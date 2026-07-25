@@ -544,11 +544,57 @@
                 (getf goal :objective))
         "No session goal is set. Use /goal OBJECTIVE to set one.")))
 
+(-> application--goal-update-argument (string) (option string))
+(defun application--goal-update-argument (remainder)
+  "Return the objective following /goal update, or NIL for other input."
+  (let ((word (string-downcase remainder)))
+    (and (uiop:string-prefix-p "update" word)
+         (or (= (length word) (length "update"))
+             (find (char word (length "update")) '(#\Space #\Tab)))
+         (application--command-remainder remainder))))
+
+(-> application--goal-update (application string) null)
+(defun application--goal-update (application objective)
+  "Rewrite the current session goal's objective to OBJECTIVE in place.
+
+An active or paused goal keeps its status and creation time while its
+continuation budget restarts. A completed goal becomes active again."
+  (let ((goal (application-goal application)))
+    (cond
+      ((null goal)
+       (application-present
+        application
+        "No session goal to update. Use /goal OBJECTIVE to set one."))
+      ((zerop (length objective))
+       (application-present application "Usage: /goal update NEW-OBJECTIVE"))
+      ((uiop:string-prefix-p "/" objective)
+       (application-present
+        application
+        (format nil "~S looks like a command, not an objective. ~
+                     Usage: /goal update NEW-OBJECTIVE"
+                objective)))
+      (t
+       (when (eq (getf goal :status) ':complete)
+         (setf (getf (application-goal application) :status) ':active))
+       (setf (getf (application-goal application) :objective)
+             (copy-seq objective)
+             (getf (application-goal application) :continuations) 0)
+       (application--record-goal application)
+       (application-present
+        application
+        (format nil
+                "Goal updated: ~A~:[~;~%It stays paused until /goal resume.~]"
+                objective
+                (eq (getf (application-goal application) :status)
+                    ':paused))))))
+  nil)
+
 (-> application-goal-command (application string) null)
 (defun application-goal-command (application remainder)
-  "Apply the /goal REMAINDER: show, set, clear, pause, or resume the goal."
+  "Apply the /goal REMAINDER: show, set, update, clear, pause, or resume the goal."
   (let ((goal (application-goal application))
-        (word (string-downcase remainder)))
+        (word (string-downcase remainder))
+        (update-argument (application--goal-update-argument remainder)))
     (cond
       ((zerop (length remainder))
        (application-present application
@@ -577,11 +623,13 @@
                                     :continuation-p t)
              (application--run-goal-continuations application))
            (application-present application "No paused goal to resume.")))
+      (update-argument
+       (application--goal-update application update-argument))
       ((uiop:string-prefix-p "/" remainder)
        (application-present
         application
         (format nil "~S looks like a command, not an objective. ~
-                     Usage: /goal [OBJECTIVE|clear|pause|resume]"
+                     Usage: /goal [OBJECTIVE|update NEW-OBJECTIVE|clear|pause|resume]"
                 remainder)))
       (t
        (setf (application-goal application)
