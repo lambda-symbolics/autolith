@@ -324,7 +324,10 @@ your messages Autolith automatically continues working toward it for up to eight
 extra turns before pausing. The model marks genuine completion with a literal
 =[GOAL-COMPLETE]= token. =/goal= alone shows the state, =/goal pause= and
 =/goal resume= control automatic continuation, and =/goal clear= removes the
-goal. Goals persist with their conversation across =/resume=.
+goal. =/goal update NEW-OBJECTIVE= rewrites the current objective in place: a
+paused goal stays paused, the continuation budget restarts, and a completed
+goal becomes active again. Goals persist with their conversation across
+=/resume=.
 
 =/model= switches between the 5.6 family models (sol, luna, terra), then
 prompts for the reasoning effort to use. =/effort= changes only the effort.

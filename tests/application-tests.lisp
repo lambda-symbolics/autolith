@@ -4219,6 +4219,9 @@
                                             :ui (terminal-ui-create
                                                  :terminal terminal))))
            (terminal-ui-start (application-ui application))
+           (application-goal-command application "update nothing yet")
+           (test-assert (null (application-goal application))
+                        "updating without a goal leaves none set")
            (application-goal-command application "polish the terminal")
            (test-assert (eq (getf (application-goal application) :status)
                             ':active)
@@ -4228,6 +4231,24 @@
                           "the goal context carries the objective")
              (test-assert (search "[GOAL-COMPLETE]" context)
                           "the goal context teaches the completion marker"))
+           (application-goal-command application "update polish the prompt")
+           (test-assert (string= (getf (application-goal application)
+                                       :objective)
+                                 "polish the prompt")
+                        "updating rewrites the objective in place")
+           (test-assert (eq (getf (application-goal application) :status)
+                            ':active)
+                        "updating keeps an active goal active")
+           (application-goal-command application "update")
+           (test-assert (string= (getf (application-goal application)
+                                       :objective)
+                                 "polish the prompt")
+                        "an empty update leaves the objective unchanged")
+           (application-goal-command application "update /status")
+           (test-assert (string= (getf (application-goal application)
+                                       :objective)
+                                 "polish the prompt")
+                        "command-shaped update objectives are rejected")
            (let ((sibling (make-instance
                            'application
                            :configuration configuration
@@ -4238,11 +4259,15 @@
                                                          :columns 60)))))
              (application--load-goal sibling)
              (test-assert (string= (getf (application-goal sibling) :objective)
-                                   "polish the terminal")
-                          "goals reload from durable conversation records"))
+                                   "polish the prompt")
+                          "updated goals reload from durable records"))
            (application-goal-command application "pause")
            (test-assert (null (application-goal-context application))
                         "paused goals inject no context")
+           (application-goal-command application "update polish it quietly")
+           (test-assert (eq (getf (application-goal application) :status)
+                            ':paused)
+                        "updating keeps a paused goal paused")
            (let* ((completion-item
                     (json-object
                      "type" "message"
@@ -4284,7 +4309,14 @@
                           "active goals ride along every provider request")
              (test-assert (search "✓ goal complete"
                                   (recording-terminal-output terminal))
-                          "completing a goal presents a notice"))
+                          "completing a goal presents a notice")
+             (application-goal-command application "update polish once more")
+             (test-assert (eq (getf (application-goal application) :status)
+                              ':active)
+                          "updating a completed goal reactivates it")
+             (test-assert (zerop (getf (application-goal application)
+                                       :continuations))
+                          "updating restarts the continuation budget"))
            (setf (application-goal application)
                  (list :objective "endless"
                        :status ':active
