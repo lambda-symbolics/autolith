@@ -2250,13 +2250,55 @@
                 (search "finish the migration" output)
                 "/goal renders the active goal while a turn is running")
                (test-assert
-                (not (search "command held" output))
-                "/goal is not held until the active response finishes")
+                (not (search "command scheduled" output))
+                "/goal is not scheduled until the active response finishes")
                (test-assert
                 (zerop
                  (length
                   (line-editor-text (terminal-ui-editor ui))))
                 "/goal does not return to the editor after inspection")))
+        (when controller
+          (application-input-controller-stop controller)))))
+  nil)
+
+(-> test-responsive-command-scheduling () null)
+(defun test-responsive-command-scheduling ()
+  "Test busy held commands queue as follow-up work instead of blocking."
+  (let* ((terminal (make-instance 'waiting-recording-terminal :columns 60))
+         (ui (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :ui ui))
+         (controller nil))
+    (setf (application-goal application)
+          (list :objective "finish the migration"
+                :status ':active
+                :continuations 0
+                :created-at (get-universal-time)))
+    (with-terminal-ui (active-ui ui)
+      (declare (ignore active-ui))
+      (setf controller (application-input-controller-create application))
+      (unwind-protect
+           (progn
+             (application-input-controller--enqueue
+              controller ':message "active turn")
+             (application-input-controller--next-work controller)
+             (application-input-controller--handle-submission
+              controller "/goal pause")
+             (let ((output (recording-terminal-output terminal)))
+               (test-assert
+                (search "command scheduled" output)
+                "a busy held command announces its scheduling")
+               (test-assert
+                (zerop (length (line-editor-text (terminal-ui-editor ui))))
+                "a scheduled command does not return to the editor"))
+             (test-assert
+              (equal (application-input-controller-work-items controller)
+                     (list (list ':command "/goal pause")))
+              "a scheduled command waits in the follow-up queue")
+             (application-input-controller--finish-work controller)
+             (test-assert
+              (equal (application-input-controller--next-work controller)
+                     (list ':command "/goal pause"))
+              "a scheduled command runs at the first idle opportunity"))
         (when controller
           (application-input-controller-stop controller)))))
   nil)
@@ -4433,6 +4475,7 @@
   (test-turn-cursor-visibility)
   (test-responsive-model-input)
   (test-responsive-goal-inspection)
+  (test-responsive-command-scheduling)
   (test-input-reader-quiescence)
   (test-late-steering-promotion)
   (test-conversation-picker)
