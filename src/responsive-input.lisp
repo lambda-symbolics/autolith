@@ -309,18 +309,20 @@ Return true when a model or command turn still needs cancellation."
 
 (-> application-input-controller--enqueue
     (application-input-controller keyword (or string user-message-input))
-    null)
+    boolean)
 (defun application-input-controller--enqueue (controller kind input)
-  "Append one work item of KIND carrying INPUT to CONTROLLER."
-  (with-lock-held ((application-input-controller-lock controller))
-    (unless (application-input-controller-stopping-p controller)
-      (setf (application-input-controller-work-items controller)
-            (nconc (application-input-controller-work-items controller)
-                   (list (list kind (application-input--copy input)))))
-      (condition-notify
-       (application-input-controller-condition-variable controller))))
-  (application-input-controller--publish-counts controller)
-  nil)
+  "Append one work item of KIND carrying INPUT and report acceptance."
+  (let ((queued-p nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (unless (application-input-controller-stopping-p controller)
+        (setf (application-input-controller-work-items controller)
+              (nconc (application-input-controller-work-items controller)
+                     (list (list kind (application-input--copy input))))
+              queued-p t)
+        (condition-notify
+         (application-input-controller-condition-variable controller))))
+    (application-input-controller--publish-counts controller)
+    queued-p))
 
 (-> application-input-controller--enqueue-steering
     (application-input-controller (or string user-message-input))
@@ -367,24 +369,22 @@ Return true when a model or command turn still needs cancellation."
         nil)))
   nil)
 
-(-> application-input-controller--hold-command
+(-> application-input-controller--schedule-command
     (application-input-controller string)
     null)
-(defun application-input-controller--hold-command (controller input)
-  "Restore busy command INPUT and explain when it can be submitted."
-  (let* ((application (application-input-controller-application controller))
-         (ui (application-ui application)))
-    (terminal-ui-set-input ui input)
+(defun application-input-controller--schedule-command (controller input)
+  "Queue busy command INPUT to run at the first idle opportunity."
+  (when (application-input-controller--enqueue controller ':command input)
     (application-present
-     application
+     (application-input-controller-application controller)
      (list
       (terminal-span
        ':hint
-       "∙ command held until the current response finishes")
+       "∙ command scheduled until the current response finishes")
       (terminal-span ':plain (string #\Newline))
       (terminal-span
        ':dim
-       "  Edit it now or press Enter again when idle."))))
+       "  It runs at the first opportunity. Tab with an empty draft edits it."))))
   nil)
 
 (-> application-input-controller--run-responsive-command
@@ -437,7 +437,7 @@ Return true when a model or command turn still needs cancellation."
                       ':quit)
               (application-input-controller--request-exit controller ':quit)))
            (:hold
-            (application-input-controller--hold-command controller text)))))
+            (application-input-controller--schedule-command controller text)))))
       (t
        (application-input-controller--enqueue controller ':command text))))
   nil)

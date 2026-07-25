@@ -225,9 +225,11 @@ Branch discovery occurs when the activity phase changes, not during the
 four-times-per-second spinner repaint. Active status includes elapsed time;
 after 30 seconds without provider progress it also shows the no-update duration.
 A draft that has not been submitted survives streaming updates unchanged. Slash
-commands that need modal terminal input are held in the editor until the current
-response finishes; nonmodal commands such as =/compact= retain responsive input
-while they run. Ctrl-C at an empty prompt cancels the active turn, discards
+commands that cannot run during an active turn are scheduled as follow-up work
+and run at the first opportunity after the current response finishes; the live
+region previews them alongside queued messages, and Tab with an empty draft
+recalls the newest one for editing. Nonmodal commands such as =/compact= retain
+responsive input while they run. Ctrl-C at an empty prompt cancels the active turn, discards
 queued messages, and prints the exact resume command for a durable conversation.
 If clean cancellation cannot finish, another Ctrl-C restores the terminal and
 forces Autolith to exit.
