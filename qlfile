@@ -9,11 +9,11 @@ ql quri 2026-01-01
 ql serapeum 2026-01-01
 ql yason 2026-01-01
 
-git cl-colorist https://github.com/luciusmagn/cl-colorist.git :ref 91041f50af55fa82f7f099b7be222055624b20af
-git clinedi https://github.com/luciusmagn/clinedi.git :ref 5c1ccedba423cbe424214593345962b70fc0512c
-git cl-exec-sandbox https://github.com/luciusmagn/cl-exec-sandbox.git :ref 8c47a1dadb64eba1629742ef6b43789ed7d73b36
-git clifff https://github.com/luciusmagn/clifff.git :ref 29c19b6bdb1d19e1ceb3ed5279eed5b81b0872d8
-git colorlisp https://github.com/luciusmagn/colorlisp.git :ref 6e1ee575bf57628fa864acd6f0a61209af9990b1
-git mcparen https://github.com/luciusmagn/mcparen.git :ref a0981df8ca0910fc0676e1b34b5507fbd54ac901
-git sexp-store https://github.com/luciusmagn/sexp-store.git :ref a03ddb709eb43efdd2f1a98dd87aa4e7f444940c
-git sbcl-workers https://github.com/luciusmagn/sbcl-workers.git :ref fff2bc4bbeb8eec93a963c5ad1f7af85bbf7a6a3
+git cl-colorist https://github.com/luciusmagn/cl-colorist.git :ref 08328155e880c3ff1d85581c23580e35e59b3162
+git clinedi https://github.com/luciusmagn/clinedi.git :ref 22b02d2c1731756e83863f3b9de04033e0db3ba0
+git cl-exec-sandbox https://github.com/luciusmagn/cl-exec-sandbox.git :ref 00cc0203a6791b240df09ffc91110920de2b64cd
+git clifff https://github.com/luciusmagn/clifff.git :ref 6df6dae2b0d7648d37510bec963189bea32d0a0a
+git colorlisp https://github.com/luciusmagn/colorlisp.git :ref 8c79c5783848871c31aed169aac947cc0032b0ad
+git mcparen https://github.com/luciusmagn/mcparen.git :ref 2840ee072f6d74efcecc31c46964955bffc24973
+git sexp-store https://github.com/luciusmagn/sexp-store.git :ref 3c9389397a853fb788f1a5a22bf60dc8b95a8d17
+git sbcl-workers https://github.com/luciusmagn/sbcl-workers.git :ref fdf9db2a3949e6c8d4693e64e6f2569e63a41515
