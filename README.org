@@ -6,7 +6,7 @@
 ┌[RAM 35%] ~/c/frob [master]
 └ 00:50 lho-thinkpad mag took λ ./bin/autolith
 
-  :::.      :::        AUTOLITH v0.16.2
+  :::.      :::        AUTOLITH v0.16.3
   ;;`;;     ;;;        ────────────────────────────────────────
  ,[[ '[[,   [[[        model         gpt-5.6-sol (effort ultra)
 c$$$cc$$$c  $$'        workspace     /root/common-lisp/frob/
