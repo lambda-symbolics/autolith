@@ -21,11 +21,15 @@
 
 (-> release-server-tests--git (pathname list) string)
 (defun release-server-tests--git (directory arguments)
-  "Run a quiet Git fixture command in DIRECTORY and return trimmed output."
+  "Run an isolated quiet Git fixture command in DIRECTORY and return output."
   (string-trim
    '(#\Space #\Tab #\Newline #\Return)
    (uiop:run-program
-    (append (list "git" "-C" (namestring directory)) arguments)
+    (append (list "env"
+                  "GIT_CONFIG_NOSYSTEM=1"
+                  "GIT_CONFIG_GLOBAL=/dev/null"
+                  "git" "-C" (namestring directory))
+            arguments)
     :output :string
     :error-output :output)))
 
