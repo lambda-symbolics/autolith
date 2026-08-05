@@ -475,7 +475,7 @@ discarded or obsolete candidates.
         (with-open-file (stream pathname
                                 :direction :input
                                 :external-format :utf-8)
-          (let ((count (read-sequence buffer stream)))
+          (let ((count (read-character-sequence buffer stream)))
             (if (> count content-limit)
                 (concatenate 'string
                              prefix

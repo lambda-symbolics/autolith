@@ -853,7 +853,7 @@ because the dependency chooses the element type from response headers."
        (handler-case
            (if (subtypep (stream-element-type stream) 'character)
                (let* ((buffer (make-string 4000))
-                      (end (read-sequence buffer stream)))
+                      (end (read-character-sequence buffer stream)))
                  (and (plusp end) (subseq buffer 0 end)))
                (let* ((buffer (make-array 4000 :element-type '(unsigned-byte 8)))
                       (end (read-sequence buffer stream)))

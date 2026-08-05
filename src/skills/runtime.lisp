@@ -610,7 +610,7 @@ stall discovery."
                        (setf *skill-definition-source-character-count*
                              character-limit)
                        (let* ((buffer (make-string (1+ character-limit)))
-                              (count (read-sequence buffer stream)))
+                              (count (read-character-sequence buffer stream)))
                          (setf *skill-definition-source-character-count* count)
                          (when (> count character-limit)
                            (skill--definition-fail

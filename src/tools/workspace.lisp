@@ -231,7 +231,7 @@ historical line-window behavior, and an empty file has zero lines."
                               :direction :input
                               :external-format :utf-8)
         (loop
-          for count = (read-sequence buffer stream)
+          for count = (read-character-sequence buffer stream)
           until (zerop count)
           do
              (setf saw-character-p t
