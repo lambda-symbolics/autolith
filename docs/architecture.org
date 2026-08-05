@@ -306,10 +306,11 @@ launcher can use the core.
 
 ** =bin/= and =recovery/=
 
-Contain the stable launcher boundary, pinned-runtime adapter, and minimal
-recovery runtime. =script/bootstrap= locates or installs the pinned SBCL beneath the
-data root without changing the system Lisp. It also installs the independently
-hash-verified matching SBCL source as a read-only reference. It builds the
+Contain the stable launcher boundary, runtime adapter, and minimal
+recovery runtime. =script/bootstrap= locates an SBCL satisfying the tracked
+minimum version or, on Linux x86-64, installs the pinned SBCL beneath the
+data root without changing the system Lisp. It also installs the matching
+SBCL source as a read-only reference. It builds the
 recovery runtime into a read-only pristine core and builds the separate
 preloaded active image outside the repository. Both builders record exact
 source provenance and boot-probe each temporary image. The launcher repeats the

@@ -16,7 +16,7 @@ on SBCL. It:
 - keeps finalized output in normal terminal scrollback;
 - runs =lisp.*= operations in named, heap-isolated SBCL REPLs;
 - saves modified worker heaps as immutable images with durable notes;
-- inspects the exact source matching its pinned SBCL runtime;
+- inspects the exact source matching its selected SBCL runtime;
 - exposes documented =self.*= inspection and mutation operations;
 - privately commits reconstructible live mutations without committing to Git;
 - saves live SBCL generations without stopping the active parent;
@@ -96,16 +96,19 @@ metadata compatibility record after the host checksum becomes available. See
 
 Source development needs Quicklisp, =curl=, =tar=, a SHA-256 utility, Rust
 with Cargo, a C compiler, CMake, and =pkg-config=. The tracked =sbcl.version=
-pins SBCL 2.6.4. On Linux, setup uses a matching =AUTOLITH_SBCL=, locates a
-matching system runtime, or installs the hash-verified official Linux x86-64
-binary. On macOS arm64, setup uses a matching runtime or builds the exact
-pinned runtime from source with a host SBCL. It installs that private runtime
-under the Autolith data root without replacing the system Lisp.
+names the minimum supported SBCL, currently 2.6.4. Setup uses
+=AUTOLITH_SBCL= or a system runtime whenever the probed version satisfies
+that minimum. On Linux, when no suitable runtime exists, setup installs the
+hash-verified official 2.6.4 x86-64 binary beneath the Autolith data root
+without replacing the system Lisp. On macOS arm64, install a suitable SBCL
+first, for example with Homebrew.
 
-Setup also downloads the official matching SBCL source archive, verifies its
-separately pinned SHA-256 identity, and publishes the extracted tree without
-write bits beside the runtime. The launcher and development commands remember
-that selection.
+Setup also downloads the official SBCL source archive matching the selected
+runtime's exact version and publishes the extracted tree without write bits
+beside the recorded runtime selection. The 2.6.4 archive is verified against
+the tracked SHA-256 identity; other release archives record their downloaded
+identity beside the tree. The launcher and development commands remember that
+selection.
 
 For a fresh macOS development machine, install the host build dependencies and
 Quicklisp first:
@@ -133,8 +136,9 @@ builds a small pristine recovery core under
 =${XDG_DATA_HOME:-~/.local/share}/autolith/recovery/=, and builds a preloaded
 active image under the adjacent =active/= directory. Both cores and their
 manifests are installed read-only. Matching implementation source lives under
-=${XDG_DATA_HOME:-~/.local/share}/autolith/runtimes/2.6.4/source/= and is used as
-a read-only inspection reference, never as a live patch target.
+=${XDG_DATA_HOME:-~/.local/share}/autolith/runtimes/<version>/source/=, a
+directory keyed by the selected runtime's exact version, and is used as a
+read-only inspection reference, never as a live patch target.
 
 The launcher probes the preloaded image against the current SBCL, operating
 system, architecture, and content hash of every Autolith source input plus the
@@ -822,9 +826,11 @@ ${XDG_DATA_HOME:-~/.local/share}/autolith/
 ├── lisp-images/IMAGE-ID/
 │   ├── manifest.sexp
 │   └── worker.core
-└── runtimes/2.6.4/
-    ├── installation/
-    └── source/
+└── runtimes/
+    ├── command
+    └── SBCL-VERSION/
+        ├── installation/
+        └── source/
 #+END_SRC
 
 Running Autolith with its own repository as the workspace turns it into an

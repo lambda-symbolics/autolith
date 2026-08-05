@@ -238,8 +238,9 @@ Materialize the locked project dependencies with:
 
 On macOS arm64, install a host SBCL, Quicklisp under `~/quicklisp`, Rust with
 Cargo, the Xcode command-line tools, CMake, `pkg-config`, and OpenSSL before
-running bootstrap. Bootstrap builds and records the exact pinned SBCL under the
-Autolith data root; it does not replace the Homebrew host SBCL.
+running bootstrap. Bootstrap records any host SBCL satisfying the tracked
+minimum version and installs its matching source under the Autolith data root;
+it never replaces the Homebrew host SBCL.
 
 Rebuild only the installed pristine recovery image with:
 

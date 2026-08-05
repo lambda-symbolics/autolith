@@ -1187,8 +1187,8 @@ Recovery must remain possible without loading the damaged active core.
 
 Autolith should include or locate:
 
-- A pinned SBCL runtime.
-- The exact source corresponding to the pinned SBCL runtime.
+- An SBCL runtime satisfying the tracked minimum version.
+- The exact source corresponding to the selected SBCL runtime.
 - A local, pinned Quicklisp distribution or equivalent dependency set.
 - Required Lisp source dependencies.
 - Bubblewrap and a private =cl-exec-sandbox= helper on Linux, or the system
@@ -1202,10 +1202,10 @@ Ordinary filesystem, process, networking, and build operations should
 prefer Common Lisp, ASDF, and UIOP.
 
 On Linux x86-64, setup may install a hash-verified pinned SBCL binary beneath
-the data root when no compatible runtime is available. On macOS arm64, setup
-uses a matching runtime or builds the pinned runtime from source with a host
-SBCL. The launcher and development commands use the private recorded executable
-without changing the user's system Lisp installation.
+the data root when no runtime satisfying the tracked minimum version is
+available. Elsewhere, setup requires an installed SBCL satisfying that
+minimum. The launcher and development commands use the private recorded
+executable without changing the user's system Lisp installation.
 
 The matching SBCL source is a reference and reconstruction input for
 implementation-aware inspection. Live implementation mutation changes only a

@@ -79,9 +79,10 @@ installing a newer release. The check runs in the background and never installs
 anything unattended. A prior cached result may place an update notice below the
 next startup banner. Run =autolith --update= to check and update explicitly.
 
-Native macOS arm64 currently runs from a source checkout. Install the host
-toolchain and Quicklisp, then let bootstrap build and install the exact pinned
-SBCL, native libraries, recovery core, and active core:
+Native macOS arm64 currently runs from a source checkout. Autolith accepts any
+SBCL at least the version in =sbcl.version= (currently 2.6.4). Install the
+host toolchain and Quicklisp, then let bootstrap install the matching SBCL
+source, native libraries, recovery core, and active core:
 
 #+BEGIN_SRC sh
 brew install sbcl rust cmake pkg-config openssl@3
