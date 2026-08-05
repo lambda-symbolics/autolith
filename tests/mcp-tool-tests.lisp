@@ -2561,7 +2561,7 @@
               :name "cleanup-stdio"
               :transport
               `(:type :stdio
-                :command ,(namestring sb-ext:*runtime-pathname*)
+                :command ,(lisp-worker-sbcl-command)
                 :arguments
                 ("--noinform"
                  "--no-sysinit"
@@ -2765,7 +2765,7 @@
             :name "credential-rotation"
             :transport
             `(:type :stdio
-              :command ,(namestring sb-ext:*runtime-pathname*)
+              :command ,(lisp-worker-sbcl-command)
               :arguments
               ("--noinform"
                "--no-sysinit"
