@@ -1721,6 +1721,24 @@
                  "non-interactive terminals never open the picker"))
   nil)
 
+(-> terminal-tests--call-without-host-size (function) t)
+(defun terminal-tests--call-without-host-size (function)
+  "Call FUNCTION while kernel and tput terminal sizes are unavailable.
+
+Resize tests drive size changes through COLUMNS and LINES, which the real
+resolution only consults after the kernel and tput sizes. Masking those host
+sources keeps the tests deterministic under an interactive terminal."
+  (test-call-with-function-replacements
+   (list (list 'terminal-file-descriptor-size
+               (lambda (file-descriptor)
+                 (declare (ignore file-descriptor))
+                 (values nil nil)))
+         (list 'terminal--query-dimension
+               (lambda (capability)
+                 (declare (ignore capability))
+                 nil)))
+   function))
+
 (-> test-terminal-modal-resize () null)
 (defun test-terminal-modal-resize ()
   "Test that a resize raised during modal input repaints before event dispatch."
@@ -1740,29 +1758,31 @@
          (ui (terminal-ui-create :terminal terminal))
          (items '((:name "alpha" :argument nil :description "first entry"))))
     (unwind-protect
-         (with-terminal-ui (active-ui ui)
-           (recording-terminal-reset terminal)
-           (test-assert
-            (string= (terminal-ui-select
-                      active-ui
-                      :title "pick"
-                      :items items
-                      :resize-callback
-                      #'application-pending-terminal-size)
-                     "alpha")
-            "submit still accepts the picker event received during resize")
-           (test-assert (= (terminal-columns terminal) 18)
-                        "a pending picker resize refreshes terminal columns")
-           (test-assert (= (terminal-rows terminal) 8)
-                        "a pending picker resize refreshes terminal rows")
-           (test-assert (null *terminal-resize-pending-p*)
-                        "the picker consumes the pending resize flag")
-           (test-assert
-            (= (terminal-tests--substring-count
-                "pick"
-                (recording-terminal-output terminal))
-               2)
-            "the picker repaints at the new width before submit exits"))
+         (terminal-tests--call-without-host-size
+          (lambda ()
+            (with-terminal-ui (active-ui ui)
+              (recording-terminal-reset terminal)
+              (test-assert
+               (string= (terminal-ui-select
+                         active-ui
+                         :title "pick"
+                         :items items
+                         :resize-callback
+                         #'application-pending-terminal-size)
+                        "alpha")
+               "submit still accepts the picker event received during resize")
+              (test-assert (= (terminal-columns terminal) 18)
+                           "a pending picker resize refreshes terminal columns")
+              (test-assert (= (terminal-rows terminal) 8)
+                           "a pending picker resize refreshes terminal rows")
+              (test-assert (null *terminal-resize-pending-p*)
+                           "the picker consumes the pending resize flag")
+              (test-assert
+               (= (terminal-tests--substring-count
+                   "pick"
+                   (recording-terminal-output terminal))
+                  2)
+               "the picker repaints at the new width before submit exits"))))
       (if previous-columns
           (sb-posix:setenv "COLUMNS" previous-columns 1)
           (sb-posix:unsetenv "COLUMNS"))
@@ -1789,16 +1809,21 @@
               (setf *terminal-resize-pending-p* t))))
          (ui (terminal-ui-create :terminal terminal)))
     (unwind-protect
-         (with-terminal-ui (active-ui ui)
-           (test-assert (eq (application-read-terminal-event active-ui)
-                            :submit)
-                        "the application preserves the event read during resize")
-           (test-assert (= (terminal-columns terminal) 19)
-                        "the application refreshes width before event dispatch")
-           (test-assert (= (terminal-rows terminal) 9)
-                        "the application refreshes height before event dispatch")
-           (test-assert (null *terminal-resize-pending-p*)
-                        "the application consumes a resize raised during read"))
+         (terminal-tests--call-without-host-size
+          (lambda ()
+            (with-terminal-ui (active-ui ui)
+              (test-assert
+               (eq (application-read-terminal-event active-ui) :submit)
+               "the application preserves the event read during resize")
+              (test-assert
+               (= (terminal-columns terminal) 19)
+               "the application refreshes width before event dispatch")
+              (test-assert
+               (= (terminal-rows terminal) 9)
+               "the application refreshes height before event dispatch")
+              (test-assert
+               (null *terminal-resize-pending-p*)
+               "the application consumes a resize raised during read"))))
       (if previous-columns
           (sb-posix:setenv "COLUMNS" previous-columns 1)
           (sb-posix:unsetenv "COLUMNS"))
