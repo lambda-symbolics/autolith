@@ -193,6 +193,7 @@ fi
   "Check the remaining bootstrap shell boundaries and tracked Lisp programs."
   (dolist (relative '("bin/autolith"
                       "bin/autolith-release"
+                      "bin/autolith-runtime"
                       "script/build-release"
                       "script/build-release-runtime"
                       "server/build-in-container"))
@@ -204,6 +205,7 @@ fi
          (namestring (merge-pathnames "script/install" source-root)))
    :output nil)
   (dolist (relative '("script/build-release-runtime.lisp"
+                      "script/runtime-requirement.lisp"
                       "server/build-in-container.lisp"))
     (with-open-file (stream (merge-pathnames relative source-root)
                             :direction :input
@@ -700,6 +702,92 @@ mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
      "the verified updater atomically selects the new release"))
   nil)
 
+(-> release-script-tests--runtime-adapter (pathname pathname) null)
+(defun release-script-tests--runtime-adapter (source-root root)
+  "Exercise minimum-version runtime selection in the pinned-runtime adapter."
+  (let* ((fixture-root (merge-pathnames "runtime-adapter/" root))
+         (bin-directory (merge-pathnames "bin/" fixture-root))
+         (data-home (merge-pathnames "data/" fixture-root))
+         (adapter (merge-pathnames "autolith-runtime" bin-directory))
+         (script (merge-pathnames "script.lisp" fixture-root)))
+    (uiop:ensure-all-directories-exist (list bin-directory data-home))
+    (uiop:copy-file (merge-pathnames "bin/autolith-runtime" source-root)
+                    adapter)
+    (release-script-tests--chmod "755" adapter)
+    (release-script-tests--write-file
+     (merge-pathnames "sbcl.version" fixture-root)
+     (format nil "2.6.4~%"))
+    (release-script-tests--write-file
+     (merge-pathnames "sbcl-source.sha256" fixture-root)
+     (format nil "~A~%" (make-string 64 :initial-element #\0)))
+    (release-script-tests--write-file script (format nil "(quit)~%"))
+    (flet ((fake-runtime (version)
+             (let ((pathname
+                     (merge-pathnames (format nil "sbcl-~A" version)
+                                      fixture-root)))
+               (release-script-tests--write-file
+                pathname
+                (format nil
+                        "#!/bin/sh
+set -eu
+case \" $* \" in
+  *'(write-string (lisp-implementation-version))'*) printf '%s' '~A' ;;
+  *' --script '*) printf 'ADAPTER-SCRIPT %s\\n' \"$*\" ;;
+esac
+"
+                        version))
+               (release-script-tests--chmod "755" pathname)
+               pathname))
+           (run-adapter (runtime)
+             (multiple-value-bind (output error-output status)
+                 (release-script-tests--run
+                  (list "/bin/sh" "-c"
+                        (format nil "~A --script ~A 2>&1"
+                                (namestring adapter)
+                                (namestring script)))
+                  :environment
+                  (list (format nil "XDG_DATA_HOME=~A" (namestring data-home))
+                        (format nil "AUTOLITH_SBCL=~A" (namestring runtime)))
+                  :ignore-error-status t)
+               (declare (ignore error-output))
+               (values (or output "") status))))
+      (multiple-value-bind (output status)
+          (run-adapter (fake-runtime "2.6.7"))
+        (test-assert (zerop status)
+                     "the adapter accepts a newer runtime than the minimum")
+        (test-assert (search "ADAPTER-SCRIPT" output)
+                     "the adapter runs the script on a newer runtime")
+        (test-assert
+         (probe-file
+          (merge-pathnames "autolith/runtimes/command" data-home))
+         "the adapter records the accepted runtime command"))
+      (multiple-value-bind (output status)
+          (run-adapter (fake-runtime "2.10.0"))
+        (test-assert (and (zerop status) (search "ADAPTER-SCRIPT" output))
+                     "the adapter compares version fields numerically"))
+      (multiple-value-bind (output status)
+          (run-adapter (fake-runtime "2.6.3"))
+        (test-assert (not (zerop status))
+                     "the adapter rejects a runtime older than the minimum")
+        (test-assert (search "does not satisfy SBCL 2.6.4 or newer" output)
+                     "the adapter explains a rejected older runtime")))
+    (let ((*package* (find-package "CL-USER")))
+      (load (merge-pathnames "script/runtime-requirement.lisp" source-root)))
+    (let ((at-least-p
+            (fdefinition
+             (find-symbol "AUTOLITH-VERSION-AT-LEAST-P" "CL-USER"))))
+      (test-assert (funcall at-least-p "2.6.4" "2.6.4")
+                   "the version requirement accepts the minimum itself")
+      (test-assert (funcall at-least-p "2.10.0" "2.6.4")
+                   "the version requirement compares fields numerically")
+      (test-assert (funcall at-least-p "2.7.0.123-gabc" "2.6.4")
+                   "the version requirement tolerates build suffixes")
+      (test-assert (not (funcall at-least-p "2.6.3" "2.6.4"))
+                   "the version requirement rejects older versions")
+      (test-assert (not (funcall at-least-p "1.9.9" "2.6.4"))
+                   "the version requirement rejects older major series"))
+    nil))
+
 (-> test-release-scripts () null)
 (defun test-release-scripts ()
   "Test shell bootstrap boundaries through Common Lisp fixtures."
@@ -712,6 +800,7 @@ mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
     (unwind-protect
          (progn
            (release-script-tests--syntax source-root)
+           (release-script-tests--runtime-adapter source-root root)
            (release-script-tests--source-launcher source-root root)
            (release-script-tests--launcher source-root root)
            (release-script-tests--update-handoff source-root root)

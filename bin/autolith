@@ -10,12 +10,7 @@ from_source_requested=false
 remaining_arguments=()
 state_home=${XDG_STATE_HOME:-$HOME/.local/state}
 data_home=${XDG_DATA_HOME:-$HOME/.local/share}
-runtime_version=$(tr -d '[:space:]' < "$source_root/sbcl.version")
-source_archive_sha256=$(tr -d '[:space:]' < "$source_root/sbcl-source.sha256")
-runtime_root=$data_home/autolith/runtimes/$runtime_version
-runtime_command_path=$data_home/autolith/runtimes/$runtime_version/command
-runtime_source_root=$runtime_root/source
-source_identity_path=$runtime_root/source.identity
+runtime_command_path=$data_home/autolith/runtimes/command
 inherited_runtime_source_root=${AUTOLITH_SBCL_SOURCE_ROOT:-}
 configured_sbcl=${AUTOLITH_SBCL:-}
 recorded_runtime=
@@ -30,18 +25,36 @@ else
   sbcl_command=sbcl
 fi
 export AUTOLITH_SBCL=$sbcl_command
-source_identity=
-if [[ -r "$source_identity_path" ]]; then
-  IFS= read -r source_identity < "$source_identity_path" || source_identity=
+selected_runtime_version=
+if [[ -d "$data_home/autolith/runtimes" ]] &&
+   selected_runtime_probe=$("$sbcl_command" --version 2>/dev/null); then
+  selected_runtime_version=${selected_runtime_probe#SBCL }
+  selected_runtime_version=${selected_runtime_version%% *}
 fi
+runtime_source_root=
+source_identity_path=
+source_identity=
+if [[ -n "$selected_runtime_version" ]]; then
+  runtime_source_root=$data_home/autolith/runtimes/$selected_runtime_version/source
+  source_identity_path=$data_home/autolith/runtimes/$selected_runtime_version/source.identity
+  if [[ -r "$source_identity_path" ]]; then
+    IFS= read -r source_identity < "$source_identity_path" || source_identity=
+  fi
+fi
+source_identity_version=${source_identity%% *}
+source_identity_sha256=${source_identity#* }
 if [[ "$inherited_runtime_source_root" == /* &&
       -f "$inherited_runtime_source_root/version.lisp-expr" ]] &&
-   grep -Fx "\"$runtime_version\"" \
-     "$inherited_runtime_source_root/version.lisp-expr" >/dev/null; then
+   { [[ -z "$selected_runtime_version" ]] ||
+     grep -Fx "\"$selected_runtime_version\"" \
+       "$inherited_runtime_source_root/version.lisp-expr" >/dev/null; }; then
   export AUTOLITH_SBCL_SOURCE_ROOT=$inherited_runtime_source_root
-elif [[ "$source_archive_sha256" =~ ^[0-9a-f]{64}$ &&
-      "$source_identity" == "$runtime_version $source_archive_sha256" &&
-      -f "$runtime_source_root/version.lisp-expr" ]]; then
+elif [[ -n "$runtime_source_root" &&
+      "$source_identity_version" == "$selected_runtime_version" &&
+      "$source_identity_sha256" =~ ^[0-9a-f]{64}$ &&
+      -f "$runtime_source_root/version.lisp-expr" ]] &&
+   grep -Fx "\"$source_identity_version\"" \
+     "$runtime_source_root/version.lisp-expr" >/dev/null; then
   export AUTOLITH_SBCL_SOURCE_ROOT=$runtime_source_root
 else
   unset AUTOLITH_SBCL_SOURCE_ROOT

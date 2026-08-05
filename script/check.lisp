@@ -10,13 +10,8 @@
        (quicklisp-setup (if (probe-file project-setup)
                            project-setup
                            user-setup)))
-  (let ((expected-version
-          (string-trim '(#\Space #\Tab #\Newline #\Return)
-                       (uiop:read-file-string version-pathname))))
-    (unless (string= expected-version (lisp-implementation-version))
-      (error "Autolith pins SBCL ~A, but this process is ~A."
-             expected-version
-             (lisp-implementation-version))))
+  (load (merge-pathnames "script/runtime-requirement.lisp" source-root))
+  (autolith-require-minimum-runtime version-pathname)
   (unless (probe-file quicklisp-setup)
     (error "Autolith needs Quicklisp at ~A" quicklisp-setup))
   (load quicklisp-setup)

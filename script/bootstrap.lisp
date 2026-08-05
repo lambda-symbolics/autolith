@@ -132,13 +132,8 @@ grandchild processes all land under the rail."
        (sbcl-command (or (uiop:getenv "AUTOLITH_SBCL") "sbcl"))
        (quicklisp-setup (merge-pathnames "quicklisp/setup.lisp"
                                          (user-homedir-pathname))))
-  (let ((expected-version
-          (string-trim '(#\Space #\Tab #\Newline #\Return)
-                       (uiop:read-file-string version-pathname))))
-    (unless (string= expected-version (lisp-implementation-version))
-      (error "Autolith pins SBCL ~A, but this process is ~A. Set AUTOLITH_SBCL to the pinned executable."
-             expected-version
-             (lisp-implementation-version))))
+  (load (merge-pathnames "script/runtime-requirement.lisp" source-root))
+  (autolith-require-minimum-runtime version-pathname)
   (unless (probe-file quicklisp-setup)
     (error "Autolith bootstrap needs Quicklisp at ~A" quicklisp-setup))
   (format t "~&~A~%" (bootstrap-style "35;1" "Autolith bootstrap"))

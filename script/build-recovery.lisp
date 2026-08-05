@@ -25,13 +25,8 @@
        (quicklisp-setup (if (probe-file project-setup)
                            project-setup
                            user-setup)))
-  (let ((expected-version
-          (string-trim '(#\Space #\Tab #\Newline #\Return)
-                       (uiop:read-file-string version-pathname))))
-    (unless (string= expected-version (lisp-implementation-version))
-      (error "Recovery builds require pinned SBCL ~A, not ~A."
-             expected-version
-             (lisp-implementation-version))))
+  (load (merge-pathnames "script/runtime-requirement.lisp" source-root))
+  (autolith-require-minimum-runtime version-pathname)
   (labels ((load-recovery-source ()
              "Load only the packages needed to compile the recovery runtime."
              (unless (probe-file quicklisp-setup)

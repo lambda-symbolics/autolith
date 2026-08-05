@@ -20,13 +20,8 @@
           (or (first arguments)
               (uiop:getenv "AUTOLITH_ACTIVE_CORE")
               default-core))))
-  (let ((expected-version
-          (string-trim '(#\Space #\Tab #\Newline #\Return)
-                       (uiop:read-file-string version-pathname))))
-    (unless (string= expected-version (lisp-implementation-version))
-      (error "Active-image builds require pinned SBCL ~A, not ~A."
-             expected-version
-             (lisp-implementation-version))))
+  (load (merge-pathnames "script/runtime-requirement.lisp" source-root))
+  (autolith-require-minimum-runtime version-pathname)
   (unless (probe-file project-setup)
     (error "Active-image builds need locked dependencies; run ./script/bootstrap."))
   (format t "~&Loading Autolith for its preloaded active image.~%")

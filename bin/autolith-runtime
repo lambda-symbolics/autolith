@@ -5,23 +5,25 @@ set -euo pipefail
 runtime_release=2.6.4
 runtime_archive_sha256=466933f9b4f403b6a49b2a7cc755fdd5d827c3b354aa3c8c0d96697e5da1e9fc
 runtime_archive_url=https://downloads.sourceforge.net/project/sbcl/sbcl/2.6.4/sbcl-2.6.4-x86-64-linux-binary.tar.bz2
-source_archive_url=https://downloads.sourceforge.net/project/sbcl/sbcl/2.6.4/sbcl-2.6.4-source.tar.bz2
+source_archive_base_url=https://downloads.sourceforge.net/project/sbcl/sbcl
 
 adapter_path=$(readlink -f -- "${BASH_SOURCE[0]}")
 source_root=$(CDPATH= cd -- "$(dirname -- "$adapter_path")/.." && pwd)
-expected_version=$(tr -d '[:space:]' < "$source_root/sbcl.version")
-source_archive_sha256=$(tr -d '[:space:]' < "$source_root/sbcl-source.sha256")
+minimum_version=$(tr -d '[:space:]' < "$source_root/sbcl.version")
+release_source_sha256=$(tr -d '[:space:]' < "$source_root/sbcl-source.sha256")
 data_home=${XDG_DATA_HOME:-$HOME/.local/share}
-runtime_root=$data_home/autolith/runtimes/$expected_version
-runtime_command_path=$runtime_root/command
-managed_prefix=$runtime_root/installation
+runtimes_root=$data_home/autolith/runtimes
+runtime_command_path=$runtimes_root/command
+managed_prefix=$runtimes_root/$runtime_release/installation
 managed_sbcl=$managed_prefix/bin/sbcl
-managed_source=$runtime_root/source
-source_identity_path=$runtime_root/source.identity
+runtime_root=
+managed_source=
+source_identity_path=
 install_requested=false
 script_path=
 script_arguments=()
 temporary_directory=
+selected_version=
 
 fail()
 {
@@ -43,6 +45,28 @@ runtime_version()
     --eval '(write-string (lisp-implementation-version))' 2>/dev/null
 }
 
+version_at_least()
+{
+  local IFS=.
+  local -a candidate_fields=($1)
+  local -a minimum_fields=($2)
+  local index candidate_field minimum_field
+
+  for index in 0 1 2; do
+    candidate_field=${candidate_fields[index]:-0}
+    minimum_field=${minimum_fields[index]:-0}
+    candidate_field=${candidate_field%%[!0-9]*}
+    minimum_field=${minimum_field%%[!0-9]*}
+    if ((10#${candidate_field:-0} > 10#${minimum_field:-0})); then
+      return 0
+    fi
+    if ((10#${candidate_field:-0} < 10#${minimum_field:-0})); then
+      return 1
+    fi
+  done
+  return 0
+}
+
 runtime_compatible()
 {
   local candidate=$1
@@ -52,7 +76,26 @@ runtime_compatible()
     return 1
   fi
   actual_version=$(runtime_version "$candidate") || return 1
-  [[ "$actual_version" == "$expected_version" ]]
+  [[ "$actual_version" =~ ^[0-9]+\.[0-9]+ ]] || return 1
+  if version_at_least "$actual_version" "$minimum_version"; then
+    selected_version=$actual_version
+    return 0
+  fi
+  return 1
+}
+
+sha256_of()
+{
+  local digest
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest=$(sha256sum -- "$1") || return 1
+  elif command -v shasum >/dev/null 2>&1; then
+    digest=$(shasum -a 256 -- "$1") || return 1
+  else
+    return 1
+  fi
+  printf '%s\n' "${digest%% *}"
 }
 
 runtime_resolve_command()
@@ -69,9 +112,9 @@ runtime_record()
   local command=$1
   local temporary
 
-  mkdir -p -- "$runtime_root"
-  chmod 700 "$runtime_root"
-  temporary=$runtime_root/.command.$$
+  mkdir -p -- "$runtimes_root"
+  chmod 700 "$runtimes_root"
+  temporary=$runtimes_root/.command.$$
   printf '%s\n' "$command" > "$temporary"
   chmod 444 "$temporary"
   mv -f -- "$temporary" "$runtime_command_path"
@@ -80,6 +123,8 @@ runtime_record()
 source_available()
 {
   local identity=
+  local identity_version=
+  local identity_sha256=
 
   if [[ ! -d "$managed_source" ||
         ! -f "$managed_source/version.lisp-expr" ||
@@ -87,36 +132,46 @@ source_available()
     return 1
   fi
   IFS= read -r identity < "$source_identity_path" || return 1
-  [[ "$identity" == "$expected_version $source_archive_sha256" ]]
+  identity_version=${identity%% *}
+  identity_sha256=${identity#* }
+  [[ "$identity_version" == "$selected_version" &&
+     "$identity_sha256" =~ ^[0-9a-f]{64}$ ]] || return 1
+  grep -Fxq "\"$identity_version\"" "$managed_source/version.lisp-expr"
 }
 
 source_install()
 {
+  local version=$selected_version
   local archive
+  local archive_sha256
   local distribution
   local identity
   local stale_source=
 
-  [[ "$expected_version" == "$runtime_release" ]] ||
-    fail "sbcl.version changed without matching source download metadata."
-  for command in curl sha256sum tar; do
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+    fail "SBCL $version is not an official release with a published source archive; set AUTOLITH_SBCL to a release build."
+  for command in curl tar; do
     command -v -- "$command" >/dev/null 2>&1 ||
       fail "automatic source installation needs $command."
   done
 
   mkdir -p -- "$runtime_root"
-  chmod 700 "$runtime_root"
+  chmod 700 "$runtimes_root" "$runtime_root"
   temporary_directory=$(mktemp -d "$runtime_root/.source.XXXXXX")
-  archive=$temporary_directory/sbcl-$expected_version-source.tar.bz2
-  distribution=$temporary_directory/sbcl-$expected_version
+  archive=$temporary_directory/sbcl-$version-source.tar.bz2
+  distribution=$temporary_directory/sbcl-$version
 
-  printf 'Installing matching SBCL %s source for Autolith.\n' "$expected_version" >&2
+  printf 'Installing matching SBCL %s source for Autolith.\n' "$version" >&2
   curl --fail --location --show-error --retry 3 --progress-bar \
     --proto '=https' --tlsv1.2 \
-    --output "$archive" "$source_archive_url"
-  printf '%s  %s\n' "$source_archive_sha256" "$archive" |
-    sha256sum --check --status - ||
+    --output "$archive" \
+    "$source_archive_base_url/$version/sbcl-$version-source.tar.bz2"
+  archive_sha256=$(sha256_of "$archive") ||
+    fail "automatic source installation needs sha256sum or shasum."
+  if [[ "$version" == "$runtime_release" &&
+        "$archive_sha256" != "$release_source_sha256" ]]; then
     fail "the downloaded SBCL source archive has the wrong SHA-256 identity."
+  fi
   tar -xjf "$archive" -C "$temporary_directory"
   [[ -f "$distribution/version.lisp-expr" &&
      -f "$distribution/src/code/list.lisp" ]] ||
@@ -138,7 +193,7 @@ source_install()
     rm -rf -- "$stale_source"
   fi
   identity=$runtime_root/.source.identity.$$
-  printf '%s %s\n' "$expected_version" "$source_archive_sha256" > "$identity"
+  printf '%s %s\n' "$version" "$archive_sha256" > "$identity"
   chmod 444 "$identity"
   mv -f -- "$identity" "$source_identity_path"
   rm -rf -- "$temporary_directory"
@@ -147,6 +202,7 @@ source_install()
 
 runtime_install()
 {
+  local install_root=$runtimes_root/$runtime_release
   local archive
   local archive_name
   local command
@@ -154,29 +210,28 @@ runtime_install()
   local installation
   local stale_installation=
 
-  [[ "$expected_version" == "$runtime_release" ]] ||
-    fail "sbcl.version changed without matching runtime download metadata."
+  version_at_least "$runtime_release" "$minimum_version" ||
+    fail "sbcl.version requires a newer runtime than the pinned download."
   [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] ||
-    fail "automatic installation currently supports Linux x86-64 only."
-  for command in curl sha256sum tar; do
+    fail "no SBCL $minimum_version or newer was found, and automatic runtime installation supports Linux x86-64 only. Install SBCL (for example: brew install sbcl) or set AUTOLITH_SBCL."
+  for command in curl tar; do
     command -v -- "$command" >/dev/null 2>&1 ||
       fail "automatic installation needs $command."
   done
 
-  mkdir -p -- "$runtime_root"
-  chmod 700 "$runtime_root"
-  temporary_directory=$(mktemp -d "$runtime_root/.install.XXXXXX")
-  archive_name=sbcl-$expected_version-x86-64-linux-binary.tar.bz2
+  mkdir -p -- "$install_root"
+  chmod 700 "$runtimes_root" "$install_root"
+  temporary_directory=$(mktemp -d "$install_root/.install.XXXXXX")
+  archive_name=sbcl-$runtime_release-x86-64-linux-binary.tar.bz2
   archive=$temporary_directory/$archive_name
-  distribution=$temporary_directory/sbcl-$expected_version-x86-64-linux
+  distribution=$temporary_directory/sbcl-$runtime_release-x86-64-linux
   installation=$temporary_directory/installation
 
-  printf 'Installing pinned SBCL %s for Autolith.\n' "$expected_version" >&2
+  printf 'Installing pinned SBCL %s for Autolith.\n' "$runtime_release" >&2
   curl --fail --location --show-error --retry 3 --progress-bar \
     --proto '=https' --tlsv1.2 \
     --output "$archive" "$runtime_archive_url"
-  printf '%s  %s\n' "$runtime_archive_sha256" "$archive" |
-    sha256sum --check --status - ||
+  [[ $(sha256_of "$archive") == "$runtime_archive_sha256" ]] ||
     fail "the downloaded SBCL archive has the wrong SHA-256 identity."
   tar -xjf "$archive" -C "$temporary_directory"
   [[ -x "$distribution/install.sh" ]] ||
@@ -189,7 +244,7 @@ runtime_install()
     fail "the installed SBCL runtime failed its version probe."
 
   if [[ -e "$managed_prefix" ]]; then
-    stale_installation=$runtime_root/installation.stale.$$
+    stale_installation=$install_root/installation.stale.$$
     mv -- "$managed_prefix" "$stale_installation"
   fi
   if ! mv -- "$installation" "$managed_prefix"; then
@@ -226,9 +281,9 @@ done
 
 [[ -n "$script_path" ]] || fail "no Lisp script was provided."
 [[ -f "$script_path" ]] || fail "Lisp script $script_path does not exist."
-[[ "$expected_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+[[ "$minimum_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
   fail "sbcl.version is malformed."
-[[ "$source_archive_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+[[ "$release_source_sha256" =~ ^[0-9a-f]{64}$ ]] ||
   fail "sbcl-source.sha256 is malformed."
 
 trap cleanup EXIT
@@ -241,7 +296,7 @@ if [[ -n ${AUTOLITH_SBCL:-} ]]; then
   sbcl_command=$(runtime_resolve_command "$AUTOLITH_SBCL") ||
     fail "AUTOLITH_SBCL does not name an executable."
   runtime_compatible "$sbcl_command" ||
-    fail "AUTOLITH_SBCL is not SBCL $expected_version."
+    fail "AUTOLITH_SBCL does not satisfy SBCL $minimum_version or newer."
 elif [[ -r "$runtime_command_path" ]]; then
   IFS= read -r recorded_command < "$runtime_command_path" || recorded_command=
   if [[ "$recorded_command" == /* ]] &&
@@ -264,8 +319,12 @@ if [[ -z "$sbcl_command" && "$install_requested" == true ]]; then
   sbcl_command=$managed_sbcl
 fi
 if [[ -z "$sbcl_command" ]]; then
-  fail "SBCL $expected_version is unavailable; run ./script/bootstrap."
+  fail "SBCL $minimum_version or newer is unavailable; run ./script/bootstrap."
 fi
+
+runtime_root=$runtimes_root/$selected_version
+managed_source=$runtime_root/source
+source_identity_path=$runtime_root/source.identity
 
 if [[ "$install_requested" == true ]] && ! source_available; then
   source_install
