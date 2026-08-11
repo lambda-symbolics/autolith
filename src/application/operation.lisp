@@ -42,6 +42,9 @@
 (defvar *application-operation-application* nil
   "The application whose registered operations are callable during local Lisp.")
 
+(defvar *application-operation-tool-context* nil
+  "The tool context whose registered operations are callable in a workflow.")
+
 (defvar *application-operation-bindings* (make-hash-table :test #'eq)
   "Function bindings installed for canonical operation symbols.")
 
@@ -838,6 +841,46 @@ serialized application boundary."
                :tool-name canonical-name))
       (tool-result-content result))))
 
+(-> application-operation--call-context-tool
+    (tool-context tool list)
+    string)
+(defun application-operation--call-context-tool (context tool arguments)
+  "Invoke TOOL with evaluated Lisp ARGUMENTS through existing CONTEXT."
+  (let* ((canonical-name (tool-canonical-name tool))
+         (json-arguments (application-operation--tool-arguments arguments))
+         (decoded-arguments
+           (tool-decode-arguments tool (json-encode json-arguments))))
+    (unless (json-object-p decoded-arguments)
+      (error 'tool-error
+             :message
+             (format nil "Arguments for ~A are not a JSON object."
+                     canonical-name)
+             :tool-name canonical-name))
+    (let ((result (tool-execute tool context decoded-arguments)))
+      (unless (tool-result-success-p result)
+        (error 'tool-error
+               :message (tool-result-content result)
+               :tool-name canonical-name))
+      (tool-result-content result))))
+
+(-> application-operation-call-context
+    (tool-context (or string symbol) &rest t)
+    string)
+(defun application-operation-call-context (context identifier &rest arguments)
+  "Invoke CONTEXT's user-callable tool named IDENTIFIER."
+  (let* ((registry (tool-context-registry context))
+         (name (string-downcase (string identifier)))
+         (tool
+           (find name
+                 (tool-registry-tools registry)
+                 :test #'string=
+                 :key #'tool-canonical-name)))
+    (unless (and tool (tool-user-callable-p tool))
+      (error 'configuration-error
+             :message
+             (format nil "No workflow-callable tool is named ~S." identifier)))
+    (application-operation--call-context-tool context tool arguments)))
+
 (-> application-operation-call
     (application (or string symbol) &rest t)
     t)
@@ -873,14 +916,18 @@ serialized application boundary."
 (defun application-operation--binding-function (name)
   "Return the dynamic wrapper function for canonical operation NAME."
   (lambda (&rest arguments)
-    (unless (typep *application-operation-application* 'application)
+    (unless (or (typep *application-operation-application* 'application)
+                (typep *application-operation-tool-context* 'tool-context))
       (error 'configuration-error
              :message
              (format nil
-                     "Operation ~A requires an active local Autolith evaluation."
+                     "Operation ~A requires an active local evaluation or Skill workflow."
                      name)))
-    (apply #'application-operation-call
-           *application-operation-application* name arguments)))
+    (if (typep *application-operation-application* 'application)
+        (apply #'application-operation-call
+               *application-operation-application* name arguments)
+        (apply #'application-operation-call-context
+               *application-operation-tool-context* name arguments))))
 
 (-> application-operation--install-binding (application-operation) symbol)
 (defun application-operation--install-binding (operation)
@@ -912,3 +959,12 @@ serialized application boundary."
   (loop for operation in (application-operation-list application)
         unless (eq (application-operation-kind operation) ':local)
           collect (application-operation--install-binding operation)))
+
+(-> application-operation-install-context-bindings (tool-context) list)
+(defun application-operation-install-context-bindings (context)
+  "Install canonical Lisp bindings for CONTEXT's user-callable tools."
+  (loop for tool in (tool-registry-tools (tool-context-registry context))
+        when (tool-user-callable-p tool)
+          collect
+          (application-operation--install-binding
+           (application-operation--from-tool tool))))

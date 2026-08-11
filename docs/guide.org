@@ -103,6 +103,19 @@ metadata compatibility record after the host checksum becomes available. See
 
 ** Source checkout
 
+With Nix, enter a complete locked development environment directly:
+
+#+BEGIN_SRC sh
+nix develop
+nix flake check
+#+END_SRC
+
+The shell exports the pinned SBCL, matching implementation source, Lisp
+dependency closure, native libraries, and platform sandbox helper. It does not
+write private baseline images into the user's data root. Running
+=./script/check= inside the shell therefore still requires a pristine recovery
+image previously installed by =./script/bootstrap=.
+
 Source development needs Quicklisp, =curl=, =tar=, a SHA-256 utility, Rust
 with Cargo, a C compiler, CMake, and =pkg-config=. The tracked =sbcl.version=
 names the minimum supported SBCL, currently 2.6.6. Setup uses

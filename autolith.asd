@@ -135,6 +135,7 @@
                              (:file "application/recovery")
                              (:file "application/commands")
                              (:file "application/operation")
+                             (:file "skills/workflow")
                              (:file "application/user-operation-context")
                              (:file "application/lisp-machine")
                              (:file "terminal/responsive-input")

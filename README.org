@@ -145,4 +145,22 @@ Read [[file:AGENTS.md][AGENTS.md]] before editing. The [[file:docs/guide.org][gu
 behavior, and the [[file:docs/architecture.org][architecture note]] maps source files to runtime
 responsibilities.
 
+Nix users can enter the locked development environment without a separate host
+SBCL or Quicklisp installation:
+
+#+BEGIN_SRC sh
+nix develop
+nix flake check
+#+END_SRC
+
+The development shell supplies the pinned SBCL, matching source, Lisp systems,
+native libraries, and sandbox helper. It does not install private baseline
+images. =./script/check= inside the shell still requires the pristine recovery
+image previously created by =./script/bootstrap=.
+
+Source development additionally needs Quicklisp, Rust with Cargo, a C compiler,
+CMake, =pkg-config=, and a host SBCL when the pinned runtime must be built from
+source. Materialize the locked environment and baseline images with
+=./script/bootstrap=.
+
 Autolith is ISC licensed. See [[file:LICENSE][LICENSE]].

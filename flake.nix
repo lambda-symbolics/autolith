@@ -45,6 +45,31 @@
             autolith = autolith;
           };
 
+          devShells.default = pkgs.mkShell {
+            packages = [
+              autolith.runtime
+              pkgs.coreutils
+              pkgs.git
+              pkgs.gnugrep
+              pkgs.perl
+            ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
+
+            AUTOLITH_NIX_DEVELOPMENT = "1";
+            AUTOLITH_SBCL = "${autolith.runtime}/bin/sbcl";
+            AUTOLITH_SBCL_SOURCE_ROOT = "${autolith.sbclSource}";
+            AUTOLITH_PROJECT_SETUP =
+              "${inputs.self}/script/nix-project-setup.lisp";
+            COLORLISP_NATIVE_LIBRARY =
+              "${autolith.colorlispNativeLibrary}/lib/libcolorlisp-tree-sitter${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
+            AUTOLITH_FFF_LIBRARY =
+              "${autolith.fffLibrary}/lib/libfff_c${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
+            CL_EXEC_SANDBOX_BWRAP = pkgs.lib.optionalString
+              pkgs.stdenv.isLinux "${pkgs.bubblewrap}/bin/bwrap";
+            CL_EXEC_SANDBOX_HELPER = pkgs.lib.optionalString
+              pkgs.stdenv.isLinux
+              "${autolith.sandboxHelper}/libexec/cl-exec-sandbox-helper";
+          };
+
           apps.default = {
             type = "app";
             program = "${autolith}/bin/autolith";

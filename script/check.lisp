@@ -35,16 +35,23 @@
        (project-setup (merge-pathnames ".qlot/setup.lisp" source-root))
        (user-setup (merge-pathnames "quicklisp/setup.lisp"
                                     (user-homedir-pathname)))
-       (quicklisp-setup (if (probe-file project-setup)
-                           project-setup
-                           user-setup)))
+       (nix-development-p
+         (string= (or (uiop:getenv "AUTOLITH_NIX_DEVELOPMENT") "") "1"))
+       (nix-setup
+         (merge-pathnames "script/nix-project-setup.lisp" source-root))
+       (dependency-setup
+         (if nix-development-p
+             nix-setup
+             (if (probe-file project-setup) project-setup user-setup))))
   (load (merge-pathnames "script/runtime-requirement.lisp" source-root))
   (autolith-require-minimum-runtime version-pathname)
-  (unless (probe-file quicklisp-setup)
-    (error "Autolith needs Quicklisp at ~A" quicklisp-setup))
-  (load quicklisp-setup)
+  (unless (probe-file dependency-setup)
+    (error "Autolith needs its dependency setup at ~A" dependency-setup))
+  (load dependency-setup)
   (load (merge-pathnames "script/build-sandbox.lisp" source-root))
-  (uiop:symbol-call '#:ql '#:quickload :cffi :silent t)
+  (if nix-development-p
+      (asdf:load-system :cffi)
+      (uiop:symbol-call '#:ql '#:quickload :cffi :silent t))
   (let ((profile-library-directory
           (merge-pathnames ".guix-profile/lib/" (user-homedir-pathname)))
         (library-directories
@@ -123,7 +130,8 @@
                          (format nil "XDG_DATA_HOME=~A" temporary-data)
                          (format nil "XDG_STATE_HOME=~A" temporary-state)
                          (format nil "XDG_CACHE_HOME=~A" temporary-cache)
-                         (format nil "AUTOLITH_PROJECT_SETUP=~A" quicklisp-setup)
+                         (format nil "AUTOLITH_PROJECT_SETUP=~A"
+                                 dependency-setup)
                          sbcl-command
                          "--noinform"
                          "--core" (namestring recovery-core)

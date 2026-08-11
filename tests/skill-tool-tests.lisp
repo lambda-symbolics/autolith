@@ -2,6 +2,30 @@
 
 ;;;; -- Skill Selection Tool Tests --
 
+(defclass skill-workflow-test-tool (tool)
+  ()
+  (:documentation "A deterministic tool called from executable Skill tests."))
+
+(defclass skill-workflow-test-self-tool (self-tool)
+  ()
+  (:documentation "An active-image tool used to test workflow restriction."))
+
+(defmethod tool-execute
+    ((tool skill-workflow-test-tool)
+     (context tool-context)
+     (arguments hash-table))
+  "Return the required test value from ARGUMENTS."
+  (declare (ignore tool context))
+  (tool-success (tool-argument arguments "value" :required t)))
+
+(defmethod tool-execute
+    ((tool skill-workflow-test-self-tool)
+     (context tool-context)
+     (arguments hash-table))
+  "Return a marker when the workflow can reach this self tool."
+  (declare (ignore tool context arguments))
+  (tool-success "self tool reached"))
+
 (-> skill-tool-tests--write (pathname string string) pathname)
 (defun skill-tool-tests--write (root relative-path content)
   "Write CONTENT beneath ROOT at RELATIVE-PATH and return its pathname."
@@ -25,6 +49,19 @@
    (json-object
     "namespace" "skill"
     "name" "load"
+    "arguments" (json-encode (json-object "name" name)))
+   context))
+
+(-> skill-tool-tests--run
+    (tool-registry tool-context string)
+    tool-result)
+(defun skill-tool-tests--run (registry context name)
+  "Call skill.run through REGISTRY with exact NAME."
+  (tool-registry-execute-call
+   registry
+   (json-object
+    "namespace" "skill"
+    "name" "run"
     "arguments" (json-encode (json-object "name" name)))
    context))
 
@@ -233,4 +270,146 @@
       (uiop:delete-directory-tree root
                                   :validate t
                                   :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-skill-run-tool () null)
+(defun test-skill-run-tool ()
+  "Test executable Skill branching, tool calls, and reader boundaries."
+  (let* ((base-configuration (test-configuration))
+         (root (test-configuration-root base-configuration))
+         (project (merge-pathnames "project/" root))
+         (skill-root (merge-pathnames ".autolith/skills/" project))
+         (configuration
+           (progn
+             (ensure-directories-exist
+              (merge-pathnames ".git/marker" project))
+             (configuration-with-working-directory
+              base-configuration project)))
+         (conversation
+           (conversation-create configuration
+                                :identifier "skill-run-tool"))
+         (registry (make-instance 'tool-registry)))
+    (skill-augment-tool-registry registry)
+    (tool-registry-register
+     registry
+     (make-instance
+      'skill-workflow-test-tool
+      :namespace "workflow-test"
+      :name "echo"
+      :description "Return one workflow test value."
+      :parameters
+      (tool-object-schema
+       (json-object "value" (tool-string-property "The returned value."))
+       '("value"))))
+    (tool-registry-register
+     registry
+     (make-instance
+      'skill-workflow-test-self-tool
+      :namespace "self"
+      :name "workflow-probe"
+      :description "Report whether a workflow can reach a self tool."
+      :parameters (tool-object-schema (json-object) nil)))
+    (let ((context
+            (make-instance 'tool-context
+                           :configuration configuration
+                           :worker nil
+                           :conversation conversation
+                           :registry registry)))
+      (unwind-protect
+           (progn
+             (skill-tool-tests--write
+              skill-root
+              "repeatable/SKILL.sexp"
+              "(:autolith-skill :version 1 :name \"repeatable\" :description \"Run a branching workflow.\" :instructions \"Inspect before running.\" :workflow \"WORKFLOW.lisp\")")
+             (skill-tool-tests--write
+              skill-root
+              "repeatable/WORKFLOW.lisp"
+              "(progn (format t \"workflow output~%\") (if (= (+ 1 1) 2) (workflow-test.echo :value \"branch selected\") \"wrong branch\"))")
+             (skill-tool-tests--write
+              skill-root
+              "plain/SKILL.sexp"
+              "(:autolith-skill :version 1 :name \"plain\" :description \"Instructions only.\" :instructions \"Do the work.\")")
+             (skill-tool-tests--write
+              skill-root
+              "no-self/SKILL.sexp"
+              "(:autolith-skill :version 1 :name \"no-self\" :description \"Run without self tools.\" :instructions \"Do not inspect or mutate Autolith.\" :workflow \"WORKFLOW.lisp\" :workflow-self-tools nil)")
+             (skill-tool-tests--write
+              skill-root
+              "no-self/WORKFLOW.lisp"
+              "(self.workflow-probe)")
+             (skill-tool-tests--write
+              skill-root
+              "escaped/SKILL.sexp"
+              "(:autolith-skill :version 1 :name \"escaped\" :description \"Reject an escaping workflow.\" :instructions \"Do not run.\" :workflow \"WORKFLOW.lisp\")")
+             (let ((outside
+                     (skill-tool-tests--write
+                      root
+                      "outside-workflow.lisp"
+                      "(error \"must not execute\")")))
+               (sb-posix:symlink
+                (namestring outside)
+                (namestring
+                 (merge-pathnames
+                  "escaped/WORKFLOW.lisp" skill-root))))
+             (let ((tool (tool-registry-find registry "skill" "run")))
+               (test-assert tool
+                            "skill registry augmentation installs skill.run")
+               (test-assert (not (tool-child-safe-p tool))
+                            "workflow execution remains a primary-agent capability"))
+             (let ((result
+                     (skill-tool-tests--run
+                      registry context "repeatable")))
+               (test-assert
+                (and (tool-result-success-p result)
+                     (search "workflow output" (tool-result-content result))
+                     (search "branch selected" (tool-result-content result)))
+                "a workflow branches and invokes a registered tool binding"))
+             (let ((result (skill-tool-tests--run registry context "plain")))
+               (test-assert
+                (and (not (tool-result-success-p result))
+                     (search "does not declare a workflow"
+                             (tool-result-content result)))
+                "instruction-only Skills cannot be executed"))
+             (let ((result
+                     (skill-tool-tests--run registry context "no-self")))
+               (test-assert
+                (and (not (tool-result-success-p result))
+                     (not (search "self tool reached"
+                                  (tool-result-content result))))
+                "a no-self workflow cannot dispatch inspection or mutation tools"))
+             (let ((result
+                     (skill-tool-tests--run registry context "escaped")))
+               (test-assert
+                (and (not (tool-result-success-p result))
+                     (search "outside its canonical root"
+                             (tool-result-content result)))
+                "a workflow symbolic link cannot escape its Skill directory"))
+             (skill-tool-tests--write
+              skill-root
+              "repeatable/WORKFLOW.lisp"
+              "(skill.run :name \"repeatable\")")
+             (let ((result
+                     (skill-tool-tests--run
+                      registry context "repeatable")))
+               (test-assert
+                (and (not (tool-result-success-p result))
+                     (search "recursion repeated"
+                             (tool-result-content result)))
+                "workflow recursion fails at a bounded explicit guard"))
+             (let ((*skill-workflow-reader-evaluated-p* nil))
+               (declare (special *skill-workflow-reader-evaluated-p*))
+               (skill-tool-tests--write
+                skill-root
+                "repeatable/WORKFLOW.lisp"
+                "#.(setf *skill-workflow-reader-evaluated-p* t)")
+               (let ((result
+                       (skill-tool-tests--run
+                        registry context "repeatable")))
+                 (test-assert
+                  (and (not (tool-result-success-p result))
+                       (null *skill-workflow-reader-evaluated-p*))
+                  "workflow reading disables read-time evaluation"))))
+        (uiop:delete-directory-tree root
+                                    :validate t
+                                    :if-does-not-exist :ignore))))
   nil)

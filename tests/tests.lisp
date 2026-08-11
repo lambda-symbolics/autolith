@@ -123,6 +123,7 @@
     (test-self-review-reminder)
     (test-skills)
     (test-skill-load-tool)
+    (test-skill-run-tool)
     (test-mcp-configuration)
     (test-directory-configuration)
     (test-mcp-tools)
