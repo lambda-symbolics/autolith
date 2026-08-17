@@ -2,14 +2,47 @@
 
 set -euo pipefail
 
-launcher_path=$(readlink -f -- "${BASH_SOURCE[0]}")
-source_root=$(CDPATH= cd -- "$(dirname -- "$launcher_path")/.." && pwd)
+resolve_path()
+{
+  local path=$1
+  local directory
+  local target
+
+  case "$path" in
+    /*) ;;
+    *) path=$PWD/$path ;;
+  esac
+  while [[ -L "$path" ]]; do
+    directory=$(CDPATH= cd -P "$(dirname "$path")" && pwd) || return 1
+    target=$(readlink "$path") || return 1
+    case "$target" in
+      /*) path=$target ;;
+      *) path=$directory/$target ;;
+    esac
+  done
+  directory=$(CDPATH= cd -P "$(dirname "$path")" && pwd) || return 1
+  printf '%s/%s\n' "$directory" "$(basename "$path")"
+}
+
+launcher_path=$(resolve_path "${BASH_SOURCE[0]}")
+source_root=$(CDPATH= cd -P -- "$(dirname -- "$launcher_path")/.." && pwd)
 installation=${1:?usage: build-release-runtime INSTALLATION}
 bootstrap_version=2.4.0
-bootstrap_sha256=50afb9765d6a2f937f609ac33ebe553326347aef23eddd49c46d76456a5b3095
+
+if [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]]; then
+  bootstrap_arch="x86-64-linux"
+  bootstrap_sha256=50afb9765d6a2f937f609ac33ebe553326347aef23eddd49c46d76456a5b3095
+elif [[ $(uname -s) == Darwin && $(uname -m) == arm64 ]]; then
+  bootstrap_arch="arm64-darwin"
+  bootstrap_sha256=1d01fac2d9748f769c9246a0a11a2c011d7843337f8f06ca144f5a500e10c117
+else
+  printf 'build-release-runtime currently supports Linux x86-64 and macOS arm64.\n' >&2
+  exit 1
+fi
+
 temporary_root=$(mktemp -d)
-bootstrap_archive=$temporary_root/sbcl-$bootstrap_version-x86-64-linux-binary.tar.bz2
-bootstrap_source=$temporary_root/sbcl-$bootstrap_version-x86-64-linux
+bootstrap_archive=$temporary_root/sbcl-$bootstrap_version-$bootstrap_arch-binary.tar.bz2
+bootstrap_source=$temporary_root/sbcl-$bootstrap_version-$bootstrap_arch
 bootstrap_installation=$temporary_root/bootstrap
 
 cleanup()
@@ -20,13 +53,25 @@ cleanup()
 
 trap cleanup EXIT HUP INT TERM
 
+sha256_verify()
+{
+  local expected=$1
+  local file=$2
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s  %s\n' "$expected" "$file" | sha256sum --check --status
+  elif command -v shasum >/dev/null 2>&1; then
+    printf '%s  %s\n' "$expected" "$file" | shasum -a 256 --check --status
+  else
+    return 1
+  fi
+}
+
 printf 'Installing the pinned SBCL %s bootstrap compiler.\n' "$bootstrap_version"
 curl --fail --location --show-error --retry 3 \
   --proto '=https' --tlsv1.2 \
   --output "$bootstrap_archive" \
-  "https://downloads.sourceforge.net/project/sbcl/sbcl/$bootstrap_version/sbcl-$bootstrap_version-x86-64-linux-binary.tar.bz2"
-printf '%s  %s\n' "$bootstrap_sha256" "$bootstrap_archive" |
-  sha256sum --check --status
+  "https://downloads.sourceforge.net/project/sbcl/sbcl/$bootstrap_version/sbcl-$bootstrap_version-$bootstrap_arch-binary.tar.bz2"
+sha256_verify "$bootstrap_sha256" "$bootstrap_archive"
 tar -xjf "$bootstrap_archive" -C "$temporary_root"
 (
   cd "$bootstrap_source"

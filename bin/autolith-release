@@ -2,17 +2,37 @@
 
 set -euo pipefail
 
+resolve_path()
+{
+  local path=$1
+  local directory
+  local target
+
+  case "$path" in
+    /*) ;;
+    *) path=$PWD/$path ;;
+  esac
+  while [[ -L "$path" ]]; do
+    directory=$(CDPATH= cd -P "$(dirname "$path")" && pwd) || return 1
+    target=$(readlink "$path") || return 1
+    case "$target" in
+      /*) path=$target ;;
+      *) path=$directory/$target ;;
+    esac
+  done
+  directory=$(CDPATH= cd -P "$(dirname "$path")" && pwd) || return 1
+  printf '%s/%s\n' "$directory" "$(basename "$path")"
+}
+
 release_latest_url=${AUTOLITH_RELEASE_LATEST_URL:-https://sh.lambda-symbolics.com/releases/latest}
-launcher_path=$(readlink -f -- "${BASH_SOURCE[0]}")
-release_root=$(CDPATH= cd -- "$(dirname -- "$launcher_path")/.." && pwd)
+launcher_path=$(resolve_path "${BASH_SOURCE[0]}")
+release_root=$(CDPATH= cd -P -- "$(dirname -- "$launcher_path")/.." && pwd)
 release_record=$release_root/RELEASE
 source_root=$release_root/libexec/autolith
 runtime_root=$release_root/runtime
 runtime_source_root=$release_root/libexec/sbcl-source
 sbcl_command=$runtime_root/bin/sbcl
 sandbox_helper=$release_root/libexec/cl-exec-sandbox-helper
-fff_library=$release_root/lib/libfff_c.so
-colorlisp_library=$release_root/lib/libcolorlisp-tree-sitter.so
 home=${HOME:-}
 data_home=${XDG_DATA_HOME:-$home/.local/share}
 active_core=$data_home/autolith/active/autolith-active.core
@@ -150,13 +170,24 @@ release_images_build()
   mkdir -p -- "$marker_directory"
   temporary_marker=$marker_directory/.release-images.$$
   printf '%s\n' "$release_tag" > "$temporary_marker"
-  chmod 600 -- "$temporary_marker"
+  chmod 600 "$temporary_marker"
   mv -f -- "$temporary_marker" "$image_marker"
 }
 
 [[ -n $home ]] || fail "HOME is not set."
-[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] ||
-  fail "binary releases currently support Linux x86-64 only."
+platform=
+if [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]]; then
+  platform=x86_64-linux
+  fff_library=$release_root/lib/libfff_c.so
+  colorlisp_library=$release_root/lib/libcolorlisp-tree-sitter.so
+elif [[ $(uname -s) == Darwin && $(uname -m) == arm64 ]]; then
+  platform=arm64-darwin
+  fff_library=$release_root/lib/libfff_c.dylib
+  colorlisp_library=$release_root/lib/libcolorlisp-tree-sitter.dylib
+else
+  fail "binary releases currently support Linux x86-64 and macOS arm64 only."
+fi
+
 [[ -r $release_record ]] || fail "RELEASE is missing."
 release_version=$(release_field version)
 release_tag=$(release_field tag)
@@ -170,19 +201,23 @@ semantic_version_valid_p "$release_version" || fail "RELEASE has an invalid vers
 [[ -f $source_root/autolith.asd && -f $source_root/.qlot/setup.lisp ]] ||
   fail "the bundled Autolith source or dependencies are missing."
 [[ -x $source_root/script/install ]] || fail "the bundled installer is missing."
-[[ -x $sandbox_helper ]] || fail "the private sandbox helper is missing."
+if [[ $platform == x86_64-linux ]]; then
+  [[ -x $sandbox_helper ]] || fail "the private sandbox helper is missing."
+fi
 [[ -f $fff_library ]] || fail "the private search library is missing."
 [[ -f $colorlisp_library ]] || fail "the private syntax library is missing."
 command -v git >/dev/null 2>&1 || fail "Git is required."
-command -v bwrap >/dev/null 2>&1 || fail "Bubblewrap is required."
+if [[ $platform == x86_64-linux ]]; then
+  command -v bwrap >/dev/null 2>&1 || fail "Bubblewrap is required."
+fi
 
-releases_root=$(CDPATH= cd -- "$release_root/.." && pwd)
-install_root=$(CDPATH= cd -- "$releases_root/.." && pwd)
+releases_root=$(CDPATH= cd -P -- "$release_root/.." && pwd)
+install_root=$(CDPATH= cd -P -- "$releases_root/.." && pwd)
 selected_release_p=false
+current_selected=$(resolve_path "$install_root/current" 2>/dev/null || true)
 if [[ ${release_root##*/} == "$release_tag" &&
       ${releases_root##*/} == releases &&
-      $(readlink -f -- "$install_root/current" 2>/dev/null || true) == \
-        "$release_root" ]]; then
+      "$current_selected" == "$release_root" ]]; then
   selected_release_p=true
 fi
 
@@ -198,9 +233,11 @@ export AUTOLITH_FFF_LIBRARY=$fff_library
 export COLORLISP_NATIVE_LIBRARY=$colorlisp_library
 export AUTOLITH_ACTIVE_CORE=$active_core
 export AUTOLITH_RECOVERY_CORE=$recovery_core
-export CL_EXEC_SANDBOX_BWRAP
-CL_EXEC_SANDBOX_BWRAP=$(command -v bwrap)
-export CL_EXEC_SANDBOX_HELPER=$sandbox_helper
+if [[ $platform == x86_64-linux ]]; then
+  export CL_EXEC_SANDBOX_BWRAP
+  CL_EXEC_SANDBOX_BWRAP=$(command -v bwrap)
+  export CL_EXEC_SANDBOX_HELPER=$sandbox_helper
+fi
 export GIT_OPTIONAL_LOCKS=0
 
 remaining_arguments=("$@")

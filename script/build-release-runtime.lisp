@@ -52,17 +52,38 @@
                                :output output
                                :error-output error-output))
 
+           (command-available-p (name)
+             "Return true when executable NAME is available in PATH."
+             (loop for directory-name
+                   in (uiop:split-string (or (uiop:getenv "PATH") "")
+                                         :separator '(#\:))
+                   thereis (and (plusp (length directory-name))
+                                (probe-file (merge-pathnames
+                                             name
+                                             (uiop:ensure-directory-pathname
+                                              directory-name))))))
+
            (check-archive (archive expected-sha256)
              "Require ARCHIVE to match EXPECTED-SHA256."
-             (run (list "sha256sum" "--check" "--status" "-")
-                  :output nil
-                  :error-output ':output
-                  :directory temporary-root
-                  :input
-                  (make-string-input-stream
-                   (format nil "~A  ~A~%"
-                           expected-sha256
-                           (file-namestring archive)))))
+             (if (command-available-p "sha256sum")
+                 (run (list "sha256sum" "--check" "--status" "-")
+                      :output nil
+                      :error-output ':output
+                      :directory temporary-root
+                      :input
+                      (make-string-input-stream
+                       (format nil "~A  ~A~%"
+                               expected-sha256
+                               (file-namestring archive))))
+                 (run (list "shasum" "-a" "256" "--check" "--status" "-")
+                      :output nil
+                      :error-output ':output
+                      :directory temporary-root
+                      :input
+                      (make-string-input-stream
+                       (format nil "~A  ~A~%"
+                               expected-sha256
+                               (file-namestring archive))))))
 
            (runtime-version (command)
              "Return the implementation version reported by SBCL COMMAND."
@@ -80,11 +101,15 @@
                        source-root installation temporary-root
                        bootstrap-installation)
             (fail "usage: build-release-runtime.lisp SOURCE INSTALLATION TEMP BOOTSTRAP"))
-          (unless (and (string-equal (software-type) "Linux")
-                       (member (string-downcase (machine-type))
-                               '("x86-64" "x86_64" "amd64")
-                               :test #'string=))
-            (fail "release runtimes currently support Linux x86-64 only."))
+          (unless (or (and (string-equal (software-type) "Linux")
+                           (member (string-downcase (machine-type))
+                                   '("x86-64" "x86_64" "amd64")
+                                   :test #'string=))
+                      (and (string-equal (software-type) "Darwin")
+                           (member (string-downcase (machine-type))
+                                   '("arm64" "aarch64")
+                                   :test #'string=)))
+            (fail "release runtimes currently support Linux x86-64 and macOS arm64 only."))
           (let* ((runtime-version
                    (trimmed-file (merge-pathnames "sbcl.version" source-root)))
                  (runtime-sha256

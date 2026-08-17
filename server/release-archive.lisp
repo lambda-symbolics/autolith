@@ -150,16 +150,8 @@
 (-> release-archive--link-target (pathname) (option pathname))
 (defun release-archive--link-target (link)
   "Return LINK's canonical existing target, or NIL for a broken link."
-  (multiple-value-bind (output error-output status)
-      (uiop:run-program (list "readlink" "-f" "--" (namestring link))
-                        :ignore-error-status t
-                        :output ':string
-                        :error-output ':string)
-    (declare (ignore error-output))
-    (let ((name (string-trim '(#\Newline #\Return) output)))
-      (when (and (eql status 0) (plusp (length name)))
-        (let ((target (pathname name)))
-          (and (probe-file target) target))))))
+  (let ((target (ignore-errors (truename link))))
+    (and target (probe-file target) target)))
 
 (-> release-archive--materialize-dependency-links (pathname) null)
 (defun release-archive--materialize-dependency-links (dependency-root)
@@ -279,17 +271,76 @@
    (release-archive--identity-git-command source-root '("read-tree" "HEAD")))
   nil)
 
+(-> release-archive--platform () string)
+(defun release-archive--platform ()
+  "Return the canonical release platform identifier."
+  (let ((os (software-type))
+        (arch (string-downcase (machine-type))))
+    (cond
+      ((and (string-equal os "Linux")
+            (member arch '("x86-64" "x86_64" "amd64") :test #'string=))
+       "x86_64-linux")
+      ((and (string-equal os "Darwin")
+            (member arch '("arm64" "aarch64") :test #'string=))
+       "arm64-darwin")
+      (t
+       (error 'release-archive-error
+              :stage ':prerequisites
+              :cause "Binary releases currently support Linux x86-64 and macOS arm64 only.")))))
+
 (-> release-archive--validate-platform () null)
 (defun release-archive--validate-platform ()
-  "Require the supported Linux x86-64 release target."
-  (unless (and (string-equal (software-type) "Linux")
-               (member (string-downcase (machine-type))
-                       '("x86-64" "x86_64" "amd64")
-                       :test #'string=))
-    (error 'release-archive-error
-           :stage ':prerequisites
-           :cause "Binary releases currently support Linux x86-64 only."))
+  "Require a supported release target platform."
+  (release-archive--platform)
   nil)
+
+(-> release-archive--shared-library-extension () string)
+(defun release-archive--shared-library-extension ()
+  "Return the dynamic library extension for the current platform."
+  (if (string-equal (software-type) "Darwin")
+      "dylib"
+      "so"))
+
+(-> release-archive--checksum-file (pathname pathname) pathname)
+(defun release-archive--checksum-file (file output)
+  "Write the SHA-256 checksum of FILE to OUTPUT."
+  (if (release-archive--command-pathname "sha256sum")
+      (release-archive--run
+       (list "sha256sum" (file-namestring file))
+       :directory (uiop:pathname-directory-pathname file)
+       :output output
+       :error-output ':output)
+      (let* ((output-string
+               (release-archive--run
+                (list "shasum" "-a" "256" (file-namestring file))
+                :directory (uiop:pathname-directory-pathname file)
+                :output ':string
+                :error-output ':output)))
+        (with-open-file (stream output
+                                :direction ':output
+                                :if-exists ':supersede
+                                :if-does-not-exist ':create
+                                :external-format ':utf-8)
+          (write-string output-string stream))))
+  output)
+
+(-> release-archive--tar-command (pathname pathname string string) list)
+(defun release-archive--tar-command (tar-file working-dir release-name commit-time)
+  "Return a tar creation command for TAR-FILE containing RELEASE-NAME below WORKING-DIR."
+  (if (release-archive--command-pathname "gtar")
+      (list "gtar" "--sort=name"
+            (format nil "--mtime=@~A" commit-time)
+            "--owner=0" "--group=0" "--numeric-owner"
+            "-cf" (namestring tar-file)
+            "-C" (namestring working-dir) release-name)
+      (if (string-equal (software-type) "Linux")
+          (list "tar" "--sort=name"
+                (format nil "--mtime=@~A" commit-time)
+                "--owner=0" "--group=0" "--numeric-owner"
+                "-cf" (namestring tar-file)
+                "-C" (namestring working-dir) release-name)
+          (list "tar" "-cf" (namestring tar-file)
+                "-C" (namestring working-dir) release-name))))
 
 (-> release-archive-build
     (&key (:source-root pathname) (:output-directory pathname))
@@ -306,6 +357,11 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
              (output-directory
                (uiop:ensure-directory-pathname
                 (or output-directory (merge-pathnames "dist/" source-root))))
+             (platform (release-archive--platform))
+             (lib-extension (release-archive--shared-library-extension))
+             (fff-library-name (format nil "libfff_c.~A" lib-extension))
+             (colorlisp-library-name
+               (format nil "libcolorlisp-tree-sitter.~A" lib-extension))
              (runtime-version
                (release-archive--trimmed-file
                 (merge-pathnames "sbcl.version" source-root)))
@@ -329,7 +385,8 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
              (fff-library
                (release-archive--environment-pathname
                 "AUTOLITH_RELEASE_FFF_LIBRARY"
-                (merge-pathnames "autolith/native/fff/libfff_c.so" data-home)))
+                (merge-pathnames (format nil "autolith/native/fff/~A" fff-library-name)
+                                 data-home)))
              (colorlisp-library (release-archive--colorlisp-library))
              (sandbox-helper (release-archive--sandbox-helper source-root))
              (version (release-builder--source-version source-root))
@@ -339,7 +396,12 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                (release-archive--git-output
                 source-root '("show" "-s" "--format=%ct" "HEAD"))))
         (release-archive--require-commands
-         '("chmod" "cp" "find" "git" "gzip" "readlink" "sha256sum" "tar"))
+         '("chmod" "cp" "find" "git" "gzip" "readlink" "tar"))
+        (unless (or (release-archive--command-pathname "sha256sum")
+                    (release-archive--command-pathname "shasum"))
+          (error 'release-archive-error
+                 :stage ':prerequisites
+                 :cause "sha256sum or shasum is required."))
         (release-archive--validate-platform)
         (unless (release-archive--semantic-version-p runtime-version)
           (error 'release-archive-error
@@ -366,10 +428,11 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
           (error 'release-archive-error
                  :stage ':prerequisites
                  :cause "The private ColorLisp library is absent; run ./script/bootstrap."))
-        (unless sandbox-helper
-          (error 'release-archive-error
-                 :stage ':prerequisites
-                 :cause "The private sandbox helper is absent; run ./script/check."))
+        (when (string-equal (software-type) "Linux")
+          (unless sandbox-helper
+            (error 'release-archive-error
+                   :stage ':prerequisites
+                   :cause "The private sandbox helper is absent; run ./script/check.")))
         (unless (release-archive--semantic-version-p version)
           (error 'release-archive-error
                  :stage ':source-validation
@@ -390,7 +453,7 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                  (release-archive--make-temporary-root output-directory)))
           (unwind-protect
                (let* ((release-name
-                        (format nil "autolith-~A-x86_64-linux" tag))
+                        (format nil "autolith-~A-~A" tag platform))
                       (release-root
                         (merge-pathnames (format nil "~A/" release-name)
                                          temporary-root))
@@ -441,29 +504,34 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                   runtime-source
                   (merge-pathnames "libexec/sbcl-source" release-root))
                  (release-archive--copy
-                  fff-library (merge-pathnames "lib/libfff_c.so" release-root))
+                  fff-library
+                  (merge-pathnames (format nil "lib/~A" fff-library-name) release-root))
                  (release-archive--copy
                   colorlisp-library
-                  (merge-pathnames "lib/libcolorlisp-tree-sitter.so"
+                  (merge-pathnames (format nil "lib/~A" colorlisp-library-name)
                                    release-root))
-                 (release-archive--copy
-                  sandbox-helper
-                  (merge-pathnames "libexec/cl-exec-sandbox-helper" release-root))
+                 (when sandbox-helper
+                   (release-archive--copy
+                    sandbox-helper
+                    (merge-pathnames "libexec/cl-exec-sandbox-helper" release-root))
+                   (release-archive--run
+                    (list "chmod" "755"
+                          (namestring
+                           (merge-pathnames "libexec/cl-exec-sandbox-helper"
+                                            release-root)))))
                  (release-archive--copy
                   (merge-pathnames "bin/autolith-release" source-root)
                   (merge-pathnames "bin/autolith" release-root))
                  (release-archive--run
                   (list "chmod" "755"
-                        (namestring (merge-pathnames "bin/autolith" release-root))
-                        (namestring
-                         (merge-pathnames "libexec/cl-exec-sandbox-helper"
-                                          release-root))))
+                        (namestring (merge-pathnames "bin/autolith" release-root))))
                  (release-archive--run
                   (list "chmod" "644"
                         (namestring
-                         (merge-pathnames "lib/libfff_c.so" release-root))
+                         (merge-pathnames (format nil "lib/~A" fff-library-name)
+                                          release-root))
                         (namestring
-                         (merge-pathnames "lib/libcolorlisp-tree-sitter.so"
+                         (merge-pathnames (format nil "lib/~A" colorlisp-library-name)
                                           release-root))))
                  (release-archive--write-record
                   (merge-pathnames "RELEASE" release-root)
@@ -500,18 +568,11 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                  (format t "~&Writing ~A.~%" archive)
                  (finish-output)
                  (release-archive--run
-                  (list "tar" "--sort=name"
-                        (format nil "--mtime=@~A" commit-time)
-                        "--owner=0" "--group=0" "--numeric-owner"
-                        "-cf" (namestring temporary-tar)
-                        "-C" (namestring temporary-root) release-name))
+                  (release-archive--tar-command
+                   temporary-tar temporary-root release-name commit-time))
                  (release-archive--run
                   (list "gzip" "-9n" (namestring temporary-tar)))
-                 (release-archive--run
-                  (list "sha256sum" (file-namestring temporary-archive))
-                  :directory temporary-root
-                  :output temporary-checksum
-                  :error-output ':output)
+                 (release-archive--checksum-file temporary-archive temporary-checksum)
                  (uiop:rename-file-overwriting-target temporary-archive archive)
                  (uiop:rename-file-overwriting-target temporary-checksum checksum)
                  (let ((checksum-value

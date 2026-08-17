@@ -2,7 +2,29 @@
 
 set -euo pipefail
 
-launcher_path=$(readlink -f -- "${BASH_SOURCE[0]}")
-source_root=$(CDPATH= cd -- "$(dirname -- "$launcher_path")/.." && pwd)
+resolve_path()
+{
+  local path=$1
+  local directory
+  local target
+
+  case "$path" in
+    /*) ;;
+    *) path=$PWD/$path ;;
+  esac
+  while [[ -L "$path" ]]; do
+    directory=$(CDPATH= cd -P "$(dirname "$path")" && pwd) || return 1
+    target=$(readlink "$path") || return 1
+    case "$target" in
+      /*) path=$target ;;
+      *) path=$directory/$target ;;
+    esac
+  done
+  directory=$(CDPATH= cd -P "$(dirname "$path")" && pwd) || return 1
+  printf '%s/%s\n' "$directory" "$(basename "$path")"
+}
+
+launcher_path=$(resolve_path "${BASH_SOURCE[0]}")
+source_root=$(CDPATH= cd -P -- "$(dirname -- "$launcher_path")/.." && pwd)
 
 exec "$source_root/server/run" archive "$@"

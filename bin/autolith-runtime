@@ -251,7 +251,7 @@ runtime_install()
   version_at_least "$runtime_release" "$minimum_version" ||
     fail "sbcl.version requires a newer runtime than the pinned download."
   [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] ||
-    fail "no SBCL $minimum_version or newer was found, and automatic runtime installation supports Linux x86-64 only. Install SBCL (for example: brew install sbcl) or set AUTOLITH_SBCL."
+    fail "no SBCL $minimum_version or newer was found, and automatic runtime binary installation supports Linux x86-64 only. On macOS, install SBCL (for example: brew install sbcl) or set AUTOLITH_SBCL."
   for command in curl tar; do
     command -v -- "$command" >/dev/null 2>&1 ||
       fail "automatic installation needs $command."
