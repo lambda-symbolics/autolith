@@ -215,6 +215,7 @@
     (test-rlm-budget-accounting)
     (test-rlm-budget-descent)
     (test-rlm-context-views)
+    (test-rlm-infer)
     (test-task-orchestration)
     (test-task-child-shared-agent-loop)
     (test-task-default-detachment)

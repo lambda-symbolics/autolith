@@ -120,6 +120,7 @@
                              (:file "task/contracts")
                              (:file "inference/budget")
                              (:file "inference/view")
+                             (:file "inference/frame")
                              (:file "task/agents")
                              (:file "task/state")
                              (:file "task/runtime")

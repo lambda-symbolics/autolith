@@ -8,6 +8,12 @@
 (defvar *system-prompt-hosted-web-search-p* nil
   "Whether the current provider request offers web search.")
 
+(defvar *system-prompt-override* nil
+  "A complete replacement system prompt for the current provider request.
+
+Inference frames bind this so their requests carry a compact frame
+prompt instead of the full Autolith persona.")
+
 (defparameter *system-prompt-template-relative-path*
   #p"docs/system-prompt.org"
   "The Org template rendered for each provider request.")
@@ -180,6 +186,8 @@
 
 The prompt is rebuilt for every provider request, so the embedded date,
 environment, and urgent execution profile reflect the moment it is made."
+  (when *system-prompt-override*
+    (return-from system-prompt *system-prompt-override*))
   (string-left-trim
    '(#\Newline)
    (system-prompt--drop-org-keyword-lines
