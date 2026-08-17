@@ -1,0 +1,115 @@
+#+TITLE: Autolith RLM
+#+STARTUP: content
+
+* Recursive inference
+
+A recursive language model treats long context as an external
+environment instead of a prompt. The model decomposes a task, runs
+bounded inference over selected snippets, and composes the returned
+values. Autolith realizes this as a middle layer between a tool call
+and a child agent, so recursion becomes an ordinary Lisp operation:
+
+#+BEGIN_SRC lisp
+(infer "List the invariants this file maintains."
+       :context (list #p"src/conversation/store.lisp")
+       :contract 'invariant-report
+       :budget (rlm-budget-create :calls 16 :tokens 80000 :depth 3))
+#+END_SRC
+
+Autolith already has the outer level. Task children are persistent
+agents with conversations, tool registries, and orchestrator
+scheduling. RLM adds the two inner levels:
+
+- An inference call. One provider request over explicitly passed
+  context. Returns a Lisp value. Never touches the caller's
+  conversation.
+- An inference frame. One task with a private ephemeral conversation,
+  a contract, and a budget subtree. A frame may recurse into child
+  frames until the budget runs out. Only the frame's value and a
+  trace reference escape.
+
+A frame never inherits the parent conversation, the agent identity,
+or unrestricted capabilities. It receives the task, the materialized
+context views, the contract, and the remaining budget. This
+containment is what makes recursion cheap and safe: a hundred frames
+cannot pollute the primary conversation or the prompt cache.
+
+* Context views
+
+Context is passed explicitly. A view designator is one of:
+
+- a string, passed verbatim,
+- a pathname, read at call time,
+- a plist =(:label ... :content ...)= for labeled literals.
+
+Each view materializes into a labeled block with a content digest, so
+a trace records exactly what the frame saw. Views are read-only and
+fixed for the frame's lifetime. Resource URIs (=workspace:=,
+=memory:=, =agenda:=) join the designator set in a later stage; they
+already carry identity and snapshot digests through the resource
+protocol, so no separate context scheme is needed.
+
+* Contracts
+
+A contract names the shape of the value a frame must return. Contracts
+reuse the task output schema language documented for task agent roles;
+=task-output-schema-normalize= validates the definition and
+=task-output-schema-valid-p= validates the value. Two contract forms
+exist:
+
+- =:text=, the default. The frame returns its answer as a string.
+- a schema, for example =(:object (:claims (:array :string)))=. The
+  frame is instructed to answer with exactly one JSON object and the
+  parsed, validated value is returned as native Lisp data.
+
+A malformed answer is repaired by re-asking within the remaining call
+budget. When the budget is gone the failure signals a condition, so
+callers can retry with more context, a different model, or accept a
+partial result.
+
+* Budgets
+
+Every inference runs under an =rlm-budget=: remaining calls, tokens,
+and recursion depth, with thread-safe accounting. Recursive frames
+share the parent's counters and decrement depth, so a subtree can
+never spend more than the root allocation regardless of fan-out.
+Exhaustion signals =rlm-budget-exhausted= instead of silently
+degrading.
+
+* Traces
+
+Frames persist their private conversations under
+=data/inferences/= in the same append-only readable format as regular
+conversations, one file per frame. The caller's conversation only
+ever sees the returned value. The trace answers "why did this
+inference conclude that" after the fact: task, views with digests,
+model parameters, raw exchanges, and usage are all in the file.
+
+* Recursion surfaces
+
+The =lisp.*= tools run in heap-isolated workers with no provider
+access, so model-authored worker code cannot call =infer=. The
+surfaces are:
+
+- The =infer= function in the active image, for user REPL forms and
+  for self-modification code (policies, agenda automation).
+- An =rlm.infer= tool for the model, added in a later stage, which
+  exposes bounded recursion with a restricted read-only capability
+  set inside frames.
+
+* Implementation stages
+
+1. Budgets: =src/inference/budget.lisp=.
+2. Context views and materialization: =src/inference/view.lisp=.
+3. The inference frame and =infer=: =src/inference/frame.lisp=, with
+   a compact frame system prompt and trace persistence.
+4. The =rlm.infer= tool with recursive frames and restricted
+   in-frame capabilities.
+5. Parallel helpers (=rlm-map=) over shared budgets.
+6. Self-modifiable decomposition and synthesis policies as generic
+   functions, promoted from successful traces.
+7. Compaction integration: summaries reference evidence views and
+   trace identifiers instead of inlining content.
+
+Stages 1 through 3 are implemented. The remaining stages build on
+them without changing the calling convention.
