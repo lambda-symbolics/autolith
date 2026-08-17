@@ -79,6 +79,109 @@
                "unsupported designators signal a view error")
   nil)
 
+(defclass rlm-inference-test-provider (model-provider)
+  ((results
+    :initarg :results
+    :accessor rlm-inference-test-provider-results
+    :type list
+    :documentation "The provider results returned in request order."))
+  (:documentation "A deterministic provider for exercising inference frames."))
+
+(defmethod provider-stream-turn
+    ((provider rlm-inference-test-provider)
+     (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Return PROVIDER's next scripted inference result."
+  (declare (ignore tool-namespaces event-callback goal-context compaction-p))
+  (let ((result (pop (rlm-inference-test-provider-results provider))))
+    (unless result
+      (error "The inference test provider has no remaining result."))
+    result))
+
+(-> rlm-inference-test-result (string string (integer 0)) provider-result)
+(defun rlm-inference-test-result (response-id text total-tokens)
+  "Return a scripted assistant TEXT result reporting TOTAL-TOKENS usage."
+  (make-instance 'provider-result
+                 :response-id response-id
+                 :output-items (list (agent-test-message text))
+                 :tool-calls nil
+                 :usage (json-object "total_tokens" total-tokens)
+                 :turn-state nil
+                 :turn-completion ':unspecified))
+
+(-> test-rlm-infer () null)
+(defun test-rlm-infer ()
+  "Test frames repair contract violations, charge budgets, and leave traces."
+  (let ((configuration (test-configuration)))
+    (test-assert (string= (let ((*system-prompt-override* "frame prompt"))
+                            (system-prompt configuration))
+                          "frame prompt")
+                 "the system prompt override replaces the persona wholesale")
+    (let ((provider
+            (make-instance
+             'rlm-inference-test-provider
+             :results
+             (list (rlm-inference-test-result "resp-1" "not json" 100)
+                   (rlm-inference-test-result
+                    "resp-2" "{\"answer\": \"42\"}" 150))))
+          (budget (rlm-budget-create :calls 4 :tokens 1000 :depth 1)))
+      (multiple-value-bind (value trace-identifier)
+          (infer "Answer the question."
+                 :context (list "the question is six times seven")
+                 :contract '(:type :object
+                             :properties (("answer" (:type :string)))
+                             :required ("answer"))
+                 :budget budget
+                 :provider provider
+                 :configuration configuration)
+        (test-assert (equal value '(:object ("answer" "42")))
+                     "schema contracts return portable tagged native data")
+        (test-assert (= (rlm-budget-remaining-calls budget) 2)
+                     "the repair round charges a second call")
+        (test-assert (= (rlm-budget-remaining-tokens budget) 750)
+                     "reported usage drains the token pool")
+        (let ((identity
+                (merge-pathnames
+                 (make-pathname :name trace-identifier :type "sexp")
+                 (configuration-inference-root configuration))))
+          (test-assert (not (null (conversation-storage-pathnames identity)))
+                       "the frame persists its trace conversation"))))
+    (let ((provider
+            (make-instance
+             'rlm-inference-test-provider
+             :results (list (rlm-inference-test-result "resp-1" "plain" 10)))))
+      (test-assert (string= (infer "Say plain."
+                                   :provider provider
+                                   :configuration configuration)
+                            "plain")
+                   "text contracts return the trimmed answer"))
+    (let ((provider
+            (make-instance
+             'rlm-inference-test-provider
+             :results (list (rlm-inference-test-result "resp-1" "no" 10)
+                            (rlm-inference-test-result "resp-2" "no" 10)))))
+      (test-assert
+       (handler-case
+           (progn
+             (infer "Structured."
+                    :contract '(:type :object
+                                :properties (("answer" (:type :string)))
+                                :required ("answer"))
+                    :budget (rlm-budget-create :calls 1 :tokens 1000 :depth 1)
+                    :provider provider
+                    :configuration configuration)
+             nil)
+         (rlm-budget-exhausted (condition)
+           (eq (rlm-budget-exhausted-dimension condition) ':calls))
+         (error () nil))
+       "unrepaired contracts stop at the call budget"))
+    (test-assert (handler-case
+                     (progn (infer "  ") nil)
+                   (rlm-inference-error () t)
+                   (error () nil))
+                 "a blank task is refused before any provider work"))
+  nil)
+
 (-> test-rlm-budget-descent () null)
 (defun test-rlm-budget-descent ()
   "Test descended budgets share counters and bound recursion depth."

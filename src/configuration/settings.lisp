@@ -585,6 +585,11 @@ reasoning effort only when that effort is supported by the selected model."
   "Return the directory containing conversation identities and chunk logs."
   (merge-pathnames "conversations/" (configuration-data-root configuration)))
 
+(-> configuration-inference-root (configuration) pathname)
+(defun configuration-inference-root (configuration)
+  "Return the directory containing inference frame trace conversations."
+  (merge-pathnames "inferences/" (configuration-data-root configuration)))
+
 (-> configuration-conversation-identifier-migration-path (configuration) pathname)
 (defun configuration-conversation-identifier-migration-path (configuration)
   "Return the durable legacy conversation identifier migration record."
