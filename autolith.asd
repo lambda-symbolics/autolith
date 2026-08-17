@@ -19,6 +19,7 @@
                #:dexador
                #:flexi-streams
                #:idsmall
+               #:ironclad/digest/sha256
                #:ironclad/mac/siphash
                #:bordeaux-threads
                #:mcparen
@@ -118,6 +119,7 @@
                              (:file "agent/runtime")
                              (:file "task/contracts")
                              (:file "inference/budget")
+                             (:file "inference/view")
                              (:file "task/agents")
                              (:file "task/state")
                              (:file "task/runtime")
