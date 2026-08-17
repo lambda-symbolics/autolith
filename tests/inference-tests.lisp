@@ -36,6 +36,49 @@
                  "a drained call pool refuses further calls and names the task"))
   nil)
 
+(-> test-rlm-context-views () null)
+(defun test-rlm-context-views ()
+  "Test view designators materialize with labels, digests, and rendering."
+  (let ((views (rlm-views-materialize
+                (list "first literal"
+                      (list ':label "notes" ':content "second literal")))))
+    (test-assert (equal (mapcar #'rlm-view-label views) '("literal" "notes"))
+                 "strings and labeled plists keep their labels")
+    (test-assert (string= (rlm-view-digest (first views))
+                          (rlm-view--digest "first literal"))
+                 "views carry the content digest")
+    (let ((rendered (rlm-views-render views)))
+      (test-assert (and (search "label=\"notes\"" rendered)
+                        (search "second literal" rendered))
+                   "rendering includes labels and exact content")))
+  (test-assert (equal (mapcar #'rlm-view-label
+                              (rlm-views-materialize (list "one" "two")))
+                      '("literal#1" "literal#2"))
+               "duplicate labels are numbered deterministically")
+  (uiop:with-temporary-file (:pathname pathname :stream stream :keep nil
+                             :prefix "autolith-rlm-view")
+    (write-string "file view content" stream)
+    (finish-output stream)
+    :close-stream
+    (let ((view (rlm-view-materialize pathname)))
+      (test-assert (string= (rlm-view-content view) "file view content")
+                   "pathname designators read the file at call time")
+      (test-assert (string= (rlm-view-origin view) (namestring pathname))
+                   "pathname views record their origin")))
+  (test-assert (handler-case
+                   (progn
+                     (rlm-view-materialize #p"/nonexistent/rlm-view-test")
+                     nil)
+                 (rlm-view-error () t)
+                 (error () nil))
+               "unreadable files signal a view error")
+  (test-assert (handler-case
+                   (progn (rlm-view-materialize 42) nil)
+                 (rlm-view-error () t)
+                 (error () nil))
+               "unsupported designators signal a view error")
+  nil)
+
 (-> test-rlm-budget-descent () null)
 (defun test-rlm-budget-descent ()
   "Test descended budgets share counters and bound recursion depth."

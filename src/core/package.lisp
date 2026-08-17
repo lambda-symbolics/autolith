@@ -213,6 +213,7 @@
                 #:source-grammar
                 #:validate-tree)
   (:import-from #:ironclad
+                #:digest-sequence
                 #:make-mac
                 #:produce-mac
                 #:random-data
