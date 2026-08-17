@@ -42,20 +42,21 @@ but it is pretty close to a Lisp Machine.
 
 * Install
 
-Autolith supports Linux x86-64 and macOS arm64 via Nix. Packaged binary
-releases are available for Linux x86-64, but not yet for macOS (good first issue? hmm?).
+Autolith supports Linux x86-64 and macOS arm64 via standalone binary releases
+and Nix.
 
-Nix supplies the complete runtime:
-
-#+BEGIN_SRC sh
-nix run github:luciusmagn/autolith
-#+END_SRC
-
-A Linux curl-into-sh installer is also available. Inspect the
+The curl-into-sh installer installs or updates the packaged release for your
+platform (Linux x86-64 and macOS arm64). Inspect the
 [[https://sh.lambda-symbolics.com/autolith][installer script]] before piping it into a shell, or trust us with your life.
 
 #+BEGIN_SRC sh
 curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
+#+END_SRC
+
+Nix also supplies the complete runtime:
+
+#+BEGIN_SRC sh
+nix run github:luciusmagn/autolith
 #+END_SRC
 
 Authenticate providers either with web flows or API keys:

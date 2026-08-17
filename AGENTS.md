@@ -31,8 +31,8 @@ another requirement, stop and ask.
 
 Supported source-development targets are Linux x86-64 and macOS arm64 on SBCL
 with a terminal interface, one primary agent, and no claim of hostile-code
-sandboxing. Nix builds support Linux x86-64 and macOS arm64; packaged binary
-releases remain Linux x86-64.
+sandboxing. Nix builds and packaged binary releases support Linux x86-64 and
+macOS arm64.
 
 ## Upstream References
 
