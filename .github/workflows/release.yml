@@ -47,3 +47,50 @@ jobs:
           done
           printf 'GitHub metadata for %s is published, but the release service has not published the Linux archive checksum yet.\n' "$GITHUB_REF_NAME" >&2
           exit 0
+
+  package-macos-arm64:
+    name: Package macOS arm64
+    needs: publish-metadata
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          brew install rust
+
+      - name: Build pinned SBCL release runtime
+        run: |
+          runtime_version=$(tr -d '[:space:]' < sbcl.version)
+          data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+          runtime_root="$data_home/autolith/runtimes/$runtime_version"
+          mkdir -p "$runtime_root"
+          ./script/build-release-runtime "$runtime_root/installation"
+
+      - name: Install Quicklisp
+        run: |
+          runtime_version=$(tr -d '[:space:]' < sbcl.version)
+          data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+          runtime_root="$data_home/autolith/runtimes/$runtime_version"
+          curl -O https://beta.quicklisp.org/quicklisp.lisp
+          "$runtime_root/installation/bin/sbcl" --noinform --non-interactive \
+            --load quicklisp.lisp \
+            --eval '(quicklisp-quickstart:install :path "~/quicklisp")'
+
+      - name: Bootstrap release dependencies
+        run: |
+          ./script/bootstrap
+
+      - name: Build macOS release archive
+        run: |
+          ./script/build-release dist/
+
+      - name: Upload macOS release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            dist/autolith-"$GITHUB_REF_NAME"-arm64-darwin.tar.gz \
+            dist/autolith-"$GITHUB_REF_NAME"-arm64-darwin.tar.gz.sha256 \
+            --clobber
