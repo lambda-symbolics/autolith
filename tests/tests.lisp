@@ -212,6 +212,8 @@
     (test-task-yield-contract)
     (test-task-child-steering-mailbox)
     (test-task-abort-control-condition)
+    (test-rlm-budget-accounting)
+    (test-rlm-budget-descent)
     (test-task-orchestration)
     (test-task-child-shared-agent-loop)
     (test-task-default-detachment)
