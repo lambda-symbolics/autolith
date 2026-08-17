@@ -47,6 +47,7 @@ Adding more platform support is always welcome!
 - [[file:docs/architecture.org][Architecture]]
 - [[file:docs/skills.org][Skills]]
 - [[file:docs/mcp.org][MCP]]
+- [[file:docs/rlm.org][RLM]]
 - [[file:AGENTS.md][Contributor rules]]
 
 * Install
