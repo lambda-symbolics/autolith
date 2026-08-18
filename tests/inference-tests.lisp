@@ -186,6 +186,168 @@
                  "a blank task is refused before any provider work"))
   nil)
 
+(defclass rlm-frame-test-search-tool (tool)
+  ((executed-p
+    :initform nil
+    :accessor rlm-frame-test-search-tool-executed-p
+    :type boolean
+    :documentation "True once the frame executed this fake search tool."))
+  (:documentation "A deterministic read-only stand-in for frame registries."))
+
+(defmethod tool-execute
+    ((tool rlm-frame-test-search-tool) (context tool-context)
+     (arguments hash-table))
+  "Record the execution and return fixed evidence."
+  (declare (ignore context arguments))
+  (setf (rlm-frame-test-search-tool-executed-p tool) t)
+  (tool-success "fixed search evidence"))
+
+(-> rlm-frame-test-tool (string string) tool)
+(defun rlm-frame-test-tool (namespace name)
+  "Return a minimal named tool for frame registry composition tests."
+  (make-instance (if (string= namespace "search")
+                     'rlm-frame-test-search-tool
+                     'tool)
+                 :namespace namespace
+                 :name name
+                 :description "Deterministic test tool."
+                 :parameters (tool-object-schema (json-object) '())))
+
+(-> test-rlm-frame-registry () null)
+(defun test-rlm-frame-registry ()
+  "Test frame registries keep read-only tools and add nested rlm.infer."
+  (let ((source (make-instance 'tool-registry))
+        (provider (make-instance 'rlm-inference-test-provider :results nil))
+        (budget (rlm-budget-create :calls 2 :tokens 100 :depth 1)))
+    (dolist (specification '(("resource" "read") ("resource" "edit")
+                             ("shell" "run") ("search" "content")))
+      (tool-registry-register
+       source
+       (rlm-frame-test-tool (first specification) (second specification))))
+    (let* ((registry (rlm--frame-registry source provider budget))
+           (names (sort (mapcar #'tool-canonical-name
+                                (tool-registry-tools registry))
+                        #'string<)))
+      (test-assert (equal names
+                          '("resource.read" "rlm.infer" "search.content"))
+                   "frames keep read-only tools and gain nested rlm.infer")
+      (let ((nested (tool-registry-find registry "rlm" "infer")))
+        (test-assert (eq (rlm-infer-tool--budget nested) budget)
+                     "the nested rlm.infer tool shares the frame budget"))))
+  nil)
+
+(-> test-rlm-framed-inference () null)
+(defun test-rlm-framed-inference ()
+  "Test read-capability frames execute restricted tools and charge budgets."
+  (let* ((configuration (test-configuration))
+         (source (make-instance 'tool-registry))
+         (search-tool (rlm-frame-test-tool "search" "content"))
+         (provider
+           (make-instance
+            'rlm-inference-test-provider
+            :results
+            (list (agent-test-result
+                   "resp-1"
+                   (list (agent-test-call :call-id "call-1"
+                                          :namespace "search"
+                                          :name "content"
+                                          :arguments "{}")))
+                  (rlm-inference-test-result "resp-2" "frame answer" 100))))
+         (budget (rlm-budget-create :calls 5 :tokens 1000 :depth 1)))
+    (tool-registry-register source search-tool)
+    (multiple-value-bind (value trace-identifier)
+        (infer "Find the evidence and answer."
+               :capabilities ':read
+               :budget budget
+               :provider provider
+               :configuration configuration
+               :source-registry source)
+      (test-assert (string= value "frame answer")
+                   "read-capability frames return the final answer")
+      (test-assert (non-empty-string-p trace-identifier)
+                   "read-capability frames leave a trace identifier")
+      (test-assert (rlm-frame-test-search-tool-executed-p search-tool)
+                   "the frame executed its restricted read-only tool")
+      (test-assert (= (rlm-budget-remaining-calls budget) 3)
+                   "each provider request in the frame charges one call")
+      (test-assert (= (rlm-budget-remaining-tokens budget) 900)
+                   "reported frame usage drains the token pool")))
+  nil)
+
+(-> test-rlm-infer-tool () null)
+(defun test-rlm-infer-tool ()
+  "Test rlm.infer runs frames from tool arguments and reports failures."
+  (let* ((configuration (test-configuration))
+         (source (make-instance 'tool-registry))
+         (conversation (conversation-create configuration
+                                            :identifier "rlm-tool-test"))
+         (context (make-instance 'tool-context
+                                 :configuration configuration
+                                 :worker nil
+                                 :conversation conversation
+                                 :registry source)))
+    (let* ((provider
+             (make-instance
+              'rlm-inference-test-provider
+              :results
+              (list (rlm-inference-test-result
+                     "resp-1" "{\"answer\": \"4\"}" 50))))
+           (tool (rlm-infer-tool-create :provider provider))
+           (result
+             (tool-execute
+              tool
+              context
+              (json-object
+               "task" "Sum the view."
+               "views" (json-array (json-object "label" "sum"
+                                                "text" "2 + 2"))
+               "contract" (json-object
+                           "type" "object"
+                           "properties" (json-object
+                                         "answer" (json-object
+                                                   "type" "string"))
+                           "required" (json-array "answer"))
+               "calls" 3))))
+      (test-assert (tool-result-success-p result)
+                   "rlm.infer succeeds on a contract-satisfying frame")
+      (test-assert (and (search ":VALUE" (tool-result-content result))
+                        (search "\"4\"" (tool-result-content result))
+                        (search ":TRACE" (tool-result-content result)))
+                   "rlm.infer reports the value and the trace identifier"))
+    (let* ((provider
+             (make-instance
+              'rlm-inference-test-provider
+              :results (list (rlm-inference-test-result "resp-1" "no" 10)
+                             (rlm-inference-test-result "resp-2" "no" 10))))
+           (tool (rlm-infer-tool-create :provider provider))
+           (result
+             (tool-execute
+              tool
+              context
+              (json-object
+               "task" "Structured."
+               "contract" (json-object
+                           "type" "object"
+                           "properties" (json-object
+                                         "answer" (json-object
+                                                   "type" "string"))
+                           "required" (json-array "answer"))
+               "calls" 1))))
+      (test-assert (and (not (tool-result-success-p result))
+                        (search "budget" (tool-result-content result)))
+                   "rlm.infer reports budget exhaustion as a tool failure"))
+    (let* ((provider
+             (make-instance 'rlm-inference-test-provider :results nil))
+           (tool (rlm-infer-tool-create
+                  :provider provider
+                  :budget (rlm-budget-create :calls 4 :tokens 100 :depth 0)))
+           (result
+             (tool-execute tool context (json-object "task" "Nested."))))
+      (test-assert (and (not (tool-result-success-p result))
+                        (search "depth" (tool-result-content result)))
+                   "nested rlm.infer refuses descent past the depth budget")))
+  nil)
+
 (-> test-rlm-budget-descent () null)
 (defun test-rlm-budget-descent ()
   "Test descended budgets share counters and bound recursion depth."
