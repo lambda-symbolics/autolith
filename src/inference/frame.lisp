@@ -6,9 +6,29 @@
   "You are one inference frame inside Autolith, a recursive language model runtime.
 You receive one task, optional read-only context views, and a required answer shape.
 Ground every claim in the supplied views and the task itself; state plainly when they are insufficient.
-There is no interlocutor and no tool access: never ask questions, never defer work.
+There is no interlocutor: never ask questions, never defer work.
 Reply exactly in the requested shape with no preamble and no meta commentary."
   "The compact system prompt replacing the Autolith persona inside frames.")
+
+(defparameter *rlm-frame-no-capability-guidance*
+  "You have no tool access: answer from the task and the views alone."
+  "The prompt line appended for frames without capabilities.")
+
+(defparameter *rlm-frame-read-guidance*
+  "Read-only tools are available: use resource and search operations to gather evidence from the workspace before answering, and rlm.infer to delegate bounded sub-questions when decomposition helps. The budget is shared and finite, so prefer few well-aimed calls."
+  "The prompt line appended for read-capability frames.")
+
+(defparameter *rlm-frame-maximum-tool-rounds* 6
+  "The most tool rounds one read-capability frame round may execute.")
+
+(-> rlm--frame-prompt ((option keyword)) string)
+(defun rlm--frame-prompt (capabilities)
+  "Return the frame system prompt specialized for CAPABILITIES."
+  (format nil "~A~%~A"
+          *rlm-frame-system-prompt*
+          (if (eq capabilities ':read)
+              *rlm-frame-read-guidance*
+              *rlm-frame-no-capability-guidance*)))
 
 (define-condition rlm-inference-error
     (error)
@@ -40,6 +60,16 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
              :message "No active application supplies an inference provider; pass :provider and :configuration."))
     (values (application-provider application)
             (application-configuration application))))
+
+(-> rlm--environment-registry () tool-registry)
+(defun rlm--environment-registry ()
+  "Return the active application's tool registry for frame capabilities."
+  (let ((application (and (boundp '*active-application*)
+                          (symbol-value '*active-application*))))
+    (unless application
+      (error 'rlm-inference-error
+             :message "No active application supplies a frame tool registry; pass :source-registry."))
+    (application-tool-registry application)))
 
 (-> rlm-contract-normalize (t) t)
 (defun rlm-contract-normalize (contract)
@@ -117,30 +147,123 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
    (list :usage (agent--portable-value (provider-result-usage result))))
   nil)
 
+(-> rlm--repair-request ((option string)) string)
+(defun rlm--repair-request (problem)
+  "Compose the repair message for one contract violation PROBLEM."
+  (format nil "~A Reply again in exactly the requested shape." problem))
+
+(-> rlm--run-direct-inference
+    (string string t rlm-budget model-provider conversation)
+    (values t string))
+(defun rlm--run-direct-inference
+    (task request contract budget provider conversation)
+  "Run a tool-free frame as bare provider calls over CONVERSATION."
+  (conversation-append-user-message conversation request)
+  (loop
+    (rlm-budget-ensure budget :task task)
+    (let ((result
+            (provider-stream-turn provider conversation
+                                  :tool-namespaces #()
+                                  :event-callback
+                                  (lambda (event)
+                                    (declare (ignore event))
+                                    nil))))
+      (rlm--record-response conversation result)
+      (rlm-budget-charge-call budget)
+      (let ((total (conversation--usage-total
+                    (provider-result-usage result))))
+        (when total
+          (rlm-budget-charge-tokens budget total)))
+      (multiple-value-bind (value valid-p problem)
+          (rlm--contract-value contract
+                               (provider-result-assistant-text result))
+        (when valid-p
+          (return (values value (conversation-identifier conversation))))
+        (conversation-append-user-message
+         conversation
+         (rlm--repair-request problem))))))
+
+(-> rlm--frame-budget-callback (rlm-budget) function)
+(defun rlm--frame-budget-callback (budget)
+  "Return an observer status callback charging BUDGET per provider request."
+  (lambda (status details)
+    (when (eq status ':provider-request-completed)
+      (rlm-budget-charge-call budget)
+      (let ((total (conversation--usage-total (getf details ':usage))))
+        (when total
+          (rlm-budget-charge-tokens budget total))))
+    nil))
+
+(-> rlm--run-framed-inference
+    (string string t rlm-budget model-provider configuration conversation
+     tool-registry)
+    (values t string))
+(defun rlm--run-framed-inference
+    (task request contract budget provider configuration conversation
+     source-registry)
+  "Run a read-capability frame as restricted agent turns over CONVERSATION."
+  (let ((agent
+          (make-instance 'agent
+                         :configuration configuration
+                         :provider provider
+                         :conversation conversation
+                         :tool-registry (rlm--frame-registry source-registry
+                                                             provider
+                                                             budget)
+                         :worker nil))
+        (observer
+          (make-instance 'callback-agent-observer
+                         :status-callback (rlm--frame-budget-callback budget)))
+        (allowlist (rlm--frame-tool-allowlist)))
+    (loop
+      (rlm-budget-ensure budget :task task)
+      (let ((result
+              (let ((*agent-restricted-maximum-tool-rounds*
+                      (min *rlm-frame-maximum-tool-rounds*
+                           (rlm-budget-remaining-calls budget))))
+                (agent-run-user-turn agent request
+                                     :observer observer
+                                     :tool-allowlist allowlist
+                                     :tool-restriction-p t))))
+        (multiple-value-bind (value valid-p problem)
+            (rlm--contract-value contract
+                                 (provider-result-assistant-text result))
+          (when valid-p
+            (return (values value (conversation-identifier conversation))))
+          (setf request (rlm--repair-request problem)))))))
+
 (-> infer
     (string &key (:context list)
                  (:contract t)
                  (:budget (option rlm-budget))
+                 (:capabilities (option keyword))
                  (:model (option string))
                  (:effort (option string))
                  (:provider (option model-provider))
-                 (:configuration (option configuration)))
+                 (:configuration (option configuration))
+                 (:source-registry (option tool-registry)))
     (values t string))
 (defun infer
-    (task &key context (contract ':text) budget model effort provider
-               configuration)
+    (task &key context (contract ':text) budget capabilities model effort
+               provider configuration source-registry)
   "Run one bounded inference frame over CONTEXT and return TASK's value.
 
 CONTEXT is a list of view designators materialized once for the frame.
 CONTRACT is ':TEXT or a task output schema; schema answers return
-portable tagged native data. The frame runs on a private conversation
-persisted under the inference trace root and never touches the
-caller's conversation; the second value is the trace conversation
-identifier. Contract violations are repaired by re-asking until BUDGET
-signals RLM-BUDGET-EXHAUSTED."
+portable tagged native data. CAPABILITIES is NIL for a pure call over
+the views, or ':READ to let the frame use workspace resource reads,
+content search, and nested rlm.infer from SOURCE-REGISTRY's tools.
+The frame runs on a private conversation persisted under the inference
+trace root and never touches the caller's conversation; the second
+value is the trace conversation identifier. Contract violations are
+repaired by re-asking until BUDGET signals RLM-BUDGET-EXHAUSTED."
   (unless (non-empty-string-p task)
     (error 'rlm-inference-error
            :message "An inference frame requires a non-empty task."))
+  (unless (member capabilities '(nil :read))
+    (error 'rlm-inference-error
+           :task task
+           :message "Frame capabilities are NIL or :READ."))
   (multiple-value-bind (environment-provider environment-configuration)
       (if (and provider configuration)
           (values provider configuration)
@@ -163,31 +286,12 @@ signals RLM-BUDGET-EXHAUSTED."
            (contract (rlm-contract-normalize contract))
            (budget (or budget (rlm-budget-create)))
            (conversation (rlm--frame-conversation configuration))
-           (*system-prompt-override* *rlm-frame-system-prompt*))
-      (conversation-append-user-message
-       conversation
-       (rlm--frame-request task views (rlm--contract-instructions contract)))
-      (loop
-        (rlm-budget-ensure budget :task task)
-        (let ((result
-                (provider-stream-turn provider conversation
-                                      :tool-namespaces #()
-                                      :event-callback
-                                      (lambda (event)
-                                        (declare (ignore event))
-                                        nil))))
-          (rlm--record-response conversation result)
-          (rlm-budget-charge-call budget)
-          (let ((total (conversation--usage-total
-                        (provider-result-usage result))))
-            (when total
-              (rlm-budget-charge-tokens budget total)))
-          (multiple-value-bind (value valid-p problem)
-              (rlm--contract-value contract
-                                   (provider-result-assistant-text result))
-            (when valid-p
-              (return (values value (conversation-identifier conversation))))
-            (conversation-append-user-message
-             conversation
-             (format nil "~A Reply again in exactly the requested shape."
-                     problem))))))))
+           (request (rlm--frame-request
+                     task views (rlm--contract-instructions contract)))
+           (*system-prompt-override* (rlm--frame-prompt capabilities)))
+      (if (eq capabilities ':read)
+          (rlm--run-framed-inference
+           task request contract budget provider configuration conversation
+           (or source-registry (rlm--environment-registry)))
+          (rlm--run-direct-inference
+           task request contract budget provider conversation)))))
