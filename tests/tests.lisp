@@ -219,6 +219,7 @@
     (test-rlm-frame-registry)
     (test-rlm-framed-inference)
     (test-rlm-infer-tool)
+    (test-rlm-map)
     (test-task-orchestration)
     (test-task-child-shared-agent-loop)
     (test-task-default-detachment)

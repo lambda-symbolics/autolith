@@ -348,6 +348,103 @@
                    "nested rlm.infer refuses descent past the depth budget")))
   nil)
 
+(defclass rlm-map-test-provider (model-provider)
+  ((request-count
+    :initform 0
+    :accessor rlm-map-test-provider-request-count
+    :type (integer 0)
+    :documentation "The total provider requests served across all threads.")
+   (count-lock
+    :initform (make-lock "Autolith map test provider")
+    :reader rlm-map-test-provider--count-lock
+    :documentation "The lock serializing concurrent request counting."))
+  (:documentation "A thread-safe provider answering from the request itself."))
+
+(-> rlm-map-test--last-user-text (conversation) (option string))
+(defun rlm-map-test--last-user-text (conversation)
+  "Return the newest user message text in CONVERSATION's request items."
+  (loop for item in (reverse (conversation-input-items-for-request
+                              conversation))
+        when (and (json-object-p item)
+                  (json-string= (json-get item "role") "user"))
+          do (let ((content (json-get item "content")))
+               (return
+                 (loop for part across content
+                       when (and (json-object-p part)
+                                 (json-string= (json-get part "type")
+                                               "input_text"))
+                         do (return (json-get part "text")))))))
+
+(defmethod provider-stream-turn
+    ((provider rlm-map-test-provider)
+     (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Echo the newest user request text back as the assistant answer."
+  (declare (ignore tool-namespaces event-callback goal-context compaction-p))
+  (with-lock-held ((rlm-map-test-provider--count-lock provider))
+    (incf (rlm-map-test-provider-request-count provider)))
+  (let ((text (or (rlm-map-test--last-user-text conversation) "")))
+    (when (search "explode" text)
+      (error 'rlm-inference-error :message "scripted map explosion"))
+    (make-instance 'provider-result
+                   :response-id "map-response"
+                   :output-items (list (agent-test-message
+                                        (format nil "echo: ~A" text)))
+                   :tool-calls nil
+                   :usage (json-object "total_tokens" 10)
+                   :turn-state nil
+                   :turn-completion ':unspecified)))
+
+(-> test-rlm-map () null)
+(defun test-rlm-map ()
+  "Test parallel maps keep order, share budgets, and capture failures."
+  (let* ((configuration (test-configuration))
+         (provider (make-instance 'rlm-map-test-provider))
+         (budget (rlm-budget-create :calls 10 :tokens 1000 :depth 1))
+         (results
+           (rlm-map (list "alpha"
+                          (list ':task "beta"
+                                ':context (list "beta extra view"))
+                          "gamma explode"
+                          "delta")
+                    :budget budget
+                    :provider provider
+                    :configuration configuration
+                    :concurrency 3)))
+    (test-assert (equal (mapcar (lambda (result) (getf result ':task))
+                                results)
+                        '("alpha" "beta" "gamma explode" "delta"))
+                 "map results keep the task order")
+    (test-assert (loop for result in results
+                       for task in '("alpha" "beta" "delta")
+                       always (or (getf result ':error)
+                                  (search (getf result ':task)
+                                          (getf result ':value))))
+                 "each completed frame answered its own task")
+    (test-assert (search "beta extra view"
+                         (getf (second results) ':value))
+                 "per-task context views reach the frame")
+    (test-assert (search "explosion" (getf (third results) ':error))
+                 "a failing frame is captured without discarding the rest")
+    (test-assert (non-empty-string-p (getf (first results) ':trace))
+                 "completed map frames report their trace identifiers")
+    (test-assert (= (rlm-budget-remaining-calls budget) 7)
+                 "the three completed frames drained the shared call pool")
+    (test-assert (= (rlm-budget-remaining-tokens budget) 970)
+                 "the three completed frames drained the shared token pool"))
+  (test-assert (null (rlm-map nil))
+               "an empty task list maps to no results")
+  (test-assert (handler-case
+                   (progn (rlm-map (list 42)
+                                   :provider (make-instance
+                                              'rlm-map-test-provider)
+                                   :configuration (test-configuration))
+                          nil)
+                 (rlm-inference-error () t)
+                 (error () nil))
+               "a malformed map element is refused before any frame runs")
+  nil)
+
 (-> test-rlm-budget-descent () null)
 (defun test-rlm-budget-descent ()
   "Test descended budgets share counters and bound recursion depth."

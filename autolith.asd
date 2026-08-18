@@ -122,6 +122,7 @@
                              (:file "inference/view")
                              (:file "inference/tools")
                              (:file "inference/frame")
+                             (:file "inference/map")
                              (:file "task/agents")
                              (:file "task/state")
                              (:file "task/runtime")
