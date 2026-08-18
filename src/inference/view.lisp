@@ -126,15 +126,22 @@
 
 (-> rlm-views-render (list) (option string))
 (defun rlm-views-render (views)
-  "Render materialized VIEWS as delimited read-only context blocks."
+  "Render materialized VIEWS as delimited read-only context blocks.
+
+The closing delimiter repeats the content digest, so view content
+cannot forge its own end or another view: embedding a closing tag
+changes the digest away from the embedded value, and finding a
+fixpoint is a preimage problem."
   (when views
     (with-output-to-string (stream)
       (loop for view in views
             for first-p = t then nil
+            for digest = (subseq (rlm-view-digest view) 0 12)
             do (unless first-p
                  (terpri stream))
-               (format stream "<view label=~S origin=~S sha256=~S>~%~A~%</view>~%"
+               (format stream "<view label=~S origin=~S sha256=~S>~%~A~%</view sha256=~S>~%"
                        (rlm-view-label view)
                        (rlm-view-origin view)
-                       (subseq (rlm-view-digest view) 0 12)
-                       (rlm-view-content view))))))
+                       digest
+                       (rlm-view-content view)
+                       digest)))))
