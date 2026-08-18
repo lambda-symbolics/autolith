@@ -2,6 +2,9 @@
 
 ;;;; -- Root Recursive Language Model Runs --
 
+(defparameter *rlm-subcall-context-characters* 40000
+  "The recommended maximum context characters per environment sub-inference.")
+
 (defparameter *rlm-environment-prelude-body*
   "(progn
      (defvar *context-text* nil)
@@ -167,18 +170,19 @@ Environment functions:
 - (infer task &key context contract) runs one bounded sub-inference over explicit context strings and returns its value.
 - (rlm-map tasks &key contract concurrency) fans tasks out concurrently; each task is a string or a (:task ... :context ...) plist.
 - (finish value) records the final answer and ends the run. Call it exactly once.
-Decompose the task programmatically: slice or partition the context, fan sub-inferences over the pieces, and combine the results in Lisp. Keep large data in environment variables; observe only bounded summaries. The call and token budget is shared across the whole run, so prefer few well-aimed evaluations."
+Decompose the task programmatically: slice or partition the context, fan sub-inferences over the pieces, and combine the results in Lisp. The context metadata names a recommended maximum context size per subcall; use structure-aware or overlapping slices when relevant evidence may cross arbitrary boundaries. Keep large data in environment variables; observe only bounded summaries. The call and token budget is shared across the whole run, so prefer few well-aimed evaluations."
   "The system prompt replacing the Autolith persona for root completions.")
 
 (-> rlm--root-request (string rlm-context-object) string)
 (defun rlm--root-request (task object)
   "Compose the root user message from TASK and OBJECT's metadata."
   (format nil
-          "Task: ~A~%~%External context object bound as *context*:~%  label ~S~%  characters ~D~%  sha256 ~A"
+          "Task: ~A~%~%External context object bound as *context*:~%  label ~S~%  characters ~D~%  sha256 ~A~%  recommended maximum context per subcall: ~D characters"
           task
           (rlm-context-object-label object)
           (rlm-context-object-characters object)
-          (subseq (rlm-context-object-digest object) 0 12)))
+          (subseq (rlm-context-object-digest object) 0 12)
+          *rlm-subcall-context-characters*))
 
 (-> rlm-complete
     (string &key (:context t)

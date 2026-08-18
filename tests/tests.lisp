@@ -226,6 +226,7 @@
     (test-rlm-trace-resource)
     (test-rlm-endpoint)
     (test-rlm-litmus-completion)
+    (test-rlm-boundary-litmus)
     (test-rlm-complete-tool)
     (test-rlm-designator-confinement)
     (test-rlm-permission-classifier)
