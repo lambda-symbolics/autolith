@@ -24,6 +24,12 @@
 (defparameter *rlm-complete-depth-budget* 2
   "The default recursion depth below one root completion.")
 
+(defparameter *rlm-tool-maximum-value-characters* 12000
+  "The largest printed final value returned inline by rlm.complete.")
+
+(defparameter *rlm-tool-value-preview-characters* 2000
+  "The preview length shown for an externalized rlm.complete value.")
+
 (defparameter *rlm-tool-maximum-map-tasks* 16
   "The most tasks one rlm.map tool call may fan out.")
 
@@ -252,6 +258,16 @@ the primary agent may launch one."
     (rlm-register-tools registry :provider provider :budget budget
                                  :complete-p nil)))
 
+(-> rlm--result-sexp (t) string)
+(defun rlm--result-sexp (value)
+  "Render VALUE as one model-visible s-expression.
+
+Tool results are read by the model, not by the Lisp reader, so plain
+printing keeps base strings as ordinary string syntax instead of the
+strict writer's #A array forms."
+  (with-standard-io-syntax
+    (write-to-string value :readably nil :escape t :circle t :pretty t)))
+
 (-> rlm--tool-resource-registry (tool-context) resource-registry)
 (defun rlm--tool-resource-registry (context)
   "Return the resource registry serving CONTEXT's uri designators.
@@ -286,21 +302,16 @@ confined to the schemes their restriction permits."
 
 (-> rlm--tool-object-content (tool-context string) string)
 (defun rlm--tool-object-content (context reference)
-  "Return the stored context object REFERENCE names, by digest or URI."
-  (let* ((digest (if (uiop:string-prefix-p "context:" reference)
-                     (subseq reference (length "context:"))
-                     reference))
-         (object (and (every (lambda (character)
-                               (digit-char-p character 16))
-                             digest)
-                      (rlm-context-object-find
-                       (tool-context-configuration context)
-                       (string-downcase digest)))))
-    (unless object
-      (error 'rlm-view-error
-             :designator reference
-             :message "no stored context object has this digest"))
-    (uiop:read-file-string (rlm-context-object-pathname object))))
+  "Return the stored context object REFERENCE names, by digest or URI.
+
+Dereferencing routes through the context resource scheme, so object
+references obey the same authority and scheme restrictions as every
+other uri designator."
+  (rlm--tool-resource-content
+   context
+   (if (uiop:string-prefix-p "context:" reference)
+       reference
+       (format nil "context:~A" reference))))
 
 (-> rlm--tool-views (t tool-context) list)
 (defun rlm--tool-views (views context)
@@ -476,12 +487,11 @@ filesystem paths are only a programmatic Lisp designator."
                    :configuration (tool-context-configuration context)
                    :source-registry (tool-context-registry context))
           (tool-success
-           (task--write-readable-sexp
+           (rlm--result-sexp
             (list ':value value
                   ':trace trace-identifier
                   ':calls-remaining (rlm-budget-remaining-calls budget)
-                  ':tokens-remaining (rlm-budget-remaining-tokens budget))
-            :pretty-p t))))
+                  ':tokens-remaining (rlm-budget-remaining-tokens budget))))))
     ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error
          resource-scheme-unknown resource-access-denied
          resource-operation-unsupported)
@@ -540,15 +550,34 @@ filesystem paths are only a programmatic Lisp designator."
                           :budget budget
                           :provider provider
                           :configuration (tool-context-configuration context))
-          (tool-success
-           (task--write-readable-sexp
-            (list ':value value
-                  ':trace trace-identifier
-                  ':context (format nil "context:~A"
-                                    (rlm-context-object-digest object))
-                  ':calls-remaining (rlm-budget-remaining-calls budget)
-                  ':tokens-remaining (rlm-budget-remaining-tokens budget))
-            :pretty-p t))))
+          (let* ((printed (rlm--result-sexp value))
+                 (value-fields
+                   ;; A large final value is externalized as a stored context
+                   ;; object with a bounded preview instead of flooding the
+                   ;; caller's conversation.
+                   (if (<= (length printed)
+                           *rlm-tool-maximum-value-characters*)
+                       (list ':value value)
+                       (list ':value-preview
+                             (subseq printed 0
+                                     *rlm-tool-value-preview-characters*)
+                             ':value-context
+                             (format nil "context:~A"
+                                     (rlm-context-object-digest
+                                      (rlm-context-intern
+                                       (tool-context-configuration context)
+                                       printed
+                                       :label "rlm result")))))))
+            (tool-success
+             (rlm--result-sexp
+              (append
+               value-fields
+               (list ':trace trace-identifier
+                     ':context (format nil "context:~A"
+                                       (rlm-context-object-digest object))
+                     ':calls-remaining (rlm-budget-remaining-calls budget)
+                     ':tokens-remaining (rlm-budget-remaining-tokens
+                                         budget))))))))
     ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error
          resource-scheme-unknown resource-access-denied
          resource-operation-unsupported)
@@ -610,11 +639,10 @@ filesystem paths are only a programmatic Lisp designator."
                         :source-registry (tool-context-registry context)
                         :concurrency concurrency)))
         (tool-success
-         (task--write-readable-sexp
+         (rlm--result-sexp
           (list ':results results
                 ':calls-remaining (rlm-budget-remaining-calls budget)
-                ':tokens-remaining (rlm-budget-remaining-tokens budget))
-          :pretty-p t)))
+                ':tokens-remaining (rlm-budget-remaining-tokens budget)))))
     ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error
          resource-scheme-unknown resource-access-denied
          resource-operation-unsupported)

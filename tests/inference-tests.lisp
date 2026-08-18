@@ -644,7 +644,16 @@
         (test-assert (tool-result-success-p result)
                      "persisted traces read back successfully")
         (test-assert (search "trace me please" (tool-result-content result))
-                     "the trace carries the frame request verbatim")))
+                     "the trace carries the frame request verbatim")
+        (test-assert (uiop:string-prefix-p "lines 1-"
+                                           (tool-result-content result))
+                     "trace reads report their window and total lines")
+        (let ((window (resource-tool-read resource read-tool context
+                                          (json-object "start-line" 2
+                                                       "line-count" 1))))
+          (test-assert (uiop:string-prefix-p "lines 2-2 of "
+                                             (tool-result-content window))
+                       "trace reads honor start-line and line-count"))))
     (let ((missing (resource-resolver-resolve resolver "zzzz-none" context)))
       (test-assert (not (tool-result-success-p
                          (resource-tool-read missing read-tool context
@@ -1087,6 +1096,45 @@
                        (tool-execute tool context
                                      (json-object "task" "No context."))))
                  "rlm.complete refuses a missing context argument"))
+  (let* ((configuration (test-configuration))
+         (conversation (conversation-create configuration
+                                            :identifier "rlm-big-value"))
+         (context (make-instance 'tool-context
+                                 :configuration configuration
+                                 :worker nil
+                                 :conversation conversation
+                                 :registry (make-instance 'tool-registry)))
+         (provider
+           (make-instance
+            'rlm-litmus-provider
+            :window-limit 100000
+            :root-results
+            (list (agent-test-result
+                   "root-1"
+                   (list (agent-test-call
+                          :call-id "eval-1"
+                          :namespace "env"
+                          :name "eval"
+                          :arguments
+                          (json-encode
+                           (json-object
+                            "form"
+                            "(finish (make-string 20000 :initial-element #\\x))"))))))))
+         (result (tool-execute (rlm-complete-tool-create :provider provider)
+                               context
+                               (json-object
+                                "task" "Produce a huge value."
+                                "context" (json-object "text" "small")
+                                "calls" 4))))
+    (test-assert (tool-result-success-p result)
+                 "rlm.complete succeeds on an oversized final value")
+    (let ((content (tool-result-content result)))
+      (test-assert (and (search ":VALUE-CONTEXT" content)
+                        (search "context:" content)
+                        (search ":VALUE-PREVIEW" content))
+                   "oversized final values are externalized with a preview")
+      (test-assert (< (length content) 15000)
+                   "externalized results stay bounded in the tool result")))
   nil)
 
 (-> test-rlm-designator-confinement () null)
@@ -1104,6 +1152,9 @@
     (resource-registry-register
      (tool-registry-resource-registry registry)
      (make-instance 'workspace-file-resolver :scheme "workspace"))
+    (resource-registry-register
+     (tool-registry-resource-registry registry)
+     (make-instance 'context-object-resolver :scheme "context"))
     (flet ((run (view &key (calls 3))
              (tool-execute
               (rlm-infer-tool-create
