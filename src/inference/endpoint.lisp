@@ -36,6 +36,12 @@
     :reader rlm-endpoint--budget
     :type rlm-budget
     :documentation "The root budget subtree every proxied call descends.")
+   (ledger
+    :initarg :ledger
+    :initform nil
+    :reader rlm-endpoint--ledger
+    :type (option function)
+    :documentation "An optional function recording one plist per served operation.")
    (lock
     :initform (make-lock "Autolith inference endpoint")
     :reader rlm-endpoint--lock
@@ -70,6 +76,26 @@
     (values (rlm-endpoint--final-value endpoint)
             (rlm-endpoint--final-p endpoint))))
 
+(-> rlm-endpoint--record (rlm-endpoint list) null)
+(defun rlm-endpoint--record (endpoint record)
+  "Append one served-operation RECORD to ENDPOINT's ledger, when any.
+
+The ledger links every child trace to the root run even when the
+environment's Lisp discards the returned trace identifiers, so a run
+leaves a machine-readable invocation tree instead of orphaned frames."
+  (let ((ledger (rlm-endpoint--ledger endpoint)))
+    (when ledger
+      (ignore-errors
+        (funcall ledger
+                 (append record
+                         (list :calls-remaining
+                               (rlm-budget-remaining-calls
+                                (rlm-endpoint--budget endpoint))
+                               :tokens-remaining
+                               (rlm-budget-remaining-tokens
+                                (rlm-endpoint--budget endpoint))))))))
+  nil)
+
 (-> rlm-endpoint--dispatch (rlm-endpoint keyword list) list)
 (defun rlm-endpoint--dispatch (endpoint operation arguments)
   "Serve one authenticated environment OPERATION and return its response."
@@ -89,6 +115,10 @@
                     :budget (rlm-budget-descend budget :task task)
                     :provider provider
                     :configuration configuration)
+           (rlm-endpoint--record endpoint
+                                 (list :operation :infer
+                                       :task task
+                                       :child-trace trace-identifier))
            (list :rlm-response :status :ok
                  :value value :trace trace-identifier))))
       (:map
@@ -100,25 +130,34 @@
                   :message
                   (format nil "An environment map call fans out 1 to ~D tasks."
                           *rlm-endpoint-map-maximum-tasks*)))
-         (list :rlm-response :status :ok
-               :value (rlm-map tasks
-                               :contract (or (getf arguments ':contract)
-                                             ':text)
-                               :budget (rlm-budget-descend budget
-                                                           :task "rlm-map")
-                               :provider provider
-                               :configuration configuration
-                               :concurrency
-                               (let ((requested
-                                       (getf arguments ':concurrency)))
-                                 (if (and (integerp requested)
-                                          (plusp requested))
-                                     requested
-                                     *rlm-map-default-concurrency*))))))
+         (let ((results
+                 (rlm-map tasks
+                          :contract (or (getf arguments ':contract) ':text)
+                          :budget (rlm-budget-descend budget :task "rlm-map")
+                          :provider provider
+                          :configuration configuration
+                          :concurrency
+                          (let ((requested (getf arguments ':concurrency)))
+                            (if (and (integerp requested) (plusp requested))
+                                requested
+                                *rlm-map-default-concurrency*)))))
+           (rlm-endpoint--record
+            endpoint
+            (list :operation :map
+                  :children
+                  (loop for result in results
+                        collect (append
+                                 (list :task (getf result ':task))
+                                 (if (getf result ':error)
+                                     (list :error (getf result ':error))
+                                     (list :child-trace
+                                           (getf result ':trace)))))))
+           (list :rlm-response :status :ok :value results))))
       (:finish
        (with-lock-held ((rlm-endpoint--lock endpoint))
          (setf (rlm-endpoint--final-value endpoint) (getf arguments ':value)
                (rlm-endpoint--final-p endpoint) t))
+       (rlm-endpoint--record endpoint (list :operation :finish))
        (list :rlm-response :status :ok :value ':finished)))))
 
 (-> rlm-endpoint--handle-client (rlm-endpoint sb-bsd-sockets:socket) null)
@@ -181,9 +220,10 @@
 (-> rlm-endpoint-start
     (&key (:provider model-provider)
           (:configuration configuration)
-          (:budget rlm-budget))
+          (:budget rlm-budget)
+          (:ledger (option function)))
     rlm-endpoint)
-(defun rlm-endpoint-start (&key provider configuration budget)
+(defun rlm-endpoint-start (&key provider configuration budget ledger)
   "Start a loopback endpoint proxying environment calls into BUDGET."
   (let ((listener (make-instance 'sb-bsd-sockets:inet-socket
                                  :type ':stream
@@ -204,7 +244,8 @@
                                             :token (localgroup-random-token)
                                             :provider provider
                                             :configuration configuration
-                                            :budget budget)))
+                                            :budget budget
+                                            :ledger ledger)))
                (setf (rlm-endpoint--accept-thread endpoint)
                      (make-thread (lambda ()
                                     (rlm-endpoint--serve endpoint))
