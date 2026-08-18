@@ -95,7 +95,9 @@ reservation rather than the current one. Exhaustion signals
 * Root completions
 
 =rlm-complete= is the paper-faithful realization: the complete input
-never enters any model context. The context designator is interned as
+remains outside the root model context, and only selected bounded
+slices are supplied to sub-inference contexts. The context designator
+is interned as
 an immutable content-addressed object under =data/inferences/objects/=
 and the root model receives only its label, size, and digest. A
 dedicated heap-isolated Lisp environment holds the content, every
@@ -130,10 +132,6 @@ trace identifiers, and the remaining budget. The root trace therefore
 holds the run's machine-readable invocation tree even when
 environment code discards the trace identifiers it receives, which is
 what trace-driven policy distillation reads.
-
-Every frame and root request also carries the subtree's remaining
-token allowance as its provider output ceiling, so one response
-cannot dramatically overrun the shared budget.
 
 The defining litmus property is tested end to end: an input larger
 than the provider window is processed almost completely, with the
@@ -209,7 +207,7 @@ fan-out can never outspend the root allocation.
 
 Settled trade-offs, recorded so review rounds do not relitigate them.
 
-** The environment is trusted, not confined
+** The environment is privileged and unsandboxed
 
 =env.eval= runs model-authored Lisp in a heap-isolated worker with the
 user's privileges, exactly like =lisp.*= always has; Autolith's stance
@@ -219,10 +217,10 @@ considered and rejected: they add a socket round trip per operation
 while confining nothing, because arbitrary worker Lisp can still open
 any file the user can. Confinement is why frames may not launch
 environments, not a property handles would provide. The store is
-protected differently: objects are read-only on disk and re-hashed on
-every lookup, so mutation is detected and repaired rather than
-prevented by pretense. Revisit only alongside real OS sandboxing of
-the worker.
+protected differently: objects are read-only on disk, host-side
+lookup re-hashes their content and rejects corruption, and
+re-interning the original content repairs a corrupted object.
+Revisit only alongside real OS sandboxing of the worker.
 
 ** Finish and shutdown do not block
 
