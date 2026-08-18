@@ -2,15 +2,6 @@
 
 ;;;; -- Root Recursive Language Model Runs --
 
-(defparameter *rlm-complete-call-budget* 24
-  "The default provider calls one root completion subtree may spend.")
-
-(defparameter *rlm-complete-token-budget* 240000
-  "The default combined token allowance for one root completion subtree.")
-
-(defparameter *rlm-complete-depth-budget* 2
-  "The default recursion depth below one root completion.")
-
 (defparameter *rlm-environment-prelude-body*
   "(progn
      (defvar *context-text* nil)

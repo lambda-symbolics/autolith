@@ -246,10 +246,10 @@
                                 (tool-registry-tools registry))
                         #'string<)))
       (test-assert (equal names
-                          '("resource.read" "rlm.infer" "rlm.map"
-                            "search.content"))
+                          '("resource.read" "rlm.complete" "rlm.infer"
+                            "rlm.map" "search.content"))
                    "frames keep read-only tools and gain nested rlm calls")
-      (dolist (name '("infer" "map"))
+      (dolist (name '("infer" "map" "complete"))
         (let ((nested (tool-registry-find registry "rlm" name)))
           (test-assert (eq (rlm-frame-tool--budget nested) budget)
                        "the nested rlm tools share the frame budget")))))
@@ -921,6 +921,55 @@
                      "corpus content never entered the root conversation")
         (test-assert (search "context-slice" trace)
                      "the root model authored the decomposition"))))
+  nil)
+
+(-> test-rlm-complete-tool () null)
+(defun test-rlm-complete-tool ()
+  "Test rlm.complete runs a root completion from tool arguments."
+  (let* ((configuration (test-configuration))
+         (conversation (conversation-create configuration
+                                            :identifier "rlm-complete-tool"))
+         (context (make-instance 'tool-context
+                                 :configuration configuration
+                                 :worker nil
+                                 :conversation conversation
+                                 :registry (make-instance 'tool-registry)))
+         (provider
+           (make-instance
+            'rlm-litmus-provider
+            :window-limit 100000
+            :root-results
+            (list (agent-test-result
+                   "root-1"
+                   (list (agent-test-call
+                          :call-id "eval-1"
+                          :namespace "env"
+                          :name "eval"
+                          :arguments (json-encode
+                                      (json-object
+                                       "form"
+                                       "(finish (context-length))")))))
+                  (rlm-inference-test-result "root-2" "Recorded." 20))))
+         (tool (rlm-complete-tool-create :provider provider))
+         (result
+           (tool-execute
+            tool
+            context
+            (json-object
+             "task" "Measure the corpus."
+             "context" (json-object
+                        "label" "corpus"
+                        "text" (make-string 200 :initial-element #\x))
+             "calls" 6))))
+    (test-assert (tool-result-success-p result)
+                 "rlm.complete succeeds when the run records a value")
+    (test-assert (and (search ":VALUE 200" (tool-result-content result))
+                      (search ":TRACE" (tool-result-content result)))
+                 "rlm.complete reports the recorded value and root trace")
+    (test-assert (not (tool-result-success-p
+                       (tool-execute tool context
+                                     (json-object "task" "No context."))))
+                 "rlm.complete refuses a missing context argument"))
   nil)
 
 (-> test-rlm-budget-descent () null)
