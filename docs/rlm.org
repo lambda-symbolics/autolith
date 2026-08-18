@@ -80,14 +80,16 @@ partial result.
 Every inference runs under an =rlm-budget=: remaining calls, tokens,
 and recursion depth, with thread-safe accounting. Recursive frames
 share the parent's counters and decrement depth. Every provider
-request atomically reserves one call and an output token tranche
-before it starts; the tranche doubles as the request's provider
+request atomically reserves, in one critical section, one call and an
+output token tranche; the tranche doubles as the request's provider
 output ceiling and is settled against the reported usage afterwards,
-with failed or usage-less requests refunded in full. Concurrent
-frames therefore each hold their own reservations and can never
-dramatically overspend the pool; only input tokens stay post hoc,
-gating the next reservation rather than the current one. Exhaustion
-signals =rlm-budget-exhausted= instead of silently degrading.
+with failed or usage-less requests refunded in full. A tranche takes
+at most a share of the remaining pool (a quarter by default, capped
+at 16000 tokens) and never more than the pool holds, so concurrent
+siblings keep headroom and combined reservations cannot oversubscribe
+the allocation; only input tokens stay post hoc, gating the next
+reservation rather than the current one. Exhaustion signals
+=rlm-budget-exhausted= instead of silently degrading.
 
 * Root completions
 

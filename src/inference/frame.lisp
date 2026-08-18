@@ -188,8 +188,7 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
   "Run a tool-free frame as bare provider calls over CONVERSATION."
   (conversation-append-user-message conversation request)
   (loop
-    (rlm-budget-acquire-call budget :task task)
-    (let ((tranche (rlm-budget-reserve-output budget))
+    (let ((tranche (rlm-budget-acquire-request budget :task task))
           (settled-p nil))
       (multiple-value-bind (value done-p)
           (unwind-protect
@@ -249,8 +248,7 @@ flushes an unsettled tranche after an aborted turn."
      (lambda (status details)
        (case status
          (:provider-request-started
-          (rlm-budget-acquire-call budget :task task)
-          (setf tranche (rlm-budget-reserve-output budget)
+          (setf tranche (rlm-budget-acquire-request budget :task task)
                 *provider-maximum-output-tokens* tranche))
          (:provider-request-completed
           (when tranche
