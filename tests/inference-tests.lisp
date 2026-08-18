@@ -92,7 +92,12 @@
     (let ((rendered (rlm-views-render views)))
       (test-assert (and (search "label=\"notes\"" rendered)
                         (search "second literal" rendered))
-                   "rendering includes labels and exact content")))
+                   "rendering includes labels and exact content")
+      (test-assert (search (format nil "</view sha256=~S>"
+                                   (subseq (rlm-view-digest (second views))
+                                           0 12))
+                           rendered)
+                   "closing delimiters repeat the content digest")))
   (test-assert (equal (mapcar #'rlm-view-label
                               (rlm-views-materialize (list "one" "two")))
                       '("literal#1" "literal#2"))
@@ -962,7 +967,7 @@
                      size (rlm-litmus-provider--window-limit provider))))
     (let* ((text (or (rlm-map-test--last-user-text conversation) ""))
            (view-start (search "<view" text))
-           (view-end (search "</view>" text :from-end t)))
+           (view-end (search "</view" text :from-end t)))
       (if (and view-start view-end)
           (rlm-inference-test-result
            "litmus-sub"
