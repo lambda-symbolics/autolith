@@ -497,6 +497,50 @@
                    "rlm.map refuses fans wider than the task cap")))
   nil)
 
+(defmethod rlm-decompose-inference-task
+    ((policy (eql ':rlm-policy-test-split)) (task string) (views list)
+     (budget rlm-budget))
+  "Split any task into two fixed labeled subtasks for policy tests."
+  (declare (ignore views budget))
+  (list (list ':task (format nil "part one of: ~A" task))
+        (list ':task (format nil "part two of: ~A" task)
+              ':context (list "part two extra view"))))
+
+(-> test-rlm-policies () null)
+(defun test-rlm-policies ()
+  "Test policies decompose, fan out, and synthesize under one budget."
+  (let* ((configuration (test-configuration))
+         (provider (make-instance 'rlm-map-test-provider))
+         (budget (rlm-budget-create :calls 10 :tokens 1000 :depth 1)))
+    (multiple-value-bind (value trace-identifier)
+        (rlm-run "summarize the module"
+                 :policy ':rlm-policy-test-split
+                 :budget budget
+                 :provider provider
+                 :configuration configuration)
+      (test-assert (and (search "part one of: summarize the module" value)
+                        (search "part two of: summarize the module" value)
+                        (search "part two extra view" value))
+                   "synthesis frames see every subtask result as a view")
+      (test-assert (search "subtask 2" value)
+                   "synthesis views are labeled per subtask")
+      (test-assert (non-empty-string-p trace-identifier)
+                   "the synthesis frame reports its trace identifier")
+      (test-assert (= (rlm-budget-remaining-calls budget) 7)
+                   "two subtasks and one synthesis share the call pool")
+      (test-assert (= (rlm-map-test-provider-request-count provider) 3)
+                   "the split policy runs exactly three frames")))
+  (let* ((configuration (test-configuration))
+         (provider (make-instance 'rlm-map-test-provider)))
+    (test-assert (search "direct question"
+                         (rlm-run "direct question"
+                                  :provider provider
+                                  :configuration configuration))
+                 "the default policy runs the task as one frame")
+    (test-assert (= (rlm-map-test-provider-request-count provider) 1)
+                 "the default policy never fans out"))
+  nil)
+
 (-> test-rlm-budget-descent () null)
 (defun test-rlm-budget-descent ()
   "Test descended budgets share counters and bound recursion depth."
