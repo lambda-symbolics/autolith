@@ -40,19 +40,21 @@ cannot pollute the primary conversation or the prompt cache.
 
 * Context views
 
-Context is passed explicitly. A view designator is one of:
+Context is passed explicitly, and the designator set is split by
+authority. Programmatic Lisp callers in the active image may pass:
 
 - a string, passed verbatim,
 - a pathname, read at call time,
 - a plist =(:label ... :content ...)= for labeled literals.
 
-Each view materializes into a labeled block with a content digest, so
-a trace records exactly what the frame saw. Views are read-only and
-fixed for the frame's lifetime. Resource URIs (=workspace:=,
-=memory:=, =agenda:=) are the natural extension of the designator
-set, since they already carry identity and snapshot digests through
-the resource protocol; until then a read-capability frame reaches the
-same content through =resource.read=.
+The model-visible tools never accept raw filesystem paths. Their
+views carry literal text, a resource URI resolved through the
+resource protocol under the caller's authority (so restricted frames
+stay confined to their readable scheme set), or a stored context
+object reference as =context:<sha256>=. Each view materializes into a
+labeled block with a content digest, so a trace records exactly what
+the frame saw. Views are read-only and fixed for the frame's
+lifetime.
 
 * Contracts
 
