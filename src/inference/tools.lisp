@@ -107,7 +107,7 @@
     (json-object
      "type" "object"
      "description"
-     "Optional JSON Schema the answer object must satisfy. Omit it for a plain text answer.")
+     "Optional JSON Schema the answer value must satisfy. Omit it for a plain text answer.")
     "capabilities"
     (json-object
      "type" "string"
