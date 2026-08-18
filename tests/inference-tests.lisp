@@ -102,6 +102,15 @@
                               (rlm-views-materialize (list "one" "two")))
                       '("literal#1" "literal#2"))
                "duplicate labels are numbered deterministically")
+  (test-assert (equal (rlm--context-designators "bare slice") '("bare slice"))
+               "a bare string context wraps into one designator")
+  (test-assert (equal (rlm--context-designators '(:label "solo" :content "x"))
+                      '((:label "solo" :content "x")))
+               "a bare plist context wraps into one designator")
+  (test-assert (equal (rlm--context-designators (list "a" "b")) '("a" "b"))
+               "designator lists pass through unchanged")
+  (test-assert (null (rlm--context-designators nil))
+               "an absent context stays empty")
   (uiop:with-temporary-file (:pathname pathname :stream stream :keep nil
                              :prefix "autolith-rlm-view")
     (write-string "file view content" stream)
@@ -216,10 +225,11 @@
              'rlm-inference-test-provider
              :results (list (rlm-inference-test-result "resp-1" "plain" 10)))))
       (test-assert (string= (infer "Say plain."
+                                   :context "one bare slice"
                                    :provider provider
                                    :configuration configuration)
                             "plain")
-                   "text contracts return the trimmed answer"))
+                   "text contracts accept a bare context designator"))
     (let ((provider
             (make-instance
              'rlm-inference-test-provider
@@ -1236,6 +1246,10 @@
       (test-assert (not (tool-result-success-p
                          (run (json-object "path" "/etc/passwd"))))
                    "raw filesystem paths are not a model-visible designator")
+      (test-assert (not (tool-result-success-p
+                         (run (json-object "text" "inline"
+                                           "uri" "workspace:README.org"))))
+                   "views supplying several source fields are refused")
       (test-assert (tool-result-success-p
                     (run (json-object "uri" "workspace:README.org")))
                    "resource uris materialize through the resource protocol")

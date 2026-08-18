@@ -17,7 +17,7 @@
     item))
 
 (-> rlm-map--run-item
-    (list list t rlm-budget (option keyword) model-provider configuration
+    (list t t rlm-budget (option keyword) model-provider configuration
      (option tool-registry))
     list)
 (defun rlm-map--run-item
@@ -28,7 +28,9 @@
     (handler-case
         (multiple-value-bind (value trace-identifier)
             (infer task
-                   :context (append context (getf item ':context))
+                   :context (append (rlm--context-designators context)
+                                    (rlm--context-designators
+                                     (getf item ':context)))
                    :contract contract
                    :budget budget
                    :capabilities capabilities
@@ -40,7 +42,7 @@
         (list ':task task ':error (format nil "~A" condition))))))
 
 (-> rlm-map
-    (list &key (:context list)
+    (list &key (:context t)
                (:contract t)
                (:budget (option rlm-budget))
                (:capabilities (option keyword))

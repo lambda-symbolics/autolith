@@ -189,6 +189,18 @@ around one object or array."
    (list :usage (agent--portable-value (provider-result-usage result))))
   nil)
 
+(-> rlm--context-designators (t) list)
+(defun rlm--context-designators (context)
+  "Return CONTEXT as a list of view designators.
+
+A bare designator is wrapped: strings, pathnames, views, and plists
+whose head is a keyword each denote one view, so environment code may
+pass (context-slice ...) directly instead of wrapping it in a list."
+  (cond
+    ((null context) nil)
+    ((and (listp context) (not (keywordp (first context)))) context)
+    (t (list context))))
+
 (-> rlm--repair-request ((option string)) string)
 (defun rlm--repair-request (problem)
   "Compose the repair message for one contract violation PROBLEM."
@@ -318,7 +330,7 @@ flushes an unsettled tranche after an aborted turn."
             (setf request (rlm--repair-request problem))))))))
 
 (-> infer
-    (string &key (:context list)
+    (string &key (:context t)
                  (:contract t)
                  (:budget (option rlm-budget))
                  (:capabilities (option keyword))
@@ -353,7 +365,8 @@ repaired by re-asking until BUDGET signals RLM-BUDGET-EXHAUSTED."
       (rlm--resolve-environment :model model :effort effort
                                 :provider provider
                                 :configuration configuration)
-    (let* ((views (rlm-views-materialize context))
+    (let* ((views (rlm-views-materialize
+                   (rlm--context-designators context)))
            (contract (rlm-contract-normalize contract))
            (budget (or budget (rlm-budget-create)))
            (conversation (rlm--frame-conversation configuration))
