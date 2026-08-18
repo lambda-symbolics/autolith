@@ -241,7 +241,9 @@ identifier."
                                        (rlm-environment-tool-create worker))
                (loop
                  (let ((*agent-restricted-maximum-tool-rounds*
-                         (max 1 (rlm-budget-remaining-calls budget))))
+                         (max 1 (rlm-budget-remaining-calls budget)))
+                       (*provider-maximum-output-tokens*
+                         (rlm--budget-output-limit budget)))
                    (agent-run-user-turn agent request
                                         :observer observer
                                         :tool-allowlist (list "env.eval")

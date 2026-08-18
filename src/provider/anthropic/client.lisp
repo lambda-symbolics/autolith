@@ -388,7 +388,10 @@ after a completed response."
       (let ((request
               (json-object
                "model" (configuration-model configuration)
-               "max_tokens" *anthropic-maximum-output-tokens*
+               "max_tokens" (if *provider-maximum-output-tokens*
+                                (min *provider-maximum-output-tokens*
+                                     *anthropic-maximum-output-tokens*)
+                                *anthropic-maximum-output-tokens*)
                "messages" (coerce messages 'vector)
                "stream" t)))
         (let ((system
