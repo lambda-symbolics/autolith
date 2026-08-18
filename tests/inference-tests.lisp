@@ -972,6 +972,56 @@
                  "rlm.complete refuses a missing context argument"))
   nil)
 
+(-> test-rlm-designator-confinement () null)
+(defun test-rlm-designator-confinement ()
+  "Test model-visible designators stay inside the resource protocol."
+  (let* ((configuration (test-configuration))
+         (conversation (conversation-create configuration
+                                            :identifier "rlm-designators"))
+         (registry (make-instance 'tool-registry))
+         (context (make-instance 'tool-context
+                                 :configuration configuration
+                                 :worker nil
+                                 :conversation conversation
+                                 :registry registry)))
+    (resource-registry-register
+     (tool-registry-resource-registry registry)
+     (make-instance 'workspace-file-resolver :scheme "workspace"))
+    (flet ((run (view &key (calls 3))
+             (tool-execute
+              (rlm-infer-tool-create
+               :provider (make-instance
+                          'rlm-inference-test-provider
+                          :results (list (rlm-inference-test-result
+                                          "response" "designator answer"
+                                          10))))
+              context
+              (json-object "task" "Describe the view."
+                           "views" (json-array view)
+                           "calls" calls))))
+      (test-assert (not (tool-result-success-p
+                         (run (json-object "path" "/etc/passwd"))))
+                   "raw filesystem paths are not a model-visible designator")
+      (test-assert (tool-result-success-p
+                    (run (json-object "uri" "workspace:README.org")))
+                   "resource uris materialize through the resource protocol")
+      (test-assert (let ((*resource-readable-schemes* (list "scratchpad")))
+                     (not (tool-result-success-p
+                           (run (json-object "uri" "workspace:README.org")))))
+                   "restricted scheme sets confine uri designators")
+      (let ((object (rlm-context-intern configuration
+                                        "stored designator content")))
+        (test-assert (tool-result-success-p
+                      (run (json-object
+                            "object"
+                            (format nil "context:~A"
+                                    (rlm-context-object-digest object)))))
+                     "stored context objects are a model-visible designator")
+        (test-assert (not (tool-result-success-p
+                           (run (json-object "object" "context:00ff"))))
+                     "unknown context object digests are refused"))))
+  nil)
+
 (-> test-rlm-budget-descent () null)
 (defun test-rlm-budget-descent ()
   "Test descended budgets share counters and bound recursion depth."

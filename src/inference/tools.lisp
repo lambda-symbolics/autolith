@@ -73,7 +73,10 @@
     (json-object
      "label" (tool-string-property "Optional short view name.")
      "text" (tool-string-property "Literal view content.")
-     "path" (tool-string-property "File whose content becomes the view.")))))
+     "uri" (tool-string-property
+            "Resource whose observation becomes the view, for example workspace:src/main.lisp.")
+     "object" (tool-string-property
+               "Stored context object reference: context:<sha256> or the bare digest.")))))
 
 (-> rlm--allowance-parameters () list)
 (defun rlm--allowance-parameters ()
@@ -194,13 +197,15 @@
            (json-object
             "type" "object"
             "description"
-            "The external context: text or the path of a file, plus an optional label."
+            "The external context: text, a resource URI, or a stored context object reference, plus an optional label."
             "properties"
             (json-object
              "label" (tool-string-property "Optional short context name.")
              "text" (tool-string-property "Literal context content.")
-             "path" (tool-string-property
-                     "File whose content becomes the context.")))
+             "uri" (tool-string-property
+                    "Resource whose observation becomes the context.")
+             "object" (tool-string-property
+                       "Stored context object reference: context:<sha256> or the bare digest.")))
            ;; Root runs return whatever finish records and decide their own
            ;; decomposition, so only the allowance parameters apply.
            (rlm--allowance-parameters))
@@ -247,27 +252,93 @@ the primary agent may launch one."
     (rlm-register-tools registry :provider provider :budget budget
                                  :complete-p nil)))
 
-(-> rlm--tool-views (t) list)
-(defun rlm--tool-views (views)
-  "Convert the tool VIEWS argument into view designator plists."
+(-> rlm--tool-resource-registry (tool-context) resource-registry)
+(defun rlm--tool-resource-registry (context)
+  "Return the resource registry serving CONTEXT's uri designators.
+
+Frame registries are fresh, so the resolvers ride on the copied
+resource.read tool when one exists."
+  (let* ((registry (tool-context-registry context))
+         (read-tool (and registry
+                         (tool-registry-find registry "resource" "read"))))
+    (cond
+      (read-tool (resource-tool-resource-registry read-tool))
+      (registry (tool-registry-resource-registry registry))
+      (t (error 'rlm-view-error
+                :designator "uri"
+                :message "no resource registry serves this call")))))
+
+(-> rlm--tool-resource-content (tool-context string) string)
+(defun rlm--tool-resource-content (context uri)
+  "Materialize URI through the resource protocol under CONTEXT's authority.
+
+Resolution honors the restricted readable scheme set, so frames stay
+confined to the schemes their restriction permits."
+  (let* ((resource (resource-registry-resolve
+                    (rlm--tool-resource-registry context) uri context))
+         (content (resource-observation-content
+                   (resource-observe resource context))))
+    (unless (stringp content)
+      (error 'rlm-view-error
+             :designator uri
+             :message "the resource observation carries no text"))
+    content))
+
+(-> rlm--tool-object-content (tool-context string) string)
+(defun rlm--tool-object-content (context reference)
+  "Return the stored context object REFERENCE names, by digest or URI."
+  (let* ((digest (if (uiop:string-prefix-p "context:" reference)
+                     (subseq reference (length "context:"))
+                     reference))
+         (object (and (every (lambda (character)
+                               (digit-char-p character 16))
+                             digest)
+                      (rlm-context-object-find
+                       (tool-context-configuration context)
+                       (string-downcase digest)))))
+    (unless object
+      (error 'rlm-view-error
+             :designator reference
+             :message "no stored context object has this digest"))
+    (uiop:read-file-string (rlm-context-object-pathname object))))
+
+(-> rlm--tool-views (t tool-context) list)
+(defun rlm--tool-views (views context)
+  "Convert the tool VIEWS argument into view designator plists.
+
+Model-visible views carry literal text, a resource URI resolved under
+CONTEXT's authority, or a stored context object reference; raw
+filesystem paths are only a programmatic Lisp designator."
   (unless (or (null views) (vectorp views) (listp views))
     (error 'rlm-view-error
            :designator views
            :message "expected an array of view objects"))
   (loop for view in (coerce views 'list)
-        collect (progn
-                  (unless (json-object-p view)
-                    (error 'rlm-view-error
-                           :designator view
-                           :message "expected a view object"))
-                  (let ((label (json-get view "label"))
-                        (text (json-get view "text"))
-                        (path (json-get view "path")))
-                    (append
-                     (when label (list ':label label))
-                     (when text (list ':content text))
-                     (when path
-                       (list ':path (parse-namestring path))))))))
+        collect
+        (progn
+          (unless (json-object-p view)
+            (error 'rlm-view-error
+                   :designator view
+                   :message "expected a view object"))
+          (let* ((label (json-get view "label"))
+                 (text (json-get view "text"))
+                 (uri (json-get view "uri"))
+                 (object (json-get view "object"))
+                 (effective-label (or label (and (stringp uri) uri))))
+            (append
+             (when effective-label (list ':label effective-label))
+             (list ':content
+                   (cond
+                     ((stringp text) text)
+                     ((stringp uri)
+                      (rlm--tool-resource-content context uri))
+                     ((stringp object)
+                      (rlm--tool-object-content context object))
+                     (t
+                      (error 'rlm-view-error
+                             :designator view
+                             :message
+                             "expected text, a resource uri, or a context object reference")))))))))
 
 (-> rlm--json-schema-type (t) keyword)
 (defun rlm--json-schema-type (type)
@@ -385,7 +456,7 @@ the primary agent may launch one."
                        task
                        (error 'rlm-inference-error
                               :message "The frame task must be a string.")))
-             (views (rlm--tool-views (gethash "views" arguments)))
+             (views (rlm--tool-views (gethash "views" arguments) context))
              (contract (let ((schema (gethash "contract" arguments)))
                          (if schema
                              (rlm--json-schema->contract schema)
@@ -411,28 +482,40 @@ the primary agent may launch one."
                   ':calls-remaining (rlm-budget-remaining-calls budget)
                   ':tokens-remaining (rlm-budget-remaining-tokens budget))
             :pretty-p t))))
-    ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error)
+    ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error
+         resource-scheme-unknown resource-access-denied
+         resource-operation-unsupported)
       (condition)
       (tool-failure (format nil "~A" condition)))))
 
-(-> rlm--tool-complete-context (t) list)
-(defun rlm--tool-complete-context (context)
-  "Convert the tool CONTEXT argument into one root context designator."
-  (unless (json-object-p context)
+(-> rlm--tool-complete-object (tool-context t) rlm-context-object)
+(defun rlm--tool-complete-object (context argument)
+  "Intern the tool's root context ARGUMENT as a context object."
+  (unless (json-object-p argument)
     (error 'rlm-view-error
-           :designator context
+           :designator argument
            :message "expected one context object"))
-  (let ((label (json-get context "label"))
-        (text (json-get context "text"))
-        (path (json-get context "path")))
-    (append
-     (when label (list ':label label))
-     (cond
-       ((stringp text) (list ':content text))
-       ((stringp path) (list ':path (parse-namestring path)))
-       (t (error 'rlm-view-error
-                 :designator context
-                 :message "expected text or a file path"))))))
+  (let ((configuration (tool-context-configuration context))
+        (label (json-get argument "label"))
+        (text (json-get argument "text"))
+        (uri (json-get argument "uri"))
+        (object (json-get argument "object")))
+    (cond
+      ((stringp text)
+       (rlm-context-intern configuration text :label label))
+      ((stringp uri)
+       (rlm-context-intern configuration
+                           (rlm--tool-resource-content context uri)
+                           :label (or label uri)))
+      ((stringp object)
+       (rlm-context-intern configuration
+                           (rlm--tool-object-content context object)
+                           :label label))
+      (t
+       (error 'rlm-view-error
+              :designator argument
+              :message
+              "expected text, a resource uri, or a context object reference")))))
 
 (defmethod tool-execute
     ((tool rlm-complete-tool) (context tool-context) (arguments hash-table))
@@ -443,8 +526,8 @@ the primary agent may launch one."
                        task
                        (error 'rlm-inference-error
                               :message "The run task must be a string.")))
-             (designator (rlm--tool-complete-context
-                          (gethash "context" arguments)))
+             (object (rlm--tool-complete-object
+                      context (gethash "context" arguments)))
              (budget (rlm--tool-budget tool arguments task
                                        :calls *rlm-complete-call-budget*
                                        :tokens *rlm-complete-token-budget*
@@ -453,7 +536,7 @@ the primary agent may launch one."
                            (rlm--environment))))
         (multiple-value-bind (value trace-identifier)
             (rlm-complete task
-                          :context designator
+                          :context object
                           :budget budget
                           :provider provider
                           :configuration (tool-context-configuration context))
@@ -461,15 +544,19 @@ the primary agent may launch one."
            (task--write-readable-sexp
             (list ':value value
                   ':trace trace-identifier
+                  ':context (format nil "context:~A"
+                                    (rlm-context-object-digest object))
                   ':calls-remaining (rlm-budget-remaining-calls budget)
                   ':tokens-remaining (rlm-budget-remaining-tokens budget))
             :pretty-p t))))
-    ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error)
+    ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error
+         resource-scheme-unknown resource-access-denied
+         resource-operation-unsupported)
       (condition)
       (tool-failure (format nil "~A" condition)))))
 
-(-> rlm--tool-map-tasks (t) list)
-(defun rlm--tool-map-tasks (tasks)
+(-> rlm--tool-map-tasks (t tool-context) list)
+(defun rlm--tool-map-tasks (tasks context)
   "Convert the tool TASKS argument into RLM-MAP task plists."
   (unless (and (vectorp tasks) (plusp (length tasks)))
     (error 'rlm-inference-error
@@ -490,7 +577,8 @@ the primary agent may launch one."
                     (append
                      (list ':task task)
                      (let ((views (rlm--tool-views
-                                   (json-get element "views"))))
+                                   (json-get element "views")
+                                   context)))
                        (when views
                          (list ':context views))))))))
 
@@ -498,7 +586,7 @@ the primary agent may launch one."
     ((tool rlm-map-tool) (context tool-context) (arguments hash-table))
   "Fan tool tasks out as inference frames and return their ordered results."
   (handler-case
-      (let* ((tasks (rlm--tool-map-tasks (gethash "tasks" arguments)))
+      (let* ((tasks (rlm--tool-map-tasks (gethash "tasks" arguments) context))
              (contract (let ((schema (gethash "contract" arguments)))
                          (if schema
                              (rlm--json-schema->contract schema)
@@ -527,6 +615,8 @@ the primary agent may launch one."
                 ':calls-remaining (rlm-budget-remaining-calls budget)
                 ':tokens-remaining (rlm-budget-remaining-tokens budget))
           :pretty-p t)))
-    ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error)
+    ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error
+         resource-scheme-unknown resource-access-denied
+         resource-operation-unsupported)
       (condition)
       (tool-failure (format nil "~A" condition)))))
