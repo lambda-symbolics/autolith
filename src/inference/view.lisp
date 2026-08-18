@@ -128,10 +128,11 @@
 (defun rlm-views-render (views)
   "Render materialized VIEWS as delimited read-only context blocks.
 
-The closing delimiter repeats the content digest, so view content
-cannot forge its own end or another view: embedding a closing tag
-changes the digest away from the embedded value, and finding a
-fixpoint is a preimage problem."
+The closing delimiter repeats the content digest, making a forged
+block boundary detectable and recording provenance: embedding a
+closing tag changes the digest away from the embedded value. Nothing
+verifies the textual nesting before the model reads it, so the
+untrusted-data system instruction stays the meaningful boundary."
   (when views
     (with-output-to-string (stream)
       (loop for view in views

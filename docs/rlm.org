@@ -24,7 +24,7 @@ agents with conversations, tool registries, and orchestrator
 scheduling. RLM adds the two inner levels plus the paper-defining
 root operation, =rlm-complete=, described below:
 
-- An inference call. One provider request over explicitly passed
+- An inference call. One bounded inference operation over explicit
   context. Returns a Lisp value. Never touches the caller's
   conversation.
 - An inference frame. One task with a private ephemeral conversation,
@@ -73,8 +73,9 @@ exist:
 
 A malformed answer is repaired by re-asking within the remaining call
 budget. When the budget is gone the failure signals a condition, so
-callers can retry with more context, a different model, or accept a
-partial result.
+callers can retry with more context or a different model; partial
+completed results are a property of =rlm-map=, which returns finished
+frames alongside failed ones.
 
 * Budgets
 
@@ -84,7 +85,8 @@ share the parent's counters and decrement depth. Every provider
 request atomically reserves, in one critical section, one call and an
 output token tranche; the tranche doubles as the request's provider
 output ceiling and is settled against the reported usage afterwards,
-with failed or usage-less requests refunded in full. A tranche takes
+with failed or usage-less requests refunding the output tranche in
+full while the admitted call stays consumed. A tranche takes
 at most a share of the remaining pool (a quarter by default, capped
 at 16000 tokens) and never more than the pool holds, so concurrent
 siblings keep headroom and combined reservations cannot oversubscribe

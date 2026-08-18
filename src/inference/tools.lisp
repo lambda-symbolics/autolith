@@ -192,7 +192,7 @@
    :provider provider
    :budget budget
    :description
-   "Run a root recursive language model over one large external context: the content is stored outside every model context, and a dedicated Lisp environment programmatically slices it, fans sub-inferences over the pieces, and records the final value. Use it when the input is far too large to read into this conversation and must be processed nearly in full. Returns the recorded value, the root trace identifier, and the remaining budget."
+   "Run a root recursive language model over one large external context: the content stays outside the root model context, only selected bounded slices enter sub-inferences, and a dedicated Lisp environment programmatically slices it, fans sub-inferences over the pieces, and records the final value. Use it when the input is far too large to read into this conversation and must be processed nearly in full. Returns the recorded value, the root trace identifier, and the remaining budget."
    :parameters
    (tool-object-schema
     (apply #'json-object
