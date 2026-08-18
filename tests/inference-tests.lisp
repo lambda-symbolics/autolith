@@ -1068,6 +1068,54 @@
                      "the root trace carries the run's invocation ledger"))))
   nil)
 
+(-> test-rlm-boundary-litmus () null)
+(defun test-rlm-boundary-litmus ()
+  "Test overlapping slices count evidence crossing naive slice boundaries."
+  (let* ((configuration (test-configuration))
+         (corpus (rlm-litmus--corpus))
+         (window-limit 60000)
+         (code
+           "(finish (let* ((size 40000) (overlap 100) (step (- size overlap))) (- (loop for start from 0 below (context-length) by step sum (parse-integer (infer \"Count the marker occurrences and reply with only the integer.\" :context (list (context-slice start (min (context-length) (+ start size))))))) (loop for start from step below (context-length) by step sum (parse-integer (infer \"Count the marker occurrences and reply with only the integer.\" :context (list (context-slice start (min (context-length) (+ start overlap))))))))))")
+         (provider
+           (make-instance
+            'rlm-litmus-provider
+            :window-limit window-limit
+            :root-results
+            (list (agent-test-result
+                   "root-1"
+                   (list (agent-test-call
+                          :call-id "eval-1"
+                          :namespace "env"
+                          :name "eval"
+                          :arguments (json-encode
+                                      (json-object "form" code))))))))
+         (budget (rlm-budget-create :calls 12 :tokens 100000 :depth 2)))
+    ;; Plant markers straddling the naive 40000-character boundaries; the
+    ;; base corpus pads block edges with dots, so the splice is exact.
+    (replace corpus "XYZZY" :start1 39998)
+    (replace corpus "XYZZY" :start1 79998)
+    (let ((expected (rlm-litmus--count-occurrences "XYZZY" corpus))
+          (naive (loop for start from 0 below (length corpus) by 40000
+                       sum (rlm-litmus--count-occurrences
+                            "XYZZY"
+                            (subseq corpus start
+                                    (min (length corpus) (+ start 40000)))))))
+      (test-assert (> expected naive)
+                   "the planted markers straddle naive slice boundaries")
+      (multiple-value-bind (value trace-identifier)
+          (rlm-complete "Count how many marker lines the corpus contains."
+                        :context (list ':label "corpus" ':content corpus)
+                        :budget budget
+                        :provider provider
+                        :configuration configuration)
+        (declare (ignore trace-identifier))
+        (test-assert (eql value expected)
+                     "overlapping slices recover boundary-straddling evidence")
+        (test-assert (<= (rlm-litmus-provider-largest-request provider)
+                         window-limit)
+                     "boundary-aware slicing still fits the provider window"))))
+  nil)
+
 (-> test-rlm-complete-tool () null)
 (defun test-rlm-complete-tool ()
   "Test rlm.complete runs a root completion from tool arguments."
