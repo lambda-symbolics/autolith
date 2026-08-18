@@ -158,7 +158,7 @@ prompt instead of the full Autolith persona.")
           :hosted-web-search-p *system-prompt-hosted-web-search-p*
           :web-run-p (system-prompt--web-run-p configuration)
           :hurry-up-p hurry-up-p
-          :rlm-available nil
+          :rlm-available t
           :user (system-prompt--environment-value "USER")
           :os (system-prompt--context-value (software-type))
           :os-version (system-prompt--context-value (software-version))

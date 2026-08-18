@@ -39,8 +39,8 @@
                                    "Org keyword lines are stripped")
              (prompt-tests--absent prompt "* Commentary"
                                    "review commentary is omitted")
-             (prompt-tests--absent prompt "RECURSIVE INFERENCE IS AVAILABLE"
-                                   "RLM is omitted until the tools are registered")
+             (prompt-tests--contains prompt "RECURSIVE INFERENCE IS AVAILABLE"
+                                     "RLM guidance rides along with the registered rlm tools")
              (prompt-tests--absent prompt "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE"
                                    "STE is omitted when the preference is off")
              (prompt-tests--absent prompt "HURRY-UP MODE IS ACTIVE"
