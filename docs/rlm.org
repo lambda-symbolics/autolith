@@ -112,6 +112,11 @@ is model-authored and untrusted; =(finish value)= records the final
 answer. Every proxied call descends the run's shared budget subtree,
 so model-authored loops can never outspend the root allocation. The
 run returns the recorded Lisp value plus the root trace identifier.
+The model reaches the same operation through the =rlm.complete= tool.
+
+Every frame and root request also carries the subtree's remaining
+token allowance as its provider output ceiling, so one response
+cannot dramatically overrun the shared budget.
 
 The defining litmus property is tested end to end: an input larger
 than the provider window is processed almost completely, with the
@@ -166,11 +171,12 @@ The =lisp.*= tools run in heap-isolated workers with no provider
 access, so model-authored worker code cannot call =infer=. The
 surfaces are:
 
-- The =infer=, =rlm-map=, and =rlm-run= functions in the active
-  image, for user REPL forms and for self-modification code
-  (policies, agenda automation).
-- The =rlm.infer= and =rlm.map= tools for the model, taking tasks,
-  views, an optional JSON Schema contract, and call, token, and depth
+- The =infer=, =rlm-map=, =rlm-run=, and =rlm-complete= functions in
+  the active image, for user REPL forms and for self-modification
+  code (policies, agenda automation).
+- The =rlm.infer=, =rlm.map=, and =rlm.complete= tools for the model,
+  taking tasks, views or one external context, an optional JSON
+  Schema contract for the frame tools, and call, token, and depth
   allowances.
 
 Both surfaces accept =:capabilities= (the tools' =capabilities=

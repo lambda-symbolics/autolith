@@ -15,6 +15,15 @@
 (defparameter *rlm-tool-maximum-depth-budget* 4
   "The largest recursion depth one rlm.infer tool call may request.")
 
+(defparameter *rlm-complete-call-budget* 24
+  "The default provider calls one root completion subtree may spend.")
+
+(defparameter *rlm-complete-token-budget* 240000
+  "The default combined token allowance for one root completion subtree.")
+
+(defparameter *rlm-complete-depth-budget* 2
+  "The default recursion depth below one root completion.")
+
 (defparameter *rlm-tool-maximum-map-tasks* 16
   "The most tasks one rlm.map tool call may fan out.")
 
@@ -47,6 +56,10 @@
   ()
   (:documentation "Fan tasks out as concurrent inference frames sharing one budget."))
 
+(defclass rlm-complete-tool (rlm-frame-tool)
+  ()
+  (:documentation "Run a root recursive language model over one external context."))
+
 (-> rlm--views-parameter (string) json-object)
 (defun rlm--views-parameter (description)
   "Return the tool schema for one read-only view array with DESCRIPTION."
@@ -62,21 +75,10 @@
      "text" (tool-string-property "Literal view content.")
      "path" (tool-string-property "File whose content becomes the view.")))))
 
-(-> rlm--shared-frame-parameters () list)
-(defun rlm--shared-frame-parameters ()
-  "Return the contract, capability, and allowance tool schema properties."
+(-> rlm--allowance-parameters () list)
+(defun rlm--allowance-parameters ()
+  "Return the budget allowance tool schema properties."
   (list
-   "contract"
-   (json-object
-    "type" "object"
-    "description"
-    "Optional JSON Schema the answer object must satisfy. Omit it for a plain text answer.")
-   "capabilities"
-   (json-object
-    "type" "string"
-    "enum" (json-array "none" "read")
-    "description"
-    "Frame capabilities: none for a pure call over the views, read to also allow workspace resource reads, content search, and nested rlm calls.")
    "calls"
    (tool-integer-property
     "Provider call allowance for the frame subtree. Ignored inside a frame, where the enclosing budget is shared.")
@@ -86,6 +88,24 @@
    "depth"
    (tool-integer-property
     "Recursion depth allowed below the frame. Ignored inside a frame.")))
+
+(-> rlm--shared-frame-parameters () list)
+(defun rlm--shared-frame-parameters ()
+  "Return the contract, capability, and allowance tool schema properties."
+  (append
+   (list
+    "contract"
+    (json-object
+     "type" "object"
+     "description"
+     "Optional JSON Schema the answer object must satisfy. Omit it for a plain text answer.")
+    "capabilities"
+    (json-object
+     "type" "string"
+     "enum" (json-array "none" "read")
+     "description"
+     "Frame capabilities: none for a pure call over the views, read to also allow workspace resource reads, content search, and nested rlm calls."))
+   (rlm--allowance-parameters)))
 
 (-> rlm-infer-tool-create
     (&key (:provider (option model-provider)) (:budget (option rlm-budget)))
@@ -151,10 +171,46 @@
            (rlm--shared-frame-parameters))
     '("tasks"))))
 
+(-> rlm-complete-tool-create
+    (&key (:provider (option model-provider)) (:budget (option rlm-budget)))
+    rlm-complete-tool)
+(defun rlm-complete-tool-create (&key provider budget)
+  "Create the rlm.complete tool, nesting under BUDGET when inside a frame."
+  (make-instance
+   'rlm-complete-tool
+   :namespace "rlm"
+   :name "complete"
+   :provider provider
+   :budget budget
+   :description
+   "Run a root recursive language model over one large external context: the content is stored outside every model context, and a dedicated Lisp environment programmatically slices it, fans sub-inferences over the pieces, and records the final value. Use it when the input is far too large to read into this conversation and must be processed nearly in full. Returns the recorded value, the root trace identifier, and the remaining budget."
+   :parameters
+   (tool-object-schema
+    (apply #'json-object
+           "task"
+           (tool-string-property
+            "The question or instruction the run must answer.")
+           "context"
+           (json-object
+            "type" "object"
+            "description"
+            "The external context: text or the path of a file, plus an optional label."
+            "properties"
+            (json-object
+             "label" (tool-string-property "Optional short context name.")
+             "text" (tool-string-property "Literal context content.")
+             "path" (tool-string-property
+                     "File whose content becomes the context.")))
+           ;; Root runs return whatever finish records and decide their own
+           ;; decomposition, so only the allowance parameters apply.
+           (rlm--allowance-parameters))
+    '("task" "context"))))
+
 (-> rlm--frame-tool-allowlist () list)
 (defun rlm--frame-tool-allowlist ()
   "Return the canonical tool names a read-capability frame may call."
-  (list* "rlm.infer" "rlm.map" (copy-list *rlm-frame-read-tool-names*)))
+  (list* "rlm.infer" "rlm.map" "rlm.complete"
+         (copy-list *rlm-frame-read-tool-names*)))
 
 (-> rlm-register-tools
     (tool-registry
@@ -168,6 +224,9 @@
   (tool-registry-register registry
                           (rlm-map-tool-create :provider provider
                                                :budget budget))
+  (tool-registry-register registry
+                          (rlm-complete-tool-create :provider provider
+                                                    :budget budget))
   registry)
 
 (-> rlm--frame-registry (tool-registry model-provider rlm-budget) tool-registry)
@@ -287,21 +346,27 @@
                 :message (format nil "The ~A allowance must be an integer."
                                  name))))))
 
-(-> rlm--tool-budget (rlm-frame-tool hash-table string) rlm-budget)
-(defun rlm--tool-budget (tool arguments task)
+(-> rlm--tool-budget
+    (rlm-frame-tool hash-table string
+     &key (:calls (integer 1)) (:tokens (integer 1)) (:depth (integer 0)))
+    rlm-budget)
+(defun rlm--tool-budget
+    (tool arguments task &key (calls *rlm-default-call-budget*)
+                              (tokens *rlm-default-token-budget*)
+                              (depth *rlm-default-depth-budget*))
   "Return the frame budget for one tool call, descending inside frames."
   (let ((parent (rlm-frame-tool--budget tool)))
     (if parent
         (rlm-budget-descend parent :task task)
         (rlm-budget-create
          :calls (rlm--bounded-tool-integer
-                 arguments "calls" *rlm-default-call-budget*
+                 arguments "calls" calls
                  1 *rlm-tool-maximum-call-budget*)
          :tokens (rlm--bounded-tool-integer
-                  arguments "tokens" *rlm-default-token-budget*
+                  arguments "tokens" tokens
                   1 *rlm-tool-maximum-token-budget*)
          :depth (rlm--bounded-tool-integer
-                 arguments "depth" *rlm-default-depth-budget*
+                 arguments "depth" depth
                  0 *rlm-tool-maximum-depth-budget*)))))
 
 (defmethod tool-execute
@@ -332,6 +397,59 @@
                    :provider provider
                    :configuration (tool-context-configuration context)
                    :source-registry (tool-context-registry context))
+          (tool-success
+           (task--write-readable-sexp
+            (list ':value value
+                  ':trace trace-identifier
+                  ':calls-remaining (rlm-budget-remaining-calls budget)
+                  ':tokens-remaining (rlm-budget-remaining-tokens budget))
+            :pretty-p t))))
+    ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error)
+      (condition)
+      (tool-failure (format nil "~A" condition)))))
+
+(-> rlm--tool-complete-context (t) list)
+(defun rlm--tool-complete-context (context)
+  "Convert the tool CONTEXT argument into one root context designator."
+  (unless (json-object-p context)
+    (error 'rlm-view-error
+           :designator context
+           :message "expected one context object"))
+  (let ((label (json-get context "label"))
+        (text (json-get context "text"))
+        (path (json-get context "path")))
+    (append
+     (when label (list ':label label))
+     (cond
+       ((stringp text) (list ':content text))
+       ((stringp path) (list ':path (parse-namestring path)))
+       (t (error 'rlm-view-error
+                 :designator context
+                 :message "expected text or a file path"))))))
+
+(defmethod tool-execute
+    ((tool rlm-complete-tool) (context tool-context) (arguments hash-table))
+  "Run one root recursive language model and return its recorded value."
+  (handler-case
+      (let* ((task (tool-argument arguments "task" :required t))
+             (task (if (stringp task)
+                       task
+                       (error 'rlm-inference-error
+                              :message "The run task must be a string.")))
+             (designator (rlm--tool-complete-context
+                          (gethash "context" arguments)))
+             (budget (rlm--tool-budget tool arguments task
+                                       :calls *rlm-complete-call-budget*
+                                       :tokens *rlm-complete-token-budget*
+                                       :depth *rlm-complete-depth-budget*))
+             (provider (or (rlm-frame-tool--provider tool)
+                           (rlm--environment))))
+        (multiple-value-bind (value trace-identifier)
+            (rlm-complete task
+                          :context designator
+                          :budget budget
+                          :provider provider
+                          :configuration (tool-context-configuration context))
           (tool-success
            (task--write-readable-sexp
             (list ':value value

@@ -225,6 +225,7 @@
     (test-rlm-trace-resource)
     (test-rlm-endpoint)
     (test-rlm-litmus-completion)
+    (test-rlm-complete-tool)
     (test-rlm-permission-classifier)
     (test-task-orchestration)
     (test-task-child-shared-agent-loop)
