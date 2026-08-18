@@ -91,6 +91,12 @@
     :documentation "The provider results returned in request order."))
   (:documentation "A deterministic provider for exercising inference frames."))
 
+(defmethod provider-with-configuration
+    ((provider rlm-inference-test-provider) (configuration configuration))
+  "Keep the scripted inference provider across configuration changes."
+  (declare (ignore configuration))
+  provider)
+
 (defmethod provider-stream-turn
     ((provider rlm-inference-test-provider)
      (conversation conversation)
@@ -589,6 +595,50 @@
                    (resource-operation-unsupported () t)
                    (error () nil))
                  "unsafe trace identifiers are refused at resolution"))
+  nil)
+
+(-> test-rlm-permission-classifier () null)
+(defun test-rlm-permission-classifier ()
+  "Test model permission decisions map to keywords and fail toward asking."
+  (let ((configuration (test-configuration)))
+    (flet ((classify (&rest texts)
+             (permissions-model-classify-command
+              "cargo build" #p"/root/project/"
+              :provider (make-instance
+                         'rlm-inference-test-provider
+                         :results
+                         (mapcar (lambda (text)
+                                   (rlm-inference-test-result "response"
+                                                              text 20))
+                                 texts))
+              :configuration configuration)))
+      (multiple-value-bind (decision reason)
+          (classify
+           "{\"decision\": \"sandboxed\", \"reason\": \"workspace build\"}")
+        (test-assert (eq decision ':sandboxed)
+                     "sandbox decisions map to the sandboxed grant")
+        (test-assert (string= reason "workspace build")
+                     "the model's reason is passed through"))
+      (test-assert (eq (classify
+                        "{\"decision\": \"full\", \"reason\": \"network\"}")
+                       ':full-access)
+                   "full decisions map to the full-access grant")
+      (test-assert (eq (classify
+                        "{\"decision\": \"deny\", \"reason\": \"wipe\"}")
+                       ':deny)
+                   "deny decisions map to the deny grant")
+      (test-assert (eq (classify
+                        "{\"decision\": \"ask\", \"reason\": \"unclear\"}")
+                       ':ask)
+                   "ask decisions defer to the human")
+      (multiple-value-bind (decision reason)
+          (classify "garbage" "still garbage")
+        (test-assert (eq decision ':ask)
+                     "unrepaired classifier output falls back to asking")
+        (test-assert (non-empty-string-p reason)
+                     "the fallback carries an explanation"))
+      (test-assert (eq (classify) ':ask)
+                   "provider failures fall back to asking")))
   nil)
 
 (-> test-rlm-budget-descent () null)
