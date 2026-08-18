@@ -220,6 +220,7 @@
     (test-rlm-framed-inference)
     (test-rlm-infer-tool)
     (test-rlm-map)
+    (test-rlm-map-tool)
     (test-task-orchestration)
     (test-task-child-shared-agent-loop)
     (test-task-default-detachment)

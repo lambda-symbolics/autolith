@@ -719,7 +719,7 @@
     (default-tools--register-plan registry)
     (default-tools--register-lisp registry)
     (default-tools--register-self registry)
-    (tool-registry-register registry (rlm-infer-tool-create))
+    (rlm-register-tools registry)
     (skill-augment-tool-registry registry)
     (when immutable-p
       (default-tools--remove-mutable-self-tools registry))
