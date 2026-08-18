@@ -738,6 +738,31 @@
     (test-assert (null (rlm-context-object-find configuration
                                                 (rlm-view--digest "absent")))
                  "unknown digests find nothing")
+    (let ((pathname (rlm-context-object-pathname first-object)))
+      (test-assert (zerop (logand (sb-posix:stat-mode
+                                   (sb-posix:stat (namestring pathname)))
+                                  #o222))
+                   "stored objects are read-only on disk")
+      (sb-posix:chmod (namestring pathname) #o644)
+      (with-open-file (stream pathname :direction ':output
+                                       :if-exists ':supersede)
+        (write-string "tampered" stream))
+      (test-assert (handler-case
+                       (progn
+                         (rlm-context-object-find
+                          configuration
+                          (rlm-context-object-digest first-object))
+                         nil)
+                     (rlm-view-error () t)
+                     (error () nil))
+                   "a mutated stored object is detected, not trusted")
+      (rlm-context-intern configuration "shared corpus")
+      (test-assert (string= (uiop:read-file-string pathname) "shared corpus")
+                   "re-interning repairs a mutated stored object")
+      (test-assert (zerop (logand (sb-posix:stat-mode
+                                   (sb-posix:stat (namestring pathname)))
+                                  #o222))
+                   "a repaired object is read-only again"))
     (test-assert (handler-case
                      (progn
                        (rlm-context-designator-object configuration 42)
