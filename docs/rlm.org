@@ -112,8 +112,11 @@ host over an authenticated loopback endpoint, where budgets,
 contracts, and traces are enforced host-side because environment code
 is model-authored and untrusted; =(finish value)= records the final
 answer. Every proxied call descends the run's shared budget subtree,
-so model-authored loops can never outspend the root allocation. The
-run returns the recorded Lisp value plus the root trace identifier.
+so model-authored loops can never outspend the root allocation.
+Finish is terminal: the first finish wins, later operations are
+refused, and the value must be portable readable data because it
+crosses the environment boundary as printed text. The run returns
+the recorded Lisp value plus the root trace identifier.
 The model reaches the same operation through the =rlm.complete= tool.
 
 Every proxied operation also appends one replay-safe =:rlm-call=
