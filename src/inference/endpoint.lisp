@@ -70,7 +70,12 @@
     :initform nil
     :accessor rlm-endpoint--final-p
     :type boolean
-    :documentation "True once the environment recorded a final value."))
+    :documentation "True once the environment recorded a final value.")
+   (active-operations
+    :initform 0
+    :accessor rlm-endpoint--active-operations
+    :type (integer 0)
+    :documentation "The admitted inference operations still running."))
   (:documentation
    "A loopback endpoint proxying environment inference calls to the host."))
 
@@ -81,17 +86,37 @@
     (values (rlm-endpoint--final-value endpoint)
             (rlm-endpoint--final-p endpoint))))
 
-(-> rlm-endpoint--require-running (rlm-endpoint) null)
-(defun rlm-endpoint--require-running (endpoint)
-  "Signal unless ENDPOINT still accepts inference work.
+(-> rlm-endpoint--admit (rlm-endpoint) null)
+(defun rlm-endpoint--admit (endpoint)
+  "Atomically admit one inference operation unless the run finished.
 
-Finish is terminal: once a final value is recorded, further inference
-and repeated finishes are refused instead of silently absorbed."
+Admission and the finished check share one lock, so no operation can
+start after a finish commits; operations admitted earlier complete
+normally, bounded by the shared budget."
   (with-lock-held ((rlm-endpoint--lock endpoint))
     (when (rlm-endpoint--final-p endpoint)
       (error 'rlm-inference-error
-             :message "The run already recorded its final value.")))
+             :message "The run already recorded its final value."))
+    (incf (rlm-endpoint--active-operations endpoint)))
   nil)
+
+(-> rlm-endpoint--release (rlm-endpoint) null)
+(defun rlm-endpoint--release (endpoint)
+  "Release one admitted inference operation."
+  (with-lock-held ((rlm-endpoint--lock endpoint))
+    (decf (rlm-endpoint--active-operations endpoint)))
+  nil)
+
+(-> rlm-endpoint--call-admitted (rlm-endpoint t function) list)
+(defun rlm-endpoint--call-admitted (endpoint admit-p function)
+  "Call FUNCTION, holding an admission lease while ADMIT-P."
+  (if admit-p
+      (progn
+        (rlm-endpoint--admit endpoint)
+        (unwind-protect
+             (funcall function)
+          (rlm-endpoint--release endpoint)))
+      (funcall function)))
 
 (-> rlm-endpoint--record (rlm-endpoint list) null)
 (defun rlm-endpoint--record (endpoint record)
@@ -102,15 +127,18 @@ environment's Lisp discards the returned trace identifiers, so a run
 leaves a machine-readable invocation tree instead of orphaned frames."
   (let ((ledger (rlm-endpoint--ledger endpoint)))
     (when ledger
-      (ignore-errors
-        (funcall ledger
-                 (append record
-                         (list :calls-remaining
-                               (rlm-budget-remaining-calls
-                                (rlm-endpoint--budget endpoint))
-                               :tokens-remaining
-                               (rlm-budget-remaining-tokens
-                                (rlm-endpoint--budget endpoint))))))))
+      (handler-case
+          (funcall ledger
+                   (append record
+                           (list :calls-remaining
+                                 (rlm-budget-remaining-calls
+                                  (rlm-endpoint--budget endpoint))
+                                 :tokens-remaining
+                                 (rlm-budget-remaining-tokens
+                                  (rlm-endpoint--budget endpoint)))))
+        (error (condition)
+          (format *error-output*
+                  "~&The inference run ledger failed: ~A~%" condition)))))
   nil)
 
 (-> rlm-endpoint--dispatch (rlm-endpoint keyword list) list)
@@ -119,11 +147,14 @@ leaves a machine-readable invocation tree instead of orphaned frames."
   (let ((provider (rlm-endpoint--provider endpoint))
         (configuration (rlm-endpoint--configuration endpoint))
         (budget (rlm-endpoint--budget endpoint)))
-    (rlm-endpoint--require-running endpoint)
-    (ecase operation
-      (:infer
-       (let ((task (getf arguments ':task)))
-         (unless (and (stringp task) (non-empty-string-p task))
+    (rlm-endpoint--call-admitted
+     endpoint
+     (member operation '(:infer :map))
+     (lambda ()
+       (ecase operation
+         (:infer
+          (let ((task (getf arguments ':task)))
+            (unless (and (stringp task) (non-empty-string-p task))
            (error 'rlm-inference-error
                   :message "An environment infer call requires task text."))
          (multiple-value-bind (value trace-identifier)
@@ -173,15 +204,15 @@ leaves a machine-readable invocation tree instead of orphaned frames."
            (list :rlm-response :status :ok :value results))))
       (:finish
        (with-lock-held ((rlm-endpoint--lock endpoint))
-         ;; The running check above is advisory; the first finish must win
-         ;; even against a concurrent finish racing past it.
+         ;; The first finish wins, atomically with the admission check, so
+         ;; no operation can start after the terminal state commits.
          (when (rlm-endpoint--final-p endpoint)
            (error 'rlm-inference-error
                   :message "The run already recorded its final value."))
          (setf (rlm-endpoint--final-value endpoint) (getf arguments ':value)
                (rlm-endpoint--final-p endpoint) t))
        (rlm-endpoint--record endpoint (list :operation :finish))
-       (list :rlm-response :status :ok :value ':finished)))))
+       (list :rlm-response :status :ok :value ':finished)))))))
 
 (-> rlm-endpoint--handle-client (rlm-endpoint sb-bsd-sockets:socket) null)
 (defun rlm-endpoint--handle-client (endpoint socket)
@@ -299,12 +330,13 @@ leaves a machine-readable invocation tree instead of orphaned frames."
   (ignore-errors
     (sb-bsd-sockets:socket-close (rlm-endpoint--listener endpoint)))
   ;; Handlers finish once their proxied inference returns; the timeout
-  ;; abandons only a handler wedged on a dead peer.
+  ;; abandons only a handler still holding a long provider call, which
+  ;; stays budget-bounded and whose response write fails harmlessly.
   (dolist (thread (with-lock-held ((rlm-endpoint--lock endpoint))
                     (copy-list (rlm-endpoint--client-threads endpoint))))
     (when (thread-alive-p thread)
       (handler-case
-          (sb-ext:with-timeout 5
+          (sb-ext:with-timeout 30
             (join-thread thread))
         (error () nil))))
   nil)
