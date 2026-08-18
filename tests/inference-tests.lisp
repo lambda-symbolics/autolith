@@ -229,11 +229,13 @@
                                 (tool-registry-tools registry))
                         #'string<)))
       (test-assert (equal names
-                          '("resource.read" "rlm.infer" "search.content"))
-                   "frames keep read-only tools and gain nested rlm.infer")
-      (let ((nested (tool-registry-find registry "rlm" "infer")))
-        (test-assert (eq (rlm-infer-tool--budget nested) budget)
-                     "the nested rlm.infer tool shares the frame budget"))))
+                          '("resource.read" "rlm.infer" "rlm.map"
+                            "search.content"))
+                   "frames keep read-only tools and gain nested rlm calls")
+      (dolist (name '("infer" "map"))
+        (let ((nested (tool-registry-find registry "rlm" name)))
+          (test-assert (eq (rlm-frame-tool--budget nested) budget)
+                       "the nested rlm tools share the frame budget")))))
   nil)
 
 (-> test-rlm-framed-inference () null)
@@ -443,6 +445,56 @@
                  (rlm-inference-error () t)
                  (error () nil))
                "a malformed map element is refused before any frame runs")
+  nil)
+
+(-> test-rlm-map-tool () null)
+(defun test-rlm-map-tool ()
+  "Test rlm.map fans tool tasks out and bounds the fan width."
+  (let* ((configuration (test-configuration))
+         (conversation (conversation-create configuration
+                                            :identifier "rlm-map-tool-test"))
+         (context (make-instance 'tool-context
+                                 :configuration configuration
+                                 :worker nil
+                                 :conversation conversation
+                                 :registry (make-instance 'tool-registry))))
+    (let* ((provider (make-instance 'rlm-map-test-provider))
+           (tool (rlm-map-tool-create :provider provider))
+           (result
+             (tool-execute
+              tool
+              context
+              (json-object
+               "tasks" (json-array
+                        (json-object "task" "alpha")
+                        (json-object "task" "beta"
+                                     "views" (json-array
+                                              (json-object
+                                               "text" "beta view"))))
+               "calls" 6
+               "concurrency" 2))))
+      (test-assert (tool-result-success-p result)
+                   "rlm.map succeeds when its frames complete")
+      (let ((content (tool-result-content result)))
+        (test-assert (and (search "alpha" content)
+                          (search "beta view" content)
+                          (search ":RESULTS" content)
+                          (search ":TRACE" content))
+                     "rlm.map reports ordered values with traces")))
+    (let* ((provider (make-instance 'rlm-map-test-provider))
+           (tool (rlm-map-tool-create :provider provider))
+           (result
+             (tool-execute
+              tool
+              context
+              (json-object
+               "tasks" (coerce
+                        (loop repeat (1+ *rlm-tool-maximum-map-tasks*)
+                              collect (json-object "task" "flood"))
+                        'vector)))))
+      (test-assert (and (not (tool-result-success-p result))
+                        (search "at most" (tool-result-content result)))
+                   "rlm.map refuses fans wider than the task cap")))
   nil)
 
 (-> test-rlm-budget-descent () null)

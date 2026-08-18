@@ -15,20 +15,77 @@
 (defparameter *rlm-tool-maximum-depth-budget* 4
   "The largest recursion depth one rlm.infer tool call may request.")
 
-(defclass rlm-infer-tool (tool)
+(defparameter *rlm-tool-maximum-map-tasks* 16
+  "The most tasks one rlm.map tool call may fan out.")
+
+(defparameter *rlm-map-default-concurrency* 4
+  "The default number of frames one RLM-MAP runs concurrently.")
+
+(defparameter *rlm-map-maximum-concurrency* 8
+  "The largest supported RLM-MAP worker pool.")
+
+(defclass rlm-frame-tool (tool)
   ((provider
     :initarg :provider
     :initform nil
-    :reader rlm-infer-tool--provider
+    :reader rlm-frame-tool--provider
     :type (option model-provider)
     :documentation "The frame provider, or NIL for the active application's.")
    (budget
     :initarg :budget
     :initform nil
-    :reader rlm-infer-tool--budget
+    :reader rlm-frame-tool--budget
     :type (option rlm-budget)
     :documentation "The enclosing frame budget nested calls descend, when inside a frame."))
+  (:documentation "A model-visible operation creating bounded inference frames."))
+
+(defclass rlm-infer-tool (rlm-frame-tool)
+  ()
   (:documentation "Run one bounded inference frame as a model-visible operation."))
+
+(defclass rlm-map-tool (rlm-frame-tool)
+  ()
+  (:documentation "Fan tasks out as concurrent inference frames sharing one budget."))
+
+(-> rlm--views-parameter (string) json-object)
+(defun rlm--views-parameter (description)
+  "Return the tool schema for one read-only view array with DESCRIPTION."
+  (json-object
+   "type" "array"
+   "description" description
+   "items"
+   (json-object
+    "type" "object"
+    "properties"
+    (json-object
+     "label" (tool-string-property "Optional short view name.")
+     "text" (tool-string-property "Literal view content.")
+     "path" (tool-string-property "File whose content becomes the view.")))))
+
+(-> rlm--shared-frame-parameters () list)
+(defun rlm--shared-frame-parameters ()
+  "Return the contract, capability, and allowance tool schema properties."
+  (list
+   "contract"
+   (json-object
+    "type" "object"
+    "description"
+    "Optional JSON Schema the answer object must satisfy. Omit it for a plain text answer.")
+   "capabilities"
+   (json-object
+    "type" "string"
+    "enum" (json-array "none" "read")
+    "description"
+    "Frame capabilities: none for a pure call over the views, read to also allow workspace resource reads, content search, and nested rlm calls.")
+   "calls"
+   (tool-integer-property
+    "Provider call allowance for the frame subtree. Ignored inside a frame, where the enclosing budget is shared.")
+   "tokens"
+   (tool-integer-property
+    "Token allowance for the frame subtree. Ignored inside a frame.")
+   "depth"
+   (tool-integer-property
+    "Recursion depth allowed below the frame. Ignored inside a frame.")))
 
 (-> rlm-infer-tool-create
     (&key (:provider (option model-provider)) (:budget (option rlm-budget)))
@@ -42,66 +99,87 @@
    :provider provider
    :budget budget
    :description
-   "Run one bounded inference frame: a separate model call over only the supplied read-only views, isolated from this conversation. Use it to analyze inputs without loading them here, or to fan a question out over many snippets. The frame sees nothing but its views, so pass everything it needs. Returns the frame's value, its trace identifier, and the remaining budget."
+   "Run one bounded inference frame: a separate model call over only the supplied read-only views, isolated from this conversation. Use it to analyze inputs without loading them here. The frame sees nothing but its views, so pass everything it needs. Returns the frame's value, its trace identifier, and the remaining budget."
    :parameters
    (tool-object-schema
-    (json-object
-     "task"
-     (tool-string-property
-      "The single question or instruction the frame must answer.")
-     "views"
-     (json-object
-      "type" "array"
-      "description"
-      "Read-only context views. Each view carries text or the path of a file to read, plus an optional label."
-      "items"
-      (json-object
-       "type" "object"
-       "properties"
-       (json-object
-        "label" (tool-string-property "Optional short view name.")
-        "text" (tool-string-property "Literal view content.")
-        "path" (tool-string-property "File whose content becomes the view."))))
-     "contract"
-     (json-object
-      "type" "object"
-      "description"
-      "Optional JSON Schema the answer object must satisfy. Omit it for a plain text answer.")
-     "capabilities"
-     (json-object
-      "type" "string"
-      "enum" (json-array "none" "read")
-      "description"
-      "Frame capabilities: none for a pure call over the views, read to also allow workspace resource reads, content search, and nested rlm.infer.")
-     "calls"
-     (tool-integer-property
-      "Provider call allowance for the frame subtree. Ignored inside a frame, where the enclosing budget is shared.")
-     "tokens"
-     (tool-integer-property
-      "Token allowance for the frame subtree. Ignored inside a frame.")
-     "depth"
-     (tool-integer-property
-      "Recursion depth allowed below the frame. Ignored inside a frame."))
+    (apply #'json-object
+           "task"
+           (tool-string-property
+            "The single question or instruction the frame must answer.")
+           "views"
+           (rlm--views-parameter
+            "Read-only context views. Each view carries text or the path of a file to read, plus an optional label.")
+           (rlm--shared-frame-parameters))
     '("task"))))
+
+(-> rlm-map-tool-create
+    (&key (:provider (option model-provider)) (:budget (option rlm-budget)))
+    rlm-map-tool)
+(defun rlm-map-tool-create (&key provider budget)
+  "Create the rlm.map tool, nesting under BUDGET when inside a frame."
+  (make-instance
+   'rlm-map-tool
+   :namespace "rlm"
+   :name "map"
+   :provider provider
+   :budget budget
+   :description
+   "Fan tasks out as concurrent bounded inference frames sharing one budget, isolated from this conversation. Use it to apply one question to many snippets or files at once. Results keep task order; a failed frame reports its error without discarding the others. Returns each frame's value and trace plus the remaining budget."
+   :parameters
+   (tool-object-schema
+    (apply #'json-object
+           "tasks"
+           (json-object
+            "type" "array"
+            "description"
+            (format nil
+                    "The frames to run, at most ~D. Each carries its task and optional views."
+                    *rlm-tool-maximum-map-tasks*)
+            "items"
+            (json-object
+             "type" "object"
+             "properties"
+             (json-object
+              "task" (tool-string-property
+                      "The question or instruction for this frame.")
+              "views" (rlm--views-parameter
+                       "Read-only context views for this frame."))
+             "required" (json-array "task")))
+           "concurrency"
+           (tool-integer-property
+            "How many frames run at once.")
+           (rlm--shared-frame-parameters))
+    '("tasks"))))
 
 (-> rlm--frame-tool-allowlist () list)
 (defun rlm--frame-tool-allowlist ()
   "Return the canonical tool names a read-capability frame may call."
-  (cons "rlm.infer" (copy-list *rlm-frame-read-tool-names*)))
+  (list* "rlm.infer" "rlm.map" (copy-list *rlm-frame-read-tool-names*)))
+
+(-> rlm-register-tools
+    (tool-registry
+     &key (:provider (option model-provider)) (:budget (option rlm-budget)))
+    tool-registry)
+(defun rlm-register-tools (registry &key provider budget)
+  "Register the rlm namespace in REGISTRY, nesting under BUDGET in frames."
+  (tool-registry-register registry
+                          (rlm-infer-tool-create :provider provider
+                                                 :budget budget))
+  (tool-registry-register registry
+                          (rlm-map-tool-create :provider provider
+                                               :budget budget))
+  registry)
 
 (-> rlm--frame-registry (tool-registry model-provider rlm-budget) tool-registry)
 (defun rlm--frame-registry (source provider budget)
-  "Build a frame registry of SOURCE's read-only tools plus nested rlm.infer."
+  "Build a frame registry of SOURCE's read-only tools plus nested rlm calls."
   (let ((registry (make-instance 'tool-registry)))
     (dolist (tool (tool-registry-tools source))
       (when (member (tool-canonical-name tool)
                     *rlm-frame-read-tool-names*
                     :test #'string=)
         (tool-registry-register registry tool)))
-    (tool-registry-register registry
-                            (rlm-infer-tool-create :provider provider
-                                                   :budget budget))
-    registry))
+    (rlm-register-tools registry :provider provider :budget budget)))
 
 (-> rlm--tool-views (t) list)
 (defun rlm--tool-views (views)
@@ -209,10 +287,10 @@
                 :message (format nil "The ~A allowance must be an integer."
                                  name))))))
 
-(-> rlm--tool-budget (rlm-infer-tool hash-table string) rlm-budget)
+(-> rlm--tool-budget (rlm-frame-tool hash-table string) rlm-budget)
 (defun rlm--tool-budget (tool arguments task)
   "Return the frame budget for one tool call, descending inside frames."
-  (let ((parent (rlm-infer-tool--budget tool)))
+  (let ((parent (rlm-frame-tool--budget tool)))
     (if parent
         (rlm-budget-descend parent :task task)
         (rlm-budget-create
@@ -243,7 +321,7 @@
              (capabilities (rlm--tool-capabilities
                             (gethash "capabilities" arguments)))
              (budget (rlm--tool-budget tool arguments task))
-             (provider (or (rlm-infer-tool--provider tool)
+             (provider (or (rlm-frame-tool--provider tool)
                            (rlm--environment))))
         (multiple-value-bind (value trace-identifier)
             (infer task
@@ -261,6 +339,69 @@
                   ':calls-remaining (rlm-budget-remaining-calls budget)
                   ':tokens-remaining (rlm-budget-remaining-tokens budget))
             :pretty-p t))))
+    ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error)
+      (condition)
+      (tool-failure (format nil "~A" condition)))))
+
+(-> rlm--tool-map-tasks (t) list)
+(defun rlm--tool-map-tasks (tasks)
+  "Convert the tool TASKS argument into RLM-MAP task plists."
+  (unless (and (vectorp tasks) (plusp (length tasks)))
+    (error 'rlm-inference-error
+           :message "The map tasks must be a non-empty array of task objects."))
+  (when (> (length tasks) *rlm-tool-maximum-map-tasks*)
+    (error 'rlm-inference-error
+           :message (format nil "One rlm.map call may fan out at most ~D tasks."
+                            *rlm-tool-maximum-map-tasks*)))
+  (loop for element across tasks
+        collect (progn
+                  (unless (json-object-p element)
+                    (error 'rlm-inference-error
+                           :message "Each map task must be one task object."))
+                  (let ((task (json-get element "task")))
+                    (unless (and (stringp task) (non-empty-string-p task))
+                      (error 'rlm-inference-error
+                             :message "Each map task requires non-empty task text."))
+                    (append
+                     (list ':task task)
+                     (let ((views (rlm--tool-views
+                                   (json-get element "views"))))
+                       (when views
+                         (list ':context views))))))))
+
+(defmethod tool-execute
+    ((tool rlm-map-tool) (context tool-context) (arguments hash-table))
+  "Fan tool tasks out as inference frames and return their ordered results."
+  (handler-case
+      (let* ((tasks (rlm--tool-map-tasks (gethash "tasks" arguments)))
+             (contract (let ((schema (gethash "contract" arguments)))
+                         (if schema
+                             (rlm--json-schema->contract schema)
+                             ':text)))
+             (capabilities (rlm--tool-capabilities
+                            (gethash "capabilities" arguments)))
+             (budget (rlm--tool-budget tool arguments "rlm.map"))
+             (provider (or (rlm-frame-tool--provider tool)
+                           (rlm--environment)))
+             (concurrency (rlm--bounded-tool-integer
+                           arguments "concurrency"
+                           *rlm-map-default-concurrency*
+                           1 *rlm-map-maximum-concurrency*))
+             (results
+               (rlm-map tasks
+                        :contract contract
+                        :budget budget
+                        :capabilities capabilities
+                        :provider provider
+                        :configuration (tool-context-configuration context)
+                        :source-registry (tool-context-registry context)
+                        :concurrency concurrency)))
+        (tool-success
+         (task--write-readable-sexp
+          (list ':results results
+                ':calls-remaining (rlm-budget-remaining-calls budget)
+                ':tokens-remaining (rlm-budget-remaining-tokens budget))
+          :pretty-p t)))
     ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error)
       (condition)
       (tool-failure (format nil "~A" condition)))))

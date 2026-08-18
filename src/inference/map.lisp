@@ -2,12 +2,6 @@
 
 ;;;; -- Parallel Recursive Inference --
 
-(defparameter *rlm-map-default-concurrency* 4
-  "The default number of frames one RLM-MAP runs concurrently.")
-
-(defparameter *rlm-map-maximum-concurrency* 8
-  "The largest supported RLM-MAP worker pool.")
-
 (-> rlm-map--normalize-task (t) list)
 (defun rlm-map--normalize-task (element)
   "Return ELEMENT as a validated (:task ... :context ...) plist."
