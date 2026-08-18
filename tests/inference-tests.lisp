@@ -223,6 +223,19 @@
     (let ((provider
             (make-instance
              'rlm-inference-test-provider
+             :results (list (rlm-inference-test-result
+                             "resp-1"
+                             "The findings: [\"first\", \"second\"]" 10)))))
+      (test-assert (equal (infer "List findings."
+                                 :contract '(:type :array
+                                             :items (:type :string))
+                                 :provider provider
+                                 :configuration configuration)
+                          '(:array "first" "second"))
+                   "top-level array contracts parse and validate"))
+    (let ((provider
+            (make-instance
+             'rlm-inference-test-provider
              :results (list (rlm-inference-test-result "resp-1" "no" 10)
                             (rlm-inference-test-result "resp-2" "no" 10)))))
       (test-assert

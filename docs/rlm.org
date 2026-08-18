@@ -67,8 +67,9 @@ exist:
 - =:text=, the default. The frame returns its answer as a string.
 - a schema, for example =(:type :object :properties (("claims"
   (:type :array :items (:type :string)))) :required ("claims"))=. The
-  frame is instructed to answer with exactly one JSON object and the
-  parsed, validated value is returned as portable tagged native data.
+  frame is instructed to answer with exactly one JSON value of any
+  type, object and array included, and the parsed, validated value is
+  returned as portable tagged native data.
 
 A malformed answer is repaired by re-asking within the remaining call
 budget. When the budget is gone the failure signals a condition, so

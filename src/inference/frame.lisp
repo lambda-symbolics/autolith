@@ -113,21 +113,34 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
   (if (eq contract ':text)
       "Reply with the answer alone."
       (format nil
-              "Reply with exactly one JSON object satisfying this JSON Schema, and nothing else:~%~A"
+              "Reply with exactly one JSON value satisfying this JSON Schema, and nothing else:~%~A"
               (json-encode (task-output-schema->json contract)))))
 
-(-> rlm--parse-structured (string) t)
+(-> rlm--parse-structured (string) (values t boolean))
 (defun rlm--parse-structured (text)
-  "Return the JSON value TEXT carries, tolerating fences, or NIL."
+  "Return the JSON value TEXT carries and whether one was found.
+
+Any JSON value is accepted, tolerating surrounding prose or fences
+around one object or array."
   (flet ((decode (candidate)
-           (let ((value (ignore-errors (json-decode candidate))))
-             (and (json-object-p value) value))))
+           (handler-case
+               (values (json-decode candidate) t)
+             (error () (values nil nil)))))
     (let ((trimmed (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
-      (or (decode trimmed)
-          (let ((start (position #\{ trimmed))
-                (end (position #\} trimmed :from-end t)))
-            (when (and start end (< start end))
-              (decode (subseq trimmed start (1+ end)))))))))
+      (multiple-value-bind (value found-p) (decode trimmed)
+        (if found-p
+            (values value t)
+            (let* ((object-start (position #\{ trimmed))
+                   (array-start (position #\[ trimmed))
+                   (start (if (and object-start array-start)
+                              (min object-start array-start)
+                              (or object-start array-start)))
+                   (end (and start
+                             (position (if (eql start array-start) #\] #\})
+                                       trimmed :from-end t))))
+              (if (and start end (< start end))
+                  (decode (subseq trimmed start (1+ end)))
+                  (values nil nil))))))))
 
 (-> rlm--contract-value (t (option string)) (values t boolean (option string)))
 (defun rlm--contract-value (contract text)
@@ -140,14 +153,14 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
       ((eq contract ':text)
        (values trimmed t nil))
       (t
-       (let ((value (rlm--parse-structured trimmed)))
+       (multiple-value-bind (value found-p) (rlm--parse-structured trimmed)
          (cond
-           ((null value)
+           ((not found-p)
             (values nil nil
-                    "The response did not contain one parseable JSON object."))
+                    "The response did not contain one parseable JSON value."))
            ((not (task-output-schema-valid-p value contract))
             (values nil nil
-                    "The JSON object does not satisfy the required schema."))
+                    "The JSON value does not satisfy the required schema."))
            (t
             (values (task-json->sexp value) t nil))))))))
 
