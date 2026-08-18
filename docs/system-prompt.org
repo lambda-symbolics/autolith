@@ -264,12 +264,9 @@ After at most 2 searches, read the most promising results.
 | =search.glob=    | Extension or tree pattern.                                                                              |
 
 =search.content= accepts either query or patterns, never both.
-Put path constraints in the same query string, for example '*.lisp
-symbol', 'src/ symbol', or '!tests/ symbol'.
-Do not pass the constraints parameter with query; that parameter
-exists only for patterns.
-Use patterns for several literal alternatives, and only then put path
-filters in constraints, for example '*.lisp src/ !tests/'.
+Path filters go in constraints, for example '*.lisp src/ !tests/',
+or inline in query, for example '*.lisp symbol'.
+Use patterns for several literal alternatives.
 
 ** Files
 

@@ -334,12 +334,12 @@
         (list
          'search-content-tool
          "search" "content"
-         "Search indexed workspace contents. Provide exactly one query or patterns array. Plain query matching is the default; put file or path constraints inline, or use separate constraints with literal patterns."
+           "Search indexed workspace contents. Provide exactly one of query or patterns. Path filters go in constraints, for example '*.lisp src/ !tests/', or inline in query."
          (let ((schema
                  (tool-object-schema
                   (json-object
                    "query" (tool-string-property
-                            "Text plus optional inline file constraints to find.")
+                              "Search text. Optional path filters may be included inline, for example '*.lisp symbol'.")
                    "patterns" (json-object
                                "type" "array"
                                "description" "Non-empty literal alternatives searched in one pass."
@@ -351,7 +351,7 @@
                            "enum" #("plain" "regex" "fuzzy")
                            "description" "Single-query matching mode; default plain.")
                    "constraints" (tool-string-property
-                                  "Optional space-separated file constraints used only with patterns, such as '*.lisp src/ !tests/'.")
+                                    "Optional space-separated path filters such as '*.lisp src/ !tests/'. Valid with query or patterns.")
                    "file-offset" (tool-integer-property
                                   "Pagination cursor from next-file-offset; default 0.")
                    "max-results" (tool-integer-property

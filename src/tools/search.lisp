@@ -132,6 +132,14 @@
                                name)
               :tool-name (tool-canonical-name tool))))))
 
+(-> search-tool--query-with-constraints (string string) string)
+(defun search-tool--query-with-constraints (query constraints)
+  "Return QUERY with non-empty CONSTRAINTS prepended as fff path filters."
+  (let ((filters (string-trim '(#\Space #\Tab #\Newline #\Return) constraints)))
+    (if (string= filters "")
+        query
+        (format nil "~A ~A" filters query))))
+
 (-> search-tool--bounded-integer
     (json-object string
      &key (:fallback integer) (:minimum integer) (:maximum integer))
