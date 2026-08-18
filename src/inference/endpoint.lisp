@@ -312,21 +312,40 @@ leaves a machine-readable invocation tree instead of orphaned frames."
       (unless completed-p
         (ignore-errors (sb-bsd-sockets:socket-close listener))))))
 
-(-> rlm-endpoint-stop (rlm-endpoint) null)
-(defun rlm-endpoint-stop (endpoint)
-  "Stop ENDPOINT's listener and wait for its accept loop to end."
-  (with-lock-held ((rlm-endpoint--lock endpoint))
-    (setf (rlm-endpoint--stopping-p endpoint) t))
-  ;; A throwaway connection wakes the accept loop so it observes the stop.
+(-> rlm-endpoint--wake (rlm-endpoint) null)
+(defun rlm-endpoint--wake (endpoint)
+  "Nudge ENDPOINT's blocking accept loop with a throwaway connection."
   (handler-case
       (multiple-value-bind (socket stream)
           (localgroup-connect (rlm-endpoint-port endpoint))
         (declare (ignore socket))
         (close stream))
     (error () nil))
+  nil)
+
+(-> rlm-endpoint-stop (rlm-endpoint) null)
+(defun rlm-endpoint-stop (endpoint)
+  "Stop ENDPOINT's listener and wait for its accept loop to end.
+
+The wake connection can miss its connect deadline on a heavily loaded
+host, so it retries with a bounded join each time; a loop that still
+never wakes is abandoned rather than deadlocking the caller, holding
+nothing but a dead listener until process exit."
+  (with-lock-held ((rlm-endpoint--lock endpoint))
+    (setf (rlm-endpoint--stopping-p endpoint) t))
   (let ((thread (rlm-endpoint--accept-thread endpoint)))
-    (when (and thread (thread-alive-p thread))
-      (ignore-errors (join-thread thread))))
+    (when thread
+      (loop repeat 3
+            while (thread-alive-p thread)
+            do (rlm-endpoint--wake endpoint)
+               (handler-case
+                   (sb-ext:with-timeout 10
+                     (join-thread thread))
+                 (error () nil)))
+      (when (thread-alive-p thread)
+        (format *error-output*
+                "~&The inference endpoint accept loop on port ~D was abandoned.~%"
+                (rlm-endpoint-port endpoint)))))
   (ignore-errors
     (sb-bsd-sockets:socket-close (rlm-endpoint--listener endpoint)))
   ;; Handlers finish once their proxied inference returns; the timeout
