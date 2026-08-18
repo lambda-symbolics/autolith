@@ -122,9 +122,9 @@ content-address invariant."
            (content (getf designator ':content))
            (path (getf designator ':path)))
        (cond
-         ((stringp content)
+         ((and (stringp content) (not path))
           (rlm-context-intern configuration content :label label))
-         ((pathnamep path)
+         ((and (pathnamep path) (not content))
           (rlm-context-intern-pathname configuration path :label label))
          (t
           (error 'rlm-view-error
