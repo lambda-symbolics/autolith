@@ -209,24 +209,30 @@
 (-> rlm--frame-tool-allowlist () list)
 (defun rlm--frame-tool-allowlist ()
   "Return the canonical tool names a read-capability frame may call."
-  (list* "rlm.infer" "rlm.map" "rlm.complete"
-         (copy-list *rlm-frame-read-tool-names*)))
+  (list* "rlm.infer" "rlm.map" (copy-list *rlm-frame-read-tool-names*)))
 
 (-> rlm-register-tools
     (tool-registry
-     &key (:provider (option model-provider)) (:budget (option rlm-budget)))
+     &key (:provider (option model-provider))
+          (:budget (option rlm-budget))
+          (:complete-p boolean))
     tool-registry)
-(defun rlm-register-tools (registry &key provider budget)
-  "Register the rlm namespace in REGISTRY, nesting under BUDGET in frames."
+(defun rlm-register-tools (registry &key provider budget (complete-p t))
+  "Register the rlm namespace in REGISTRY, nesting under BUDGET in frames.
+
+COMPLETE-P is refused inside frames: rlm.complete starts an
+environment evaluating arbitrary Lisp with user privileges, so only
+the primary agent may launch one."
   (tool-registry-register registry
                           (rlm-infer-tool-create :provider provider
                                                  :budget budget))
   (tool-registry-register registry
                           (rlm-map-tool-create :provider provider
                                                :budget budget))
-  (tool-registry-register registry
-                          (rlm-complete-tool-create :provider provider
-                                                    :budget budget))
+  (when complete-p
+    (tool-registry-register registry
+                            (rlm-complete-tool-create :provider provider
+                                                      :budget budget)))
   registry)
 
 (-> rlm--frame-registry (tool-registry model-provider rlm-budget) tool-registry)
@@ -238,7 +244,8 @@
                     *rlm-frame-read-tool-names*
                     :test #'string=)
         (tool-registry-register registry tool)))
-    (rlm-register-tools registry :provider provider :budget budget)))
+    (rlm-register-tools registry :provider provider :budget budget
+                                 :complete-p nil)))
 
 (-> rlm--tool-views (t) list)
 (defun rlm--tool-views (views)

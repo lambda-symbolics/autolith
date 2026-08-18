@@ -246,10 +246,10 @@
                                 (tool-registry-tools registry))
                         #'string<)))
       (test-assert (equal names
-                          '("resource.read" "rlm.complete" "rlm.infer"
-                            "rlm.map" "search.content"))
-                   "frames keep read-only tools and gain nested rlm calls")
-      (dolist (name '("infer" "map" "complete"))
+                          '("resource.read" "rlm.infer" "rlm.map"
+                            "search.content"))
+                   "frames gain nested rlm calls but never rlm.complete")
+      (dolist (name '("infer" "map"))
         (let ((nested (tool-registry-find registry "rlm" name)))
           (test-assert (eq (rlm-frame-tool--budget nested) budget)
                        "the nested rlm tools share the frame budget")))))
