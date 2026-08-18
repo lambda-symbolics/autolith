@@ -55,6 +55,14 @@
 (-> test-search-tools () null)
 (defun test-search-tools ()
   "Exercise the clifff adapter and all three indexed workspace operations."
+    (test-assert
+     (and (string= (search-tool--query-with-constraints "symbol" "")
+                   "symbol")
+            (string= (search-tool--query-with-constraints "symbol" "   ")
+                     "symbol")
+          (string= (search-tool--query-with-constraints "symbol" "*.lisp src/")
+                   "*.lisp src/ symbol"))
+     "query constraints prepend as fff path filters")
   (let* ((default-configuration
            (configuration-create
             :source-root (asdf:system-source-directory :autolith)
@@ -182,27 +190,45 @@
                                           (tool-result-content result))
                                   (not (search "docs/search-guide.org"
                                                (tool-result-content result))))
-                             "search.content honors separate pattern constraints"))
-              (dolist (case
-                        (list
-                         (list "missing selector" nil
-                               "exactly one of query or patterns")
-                         (list "both selectors"
-                               (list "query" "AUTOLITH_FFF_PRIMARY"
-                                     "patterns" #("AUTOLITH_FFF_SECONDARY"))
-                               "exactly one of query or patterns")
-                         (list "empty patterns" (list "patterns" #())
-                               "non-empty literal strings")
-                         (list "invalid patterns" (list "patterns" #(42))
-                               "non-empty literal strings")
-                         (list "mode with patterns"
-                               (list "patterns" #("AUTOLITH_FFF_PRIMARY")
-                                     "mode" "plain")
-                               "mode applies only")
-                         (list "constraints with query"
-                               (list "query" "AUTOLITH_FFF_PRIMARY"
-                                     "constraints" "*.lisp")
-                               "constraints apply only")))
+                               "search.content honors separate pattern constraints"))
+                (let ((kept
+                        (search-tests--call registry context
+                                            "search" "content"
+                                            "query" "AUTOLITH_FFF_PRIMARY"
+                                            "constraints" "*.lisp"))
+                      (dropped
+                        (search-tests--call registry context
+                                            "search" "content"
+                                            "query" "AUTOLITH_FFF_SECONDARY"
+                                            "constraints" "*.lisp")))
+                  (test-assert (and (tool-result-success-p kept)
+                                    (search "src/model-selection.lisp"
+                                            (tool-result-content kept))
+                                    (not (search "docs/search-guide.org"
+                                                 (tool-result-content kept))))
+                               "search.content keeps query matches under constraints")
+                  (test-assert (and (tool-result-success-p dropped)
+                                    (not (search "src/model-selection.lisp"
+                                                 (tool-result-content dropped)))
+                                    (not (search "docs/search-guide.org"
+                                                 (tool-result-content dropped))))
+                               "search.content applies query constraints as path filters"))
+                (dolist (case
+                          (list
+                           (list "missing selector" nil
+                                 "exactly one of query or patterns")
+                           (list "both selectors"
+                                 (list "query" "AUTOLITH_FFF_PRIMARY"
+                                       "patterns" #("AUTOLITH_FFF_SECONDARY"))
+                                 "exactly one of query or patterns")
+                           (list "empty patterns" (list "patterns" #())
+                                 "non-empty literal strings")
+                           (list "invalid patterns" (list "patterns" #(42))
+                                 "non-empty literal strings")
+                           (list "mode with patterns"
+                                 (list "patterns" #("AUTOLITH_FFF_PRIMARY")
+                                       "mode" "plain")
+                                 "mode applies only")))
                 (destructuring-bind (label arguments expected) case
                   (let ((result
                           (apply #'search-tests--call

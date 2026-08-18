@@ -135,52 +135,52 @@
       (error 'tool-error
              :message "search.content requires exactly one of query or patterns."
              :tool-name "search.content"))
-    (if patterns-p
-        (let* ((patterns (and (vectorp patterns-value)
-                              (coerce patterns-value 'list)))
-               (constraints
-                 (search-tool--string-argument tool arguments "constraints")))
-          (when (nth-value 1 (gethash "mode" arguments))
-            (error 'tool-error
-                   :message "search.content mode applies only to a single query."
-                   :tool-name "search.content"))
-          (unless (and patterns
-                       (every (lambda (pattern)
-                                (and (non-empty-string-p pattern)
-                                     (not (find #\Newline pattern))))
-                              patterns))
-            (error 'tool-error
-                   :message "search.content patterns must be non-empty literal strings without newlines."
-                   :tool-name "search.content"))
-          (tool-success
-           (search-worker-request
-            (search-tool-engine tool)
-            (tool-context-configuration context)
-            :operation ':multi-content
-            :arguments
-            (append (list patterns :constraints constraints)
-                    (search-tool--common-content-options arguments)))))
-        (let* ((query (search-tool--string-argument tool arguments "query"
-                                                    :required t))
-               (mode-name (search-tool--string-argument tool arguments "mode"
-                                                        :fallback "plain"))
-               (mode (cond
-                       ((string= mode-name "plain") ':plain)
-                       ((string= mode-name "regex") ':regex)
-                       ((string= mode-name "fuzzy") ':fuzzy)
-                       (t
-                        (error 'tool-error
-                               :message
-                               "search.content mode must be plain, regex, or fuzzy."
-                               :tool-name "search.content")))))
-          (when (nth-value 1 (gethash "constraints" arguments))
-            (error 'tool-error
-                   :message "search.content constraints apply only with patterns. Put constraints inline in a single query."
-                   :tool-name "search.content"))
-          (tool-success
-           (search-worker-request
-            (search-tool-engine tool)
-            (tool-context-configuration context)
-            :operation ':content
-            :arguments (append (list query :mode mode)
-                               (search-tool--common-content-options arguments))))))))
+      (if patterns-p
+          (let* ((patterns (and (vectorp patterns-value)
+                                (coerce patterns-value 'list)))
+                 (constraints
+                   (search-tool--string-argument tool arguments "constraints")))
+            (when (nth-value 1 (gethash "mode" arguments))
+              (error 'tool-error
+                     :message "search.content mode applies only to a single query."
+                     :tool-name "search.content"))
+            (unless (and patterns
+                         (every (lambda (pattern)
+                                  (and (non-empty-string-p pattern)
+                                       (not (find #\Newline pattern))))
+                                patterns))
+              (error 'tool-error
+                     :message "search.content patterns must be non-empty literal strings without newlines."
+                     :tool-name "search.content"))
+            (tool-success
+             (search-worker-request
+              (search-tool-engine tool)
+              (tool-context-configuration context)
+              :operation ':multi-content
+              :arguments
+              (append (list patterns :constraints constraints)
+                      (search-tool--common-content-options arguments)))))
+          (let* ((query (search-tool--string-argument tool arguments "query"
+                                                      :required t))
+                 (constraints
+                   (search-tool--string-argument tool arguments "constraints"))
+                 (mode-name (search-tool--string-argument tool arguments "mode"
+                                                          :fallback "plain"))
+                 (mode (cond
+                         ((string= mode-name "plain") ':plain)
+                         ((string= mode-name "regex") ':regex)
+                         ((string= mode-name "fuzzy") ':fuzzy)
+                         (t
+                          (error 'tool-error
+                                 :message
+                                 "search.content mode must be plain, regex, or fuzzy."
+                                 :tool-name "search.content")))))
+            (tool-success
+             (search-worker-request
+              (search-tool-engine tool)
+              (tool-context-configuration context)
+              :operation ':content
+              :arguments (append (list (search-tool--query-with-constraints
+                                        query constraints)
+                                       :mode mode)
+                                 (search-tool--common-content-options arguments))))))))
