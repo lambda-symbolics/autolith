@@ -175,14 +175,6 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
    (list :usage (agent--portable-value (provider-result-usage result))))
   nil)
 
-(-> rlm--budget-output-limit (rlm-budget) (integer 16))
-(defun rlm--budget-output-limit (budget)
-  "Return the provider output ceiling for BUDGET's remaining tokens.
-
-The floor keeps tiny remainders acceptable to provider request
-validation; the next reservation still refuses a drained pool."
-  (max 16 (rlm-budget-remaining-tokens budget)))
-
 (-> rlm--repair-request ((option string)) string)
 (defun rlm--repair-request (problem)
   "Compose the repair message for one contract violation PROBLEM."
@@ -197,45 +189,68 @@ validation; the next reservation still refuses a drained pool."
   (conversation-append-user-message conversation request)
   (loop
     (rlm-budget-acquire-call budget :task task)
-    (let ((result
-            (let ((*provider-maximum-output-tokens*
-                    (rlm--budget-output-limit budget)))
-              (provider-stream-turn provider conversation
-                                    :tool-namespaces #()
-                                    :event-callback
-                                    (lambda (event)
-                                      (declare (ignore event))
-                                      nil)))))
-      (rlm--record-response conversation result)
-      (let ((total (conversation--usage-total
-                    (provider-result-usage result))))
-        (when total
-          (rlm-budget-charge-tokens budget total)))
-      (multiple-value-bind (value valid-p problem)
-          (rlm--contract-value contract
-                               (provider-result-assistant-text result))
-        (when valid-p
-          (return (values value (conversation-identifier conversation))))
-        (conversation-append-user-message
-         conversation
-         (rlm--repair-request problem))))))
+    (let ((tranche (rlm-budget-reserve-output budget))
+          (settled-p nil))
+      (multiple-value-bind (value done-p)
+          (unwind-protect
+               (let ((result
+                       (let ((*provider-maximum-output-tokens* tranche))
+                         (provider-stream-turn provider conversation
+                                               :tool-namespaces #()
+                                               :event-callback
+                                               (lambda (event)
+                                                 (declare (ignore event))
+                                                 nil)))))
+                 (rlm--record-response conversation result)
+                 (rlm-budget-settle-output budget tranche
+                                           (conversation--usage-total
+                                            (provider-result-usage result)))
+                 (setf settled-p t)
+                 (multiple-value-bind (value valid-p problem)
+                     (rlm--contract-value contract
+                                          (provider-result-assistant-text
+                                           result))
+                   (if valid-p
+                       (values value t)
+                       (progn
+                         (conversation-append-user-message
+                          conversation
+                          (rlm--repair-request problem))
+                         (values nil nil)))))
+            (unless settled-p
+              (rlm-budget-settle-output budget tranche nil)))
+        (when done-p
+          (return (values value
+                          (conversation-identifier conversation))))))))
 
-(-> rlm--frame-budget-callback (rlm-budget string) function)
+(-> rlm--frame-budget-callback (rlm-budget string) (values function function))
 (defun rlm--frame-budget-callback (budget task)
   "Return an observer status callback charging BUDGET per provider request.
 
-Each request atomically reserves one call before it starts, so an
-exhausted subtree stops the frame's agent loop mid-turn instead of
-letting concurrent frames overspend the pool."
-  (lambda (status details)
-    (case status
-      (:provider-request-started
-       (rlm-budget-acquire-call budget :task task))
-      (:provider-request-completed
-       (let ((total (conversation--usage-total (getf details ':usage))))
-         (when total
-           (rlm-budget-charge-tokens budget total)))))
-    nil))
+Each request atomically reserves one call and an output tranche
+before it starts, so an exhausted subtree stops the frame's agent
+loop mid-turn and concurrent frames can never overspend the pool.
+The reserved tranche is installed as the request's provider output
+ceiling through the caller's dynamic binding. The second value
+flushes an unsettled tranche after an aborted turn."
+  (let ((tranche nil))
+    (values
+     (lambda (status details)
+       (case status
+         (:provider-request-started
+          (rlm-budget-acquire-call budget :task task)
+          (setf tranche (rlm-budget-reserve-output budget)
+                *provider-maximum-output-tokens* tranche))
+         (:provider-request-completed
+          (when tranche
+            (rlm-budget-settle-output budget (shiftf tranche nil)
+                                      (conversation--usage-total
+                                       (getf details ':usage))))))
+       nil)
+     (lambda ()
+       (when tranche
+         (rlm-budget-settle-output budget (shiftf tranche nil) nil))
+       nil))))
 
 (-> rlm--run-framed-inference
     (string string t rlm-budget model-provider configuration conversation
@@ -245,37 +260,39 @@ letting concurrent frames overspend the pool."
     (task request contract budget provider configuration conversation
      source-registry)
   "Run a read-capability frame as restricted agent turns over CONVERSATION."
-  (let ((agent
-          (make-instance 'agent
-                         :configuration configuration
-                         :provider provider
-                         :conversation conversation
-                         :tool-registry (rlm--frame-registry source-registry
-                                                             provider
-                                                             budget)
-                         :worker nil))
-        (observer
-          (make-instance 'callback-agent-observer
-                         :status-callback (rlm--frame-budget-callback budget
-                                                                      task)))
-        (allowlist (rlm--frame-tool-allowlist)))
-    (loop
-      (let ((result
-              (let ((*agent-restricted-maximum-tool-rounds*
-                      (min *rlm-frame-maximum-tool-rounds*
-                           (rlm-budget-remaining-calls budget)))
-                    (*provider-maximum-output-tokens*
-                      (rlm--budget-output-limit budget)))
-                (agent-run-user-turn agent request
-                                     :observer observer
-                                     :tool-allowlist allowlist
-                                     :tool-restriction-p t))))
-        (multiple-value-bind (value valid-p problem)
-            (rlm--contract-value contract
-                                 (provider-result-assistant-text result))
-          (when valid-p
-            (return (values value (conversation-identifier conversation))))
-          (setf request (rlm--repair-request problem)))))))
+  (multiple-value-bind (status-callback flush-tranche)
+      (rlm--frame-budget-callback budget task)
+    (let ((agent
+            (make-instance 'agent
+                           :configuration configuration
+                           :provider provider
+                           :conversation conversation
+                           :tool-registry (rlm--frame-registry source-registry
+                                                               provider
+                                                               budget)
+                           :worker nil))
+          (observer
+            (make-instance 'callback-agent-observer
+                           :status-callback status-callback))
+          (allowlist (rlm--frame-tool-allowlist)))
+      (loop
+        (let ((result
+                (let ((*agent-restricted-maximum-tool-rounds*
+                        (min *rlm-frame-maximum-tool-rounds*
+                             (rlm-budget-remaining-calls budget)))
+                      (*provider-maximum-output-tokens* nil))
+                  (unwind-protect
+                       (agent-run-user-turn agent request
+                                            :observer observer
+                                            :tool-allowlist allowlist
+                                            :tool-restriction-p t)
+                    (funcall flush-tranche)))))
+          (multiple-value-bind (value valid-p problem)
+              (rlm--contract-value contract
+                                   (provider-result-assistant-text result))
+            (when valid-p
+              (return (values value (conversation-identifier conversation))))
+            (setf request (rlm--repair-request problem))))))))
 
 (-> infer
     (string &key (:context list)
