@@ -713,9 +713,12 @@
   (let* ((configuration (test-configuration))
          (provider (make-instance 'rlm-map-test-provider))
          (budget (rlm-budget-create :calls 6 :tokens 1000 :depth 1))
+         (records nil)
          (endpoint (rlm-endpoint-start :provider provider
                                        :configuration configuration
-                                       :budget budget)))
+                                       :budget budget
+                                       :ledger (lambda (record)
+                                                 (push record records)))))
     (unwind-protect
          (progn
            (let ((response
@@ -771,7 +774,20 @@
                   :arguments (list :value 42)))
            (multiple-value-bind (value final-p) (rlm-endpoint-final endpoint)
              (test-assert (and final-p (eql value 42))
-                          "finish records the environment's final value")))
+                          "finish records the environment's final value"))
+           (let ((operations (mapcar (lambda (record)
+                                       (getf record ':operation))
+                                     (reverse records))))
+             (test-assert (equal operations '(:infer :map :finish))
+                          "the ledger records every served operation in order"))
+           (let ((infer-record (find ':infer records
+                                     :key (lambda (record)
+                                            (getf record ':operation)))))
+             (test-assert (and (non-empty-string-p
+                                (getf infer-record ':child-trace))
+                               (integerp
+                                (getf infer-record ':calls-remaining)))
+                          "ledger records link child traces and budget state")))
       (rlm-endpoint-stop endpoint)))
   nil)
 
@@ -920,7 +936,10 @@
         (test-assert (and trace (not (search "lorem" trace)))
                      "corpus content never entered the root conversation")
         (test-assert (search "context-slice" trace)
-                     "the root model authored the decomposition"))))
+                     "the root model authored the decomposition")
+        (test-assert (and (search ":RLM-CALL" trace)
+                          (search ":CHILD-TRACE" trace))
+                     "the root trace carries the run's invocation ledger"))))
   nil)
 
 (-> test-rlm-complete-tool () null)

@@ -116,6 +116,13 @@ so model-authored loops can never outspend the root allocation. The
 run returns the recorded Lisp value plus the root trace identifier.
 The model reaches the same operation through the =rlm.complete= tool.
 
+Every proxied operation also appends one replay-safe =:rlm-call=
+metadata record to the root trace, carrying the operation, the child
+trace identifiers, and the remaining budget. The root trace therefore
+holds the run's machine-readable invocation tree even when
+environment code discards the trace identifiers it receives, which is
+what trace-driven policy distillation reads.
+
 Every frame and root request also carries the subtree's remaining
 token allowance as its provider output ceiling, so one response
 cannot dramatically overrun the shared budget.

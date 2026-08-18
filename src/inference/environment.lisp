@@ -192,9 +192,18 @@ identifier."
                         :calls *rlm-complete-call-budget*
                         :tokens *rlm-complete-token-budget*
                         :depth *rlm-complete-depth-budget*)))
-           (endpoint (rlm-endpoint-start :provider provider
-                                         :configuration configuration
-                                         :budget budget))
+           (conversation (rlm--frame-conversation configuration))
+           (endpoint (rlm-endpoint-start
+                      :provider provider
+                      :configuration configuration
+                      :budget budget
+                      ;; Metadata records are replay-safe, so the root trace
+                      ;; itself carries the run's invocation tree.
+                      :ledger
+                      (lambda (record)
+                        (conversation-append-provider-metadata
+                         conversation
+                         (list :rlm-call record)))))
            (worker nil))
       (unwind-protect
            (progn
@@ -212,8 +221,7 @@ identifier."
                           :message
                           (format nil "The environment prelude failed: ~A"
                                   (getf (rest response) ':message))))))
-             (let* ((conversation (rlm--frame-conversation configuration))
-                    (registry (make-instance 'tool-registry))
+             (let* ((registry (make-instance 'tool-registry))
                     (agent
                       (make-instance 'agent
                                      :configuration configuration
