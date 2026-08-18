@@ -12,7 +12,14 @@
   "The default remaining recursion depth below a root inference frame.")
 
 (defparameter *rlm-output-reserve-tokens* 16000
-  "The output token tranche reserved from the pool per provider request.")
+  "The largest output token tranche reserved per provider request.")
+
+(defparameter *rlm-output-reserve-share* 4
+  "The fraction of the remaining pool one reservation may take.
+
+Reserving only a share leaves headroom for concurrent siblings, so a
+small shared pool admits parallel fan-out instead of letting the
+first request drain it and starve the rest.")
 
 (define-condition rlm-budget-exhausted
     (error)
@@ -95,40 +102,38 @@
     (with-lock-held ((rlm-budget-pool--lock pool))
       (rlm-budget-pool--tokens-remaining pool))))
 
-(-> rlm-budget-acquire-call
+(-> rlm-budget-acquire-request
     (rlm-budget &key (:task (option string)))
-    rlm-budget)
-(defun rlm-budget-acquire-call (budget &key task)
-  "Atomically reserve one provider call from BUDGET before issuing it.
+    (integer 1))
+(defun rlm-budget-acquire-request (budget &key task)
+  "Atomically reserve one provider call and its output tranche from BUDGET.
 
-Signal RLM-BUDGET-EXHAUSTED when no calls remain, or when earlier
-responses already drained the token allowance. The reservation and the
-check happen under one lock, so concurrent frames can never spend more
-calls than the subtree allocation."
+Return the tranche, which is also the request's advertised provider
+output ceiling. The tranche takes at most a configured share of the
+remaining pool, leaving headroom for concurrent siblings, and never
+more than the pool holds, so combined reservations cannot
+oversubscribe the subtree allocation; only a nearly dry pool can
+yield a ceiling below common provider minimums, at which point the
+budget is ending anyway. The exhaustion checks, the call decrement,
+and the tranche reservation happen under one lock. Signal
+RLM-BUDGET-EXHAUSTED when no calls remain, or when earlier responses
+already drained the token allowance. Settle the tranche with
+RLM-BUDGET-SETTLE-OUTPUT once usage is known."
   (let ((pool (rlm-budget--pool budget)))
     (with-lock-held ((rlm-budget-pool--lock pool))
       (when (zerop (rlm-budget-pool--calls-remaining pool))
         (error 'rlm-budget-exhausted :dimension ':calls :task task))
       (when (zerop (rlm-budget-pool--tokens-remaining pool))
         (error 'rlm-budget-exhausted :dimension ':tokens :task task))
-      (decf (rlm-budget-pool--calls-remaining pool))))
-  budget)
-
-(-> rlm-budget-reserve-output (rlm-budget) (integer 16))
-(defun rlm-budget-reserve-output (budget)
-  "Atomically reserve one request's output tranche from BUDGET.
-
-The tranche is the request's advertised provider output ceiling.
-Concurrent frames each hold their own tranche while their requests
-run, so combined output can never dramatically overrun the pool; a
-small floor keeps tiny remainders acceptable to provider validation.
-Settle the tranche with RLM-BUDGET-SETTLE-OUTPUT once usage is known."
-  (let ((pool (rlm-budget--pool budget)))
-    (with-lock-held ((rlm-budget-pool--lock pool))
-      (let ((tranche (max 16 (min *rlm-output-reserve-tokens*
-                                  (rlm-budget-pool--tokens-remaining pool)))))
+      (decf (rlm-budget-pool--calls-remaining pool))
+      (let* ((remaining (rlm-budget-pool--tokens-remaining pool))
+             (tranche
+               (min remaining
+                    (max 16 (min *rlm-output-reserve-tokens*
+                                 (ceiling remaining
+                                          *rlm-output-reserve-share*))))))
         (setf (rlm-budget-pool--tokens-remaining pool)
-              (max 0 (- (rlm-budget-pool--tokens-remaining pool) tranche)))
+              (- remaining tranche))
         tranche))))
 
 (-> rlm-budget-settle-output

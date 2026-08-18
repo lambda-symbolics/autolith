@@ -213,6 +213,7 @@
     (test-task-abort-control-condition)
     (test-rlm-budget-accounting)
     (test-rlm-budget-descent)
+    (test-rlm-budget-contention)
     (test-rlm-context-views)
     (test-rlm-context-objects)
     (test-rlm-infer)
