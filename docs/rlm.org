@@ -204,6 +204,53 @@ with tool rounds bounded per round. Inside a frame the nested tools
 ignore allowance arguments and descend the enclosing budget, so
 fan-out can never outspend the root allocation.
 
+* Design decisions
+
+Settled trade-offs, recorded so review rounds do not relitigate them.
+
+** The environment is trusted, not confined
+
+=env.eval= runs model-authored Lisp in a heap-isolated worker with the
+user's privileges, exactly like =lisp.*= always has; Autolith's stance
+is that sandboxing is no substitute for oversight. Opaque context
+handles with host-proxied =context-slice= and =context-search= were
+considered and rejected: they add a socket round trip per operation
+while confining nothing, because arbitrary worker Lisp can still open
+any file the user can. Confinement is why frames may not launch
+environments, not a property handles would provide. The store is
+protected differently: objects are read-only on disk and re-hashed on
+every lookup, so mutation is detected and repaired rather than
+prevented by pretense. Revisit only alongside real OS sandboxing of
+the worker.
+
+** Finish and shutdown do not block
+
+Admission shares one lock with the terminal state, so nothing starts
+after a finish commits, but a finish never waits for admitted
+operations: they only overlap when environment code spawned worker
+threads, they stay budget-bounded, and a blocking finish could
+deadlock the run. Endpoint shutdown likewise joins handlers briefly
+and then abandons stragglers; an abandoned handler is a budget-bounded
+provider call whose response write fails harmlessly, which is cheaper
+than any safe cancellation.
+
+** Context objects live in the heap
+
+Interning and the environment's context functions materialize whole
+objects in memory. This is a documented capacity bound, not a design
+error: the RLM property only requires the content to stay outside
+model contexts, and content addressing already provides stable
+identity. Streaming, mmap, or indexes arrive when a workload actually
+exceeds the heap, not before.
+
+** Token accounting is exact for output, soft for input
+
+Reservations bound what concurrent requests may produce, but exact
+input usage is only known after a response, so input tokens settle
+post hoc and gate the next reservation. Providers that report no
+usage consume reservations but settle as free; deterministic test
+providers depend on this, and real providers report usage.
+
 * Implementation
 
 - Budgets: =src/inference/budget.lisp=.
