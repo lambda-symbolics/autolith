@@ -48,6 +48,13 @@
                  "a drained token pool refuses the next request")
     (test-assert (= (rlm-budget-remaining-calls budget) 3)
                  "a refused request reserves no call"))
+  (let* ((budget (rlm-budget-create :calls 4 :tokens 100 :depth 1))
+         (first-tranche (rlm-budget-acquire-request budget))
+         (second-tranche (rlm-budget-acquire-request budget)))
+    (rlm-budget-settle-output budget first-tranche 100)
+    (rlm-budget-settle-output budget second-tranche nil)
+    (test-assert (zerop (rlm-budget-remaining-tokens budget))
+                 "a later refund does not erase an earlier token overdraft"))
   nil)
 
 (-> test-rlm-budget-contention () null)

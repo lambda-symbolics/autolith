@@ -55,8 +55,11 @@ first request drain it and starve the rest.")
    (tokens-remaining
     :initarg :tokens-remaining
     :accessor rlm-budget-pool--tokens-remaining
-    :type (integer 0)
-    :documentation "The combined tokens the subtree may still spend."))
+    :type integer
+    :documentation "The combined tokens the subtree may still spend.
+
+The internal balance may carry debt below zero while overdrafts and
+outstanding reservations settle; readers clamp it to zero."))
   (:documentation
    "The call and token counters shared by every budget in one subtree."))
 
@@ -100,7 +103,7 @@ first request drain it and starve the rest.")
   "Return the combined tokens BUDGET's subtree may still spend."
   (let ((pool (rlm-budget--pool budget)))
     (with-lock-held ((rlm-budget-pool--lock pool))
-      (rlm-budget-pool--tokens-remaining pool))))
+      (max 0 (rlm-budget-pool--tokens-remaining pool)))))
 
 (-> rlm-budget-acquire-request
     (rlm-budget &key (:task (option string)))
@@ -123,7 +126,7 @@ RLM-BUDGET-SETTLE-OUTPUT once usage is known."
     (with-lock-held ((rlm-budget-pool--lock pool))
       (when (zerop (rlm-budget-pool--calls-remaining pool))
         (error 'rlm-budget-exhausted :dimension ':calls :task task))
-      (when (zerop (rlm-budget-pool--tokens-remaining pool))
+      (unless (plusp (rlm-budget-pool--tokens-remaining pool))
         (error 'rlm-budget-exhausted :dimension ':tokens :task task))
       (decf (rlm-budget-pool--calls-remaining pool))
       (let* ((remaining (rlm-budget-pool--tokens-remaining pool))
@@ -145,12 +148,13 @@ RLM-BUDGET-SETTLE-OUTPUT once usage is known."
 The tranche refund and the actual charge happen in one atomic step.
 A NIL USAGE-TOTAL refunds the whole tranche, matching failed requests
 and providers that report no usage; input tokens therefore stay post
-hoc, gating the next reservation rather than the current one."
+hoc, gating the next reservation rather than the current one. The
+balance carries overdraft debt below zero, so refunds of outstanding
+reservations can never resurrect tokens an earlier settlement spent."
   (let ((pool (rlm-budget--pool budget)))
     (with-lock-held ((rlm-budget-pool--lock pool))
-      (setf (rlm-budget-pool--tokens-remaining pool)
-            (max 0 (+ (rlm-budget-pool--tokens-remaining pool)
-                      (- tranche (or usage-total 0)))))))
+      (incf (rlm-budget-pool--tokens-remaining pool)
+            (- tranche (or usage-total 0)))))
   budget)
 
 (-> rlm-budget-descend (rlm-budget &key (:task (option string))) rlm-budget)
