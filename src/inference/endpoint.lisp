@@ -56,6 +56,11 @@
     :accessor rlm-endpoint--accept-thread
     :type t
     :documentation "The thread accepting environment connections.")
+   (client-threads
+    :initform nil
+    :accessor rlm-endpoint--client-threads
+    :type list
+    :documentation "The request handler threads joined at shutdown.")
    (final-value
     :initform nil
     :accessor rlm-endpoint--final-value
@@ -75,6 +80,18 @@
   (with-lock-held ((rlm-endpoint--lock endpoint))
     (values (rlm-endpoint--final-value endpoint)
             (rlm-endpoint--final-p endpoint))))
+
+(-> rlm-endpoint--require-running (rlm-endpoint) null)
+(defun rlm-endpoint--require-running (endpoint)
+  "Signal unless ENDPOINT still accepts inference work.
+
+Finish is terminal: once a final value is recorded, further inference
+and repeated finishes are refused instead of silently absorbed."
+  (with-lock-held ((rlm-endpoint--lock endpoint))
+    (when (rlm-endpoint--final-p endpoint)
+      (error 'rlm-inference-error
+             :message "The run already recorded its final value.")))
+  nil)
 
 (-> rlm-endpoint--record (rlm-endpoint list) null)
 (defun rlm-endpoint--record (endpoint record)
@@ -102,6 +119,7 @@ leaves a machine-readable invocation tree instead of orphaned frames."
   (let ((provider (rlm-endpoint--provider endpoint))
         (configuration (rlm-endpoint--configuration endpoint))
         (budget (rlm-endpoint--budget endpoint)))
+    (rlm-endpoint--require-running endpoint)
     (ecase operation
       (:infer
        (let ((task (getf arguments ':task)))
@@ -155,6 +173,11 @@ leaves a machine-readable invocation tree instead of orphaned frames."
            (list :rlm-response :status :ok :value results))))
       (:finish
        (with-lock-held ((rlm-endpoint--lock endpoint))
+         ;; The running check above is advisory; the first finish must win
+         ;; even against a concurrent finish racing past it.
+         (when (rlm-endpoint--final-p endpoint)
+           (error 'rlm-inference-error
+                  :message "The run already recorded its final value."))
          (setf (rlm-endpoint--final-value endpoint) (getf arguments ':value)
                (rlm-endpoint--final-p endpoint) t))
        (rlm-endpoint--record endpoint (list :operation :finish))
@@ -209,10 +232,13 @@ leaves a machine-readable invocation tree instead of orphaned frames."
           (if (with-lock-held ((rlm-endpoint--lock endpoint))
                 (rlm-endpoint--stopping-p endpoint))
               (ignore-errors (sb-bsd-sockets:socket-close socket))
-              (make-thread
-               (lambda ()
-                 (rlm-endpoint--handle-client endpoint socket))
-               :name "Autolith inference request")))
+              (let ((thread
+                      (make-thread
+                       (lambda ()
+                         (rlm-endpoint--handle-client endpoint socket))
+                       :name "Autolith inference request")))
+                (with-lock-held ((rlm-endpoint--lock endpoint))
+                  (push thread (rlm-endpoint--client-threads endpoint))))))
       (error ()
         (return))))
   nil)
@@ -272,4 +298,13 @@ leaves a machine-readable invocation tree instead of orphaned frames."
       (ignore-errors (join-thread thread))))
   (ignore-errors
     (sb-bsd-sockets:socket-close (rlm-endpoint--listener endpoint)))
+  ;; Handlers finish once their proxied inference returns; the timeout
+  ;; abandons only a handler wedged on a dead peer.
+  (dolist (thread (with-lock-held ((rlm-endpoint--lock endpoint))
+                    (copy-list (rlm-endpoint--client-threads endpoint))))
+    (when (thread-alive-p thread)
+      (handler-case
+          (sb-ext:with-timeout 5
+            (join-thread thread))
+        (error () nil))))
   nil)

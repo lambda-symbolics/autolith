@@ -23,8 +23,9 @@
        (search pattern (context-text) :start2 start))
      (defun rlm--write-packet (stream packet)
        (let ((payload (with-standard-io-syntax
-                        (let ((*print-circle* nil)
-                              (*print-pretty* nil))
+                        (let ((*print-circle* t)
+                              (*print-pretty* nil)
+                              (*print-readably* t))
                           (prin1-to-string packet)))))
          (write (length payload) :stream stream)
          (terpri stream)

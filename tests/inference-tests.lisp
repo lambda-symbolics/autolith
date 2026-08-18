@@ -775,6 +775,26 @@
            (multiple-value-bind (value final-p) (rlm-endpoint-final endpoint)
              (test-assert (and final-p (eql value 42))
                           "finish records the environment's final value"))
+           (let ((response
+                   (rlm-endpoint-test-call
+                    endpoint
+                    (list :rlm-request
+                          :token (rlm-endpoint-token endpoint)
+                          :operation ':finish
+                          :arguments (list :value 43)))))
+             (test-assert (eq (getf (rest response) ':status) ':error)
+                          "a second finish is refused"))
+           (test-assert (eql (rlm-endpoint-final endpoint) 42)
+                        "the first finish wins")
+           (let ((response
+                   (rlm-endpoint-test-call
+                    endpoint
+                    (list :rlm-request
+                          :token (rlm-endpoint-token endpoint)
+                          :operation ':infer
+                          :arguments (list :task "after the end")))))
+             (test-assert (eq (getf (rest response) ':status) ':error)
+                          "finished runs refuse further inference"))
            (let ((operations (mapcar (lambda (record)
                                        (getf record ':operation))
                                      (reverse records))))
