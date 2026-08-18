@@ -221,6 +221,7 @@
     (test-rlm-infer-tool)
     (test-rlm-map)
     (test-rlm-map-tool)
+    (test-rlm-policies)
     (test-task-orchestration)
     (test-task-child-shared-agent-loop)
     (test-task-default-detachment)

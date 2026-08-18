@@ -71,6 +71,34 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
              :message "No active application supplies a frame tool registry; pass :source-registry."))
     (application-tool-registry application)))
 
+(-> rlm--resolve-environment
+    (&key (:model (option string))
+          (:effort (option string))
+          (:provider (option model-provider))
+          (:configuration (option configuration)))
+    (values model-provider configuration))
+(defun rlm--resolve-environment (&key model effort provider configuration)
+  "Return the provider and configuration one frame runs under."
+  (multiple-value-bind (environment-provider environment-configuration)
+      (if (and provider configuration)
+          (values provider configuration)
+          (rlm--environment))
+    (let* ((configuration (or configuration environment-configuration))
+           (configuration
+             (if model
+                 (configuration-with-model configuration model)
+                 configuration))
+           (configuration
+             (if effort
+                 (configuration-with-reasoning-effort configuration effort)
+                 configuration))
+           (provider
+             (if (or model effort)
+                 (provider-with-configuration
+                  (or provider environment-provider) configuration)
+                 (or provider environment-provider))))
+      (values provider configuration))))
+
 (-> rlm-contract-normalize (t) t)
 (defun rlm-contract-normalize (contract)
   "Return ':TEXT or the canonical task output schema CONTRACT denotes."
@@ -264,25 +292,11 @@ repaired by re-asking until BUDGET signals RLM-BUDGET-EXHAUSTED."
     (error 'rlm-inference-error
            :task task
            :message "Frame capabilities are NIL or :READ."))
-  (multiple-value-bind (environment-provider environment-configuration)
-      (if (and provider configuration)
-          (values provider configuration)
-          (rlm--environment))
-    (let* ((configuration (or configuration environment-configuration))
-           (configuration
-             (if model
-                 (configuration-with-model configuration model)
-                 configuration))
-           (configuration
-             (if effort
-                 (configuration-with-reasoning-effort configuration effort)
-                 configuration))
-           (provider
-             (if (or model effort)
-                 (provider-with-configuration
-                  (or provider environment-provider) configuration)
-                 (or provider environment-provider)))
-           (views (rlm-views-materialize context))
+  (multiple-value-bind (provider configuration)
+      (rlm--resolve-environment :model model :effort effort
+                                :provider provider
+                                :configuration configuration)
+    (let* ((views (rlm-views-materialize context))
            (contract (rlm-contract-normalize contract))
            (budget (or budget (rlm-budget-create)))
            (conversation (rlm--frame-conversation configuration))
