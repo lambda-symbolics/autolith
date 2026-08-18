@@ -223,6 +223,17 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
           (return (values value
                           (conversation-identifier conversation))))))))
 
+(defclass rlm-frame-agent (agent)
+  ()
+  (:documentation "An ephemeral inference frame agent."))
+
+(defmethod agent-should-compact-p ((agent rlm-frame-agent))
+  "Never compact a frame: its conversation is a bounded private trace.
+
+Compaction would also call the provider outside the frame budget's
+request accounting, so disabling it keeps the budget invariant exact."
+  nil)
+
 (-> rlm--frame-budget-callback (rlm-budget string) (values function function))
 (defun rlm--frame-budget-callback (budget task)
   "Return an observer status callback charging BUDGET per provider request.
@@ -263,7 +274,7 @@ flushes an unsettled tranche after an aborted turn."
   (multiple-value-bind (status-callback flush-tranche)
       (rlm--frame-budget-callback budget task)
     (let ((agent
-            (make-instance 'agent
+            (make-instance 'rlm-frame-agent
                            :configuration configuration
                            :provider provider
                            :conversation conversation

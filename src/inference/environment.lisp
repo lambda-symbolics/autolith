@@ -102,6 +102,24 @@ the worker must be able to read this form's socket symbols."
           (rlm-context-object-digest object)
           *rlm-environment-prelude-body*))
 
+(defclass rlm-root-agent (rlm-frame-agent)
+  ((endpoint
+    :initarg :endpoint
+    :reader rlm-root-agent--endpoint
+    :type rlm-endpoint
+    :documentation "The endpoint whose finished state ends the root turn."))
+  (:documentation "The root agent of one recursive language model run."))
+
+(defmethod agent-turn-complete-p
+    ((agent rlm-root-agent) (result provider-result))
+  "Return true once the environment records its final value.
+
+The post-tool completion check observes a finish evaluated inside
+env.eval, ending the turn immediately instead of spending one more
+provider request on a closing remark."
+  (or (nth-value 1 (rlm-endpoint-final (rlm-root-agent--endpoint agent)))
+      (call-next-method)))
+
 (defclass rlm-environment-tool (tool)
   ((worker
     :initarg :worker
@@ -226,12 +244,13 @@ identifier."
                  (rlm--frame-budget-callback budget task)
                (let* ((registry (make-instance 'tool-registry))
                       (agent
-                        (make-instance 'agent
+                        (make-instance 'rlm-root-agent
                                        :configuration configuration
                                        :provider provider
                                        :conversation conversation
                                        :tool-registry registry
-                                       :worker nil))
+                                       :worker nil
+                                       :endpoint endpoint))
                       (observer
                         (make-instance 'callback-agent-observer
                                        :status-callback status-callback))
