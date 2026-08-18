@@ -97,9 +97,18 @@ surfaces are:
 
 - The =infer= function in the active image, for user REPL forms and
   for self-modification code (policies, agenda automation).
-- An =rlm.infer= tool for the model, added in a later stage, which
-  exposes bounded recursion with a restricted read-only capability
-  set inside frames.
+- The =rlm.infer= tool for the model, taking a task, views, an
+  optional JSON Schema contract, and call, token, and depth
+  allowances.
+
+Both surfaces accept =:capabilities= (the tool's =capabilities=
+argument). A frame without capabilities is a pure call over its
+views. A =read= frame runs as a restricted agent turn: it may use
+=resource.read= (workspace scheme only), the =search= tools, and a
+nested =rlm.infer= sharing the same budget subtree, with tool rounds
+bounded per round. Inside a frame the nested tool ignores allowance
+arguments and descends the enclosing budget, so fan-out can never
+outspend the root allocation.
 
 * Implementation stages
 
@@ -115,5 +124,5 @@ surfaces are:
 7. Compaction integration: summaries reference evidence views and
    trace identifiers instead of inlining content.
 
-Stages 1 through 3 are implemented. The remaining stages build on
+Stages 1 through 4 are implemented. The remaining stages build on
 them without changing the calling convention.
