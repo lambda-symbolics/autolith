@@ -763,6 +763,154 @@
       (rlm-endpoint-stop endpoint)))
   nil)
 
+(defclass rlm-litmus-provider (model-provider)
+  ((window-limit
+    :initarg :window-limit
+    :reader rlm-litmus-provider--window-limit
+    :type (integer 1)
+    :documentation "The simulated provider context window in request characters.")
+   (largest-request
+    :initform 0
+    :accessor rlm-litmus-provider-largest-request
+    :type (integer 0)
+    :documentation "The largest request observed across all threads.")
+   (request-count
+    :initform 0
+    :accessor rlm-litmus-provider-request-count
+    :type (integer 0)
+    :documentation "The total provider requests served.")
+   (root-results
+    :initarg :root-results
+    :accessor rlm-litmus-provider--root-results
+    :type list
+    :documentation "The scripted root-model results in request order.")
+   (lock
+    :initform (make-lock "Autolith litmus provider")
+    :reader rlm-litmus-provider--lock
+    :documentation "The lock guarding counters across handler threads."))
+  (:documentation
+   "A window-limited provider serving scripted root turns and computed sub-answers."))
+
+(defmethod provider-with-configuration
+    ((provider rlm-litmus-provider) (configuration configuration))
+  "Keep the litmus provider across configuration changes."
+  (declare (ignore configuration))
+  provider)
+
+(-> rlm-litmus--count-occurrences (string string) (integer 0))
+(defun rlm-litmus--count-occurrences (needle text)
+  "Return how many times NEEDLE occurs in TEXT, overlapping included."
+  (loop with start = 0
+        with count = 0
+        for position = (search needle text :start2 start)
+        while position
+        do (incf count)
+           (setf start (1+ position))
+        finally (return count)))
+
+(defmethod provider-stream-turn
+    ((provider rlm-litmus-provider)
+     (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Refuse over-window requests, answer sub-frames, script root turns."
+  (declare (ignore tool-namespaces event-callback goal-context compaction-p))
+  (let ((size (loop for item in (conversation-input-items-for-request
+                                 conversation)
+                    sum (length (json-encode item)))))
+    (with-lock-held ((rlm-litmus-provider--lock provider))
+      (incf (rlm-litmus-provider-request-count provider))
+      (setf (rlm-litmus-provider-largest-request provider)
+            (max (rlm-litmus-provider-largest-request provider) size)))
+    (when (> size (rlm-litmus-provider--window-limit provider))
+      (error 'rlm-inference-error
+             :message
+             (format nil "A ~D character request exceeds the ~D window."
+                     size (rlm-litmus-provider--window-limit provider))))
+    (let* ((text (or (rlm-map-test--last-user-text conversation) ""))
+           (view-start (search "<view" text))
+           (view-end (search "</view>" text :from-end t)))
+      (if (and view-start view-end)
+          (rlm-inference-test-result
+           "litmus-sub"
+           (format nil "~D"
+                   (rlm-litmus--count-occurrences
+                    "XYZZY" (subseq text view-start view-end)))
+           40)
+          (let ((result
+                  (with-lock-held ((rlm-litmus-provider--lock provider))
+                    (pop (rlm-litmus-provider--root-results provider)))))
+            (unless result
+              (error "The litmus provider has no remaining root result."))
+            result)))))
+
+(-> rlm-litmus--corpus () string)
+(defun rlm-litmus--corpus ()
+  "Return a four-block corpus with markers never straddling slice edges."
+  (with-output-to-string (stream)
+    (dotimes (block-number 4)
+      (let ((block-text
+              (with-output-to-string (block-stream)
+                (dotimes (line 760)
+                  (format block-stream
+                          "filler-~D-~4,'0D lorem ipsum dolor sit~%"
+                          block-number line)
+                  (when (zerop (mod line 89))
+                    (format block-stream "XYZZY~%"))))))
+        (write-string block-text stream)
+        (loop repeat (- 40000 (length block-text))
+              do (write-char #\. stream))))))
+
+(-> test-rlm-litmus-completion () null)
+(defun test-rlm-litmus-completion ()
+  "Test the defining RLM property over an input beyond the provider window."
+  (let* ((configuration (test-configuration))
+         (corpus (rlm-litmus--corpus))
+         (expected (rlm-litmus--count-occurrences "XYZZY" corpus))
+         (window-limit 60000)
+         (code
+           "(finish (loop for start from 0 below (context-length) by 40000 sum (parse-integer (infer \"Count the marker occurrences and reply with only the integer.\" :context (list (context-slice start (min (context-length) (+ start 40000))))))))")
+         (provider
+           (make-instance
+            'rlm-litmus-provider
+            :window-limit window-limit
+            :root-results
+            (list (agent-test-result
+                   "root-1"
+                   (list (agent-test-call
+                          :call-id "eval-1"
+                          :namespace "env"
+                          :name "eval"
+                          :arguments (json-encode
+                                      (json-object "form" code)))))
+                  (rlm-inference-test-result
+                   "root-2" "Recorded the final count." 50))))
+         (budget (rlm-budget-create :calls 12 :tokens 100000 :depth 2)))
+    (test-assert (= (length corpus) 160000)
+                 "the corpus is four exact provider-window-sized blocks")
+    (test-assert (> (length corpus) window-limit)
+                 "the corpus exceeds the provider window")
+    (test-assert (plusp expected)
+                 "the corpus contains markers to count")
+    (multiple-value-bind (value trace-identifier)
+        (rlm-complete "Count how many marker lines the corpus contains."
+                      :context (list ':label "corpus" ':content corpus)
+                      :budget budget
+                      :provider provider
+                      :configuration configuration)
+      (test-assert (eql value expected)
+                   "the recursive run returns the exact marker count")
+      (test-assert (<= (rlm-litmus-provider-largest-request provider)
+                       window-limit)
+                   "no provider request exceeded the context window")
+      (test-assert (= (rlm-litmus-provider-request-count provider) 6)
+                   "the run used four sub-inferences and two root requests")
+      (let ((trace (rlm--trace-content configuration trace-identifier)))
+        (test-assert (and trace (not (search "lorem" trace)))
+                     "corpus content never entered the root conversation")
+        (test-assert (search "context-slice" trace)
+                     "the root model authored the decomposition"))))
+  nil)
+
 (-> test-rlm-budget-descent () null)
 (defun test-rlm-budget-descent ()
   "Test descended budgets share counters and bound recursion depth."
