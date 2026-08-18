@@ -188,7 +188,7 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
   "Run a tool-free frame as bare provider calls over CONVERSATION."
   (conversation-append-user-message conversation request)
   (loop
-    (rlm-budget-ensure budget :task task)
+    (rlm-budget-acquire-call budget :task task)
     (let ((result
             (provider-stream-turn provider conversation
                                   :tool-namespaces #()
@@ -197,7 +197,6 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
                                     (declare (ignore event))
                                     nil))))
       (rlm--record-response conversation result)
-      (rlm-budget-charge-call budget)
       (let ((total (conversation--usage-total
                     (provider-result-usage result))))
         (when total
@@ -211,15 +210,21 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
          conversation
          (rlm--repair-request problem))))))
 
-(-> rlm--frame-budget-callback (rlm-budget) function)
-(defun rlm--frame-budget-callback (budget)
-  "Return an observer status callback charging BUDGET per provider request."
+(-> rlm--frame-budget-callback (rlm-budget string) function)
+(defun rlm--frame-budget-callback (budget task)
+  "Return an observer status callback charging BUDGET per provider request.
+
+Each request atomically reserves one call before it starts, so an
+exhausted subtree stops the frame's agent loop mid-turn instead of
+letting concurrent frames overspend the pool."
   (lambda (status details)
-    (when (eq status ':provider-request-completed)
-      (rlm-budget-charge-call budget)
-      (let ((total (conversation--usage-total (getf details ':usage))))
-        (when total
-          (rlm-budget-charge-tokens budget total))))
+    (case status
+      (:provider-request-started
+       (rlm-budget-acquire-call budget :task task))
+      (:provider-request-completed
+       (let ((total (conversation--usage-total (getf details ':usage))))
+         (when total
+           (rlm-budget-charge-tokens budget total)))))
     nil))
 
 (-> rlm--run-framed-inference
@@ -241,10 +246,10 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
                          :worker nil))
         (observer
           (make-instance 'callback-agent-observer
-                         :status-callback (rlm--frame-budget-callback budget)))
+                         :status-callback (rlm--frame-budget-callback budget
+                                                                      task)))
         (allowlist (rlm--frame-tool-allowlist)))
     (loop
-      (rlm-budget-ensure budget :task task)
       (let ((result
               (let ((*agent-restricted-maximum-tool-rounds*
                       (min *rlm-frame-maximum-tool-rounds*

@@ -92,30 +92,23 @@
     (with-lock-held ((rlm-budget-pool--lock pool))
       (rlm-budget-pool--tokens-remaining pool))))
 
-(-> rlm-budget-ensure (rlm-budget &key (:task (option string))) rlm-budget)
-(defun rlm-budget-ensure (budget &key task)
-  "Signal RLM-BUDGET-EXHAUSTED unless BUDGET still allows a provider call.
+(-> rlm-budget-acquire-call
+    (rlm-budget &key (:task (option string)))
+    rlm-budget)
+(defun rlm-budget-acquire-call (budget &key task)
+  "Atomically reserve one provider call from BUDGET before issuing it.
 
-Use this as the gate before starting a call or a frame round; the
-matching charges are recorded after each completed response."
+Signal RLM-BUDGET-EXHAUSTED when no calls remain, or when earlier
+responses already drained the token allowance. The reservation and the
+check happen under one lock, so concurrent frames can never spend more
+calls than the subtree allocation."
   (let ((pool (rlm-budget--pool budget)))
     (with-lock-held ((rlm-budget-pool--lock pool))
       (when (zerop (rlm-budget-pool--calls-remaining pool))
         (error 'rlm-budget-exhausted :dimension ':calls :task task))
       (when (zerop (rlm-budget-pool--tokens-remaining pool))
-        (error 'rlm-budget-exhausted :dimension ':tokens :task task))))
-  budget)
-
-(-> rlm-budget-charge-call (rlm-budget) rlm-budget)
-(defun rlm-budget-charge-call (budget)
-  "Record one completed provider call against BUDGET.
-
-Charges happen after responses, so this never signals; a drained pool
-instead refuses the next RLM-BUDGET-ENSURE."
-  (let ((pool (rlm-budget--pool budget)))
-    (with-lock-held ((rlm-budget-pool--lock pool))
-      (setf (rlm-budget-pool--calls-remaining pool)
-            (max 0 (1- (rlm-budget-pool--calls-remaining pool))))))
+        (error 'rlm-budget-exhausted :dimension ':tokens :task task))
+      (decf (rlm-budget-pool--calls-remaining pool))))
   budget)
 
 (-> rlm-budget-charge-tokens (rlm-budget (integer 0)) rlm-budget)
@@ -123,7 +116,7 @@ instead refuses the next RLM-BUDGET-ENSURE."
   "Record TOKENS spent by a completed response against BUDGET.
 
 Token usage is only known after a response, so this never signals; a
-drained allowance instead refuses the next RLM-BUDGET-ENSURE."
+drained allowance instead refuses the next RLM-BUDGET-ACQUIRE-CALL."
   (let ((pool (rlm-budget--pool budget)))
     (with-lock-held ((rlm-budget-pool--lock pool))
       (setf (rlm-budget-pool--tokens-remaining pool)
