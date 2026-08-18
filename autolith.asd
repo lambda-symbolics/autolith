@@ -128,6 +128,7 @@
                              (:file "inference/resource")
                              (:file "inference/permission")
                              (:file "inference/endpoint")
+                             (:file "inference/environment")
                              (:file "task/agents")
                              (:file "task/state")
                              (:file "task/runtime")
