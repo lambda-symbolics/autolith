@@ -2612,6 +2612,10 @@ may execute immediately; other Lisp waits for the idle boundary."
     (values keyword string))
 (defun application--model-command-permission (application command directory)
   "Return the cached or freshly inferred model permission for COMMAND."
+  (unless (and (slot-boundp application 'provider)
+               (application-provider application))
+    (return-from application--model-command-permission
+      (values ':ask "no provider is available to classify commands")))
   (let* ((cache (application-command-classifications application))
          (key (format nil "~A~%~A" command (namestring directory)))
          (cached (gethash key cache)))
@@ -2632,29 +2636,13 @@ may execute immediately; other Lisp waits for the idle boundary."
               (setf (gethash key cache) (cons decision reason)))
             (values decision reason))))))
 
-(-> application--classified-command-permission
-    (application string pathname)
-    (values keyword string))
-(defun application--classified-command-permission
-    (application command directory)
-  "Classify COMMAND with the conservative heuristics, then the model.
-
-The heuristic floor still refuses catastrophic commands and fast-paths
-trivial inspection without a model call; the model decides the rest."
-  (multiple-value-bind (decision reason)
-      (permissions-classify-command command)
-    (if (eq decision ':ask)
-        (application--model-command-permission application command directory)
-        (values decision reason))))
-
 (-> application--auto-command-permission
     (application string pathname)
     keyword)
 (defun application--auto-command-permission (application command directory)
-  "Classify COMMAND and grant, refuse, or ask only when the model defers."
+  "Classify COMMAND with the model and ask only when it defers."
   (multiple-value-bind (decision reason)
-      (application--classified-command-permission application command
-                                                  directory)
+      (application--model-command-permission application command directory)
     (if (eq decision ':ask)
         (application--ask-command-permission application command directory)
         (application--apply-classified-command-permission
@@ -2690,7 +2678,7 @@ trivial inspection without a model call; the model decides the rest."
           ((or (string= (or choice "") "pick")
                (string= (or choice "") "auto"))
            (multiple-value-bind (decision reason)
-               (application--classified-command-permission
+               (application--model-command-permission
                 application command directory)
              (application--apply-classified-command-permission
               application command

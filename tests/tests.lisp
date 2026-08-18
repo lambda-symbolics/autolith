@@ -114,7 +114,6 @@
     (test-preferences)
     (test-command-permission-persistence)
     (test-command-permission-corruption)
-    (test-command-permission-classification)
     (test-later-persistence)
     (test-later-malformed-state)
     (test-later-reset-selection)

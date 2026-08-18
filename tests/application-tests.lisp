@@ -1161,7 +1161,19 @@
            (make-instance 'application
                           :configuration configuration
                           :ui ui
-                          :permission-state state)))
+                          :permission-state state
+                          :provider
+                          (make-instance
+                           'rlm-inference-test-provider
+                           :results
+                           (list (rlm-inference-test-result
+                                  "classify-1"
+                                  "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
+                                  20)
+                                 (rlm-inference-test-result
+                                  "classify-2"
+                                  "{\"decision\": \"deny\", \"reason\": \"privilege escalation\"}"
+                                  20))))))
     (unwind-protect
          (progn
            (terminal-ui-start ui)
