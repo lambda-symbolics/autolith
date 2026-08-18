@@ -11,6 +11,9 @@
 (defparameter *rlm-default-depth-budget* 2
   "The default remaining recursion depth below a root inference frame.")
 
+(defparameter *rlm-output-reserve-tokens* 16000
+  "The output token tranche reserved from the pool per provider request.")
+
 (define-condition rlm-budget-exhausted
     (error)
   ((dimension
@@ -111,16 +114,38 @@ calls than the subtree allocation."
       (decf (rlm-budget-pool--calls-remaining pool))))
   budget)
 
-(-> rlm-budget-charge-tokens (rlm-budget (integer 0)) rlm-budget)
-(defun rlm-budget-charge-tokens (budget tokens)
-  "Record TOKENS spent by a completed response against BUDGET.
+(-> rlm-budget-reserve-output (rlm-budget) (integer 16))
+(defun rlm-budget-reserve-output (budget)
+  "Atomically reserve one request's output tranche from BUDGET.
 
-Token usage is only known after a response, so this never signals; a
-drained allowance instead refuses the next RLM-BUDGET-ACQUIRE-CALL."
+The tranche is the request's advertised provider output ceiling.
+Concurrent frames each hold their own tranche while their requests
+run, so combined output can never dramatically overrun the pool; a
+small floor keeps tiny remainders acceptable to provider validation.
+Settle the tranche with RLM-BUDGET-SETTLE-OUTPUT once usage is known."
+  (let ((pool (rlm-budget--pool budget)))
+    (with-lock-held ((rlm-budget-pool--lock pool))
+      (let ((tranche (max 16 (min *rlm-output-reserve-tokens*
+                                  (rlm-budget-pool--tokens-remaining pool)))))
+        (setf (rlm-budget-pool--tokens-remaining pool)
+              (max 0 (- (rlm-budget-pool--tokens-remaining pool) tranche)))
+        tranche))))
+
+(-> rlm-budget-settle-output
+    (rlm-budget (integer 0) (option (integer 0)))
+    rlm-budget)
+(defun rlm-budget-settle-output (budget tranche usage-total)
+  "Settle one request's TRANCHE against its reported USAGE-TOTAL.
+
+The tranche refund and the actual charge happen in one atomic step.
+A NIL USAGE-TOTAL refunds the whole tranche, matching failed requests
+and providers that report no usage; input tokens therefore stay post
+hoc, gating the next reservation rather than the current one."
   (let ((pool (rlm-budget--pool budget)))
     (with-lock-held ((rlm-budget-pool--lock pool))
       (setf (rlm-budget-pool--tokens-remaining pool)
-            (max 0 (- (rlm-budget-pool--tokens-remaining pool) tokens)))))
+            (max 0 (+ (rlm-budget-pool--tokens-remaining pool)
+                      (- tranche (or usage-total 0)))))))
   budget)
 
 (-> rlm-budget-descend (rlm-budget &key (:task (option string))) rlm-budget)

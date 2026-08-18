@@ -222,32 +222,34 @@ identifier."
                           :message
                           (format nil "The environment prelude failed: ~A"
                                   (getf (rest response) ':message))))))
-             (let* ((registry (make-instance 'tool-registry))
-                    (agent
-                      (make-instance 'agent
-                                     :configuration configuration
-                                     :provider provider
-                                     :conversation conversation
-                                     :tool-registry registry
-                                     :worker nil))
-                    (observer
-                      (make-instance 'callback-agent-observer
-                                     :status-callback
-                                     (rlm--frame-budget-callback budget
-                                                                 task)))
-                    (request (rlm--root-request task object))
-                    (*system-prompt-override* *rlm-root-system-prompt*))
-               (tool-registry-register registry
-                                       (rlm-environment-tool-create worker))
-               (loop
-                 (let ((*agent-restricted-maximum-tool-rounds*
-                         (max 1 (rlm-budget-remaining-calls budget)))
-                       (*provider-maximum-output-tokens*
-                         (rlm--budget-output-limit budget)))
-                   (agent-run-user-turn agent request
-                                        :observer observer
-                                        :tool-allowlist (list "env.eval")
-                                        :tool-restriction-p t))
+             (multiple-value-bind (status-callback flush-tranche)
+                 (rlm--frame-budget-callback budget task)
+               (let* ((registry (make-instance 'tool-registry))
+                      (agent
+                        (make-instance 'agent
+                                       :configuration configuration
+                                       :provider provider
+                                       :conversation conversation
+                                       :tool-registry registry
+                                       :worker nil))
+                      (observer
+                        (make-instance 'callback-agent-observer
+                                       :status-callback status-callback))
+                      (request (rlm--root-request task object))
+                      (*system-prompt-override* *rlm-root-system-prompt*))
+                 (tool-registry-register registry
+                                         (rlm-environment-tool-create worker))
+                 (loop
+                   (let ((*agent-restricted-maximum-tool-rounds*
+                           (max 1 (rlm-budget-remaining-calls budget)))
+                         (*provider-maximum-output-tokens* nil))
+                     (unwind-protect
+                          (agent-run-user-turn agent request
+                                               :observer observer
+                                               :tool-allowlist
+                                               (list "env.eval")
+                                               :tool-restriction-p t)
+                       (funcall flush-tranche)))
                  (multiple-value-bind (value final-p)
                      (rlm-endpoint-final endpoint)
                    (when final-p
@@ -255,7 +257,7 @@ identifier."
                                      (conversation-identifier
                                       conversation)))))
                  (setf request
-                       "No final value is recorded yet. Continue in the environment and call (finish value) once the answer is complete."))))
+                       "No final value is recorded yet. Continue in the environment and call (finish value) once the answer is complete.")))))
         (when worker
           (ignore-errors (lisp-worker-stop worker)))
         (rlm-endpoint-stop endpoint)))))
