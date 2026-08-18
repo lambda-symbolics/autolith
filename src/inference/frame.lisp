@@ -175,6 +175,14 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
    (list :usage (agent--portable-value (provider-result-usage result))))
   nil)
 
+(-> rlm--budget-output-limit (rlm-budget) (integer 16))
+(defun rlm--budget-output-limit (budget)
+  "Return the provider output ceiling for BUDGET's remaining tokens.
+
+The floor keeps tiny remainders acceptable to provider request
+validation; the next reservation still refuses a drained pool."
+  (max 16 (rlm-budget-remaining-tokens budget)))
+
 (-> rlm--repair-request ((option string)) string)
 (defun rlm--repair-request (problem)
   "Compose the repair message for one contract violation PROBLEM."
@@ -190,12 +198,14 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
   (loop
     (rlm-budget-acquire-call budget :task task)
     (let ((result
-            (provider-stream-turn provider conversation
-                                  :tool-namespaces #()
-                                  :event-callback
-                                  (lambda (event)
-                                    (declare (ignore event))
-                                    nil))))
+            (let ((*provider-maximum-output-tokens*
+                    (rlm--budget-output-limit budget)))
+              (provider-stream-turn provider conversation
+                                    :tool-namespaces #()
+                                    :event-callback
+                                    (lambda (event)
+                                      (declare (ignore event))
+                                      nil)))))
       (rlm--record-response conversation result)
       (let ((total (conversation--usage-total
                     (provider-result-usage result))))
@@ -253,7 +263,9 @@ letting concurrent frames overspend the pool."
       (let ((result
               (let ((*agent-restricted-maximum-tool-rounds*
                       (min *rlm-frame-maximum-tool-rounds*
-                           (rlm-budget-remaining-calls budget))))
+                           (rlm-budget-remaining-calls budget)))
+                    (*provider-maximum-output-tokens*
+                      (rlm--budget-output-limit budget)))
                 (agent-run-user-turn agent request
                                      :observer observer
                                      :tool-allowlist allowlist

@@ -637,6 +637,12 @@ so authentication can bootstrap credentials before model discovery."
 (defparameter *provider-hosted-tools-enabled-p* t
   "Whether the current provider request may advertise hosted provider tools.")
 
+(defvar *provider-maximum-output-tokens* nil
+  "An optional output token ceiling for the current provider request.
+
+Inference frames bind this to their remaining token allowance so one
+response cannot dramatically overrun the shared subtree budget.")
+
 (-> provider--web-search-content-types (configuration) (option vector))
 (defun provider--web-search-content-types (configuration)
   "Return CONFIGURATION's provider-required web-search content types.
@@ -753,17 +759,23 @@ delivery that the transport consumes only after a completed response."
                (not compaction-p))
       (setf (gethash "summary" reasoning) "auto"))
     (values
-     (json-object
-      "model" (configuration-model configuration)
-      "input" input
-      "tool_choice" "auto"
-      "parallel_tool_calls" false
-      "reasoning" reasoning
-      "store" false
-      "stream" t
-      "include" (json-array "reasoning.encrypted_content")
-      "prompt_cache_key" (provider--codex-prompt-cache-key provider conversation)
-      "text" (json-object "verbosity" "low"))
+     (apply
+      #'json-object
+      (append
+       (list
+        "model" (configuration-model configuration)
+        "input" input
+        "tool_choice" "auto"
+        "parallel_tool_calls" false
+        "reasoning" reasoning
+        "store" false
+        "stream" t
+        "include" (json-array "reasoning.encrypted_content")
+        "prompt_cache_key" (provider--codex-prompt-cache-key provider
+                                                            conversation)
+        "text" (json-object "verbosity" "low"))
+       (when *provider-maximum-output-tokens*
+         (list "max_output_tokens" *provider-maximum-output-tokens*))))
      delivery)))
 
 (-> provider-native-compaction-request-object

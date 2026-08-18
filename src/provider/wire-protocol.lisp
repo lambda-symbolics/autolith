@@ -260,6 +260,8 @@ delivery consumed only after a completed response."
                                (list "effort" effort)
                                (when summary
                                  (list "summary" summary)))))))
+             (when *provider-maximum-output-tokens*
+               (list "max_output_tokens" *provider-maximum-output-tokens*))
              (list "store" false
                    "stream" t)
              (provider-responses-request-fields provider conversation)))

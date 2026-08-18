@@ -196,6 +196,13 @@
             "providers opt into inherited child reference history explicitly")
            (test-assert (null (json-get request "service_tier"))
                         "requests never select a provider service tier")
+           (test-assert (null (json-get request "max_output_tokens"))
+                        "requests omit the output ceiling when none is bound")
+           (let ((bounded (let ((*provider-maximum-output-tokens* 4242))
+                            (provider-request-object provider conversation
+                                                     schemas))))
+             (test-assert (= (json-get bounded "max_output_tokens") 4242)
+                          "a bound output ceiling reaches the wire request"))
            (let ((input (json-get request "input")))
              (test-assert (= (length input) 3)
                           "the provider request prefixes two developer items")

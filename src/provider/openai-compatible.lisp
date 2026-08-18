@@ -608,6 +608,9 @@ letters, digits, hyphens, and underscores on the wire."
       (setf (gethash (openai-compatible-provider-reasoning-parameter provider)
                      request)
             (configuration-reasoning-effort configuration)))
+    (when *provider-maximum-output-tokens*
+      (setf (gethash "max_completion_tokens" request)
+            *provider-maximum-output-tokens*))
     (values request delivery)))
 
 

@@ -87,7 +87,12 @@
     :initarg :results
     :accessor rlm-inference-test-provider-results
     :type list
-    :documentation "The provider results returned in request order."))
+    :documentation "The provider results returned in request order.")
+   (output-limits
+    :initform nil
+    :accessor rlm-inference-test-provider-output-limits
+    :type list
+    :documentation "The bound output ceilings observed per request, newest first."))
   (:documentation "A deterministic provider for exercising inference frames."))
 
 (defmethod provider-with-configuration
@@ -102,6 +107,8 @@
      &key tool-namespaces event-callback goal-context compaction-p)
   "Return PROVIDER's next scripted inference result."
   (declare (ignore tool-namespaces event-callback goal-context compaction-p))
+  (push *provider-maximum-output-tokens*
+        (rlm-inference-test-provider-output-limits provider))
   (let ((result (pop (rlm-inference-test-provider-results provider))))
     (unless result
       (error "The inference test provider has no remaining result."))
@@ -149,6 +156,11 @@
                      "the repair round charges a second call")
         (test-assert (= (rlm-budget-remaining-tokens budget) 750)
                      "reported usage drains the token pool")
+        (test-assert (equal (reverse
+                             (rlm-inference-test-provider-output-limits
+                              provider))
+                            '(1000 900))
+                     "each request carries the remaining tokens as its ceiling")
         (let ((identity
                 (merge-pathnames
                  (make-pathname :name trace-identifier :type "sexp")
