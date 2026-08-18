@@ -131,7 +131,7 @@
             "The single question or instruction the frame must answer.")
            "views"
            (rlm--views-parameter
-            "Read-only context views. Each view carries text or the path of a file to read, plus an optional label.")
+            "Read-only context views. Each view carries text, a resource URI, or a stored context object reference, plus an optional label.")
            (rlm--shared-frame-parameters))
     '("task"))))
 
