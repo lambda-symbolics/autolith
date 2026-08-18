@@ -48,9 +48,10 @@ Context is passed explicitly. A view designator is one of:
 Each view materializes into a labeled block with a content digest, so
 a trace records exactly what the frame saw. Views are read-only and
 fixed for the frame's lifetime. Resource URIs (=workspace:=,
-=memory:=, =agenda:=) join the designator set in a later stage; they
-already carry identity and snapshot digests through the resource
-protocol, so no separate context scheme is needed.
+=memory:=, =agenda:=) are the natural extension of the designator
+set, since they already carry identity and snapshot digests through
+the resource protocol; until then a read-capability frame reaches the
+same content through =resource.read=.
 
 * Contracts
 
@@ -80,6 +81,32 @@ never spend more than the root allocation regardless of fan-out.
 Exhaustion signals =rlm-budget-exhausted= instead of silently
 degrading.
 
+* Parallel maps
+
+=rlm-map= fans a list of tasks out as frames sharing one budget
+subtree, each task a string or a =(:task ... :context ...)= plist.
+Results keep task order, and a failed frame reports its error in
+place instead of discarding the finished ones, so exhausting the
+shared budget degrades to partial results. The model reaches the same
+fan-out through the =rlm.map= tool.
+
+* Policies
+
+Decomposition and synthesis are generic functions dispatching on a
+policy keyword, so live self modification can promote strategies
+distilled from successful traces as new eql-specialized methods:
+
+- =rlm-decompose-inference-task= returns subtask plists for a task,
+  or NIL to run it directly.
+- =rlm-synthesize-inference-results= composes the final answer from
+  the subtask results; the default method for every policy runs one
+  more frame whose views are the results, failures included.
+
+=rlm-run= drives one task through a policy: decompose, fan the
+subtasks out through =rlm-map=, and synthesize under the caller's
+contract, all inside one budget subtree. The default =:direct= policy
+never decomposes.
+
 * Traces
 
 Frames persist their private conversations under
@@ -89,40 +116,43 @@ ever sees the returned value. The trace answers "why did this
 inference conclude that" after the fact: task, views with digests,
 model parameters, raw exchanges, and usage are all in the file.
 
+Traces stay addressable after the fact: =inference:<trace-id>= URIs
+read a bounded trace log back through =resource.read=, and the
+compaction instructions tell summaries to reference frames by trace
+identifier instead of restating their content, so compaction keeps
+evidence reachable instead of inlining it.
+
 * Recursion surfaces
 
 The =lisp.*= tools run in heap-isolated workers with no provider
 access, so model-authored worker code cannot call =infer=. The
 surfaces are:
 
-- The =infer= function in the active image, for user REPL forms and
-  for self-modification code (policies, agenda automation).
-- The =rlm.infer= tool for the model, taking a task, views, an
-  optional JSON Schema contract, and call, token, and depth
+- The =infer=, =rlm-map=, and =rlm-run= functions in the active
+  image, for user REPL forms and for self-modification code
+  (policies, agenda automation).
+- The =rlm.infer= and =rlm.map= tools for the model, taking tasks,
+  views, an optional JSON Schema contract, and call, token, and depth
   allowances.
 
-Both surfaces accept =:capabilities= (the tool's =capabilities=
+Both surfaces accept =:capabilities= (the tools' =capabilities=
 argument). A frame without capabilities is a pure call over its
 views. A =read= frame runs as a restricted agent turn: it may use
-=resource.read= (workspace scheme only), the =search= tools, and a
-nested =rlm.infer= sharing the same budget subtree, with tool rounds
-bounded per round. Inside a frame the nested tool ignores allowance
-arguments and descends the enclosing budget, so fan-out can never
-outspend the root allocation.
+=resource.read= (workspace scheme only), the =search= tools, and
+nested =rlm.infer= and =rlm.map= sharing the same budget subtree,
+with tool rounds bounded per round. Inside a frame the nested tools
+ignore allowance arguments and descend the enclosing budget, so
+fan-out can never outspend the root allocation.
 
-* Implementation stages
+* Implementation
 
-1. Budgets: =src/inference/budget.lisp=.
-2. Context views and materialization: =src/inference/view.lisp=.
-3. The inference frame and =infer=: =src/inference/frame.lisp=, with
-   a compact frame system prompt and trace persistence.
-4. The =rlm.infer= tool with recursive frames and restricted
-   in-frame capabilities.
-5. Parallel helpers (=rlm-map=) over shared budgets.
-6. Self-modifiable decomposition and synthesis policies as generic
-   functions, promoted from successful traces.
-7. Compaction integration: summaries reference evidence views and
-   trace identifiers instead of inlining content.
-
-Stages 1 through 4 are implemented. The remaining stages build on
-them without changing the calling convention.
+- Budgets: =src/inference/budget.lisp=.
+- Context views and materialization: =src/inference/view.lisp=.
+- The inference frame and =infer=: =src/inference/frame.lisp=, with
+  the compact frame system prompts and trace persistence.
+- The =rlm.infer= and =rlm.map= tools, frame registries, and the
+  contract conversion from JSON Schema: =src/inference/tools.lisp=.
+- Parallel maps: =src/inference/map.lisp=.
+- Policies and =rlm-run=: =src/inference/policy.lisp=.
+- The =inference:= trace resource: =src/inference/resource.lisp=,
+  with the trace reference guidance in the compaction instructions.
