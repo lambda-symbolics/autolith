@@ -66,6 +66,10 @@
   ()
   (:documentation "Run a root recursive language model over one external context."))
 
+(defmethod tool-decode-arguments ((tool rlm-frame-tool) source)
+  "Decode rlm tool arguments exactly, keeping false and null distinct."
+  (task-json-decode source :tool-name (tool-canonical-name tool)))
+
 (-> rlm--views-parameter (string) json-object)
 (defun rlm--views-parameter (description)
   "Return the tool schema for one read-only view array with DESCRIPTION."
@@ -382,7 +386,7 @@ filesystem paths are only a programmatic Lisp designator."
         (gethash "additionalProperties" schema)
       (when additional-present-p
         (setf contract
-              (list* ':additional-properties (and additional t) contract))))
+              (list* ':additional-properties (eq additional t) contract))))
     (let ((required (json-get schema "required")))
       (when required
         (setf contract
@@ -404,7 +408,13 @@ filesystem paths are only a programmatic Lisp designator."
                      contract))))
     (let ((enum (json-get schema "enum")))
       (when enum
-        (setf contract (list* ':enum (coerce enum 'list) contract))))
+        (setf contract
+              (list* ':enum
+                     ;; Native NIL and :NULL denote JSON false and null in
+                     ;; enum positions, so the exact decoder's false maps.
+                     (loop for value across enum
+                           collect (if (eq value false) nil value))
+                     contract))))
     (let ((type (json-get schema "type")))
       (when type
         (setf contract (list* ':type (rlm--json-schema-type type) contract))))

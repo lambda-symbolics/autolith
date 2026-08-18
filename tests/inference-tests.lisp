@@ -243,6 +243,45 @@
                                  :configuration configuration)
                           '(:array "first" "second"))
                    "top-level array contracts parse and validate"))
+    (flet ((structured (text contract)
+             (infer "Answer structurally."
+                    :contract contract
+                    :provider (make-instance
+                               'rlm-inference-test-provider
+                               :results (list (rlm-inference-test-result
+                                               "resp-1" text 10)))
+                    :configuration configuration)))
+      (test-assert (null (structured "false" '(:type :boolean)))
+                   "a JSON false answer validates as native nil")
+      (test-assert (eq (structured "null" '(:type :null)) ':null)
+                   "a JSON null answer validates as :null")
+      (test-assert (equal (structured
+                           "{\"enabled\": false, \"value\": null}"
+                           '(:type :object
+                             :properties
+                             (("enabled" (:type :boolean))
+                              ("value" (:type :null)))
+                             :required ("enabled" "value")))
+                          '(:object ("enabled" nil) ("value" :null)))
+                   "nested false and null fields validate losslessly"))
+    (let* ((arguments
+             (tool-decode-arguments
+              (rlm-infer-tool-create)
+              "{\"task\": \"x\", \"contract\": {\"type\": \"object\", \"properties\": {\"on\": {\"type\": \"boolean\", \"enum\": [true, false]}}, \"additionalProperties\": false}}"))
+           (contract (rlm--json-schema->contract
+                      (gethash "contract" arguments))))
+      (test-assert (eq (gethash "additionalProperties"
+                                 (gethash "contract" arguments))
+                       false)
+                   "rlm tool arguments keep JSON false distinct from null")
+      (test-assert (null (getf contract ':additional-properties ':missing))
+                   "a JSON false additionalProperties converts to native nil")
+      (test-assert (equal (getf (second
+                                 (assoc "on" (getf contract ':properties)
+                                        :test #'string=))
+                                ':enum)
+                          '(t nil))
+                   "enum booleans convert to native true and false"))
     (let ((provider
             (make-instance
              'rlm-inference-test-provider
@@ -806,7 +845,16 @@
                        nil)
                    (rlm-view-error () t)
                    (error () nil))
-                 "unsupported root context designators are refused"))
+                 "unsupported root context designators are refused")
+    (test-assert (handler-case
+                     (progn
+                       (rlm-context-designator-object
+                        configuration
+                        (list ':content "x" ':path #p"/tmp/y"))
+                       nil)
+                   (rlm-view-error () t)
+                   (error () nil))
+                 "designators supplying both content and path are refused"))
   nil)
 
 (-> rlm-endpoint-test-call (rlm-endpoint list) list)

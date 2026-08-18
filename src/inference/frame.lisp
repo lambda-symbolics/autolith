@@ -121,10 +121,11 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
   "Return the JSON value TEXT carries and whether one was found.
 
 Any JSON value is accepted, tolerating surrounding prose or fences
-around one object or array."
+around one object or array. The exact task decoder keeps false and
+null distinguishable, matching the contract validator."
   (flet ((decode (candidate)
            (handler-case
-               (values (json-decode candidate) t)
+               (values (task-json-decode candidate :tool-name "rlm") t)
              (error () (values nil nil)))))
     (let ((trimmed (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
       (multiple-value-bind (value found-p) (decode trimmed)
