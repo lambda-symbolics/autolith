@@ -426,7 +426,7 @@
        (let ((conversation (agent-conversation agent)))
          ;; Compact before appending CONTENT so the fresh question survives
          ;; verbatim instead of being folded into the summary.
-         (when (agent--should-compact-p agent)
+         (when (agent-should-compact-p agent)
            (agent-compact-conversation
             agent observer
             :tool-allowlist tool-allowlist
@@ -852,8 +852,12 @@ tool registry reaches the very next provider request."
        (list :message-count (length messages)))))
   nil)
 
-(-> agent--should-compact-p (agent) boolean)
-(defun agent--should-compact-p (agent)
+(-> agent-should-compact-p (agent) boolean)
+(defgeneric agent-should-compact-p (agent)
+  (:documentation
+   "Return true when AGENT's conversation should compact before continuing."))
+
+(defmethod agent-should-compact-p ((agent agent))
   "Return true when the newest usage crossed AGENT's compaction limit."
   (>= (conversation-last-total-tokens (agent-conversation agent))
       (configuration-compaction-token-limit (agent-configuration agent))))
@@ -935,7 +939,7 @@ checkpoint preserves the current model's opaque reasoning state."
         (tool-rounds 0)
         (tool-calls 0))
     (loop
-      (when (agent--should-compact-p agent)
+      (when (agent-should-compact-p agent)
         (agent-compact-conversation
          agent observer
          :tool-allowlist tool-allowlist

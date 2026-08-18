@@ -952,10 +952,10 @@
                           :namespace "env"
                           :name "eval"
                           :arguments (json-encode
-                                      (json-object "form" code)))))
-                  (rlm-inference-test-result
-                   "root-2" "Recorded the final count." 50))))
-         (budget (rlm-budget-create :calls 12 :tokens 100000 :depth 2)))
+                                      (json-object "form" code))))))))
+         ;; Exactly one root request plus four sub-inferences: a finish on
+         ;; the last remaining call must end the run without another request.
+         (budget (rlm-budget-create :calls 5 :tokens 100000 :depth 2)))
     (test-assert (= (length corpus) 160000)
                  "the corpus is four exact provider-window-sized blocks")
     (test-assert (> (length corpus) window-limit)
@@ -973,8 +973,10 @@
       (test-assert (<= (rlm-litmus-provider-largest-request provider)
                        window-limit)
                    "no provider request exceeded the context window")
-      (test-assert (= (rlm-litmus-provider-request-count provider) 6)
-                   "the run used four sub-inferences and two root requests")
+      (test-assert (= (rlm-litmus-provider-request-count provider) 5)
+                   "the run used four sub-inferences and one root request")
+      (test-assert (zerop (rlm-budget-remaining-calls budget))
+                   "a finish on the last call ends the run without failing")
       (let ((trace (rlm--trace-content configuration trace-identifier)))
         (test-assert (and trace (not (search "lorem" trace)))
                      "corpus content never entered the root conversation")
@@ -1010,8 +1012,7 @@
                           :arguments (json-encode
                                       (json-object
                                        "form"
-                                       "(finish (context-length))")))))
-                  (rlm-inference-test-result "root-2" "Recorded." 20))))
+                                       "(finish (context-length))"))))))))
          (tool (rlm-complete-tool-create :provider provider))
          (result
            (tool-execute
