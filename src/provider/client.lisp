@@ -586,7 +586,7 @@ so authentication can bootstrap credentials before model discovery."
 ;; Modeled on the Codex context checkpoint compaction instructions at
 ;; reference commit 6219b7c40f, restated for Autolith.
 (defparameter *compaction-instructions*
-  "You are performing a context checkpoint compaction. Write a handoff summary for another model that will resume this conversation. Include the current progress and key decisions, important context, constraints, and user preferences, what remains to be done as clear next steps, and any critical data or references needed to continue. Be concise, structured, and complete enough that no earlier context is required."
+  "You are performing a context checkpoint compaction. Write a handoff summary for another model that will resume this conversation. Include the current progress and key decisions, important context, constraints, and user preferences, what remains to be done as clear next steps, and any critical data or references needed to continue. Reference completed rlm.infer and rlm.map frames by their trace identifiers as inference:<trace-id> resources instead of restating frame content; the traces stay readable through resource.read. Be concise, structured, and complete enough that no earlier context is required."
   "The developer instructions driving one compaction request.")
 
 (-> response-item-assistant-text (json-object) (option string))

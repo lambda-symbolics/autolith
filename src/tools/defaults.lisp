@@ -207,13 +207,16 @@
     (resource-registry-register
      resource-registry
      (make-instance 'memory-resolver :scheme "memory"))
+    (resource-registry-register
+     resource-registry
+     (make-instance 'inference-trace-resolver :scheme "inference"))
     (dolist
         (specification
          (list
           (list
            'resource-read-tool
            "resource" "read"
-           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows, sorted directory listings, or an observed missing state; scratchpad: URIs expose the current conversation's disposable files through the same bounded observations; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. Every read establishes a transient conversation-local revision."
+           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows, sorted directory listings, or an observed missing state; scratchpad: URIs expose the current conversation's disposable files through the same bounded observations; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. inference:<trace-id> URIs return bounded read-only recursive-inference trace logs. Every read establishes a transient conversation-local revision."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property

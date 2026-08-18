@@ -541,6 +541,56 @@
                  "the default policy never fans out"))
   nil)
 
+(-> test-rlm-trace-resource () null)
+(defun test-rlm-trace-resource ()
+  "Test persisted frame traces read back through the inference scheme."
+  (let* ((configuration (test-configuration))
+         (provider (make-instance 'rlm-map-test-provider))
+         (conversation (conversation-create configuration
+                                            :identifier "rlm-trace-test"))
+         (context (make-instance 'tool-context
+                                 :configuration configuration
+                                 :worker nil
+                                 :conversation conversation
+                                 :registry (make-instance 'tool-registry)))
+         (resolver (make-instance 'inference-trace-resolver
+                                  :scheme "inference"))
+         (read-tool (make-instance 'resource-read-tool
+                                   :namespace "resource"
+                                   :name "read"
+                                   :description "Test resource read."
+                                   :parameters (tool-object-schema
+                                                (json-object) '())
+                                   :resource-registry
+                                   (make-resource-registry))))
+    (multiple-value-bind (value trace-identifier)
+        (infer "trace me please"
+               :provider provider
+               :configuration configuration)
+      (declare (ignore value))
+      (let* ((resource (resource-resolver-resolve resolver trace-identifier
+                                                  context))
+             (result (resource-tool-read resource read-tool context
+                                         (json-object))))
+        (test-assert (tool-result-success-p result)
+                     "persisted traces read back successfully")
+        (test-assert (search "trace me please" (tool-result-content result))
+                     "the trace carries the frame request verbatim")))
+    (let ((missing (resource-resolver-resolve resolver "zzzz-none" context)))
+      (test-assert (not (tool-result-success-p
+                         (resource-tool-read missing read-tool context
+                                             (json-object))))
+                   "missing traces read as tool failures"))
+    (test-assert (handler-case
+                     (progn
+                       (resource-resolver-resolve resolver "../escape"
+                                                  context)
+                       nil)
+                   (resource-operation-unsupported () t)
+                   (error () nil))
+                 "unsafe trace identifiers are refused at resolution"))
+  nil)
+
 (-> test-rlm-budget-descent () null)
 (defun test-rlm-budget-descent ()
   "Test descended budgets share counters and bound recursion depth."
