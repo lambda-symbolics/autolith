@@ -45,11 +45,14 @@
   "Store CONTENT once under its digest and return its object handle.
 
 Interning identical content is idempotent: the object file is written
-atomically the first time and reused afterwards, so repeated or shared
-context never duplicates storage."
+atomically the first time, marked read-only, and reused afterwards,
+so repeated or shared context never duplicates storage. A stored
+object whose content no longer matches its digest is repaired in
+place from CONTENT."
   (let* ((digest (rlm-view--digest content))
          (pathname (rlm-object--pathname configuration digest)))
-    (unless (probe-file pathname)
+    (unless (and (probe-file pathname)
+                 (string= content (uiop:read-file-string pathname)))
       (ensure-directories-exist pathname)
       (uiop:with-temporary-file (:pathname temporary
                                  :stream stream
@@ -61,8 +64,10 @@ context never duplicates storage."
         (finish-output stream)
         :close-stream
         ;; Concurrent interns of the same digest write identical bytes, so
-        ;; the last rename winning is harmless.
-        (rename-file temporary pathname)))
+        ;; the last rename winning is harmless. Renaming needs directory
+        ;; write permission only, so a read-only target never blocks repair.
+        (rename-file temporary pathname))
+      (sb-posix:chmod (namestring pathname) #o444))
     (make-instance 'rlm-context-object
                    :digest digest
                    :label (or label "context")
@@ -87,14 +92,23 @@ context never duplicates storage."
     (configuration string)
     (option rlm-context-object))
 (defun rlm-context-object-find (configuration digest)
-  "Return the stored object handle for DIGEST, or NIL when absent."
+  "Return the stored object handle for DIGEST, or NIL when absent.
+
+The stored content is re-hashed rather than trusted by filename, so a
+mutated object is detected instead of silently breaking the
+content-address invariant."
   (let ((pathname (rlm-object--pathname configuration digest)))
     (when (probe-file pathname)
-      (make-instance 'rlm-context-object
-                     :digest digest
-                     :label "context"
-                     :characters (length (uiop:read-file-string pathname))
-                     :pathname pathname))))
+      (let ((content (uiop:read-file-string pathname)))
+        (unless (string= digest (rlm-view--digest content))
+          (error 'rlm-view-error
+                 :designator digest
+                 :message "the stored context object no longer matches its digest"))
+        (make-instance 'rlm-context-object
+                       :digest digest
+                       :label "context"
+                       :characters (length content)
+                       :pathname pathname)))))
 
 (-> rlm-context-designator-object (configuration t) rlm-context-object)
 (defun rlm-context-designator-object (configuration designator)
