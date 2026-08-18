@@ -640,6 +640,49 @@
                    "provider failures fall back to asking")))
   nil)
 
+(-> test-rlm-context-objects () null)
+(defun test-rlm-context-objects ()
+  "Test content-addressed context objects intern once and read back."
+  (let* ((configuration (test-configuration))
+         (first-object (rlm-context-intern configuration "shared corpus"
+                                           :label "corpus"))
+         (second-object (rlm-context-intern configuration "shared corpus")))
+    (test-assert (string= (rlm-context-object-digest first-object)
+                          (rlm-context-object-digest second-object))
+                 "identical content interns to one digest")
+    (test-assert (equal (rlm-context-object-pathname first-object)
+                        (rlm-context-object-pathname second-object))
+                 "identical content shares one stored file")
+    (test-assert (= (length (directory
+                             (merge-pathnames
+                              (make-pathname :name ':wild :type "txt")
+                              (rlm-object-root configuration))))
+                    1)
+                 "repeated interning never duplicates storage")
+    (test-assert (string= (uiop:read-file-string
+                           (rlm-context-object-pathname first-object))
+                          "shared corpus")
+                 "the stored object carries the exact content")
+    (test-assert (= (rlm-context-object-characters first-object) 13)
+                 "object handles report the exact character count")
+    (let ((found (rlm-context-object-find
+                  configuration
+                  (rlm-context-object-digest first-object))))
+      (test-assert (and found
+                        (= (rlm-context-object-characters found) 13))
+                   "stored objects are findable by digest"))
+    (test-assert (null (rlm-context-object-find configuration
+                                                (rlm-view--digest "absent")))
+                 "unknown digests find nothing")
+    (test-assert (handler-case
+                     (progn
+                       (rlm-context-designator-object configuration 42)
+                       nil)
+                   (rlm-view-error () t)
+                   (error () nil))
+                 "unsupported root context designators are refused"))
+  nil)
+
 (-> test-rlm-budget-descent () null)
 (defun test-rlm-budget-descent ()
   "Test descended budgets share counters and bound recursion depth."

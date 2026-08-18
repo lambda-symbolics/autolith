@@ -214,6 +214,7 @@
     (test-rlm-budget-accounting)
     (test-rlm-budget-descent)
     (test-rlm-context-views)
+    (test-rlm-context-objects)
     (test-rlm-infer)
     (test-rlm-frame-registry)
     (test-rlm-framed-inference)
