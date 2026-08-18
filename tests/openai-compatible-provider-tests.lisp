@@ -274,6 +274,12 @@
                      (lambda (configuration selection)
                        (setf authenticated-configuration configuration
                              authenticated-selection selection)
+                       nil))
+               ;; Authentication continues into a session; a real interactive
+               ;; loop against the test's non-terminal stdin can wait forever.
+               (list 'application-run
+                     (lambda (application &rest arguments)
+                       (declare (ignore application arguments))
                        nil)))
               (lambda ()
                 (main-dispatch '("auth"))))
