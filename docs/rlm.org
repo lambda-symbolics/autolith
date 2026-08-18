@@ -21,7 +21,8 @@ and a child agent, so recursion becomes an ordinary Lisp operation:
 
 Autolith already has the outer level. Task children are persistent
 agents with conversations, tool registries, and orchestrator
-scheduling. RLM adds the two inner levels:
+scheduling. RLM adds the two inner levels plus the paper-defining
+root operation, =rlm-complete=, described below:
 
 - An inference call. One provider request over explicitly passed
   context. Returns a Lisp value. Never touches the caller's
@@ -83,6 +84,40 @@ of fan-out. Token accounting is post hoc and therefore soft by one
 response per frame: usage is only known after a response, and a
 drained token pool refuses the next reservation. Exhaustion signals
 =rlm-budget-exhausted= instead of silently degrading.
+
+* Root completions
+
+=rlm-complete= is the paper-faithful realization: the complete input
+never enters any model context. The context designator is interned as
+an immutable content-addressed object under =data/inferences/objects/=
+and the root model receives only its label, size, and digest. A
+dedicated heap-isolated Lisp environment holds the content, every
+intermediate value, and the recursion:
+
+#+BEGIN_SRC lisp
+(rlm-complete "Summarize every incident in this log."
+              :context #p"/var/log/huge.log"
+              :budget (rlm-budget-create :calls 24 :tokens 240000
+                                         :depth 2))
+#+END_SRC
+
+The root model drives the environment through the =env.eval= tool,
+one form per call, observing only bounded printed values and output.
+Inside the environment, =(context-length)=, =(context-slice start
+end)=, and =(context-search pattern)= inspect the external object;
+=(infer ...)= and =(rlm-map ...)= proxy sub-inferences back to the
+host over an authenticated loopback endpoint, where budgets,
+contracts, and traces are enforced host-side because environment code
+is model-authored and untrusted; =(finish value)= records the final
+answer. Every proxied call descends the run's shared budget subtree,
+so model-authored loops can never outspend the root allocation. The
+run returns the recorded Lisp value plus the root trace identifier.
+
+The defining litmus property is tested end to end: an input larger
+than the provider window is processed almost completely, with the
+decomposition authored by the root model as Lisp, no provider request
+exceeding the window, intermediate values staying in the environment,
+and the exact answer returned.
 
 * Parallel maps
 
@@ -159,3 +194,10 @@ fan-out can never outspend the root allocation.
 - Policies and =rlm-run=: =src/inference/policy.lisp=.
 - The =inference:= trace resource: =src/inference/resource.lisp=,
   with the trace reference guidance in the compaction instructions.
+- Content-addressed context objects: =src/inference/object.lisp=.
+- The loopback host endpoint for environment calls:
+  =src/inference/endpoint.lisp=.
+- Root completions, the environment prelude, and =env.eval=:
+  =src/inference/environment.lisp=.
+- Model-decided auto-mode command permissions:
+  =src/inference/permission.lisp=.
