@@ -45,8 +45,7 @@ vanishing. Returns the value and its trace identifier."))
                         ((stringp (getf result ':value))
                          (getf result ':value))
                         (t
-                         (task--write-readable-sexp (getf result ':value)
-                                                    :pretty-p t)))))))
+                         (rlm--result-sexp (getf result ':value))))))))
 
 (defmethod rlm-synthesize-inference-results
     ((policy t) (task string) (results list)
