@@ -168,7 +168,7 @@ signals RLM-BUDGET-EXHAUSTED."
        conversation
        (rlm--frame-request task views (rlm--contract-instructions contract)))
       (loop
-        (rlm-budget-charge-call budget :task task)
+        (rlm-budget-ensure budget :task task)
         (let ((result
                 (provider-stream-turn provider conversation
                                       :tool-namespaces #()
@@ -177,6 +177,7 @@ signals RLM-BUDGET-EXHAUSTED."
                                         (declare (ignore event))
                                         nil))))
           (rlm--record-response conversation result)
+          (rlm-budget-charge-call budget)
           (let ((total (conversation--usage-total
                         (provider-result-usage result))))
             (when total
