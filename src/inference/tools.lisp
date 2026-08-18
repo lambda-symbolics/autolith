@@ -336,6 +336,11 @@ filesystem paths are only a programmatic Lisp designator."
                  (uri (json-get view "uri"))
                  (object (json-get view "object"))
                  (effective-label (or label (and (stringp uri) uri))))
+            (unless (= (count-if #'stringp (list text uri object)) 1)
+              (error 'rlm-view-error
+                     :designator view
+                     :message
+                     "expected exactly one of text, a resource uri, or a context object reference"))
             (append
              (when effective-label (list ':label effective-label))
              (list ':content
@@ -343,13 +348,8 @@ filesystem paths are only a programmatic Lisp designator."
                      ((stringp text) text)
                      ((stringp uri)
                       (rlm--tool-resource-content context uri))
-                     ((stringp object)
-                      (rlm--tool-object-content context object))
                      (t
-                      (error 'rlm-view-error
-                             :designator view
-                             :message
-                             "expected text, a resource uri, or a context object reference")))))))))
+                      (rlm--tool-object-content context object)))))))))
 
 (-> rlm--json-schema-type (t) keyword)
 (defun rlm--json-schema-type (type)
@@ -510,6 +510,11 @@ filesystem paths are only a programmatic Lisp designator."
         (text (json-get argument "text"))
         (uri (json-get argument "uri"))
         (object (json-get argument "object")))
+    (unless (= (count-if #'stringp (list text uri object)) 1)
+      (error 'rlm-view-error
+             :designator argument
+             :message
+             "expected exactly one of text, a resource uri, or a context object reference"))
     (cond
       ((stringp text)
        (rlm-context-intern configuration text :label label))
@@ -517,15 +522,10 @@ filesystem paths are only a programmatic Lisp designator."
        (rlm-context-intern configuration
                            (rlm--tool-resource-content context uri)
                            :label (or label uri)))
-      ((stringp object)
+      (t
        (rlm-context-intern configuration
                            (rlm--tool-object-content context object)
-                           :label label))
-      (t
-       (error 'rlm-view-error
-              :designator argument
-              :message
-              "expected text, a resource uri, or a context object reference")))))
+                           :label label)))))
 
 (defmethod tool-execute
     ((tool rlm-complete-tool) (context tool-context) (arguments hash-table))
