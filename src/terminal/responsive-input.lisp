@@ -2559,7 +2559,7 @@ may execute immediately; other Lisp waits for the idle boundary."
   (list
    (list :name "pick"
          :argument nil
-         :description "pick for me; allow safe inspection or ask about the rest")
+         :description "pick for me; the model chooses sandbox, full access, or refusal")
    (list :name "once"
          :argument nil
          :description "allow once inside the workspace sandbox")
@@ -2592,25 +2592,69 @@ may execute immediately; other Lisp waits for the idle boundary."
               (text-cell-prefix (sanitize-text command :single-line-p t) 40)
               reason))
      ':sandboxed)
+    (:full-access
+     (application-present
+      application
+      (format nil "Picked full access for ~A: ~A."
+              (text-cell-prefix (sanitize-text command :single-line-p t) 40)
+              reason))
+     ':full-access)
     (:deny
      (application-present
       application
       (format nil "Refused ~A: ~A."
               (text-cell-prefix (sanitize-text command :single-line-p t) 40)
               reason))
-     ':deny)
-    (:ask
-     (application--ask-command-permission application command
-                                          (uiop:getcwd)))))
+     ':deny)))
+
+(-> application--model-command-permission
+    (application string pathname)
+    (values keyword string))
+(defun application--model-command-permission (application command directory)
+  "Return the cached or freshly inferred model permission for COMMAND."
+  (let* ((cache (application-command-classifications application))
+         (key (format nil "~A~%~A" command (namestring directory)))
+         (cached (gethash key cache)))
+    (if cached
+        (values (car cached) (cdr cached))
+        (progn
+          (application-present
+           application
+           (format nil "Picking a permission for ~A."
+                   (text-cell-prefix (sanitize-text command :single-line-p t)
+                                     40)))
+          (multiple-value-bind (decision reason)
+              (permissions-model-classify-command
+               command directory
+               :provider (application-provider application)
+               :configuration (application-configuration application))
+            (unless (eq decision ':ask)
+              (setf (gethash key cache) (cons decision reason)))
+            (values decision reason))))))
+
+(-> application--classified-command-permission
+    (application string pathname)
+    (values keyword string))
+(defun application--classified-command-permission
+    (application command directory)
+  "Classify COMMAND with the conservative heuristics, then the model.
+
+The heuristic floor still refuses catastrophic commands and fast-paths
+trivial inspection without a model call; the model decides the rest."
+  (multiple-value-bind (decision reason)
+      (permissions-classify-command command)
+    (if (eq decision ':ask)
+        (application--model-command-permission application command directory)
+        (values decision reason))))
 
 (-> application--auto-command-permission
     (application string pathname)
     keyword)
 (defun application--auto-command-permission (application command directory)
-  "Classify COMMAND and allow, refuse, or ask without granting full access."
-  (declare (ignore directory))
+  "Classify COMMAND and grant, refuse, or ask only when the model defers."
   (multiple-value-bind (decision reason)
-      (permissions-classify-command command)
+      (application--classified-command-permission application command
+                                                  directory)
     (if (eq decision ':ask)
         (application--ask-command-permission application command directory)
         (application--apply-classified-command-permission
@@ -2646,11 +2690,12 @@ may execute immediately; other Lisp waits for the idle boundary."
           ((or (string= (or choice "") "pick")
                (string= (or choice "") "auto"))
            (multiple-value-bind (decision reason)
-               (permissions-classify-command command)
-             (if (eq decision ':ask)
-                 ':deny
-                 (application--apply-classified-command-permission
-                  application command decision reason))))
+               (application--classified-command-permission
+                application command directory)
+             (application--apply-classified-command-permission
+              application command
+              (if (eq decision ':ask) ':deny decision)
+              reason)))
           ((string= (or choice "") "once")
            ':sandboxed)
           ((string= (or choice "") "always")

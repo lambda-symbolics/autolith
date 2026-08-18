@@ -108,6 +108,11 @@
     :accessor application-permission-mode
     :type (member :ask :auto :sandboxed :full-access)
     :documentation "The command approval behavior for this process session.")
+   (command-classifications
+    :initform (make-hash-table :test #'equal)
+    :reader application-command-classifications
+    :type hash-table
+    :documentation "Session-cached model permission decisions per command and directory.")
    (command-authorization-lock
     :initform (make-lock "Autolith command authorization")
     :reader application-command-authorization-lock
