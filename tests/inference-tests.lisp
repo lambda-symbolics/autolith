@@ -683,6 +683,86 @@
                  "unsupported root context designators are refused"))
   nil)
 
+(-> rlm-endpoint-test-call (rlm-endpoint list) list)
+(defun rlm-endpoint-test-call (endpoint request)
+  "Send one raw REQUEST packet to ENDPOINT and return its response."
+  (multiple-value-bind (socket stream)
+      (localgroup-connect (rlm-endpoint-port endpoint))
+    (declare (ignore socket))
+    (unwind-protect
+         (progn
+           (localgroup-write-packet stream request)
+           (localgroup-read-packet stream))
+      (ignore-errors (close stream)))))
+
+(-> test-rlm-endpoint () null)
+(defun test-rlm-endpoint ()
+  "Test the loopback endpoint proxies inference under the shared budget."
+  (let* ((configuration (test-configuration))
+         (provider (make-instance 'rlm-map-test-provider))
+         (budget (rlm-budget-create :calls 6 :tokens 1000 :depth 1))
+         (endpoint (rlm-endpoint-start :provider provider
+                                       :configuration configuration
+                                       :budget budget)))
+    (unwind-protect
+         (progn
+           (let ((response
+                   (rlm-endpoint-test-call
+                    endpoint
+                    (list :rlm-request
+                          :token (rlm-endpoint-token endpoint)
+                          :operation ':infer
+                          :arguments (list :task "proxy this question"
+                                           :context (list "proxy view"))))))
+             (test-assert (eq (getf (rest response) ':status) ':ok)
+                          "proxied inference succeeds through the endpoint")
+             (test-assert (search "proxy this question"
+                                  (getf (rest response) ':value))
+                          "proxied inference returns the frame value")
+             (test-assert (non-empty-string-p
+                           (getf (rest response) ':trace))
+                          "proxied inference reports its trace"))
+           (test-assert (= (rlm-budget-remaining-calls budget) 5)
+                        "proxied calls drain the shared root budget")
+           (let ((response
+                   (rlm-endpoint-test-call
+                    endpoint
+                    (list :rlm-request
+                          :token "wrong-token"
+                          :operation ':infer
+                          :arguments (list :task "steal a call")))))
+             (test-assert (eq (getf (rest response) ':status) ':error)
+                          "an invalid token is refused"))
+           (test-assert (= (rlm-budget-remaining-calls budget) 5)
+                        "refused requests spend nothing")
+           (let ((response
+                   (rlm-endpoint-test-call
+                    endpoint
+                    (list :rlm-request
+                          :token (rlm-endpoint-token endpoint)
+                          :operation ':map
+                          :arguments
+                          (list :tasks (list "first part" "second part")
+                                :concurrency 2)))))
+             (test-assert (and (eq (getf (rest response) ':status) ':ok)
+                               (= (length (getf (rest response) ':value)) 2))
+                          "proxied maps fan out and return ordered results"))
+           (multiple-value-bind (value final-p) (rlm-endpoint-final endpoint)
+             (declare (ignore value))
+             (test-assert (not final-p)
+                          "no final value exists before finish"))
+           (rlm-endpoint-test-call
+            endpoint
+            (list :rlm-request
+                  :token (rlm-endpoint-token endpoint)
+                  :operation ':finish
+                  :arguments (list :value 42)))
+           (multiple-value-bind (value final-p) (rlm-endpoint-final endpoint)
+             (test-assert (and final-p (eql value 42))
+                          "finish records the environment's final value")))
+      (rlm-endpoint-stop endpoint)))
+  nil)
+
 (-> test-rlm-budget-descent () null)
 (defun test-rlm-budget-descent ()
   "Test descended budgets share counters and bound recursion depth."
