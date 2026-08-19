@@ -201,8 +201,8 @@
            (let ((bounded (let ((*provider-maximum-output-tokens* 4242))
                             (provider-request-object provider conversation
                                                      schemas))))
-             (test-assert (= (json-get bounded "max_output_tokens") 4242)
-                          "a bound output ceiling reaches the wire request"))
+             (test-assert (null (json-get bounded "max_output_tokens"))
+                          "the Codex serving stack never receives an output ceiling"))
            (let ((input (json-get request "input")))
              (test-assert (= (length input) 3)
                           "the provider request prefixes two developer items")

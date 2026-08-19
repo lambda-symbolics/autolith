@@ -28,6 +28,11 @@
   (:documentation
    "A provider for the streaming OpenAI Chat Completions wire protocol."))
 
+(defmethod provider-output-ceiling-p ((provider openai-compatible-provider))
+  "Chat Completions accepts max_completion_tokens."
+  (declare (ignore provider))
+  t)
+
 (defmethod provider-account-label ((provider openai-compatible-provider))
   "Return the configured OpenAI-compatible provider name."
   (openai-compatible-provider-display-name provider))
@@ -622,7 +627,8 @@ message, which thinking-mode providers require passed back."
       (setf (gethash (openai-compatible-provider-reasoning-parameter provider)
                      request)
             (configuration-reasoning-effort configuration)))
-    (when *provider-maximum-output-tokens*
+    (when (and *provider-maximum-output-tokens*
+               (provider-output-ceiling-p provider))
       (setf (gethash "max_completion_tokens" request)
             *provider-maximum-output-tokens*))
     (values request delivery)))
