@@ -509,7 +509,7 @@ task. When several independent views need the same treatment, prefer
 
 Omit =contract= for a plain text answer. Supply a JSON Schema object
 when the result will be aggregated, validated, or acted upon; the
-frame returns exactly one JSON object satisfying the schema and the
+frame returns exactly one JSON value satisfying the schema and the
 validated value comes back as portable data.
 
 | =capabilities= | Effect                                                                                                               |
@@ -522,7 +522,7 @@ validated value comes back as portable data.
 | Allowance | Meaning                                                                     |
 |-----------+-----------------------------------------------------------------------------|
 | =calls=     | Provider call allowance for the subtree. At most 32 from the primary agent. |
-| =tokens=    | Token allowance. At most 400000.                                            |
+| =tokens=    | Total allowance for the subtree: every frame's full input, views included, plus its output. At most 400000. |
 | =depth=     | Recursion depth below the frame. At most 4.                                 |
 
 =rlm.map= accepts at most 16 tasks. Default concurrency is 4, at most
@@ -530,9 +530,14 @@ validated value comes back as portable data.
 the enclosing budget; their allowance arguments do not create fresh
 budgets. =rlm.complete= is unavailable inside frames.
 
-Request the smallest budget that reasonably covers the task. Prefer a
-few well-aimed subcalls and structured aggregation over repeated
-open-ended exploration. Budget exhaustion is explicit.
+Omit the allowances to accept the defaults (8 calls and 80,000
+tokens at depth 2; root runs get 24 calls and 240,000 tokens), which
+cover most fan-outs. One frame over a file-sized view typically costs
+5,000 to 20,000 tokens, so set explicit allowances to constrain
+deliberately, never to economize: an under-provisioned budget fails
+frames mid-map. Prefer a few well-aimed subcalls and structured
+aggregation over repeated open-ended exploration. Budget exhaustion
+is explicit and per-frame.
 
 ** Root completions
 

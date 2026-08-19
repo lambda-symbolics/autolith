@@ -94,10 +94,10 @@
   (list
    "calls"
    (tool-integer-property
-    "Provider call allowance for the frame subtree. Ignored inside a frame, where the enclosing budget is shared.")
+    "Provider call allowance for the frame subtree; omit to accept the default. Ignored inside a frame, where the enclosing budget is shared.")
    "tokens"
    (tool-integer-property
-    "Token allowance for the frame subtree. Ignored inside a frame.")
+    "Total token allowance for the frame subtree, counting every frame's full input, views included, plus its output. One file-sized frame typically costs 5000 to 20000 tokens; omit to accept the default. Ignored inside a frame.")
    "depth"
    (tool-integer-property
     "Recursion depth allowed below the frame. Ignored inside a frame.")))
