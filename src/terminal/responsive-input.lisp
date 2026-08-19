@@ -2583,28 +2583,29 @@ may execute immediately; other Lisp waits for the idle boundary."
     keyword)
 (defun application--apply-classified-command-permission
     (application command decision reason)
-  "Apply one classifier DECISION for COMMAND and explain REASON."
+  "Apply one classifier DECISION for COMMAND with a terse dim notice.
+
+The command already appears with its tool call, so the notice never
+restates it; only a refusal carries the classifier's short reason."
+  (declare (ignore command))
   (ecase decision
     (:sandboxed
      (application-present
       application
-      (format nil "Picked sandbox for ~A: ~A."
-              (text-cell-prefix (sanitize-text command :single-line-p t) 40)
-              reason))
+      (list (terminal-span ':dim "auto-permission sandbox")))
      ':sandboxed)
     (:full-access
      (application-present
       application
-      (format nil "Picked full access for ~A: ~A."
-              (text-cell-prefix (sanitize-text command :single-line-p t) 40)
-              reason))
+      (list (terminal-span ':dim "auto-permission full access")))
      ':full-access)
     (:deny
      (application-present
       application
-      (format nil "Refused ~A: ~A."
-              (text-cell-prefix (sanitize-text command :single-line-p t) 40)
-              reason))
+      (list (terminal-span
+             ':dim
+             (format nil "auto-permission deny: ~A"
+                     (sanitize-text reason :single-line-p t)))))
      ':deny)))
 
 (-> application--model-command-permission
@@ -2622,11 +2623,6 @@ may execute immediately; other Lisp waits for the idle boundary."
     (if cached
         (values (car cached) (cdr cached))
         (progn
-          (application-present
-           application
-           (format nil "Picking a permission for ~A."
-                   (text-cell-prefix (sanitize-text command :single-line-p t)
-                                     40)))
           (multiple-value-bind (decision reason)
               (permissions-model-classify-command
                command directory

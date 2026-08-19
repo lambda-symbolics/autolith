@@ -23,7 +23,8 @@ version-control operations, or writing agreed artifacts outside the
 workspace. Choose deny for privilege escalation, credential or secret
 access, host reconfiguration, or data destruction. Choose ask when
 the command is consequential, ambiguous, or irreversible enough that
-a human should decide; when torn between full and ask, ask."
+a human should decide; when torn between full and ask, ask. Keep the
+reason to one clause of at most twelve words."
   "The frame task guiding one model command permission decision.")
 
 (defparameter *permissions-model-decision-contract*
