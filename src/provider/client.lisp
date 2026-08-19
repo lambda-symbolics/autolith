@@ -640,8 +640,20 @@ so authentication can bootstrap credentials before model discovery."
 (defvar *provider-maximum-output-tokens* nil
   "An optional output token ceiling for the current provider request.
 
-Inference frames bind this to their remaining token allowance so one
+Inference frames bind this to their reserved output tranche so one
 response cannot dramatically overrun the shared subtree budget.")
+
+(-> provider-output-ceiling-p (model-provider) boolean)
+(defgeneric provider-output-ceiling-p (provider)
+  (:documentation
+   "Return true when PROVIDER's wire protocol accepts an output ceiling field."))
+
+(defmethod provider-output-ceiling-p ((provider model-provider))
+  "Refuse the ceiling by default: serving stacks reject unknown fields.
+
+Where the field is refused, an inference tranche stays a budget
+reservation settled against actual usage instead of a wire limit."
+  nil)
 
 (-> provider--web-search-content-types (configuration) (option vector))
 (defun provider--web-search-content-types (configuration)
@@ -774,7 +786,8 @@ delivery that the transport consumes only after a completed response."
         "prompt_cache_key" (provider--codex-prompt-cache-key provider
                                                             conversation)
         "text" (json-object "verbosity" "low"))
-       (when *provider-maximum-output-tokens*
+       (when (and *provider-maximum-output-tokens*
+                  (provider-output-ceiling-p provider))
          (list "max_output_tokens" *provider-maximum-output-tokens*))))
      delivery)))
 

@@ -84,7 +84,9 @@ and recursion depth, with thread-safe accounting. Recursive frames
 share the parent's counters and decrement depth. Every provider
 request atomically reserves, in one critical section, one call and an
 output token tranche; the tranche doubles as the request's provider
-output ceiling and is settled against the reported usage afterwards,
+output ceiling where the wire protocol accepts one (elsewhere it stays
+an accounting reservation) and is settled against the reported usage
+afterwards,
 with failed or usage-less requests refunding the output tranche in
 full while the admitted call stays consumed. A tranche takes
 at most a share of the remaining pool (a quarter by default, capped
