@@ -1256,6 +1256,13 @@ because durable configuration records are projected in order."
         (setf (gethash "type" item) "compaction"))))
   item)
 
+(-> chat-reasoning-item-p (t) boolean)
+(defun chat-reasoning-item-p (item)
+  "Return true when ITEM carries Chat Completions thinking content."
+  (and (json-object-p item)
+       (string= (or (json-get item "type") "") "reasoning_content")
+       t))
+
 (-> backend-search-call-item-p (t) boolean)
 (defun backend-search-call-item-p (item)
   "Return true when ITEM is a server-executed backend search call."
@@ -1273,6 +1280,7 @@ because durable configuration records are projected in order."
 Backend search calls carry provider-specific server identifiers and state
 that only the executing family accepts on replay."
   (or (reasoning-item-p item)
+      (chat-reasoning-item-p item)
       (native-compaction-item-p item)
       (backend-search-call-item-p item)))
 
