@@ -1159,3 +1159,79 @@
       (when root
         (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
   nil))
+
+(-> test-openai-compatible-tool-name-recovery () null)
+(defun test-openai-compatible-tool-name-recovery ()
+  "Test tool dispatch recovers when models drop the encoded wire names."
+  (multiple-value-bind (namespace name)
+      (openai-compatible--decode-wire-tool-name
+       (openai-compatible--wire-tool-name "resource" "read"))
+    (test-assert (and (equal namespace "resource") (equal name "read"))
+                 "encoded wire names round-trip"))
+  (multiple-value-bind (namespace name)
+      (openai-compatible--fallback-tool-name ".self.eval")
+    (test-assert (and (equal namespace "self") (equal name "eval"))
+                 "leading-dot canonical echoes recover their namespace"))
+  (multiple-value-bind (namespace name)
+      (openai-compatible--fallback-tool-name "fs.view-image")
+    (test-assert (and (equal namespace "fs") (equal name "view-image"))
+                 "dotted canonical echoes split at the first dot"))
+  (multiple-value-bind (namespace name)
+      (openai-compatible--fallback-tool-name "content")
+    (test-assert (and (null namespace) (equal name "content"))
+                 "bare echoes pass through without a namespace"))
+  (test-assert (string= (function-call-canonical-name
+                         (json-object "type" "function_call" "name" "echo"))
+                        "echo")
+               "canonical names of bare calls gain no leading dot")
+  (let* ((configuration (test-configuration))
+         (registry (make-instance 'tool-registry))
+         (context (make-instance 'tool-context
+                                 :configuration configuration
+                                 :worker nil
+                                 :conversation (conversation-create
+                                                configuration
+                                                :identifier "name-recovery")
+                                 :registry registry))
+         (parameters (tool-object-schema
+                      (json-object "value" (tool-string-property
+                                            "The value to echo."))
+                      '("value")))
+         (call (json-object "type" "function_call"
+                            "call_id" "bare-1"
+                            "name" "echo"
+                            "arguments" "{\"value\": \"hi\"}")))
+    (tool-registry-register
+     registry
+     (make-instance 'agent-test-echo-tool
+                    :namespace "test" :name "echo"
+                    :description "Echo the required value."
+                    :parameters parameters))
+    (let ((result (tool-registry-execute-call registry call context)))
+      (test-assert (and (tool-result-success-p result)
+                        (search "echo: hi" (tool-result-content result)))
+                   "a unique bare name dispatches to its only tool"))
+    (tool-registry-register
+     registry
+     (make-instance 'agent-test-echo-tool
+                    :namespace "other" :name "echo"
+                    :description "Echo the required value."
+                    :parameters parameters))
+    (let ((result (tool-registry-execute-call registry call context)))
+      (test-assert (and (not (tool-result-success-p result))
+                        (search "Ambiguous tool name echo"
+                                (tool-result-content result))
+                        (search "test.echo" (tool-result-content result)))
+                   "an ambiguous bare name lists its candidates"))
+    (let ((result (tool-registry-execute-call
+                   registry
+                   (json-object "type" "function_call"
+                                "call_id" "bare-2"
+                                "name" "missing"
+                                "arguments" "{}")
+                   context)))
+      (test-assert (and (not (tool-result-success-p result))
+                        (search "Unknown tool missing." 
+                                (tool-result-content result)))
+                   "an unknown bare name fails with its own name")))
+  nil)

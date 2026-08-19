@@ -760,6 +760,25 @@ letters, digits, hyphens, and underscores on the wire."
      "name" name
      "arguments" (if (zerop (length arguments)) "{}" arguments))))
 
+(-> openai-compatible--fallback-tool-name
+    (string)
+    (values (option string) (option string)))
+(defun openai-compatible--fallback-tool-name (name)
+  "Split a canonical dotted tool NAME a model echoed instead of ours.
+
+Models that do not repeat the encoded function names verbatim commonly
+reproduce the dotted canonical name from the prompt, sometimes with a
+stray leading dot. A bare name without a namespace half is left for
+the registry's unique-name dispatch."
+  (let* ((trimmed (string-left-trim "." name))
+         (separator (position #\. trimmed)))
+    (if (and separator
+             (plusp separator)
+             (< (1+ separator) (length trimmed)))
+        (values (subseq trimmed 0 separator)
+                (subseq trimmed (1+ separator)))
+        (values nil (and (plusp (length trimmed)) trimmed)))))
+
 (defmethod provider-normalize-output-item
     ((provider openai-compatible-provider) (item hash-table))
   "Strip server identifiers and split encoded names into namespaced calls."
@@ -769,9 +788,13 @@ letters, digits, hyphens, and underscores on the wire."
       (when (stringp name)
         (multiple-value-bind (namespace tool-name)
             (openai-compatible--decode-wire-tool-name name)
-          (when (and namespace tool-name)
-            (setf (gethash "namespace" item) namespace
-                  (gethash "name" item) tool-name))))))
+          (unless (and namespace tool-name)
+            (multiple-value-setq (namespace tool-name)
+              (openai-compatible--fallback-tool-name name)))
+          (when tool-name
+            (when namespace
+              (setf (gethash "namespace" item) namespace))
+            (setf (gethash "name" item) tool-name))))))
   item)
 
 (defmethod provider-consume-stream

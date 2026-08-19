@@ -902,14 +902,39 @@
 
 (-> function-call-canonical-name (json-object) string)
 (defun function-call-canonical-name (call)
-  "Return the dotted canonical name carried by function CALL."
-  (format nil "~A.~A"
-          (or (json-get call "namespace") "")
-          (or (json-get call "name") "")))
+  "Return the dotted canonical name carried by function CALL.
+
+A call without a namespace reads as its bare name instead of gaining
+a spurious leading dot."
+  (let ((namespace (json-get call "namespace"))
+        (name (or (json-get call "name") "")))
+    (if (non-empty-string-p namespace)
+        (format nil "~A.~A" namespace name)
+        name)))
 
 (-> tool-registry-execute-call
     (tool-registry json-object tool-context)
     tool-result)
+(-> tool-registry--only-named (tool-registry string) (option tool))
+(defun tool-registry--only-named (registry name)
+  "Return the single tool called NAME across namespaces, when unique.
+
+Some Chat Completions models echo only the bare half of an advertised
+tool name; a unique bare name still dispatches, while an ambiguous one
+signals with the candidate canonical names."
+  (let ((matches (remove-if-not (lambda (tool)
+                                  (string= (tool-name tool) name))
+                                (tool-registry-tools registry))))
+    (cond
+      ((null matches) nil)
+      ((rest matches)
+       (error 'tool-error
+              :message
+              (format nil "Ambiguous tool name ~A: use one of ~{~A~^, ~}."
+                      name (mapcar #'tool-canonical-name matches))
+              :tool-name name))
+      (t (first matches)))))
+
 (defun tool-registry-execute-call (registry call context)
   "Validate and execute one Responses function CALL through REGISTRY."
   (let* ((namespace (json-get call "namespace"))
@@ -917,11 +942,13 @@
          (canonical-name (function-call-canonical-name call)))
     (handler-case
         (progn
-          (unless (and (non-empty-string-p namespace) (non-empty-string-p name))
+          (unless (non-empty-string-p name)
             (error 'tool-error
-                   :message "The provider returned a function call without namespace or name."
+                   :message "The provider returned a function call without a tool name."
                    :tool-name canonical-name))
-          (let ((tool (tool-registry-find registry namespace name)))
+          (let ((tool (if (non-empty-string-p namespace)
+                          (tool-registry-find registry namespace name)
+                          (tool-registry--only-named registry name))))
             (unless tool
               (error 'tool-error
                      :message (format nil "Unknown tool ~A." canonical-name)
