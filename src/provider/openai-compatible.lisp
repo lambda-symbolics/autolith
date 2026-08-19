@@ -527,25 +527,39 @@ letters, digits, hyphens, and underscores on the wire."
 
 (-> openai-compatible--chat-input-messages (list) list)
 (defun openai-compatible--chat-input-messages (items)
-  "Translate portable Responses ITEMS into valid Chat Completions messages."
+  "Translate portable Responses ITEMS into valid Chat Completions messages.
+
+Captured thinking rides on the same round's tool-call assistant
+message, which thinking-mode providers require passed back."
   (let ((messages nil)
-        (function-calls nil))
+        (function-calls nil)
+        (pending-reasoning nil))
     (labels ((flush-function-calls ()
                "Append one assistant message for pending function calls."
                (when function-calls
-                 (push (openai-compatible--chat-function-calls
-                        (nreverse function-calls))
-                       messages)
+                 (let ((message (openai-compatible--chat-function-calls
+                                 (nreverse function-calls))))
+                   (when pending-reasoning
+                     (setf (gethash "reasoning_content" message)
+                           pending-reasoning
+                           pending-reasoning nil))
+                   (push message messages))
                  (setf function-calls nil))))
       (dolist (item items)
-        (if (and (json-object-p item)
-                 (function-call-item-p item))
-            (push item function-calls)
-            (progn
-              (flush-function-calls)
-              (let ((message (openai-compatible--chat-input-item item)))
-                (when message
-                  (push message messages))))))
+        (cond
+          ((chat-reasoning-item-p item)
+           (setf pending-reasoning (json-get item "content")))
+          ((and (json-object-p item)
+                (function-call-item-p item))
+           (push item function-calls))
+          (t
+           (flush-function-calls)
+           (when (and (json-object-p item)
+                      (json-string= (json-get item "role") "user"))
+             (setf pending-reasoning nil))
+           (let ((message (openai-compatible--chat-input-item item)))
+             (when message
+               (push message messages))))))
       (flush-function-calls)
       (nreverse messages))))
 
@@ -804,6 +818,7 @@ the registry's unique-name dispatch."
         (usage nil)
         (finish-reason nil)
         (text-stream (make-string-output-stream))
+        (reasoning-stream (make-string-output-stream))
         (tool-states (make-hash-table :test #'equal))
         (completed-p nil))
     (loop until completed-p
@@ -862,6 +877,8 @@ the registry's unique-name dispatch."
                                                    'assistant-delta-event
                                                    :text text)))
                                        (when (stringp reasoning)
+                                         (write-string reasoning
+                                                       reasoning-stream)
                                          (funcall event-callback
                                                   (make-instance
                                                    'reasoning-delta-event
@@ -879,7 +896,14 @@ the registry's unique-name dispatch."
                           (funcall event-callback
                                    (make-instance 'provider-progress-event)))))))))
     (let ((output-items nil)
+          (reasoning-text (get-output-stream-string reasoning-stream))
           (assistant-text (get-output-stream-string text-stream)))
+      ;; Thinking-mode models require their reasoning passed back with the
+      ;; same round's tool calls, so it persists as a family-private item.
+      (when (plusp (length reasoning-text))
+        (push (json-object "type" "reasoning_content"
+                           "content" reasoning-text)
+              output-items))
       (when (plusp (length assistant-text))
         (push
          (json-object

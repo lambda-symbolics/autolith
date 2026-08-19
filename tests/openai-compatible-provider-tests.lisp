@@ -867,20 +867,35 @@
                        "type" "function_call_output"
                        "call_id" "call-a"
                        "output" "done"))
+                    (reasoning-item
+                      (json-object
+                       "type" "reasoning_content"
+                       "content" "let me think"))
                     (messages
                       (openai-compatible--chat-input-messages
-                       (list call-a call-b tool-output))))
+                       (list reasoning-item call-a call-b tool-output))))
                (test-assert
                 (and (= (length messages) 2)
                      (string= (json-get (first messages) "role") "assistant")
                      (= (length (json-get (first messages) "tool_calls")) 2))
                 "multiple function calls share one Chat Completions assistant message")
                (test-assert
+                (string= (json-get (first messages) "reasoning_content")
+                         "let me think")
+                "captured thinking rides on the same round's tool-call message")
+               (test-assert
+                (conversation-family-private-item-p reasoning-item)
+                "thinking items stay private to their producing family")
+               (test-assert
                 (string= (json-get (second messages) "role") "tool")
                 "Chat Completions tool results follow the grouped assistant message"))
              (let* ((text-event
                       (openai-compatible-provider-tests--stream-event
                        (json-object "content" "hello")
+                       "chat-test"))
+                    (reasoning-event
+                      (openai-compatible-provider-tests--stream-event
+                       (json-object "reasoning_content" "pondering")
                        "chat-test"))
                     (first-tool
                       (json-object
@@ -913,6 +928,7 @@
                     (source
                       (concatenate
                        'string
+                       (test-sse-event-string reasoning-event)
                        (test-sse-event-string text-event)
                        (test-sse-event-string first-tool-event)
                        (test-sse-event-string second-tool-event)
@@ -929,8 +945,13 @@
                (test-assert
                 (and (string= (provider-result-response-id result) "chat-test")
                      (eq (provider-result-turn-completion result) ':continue)
-                     (= (length (provider-result-output-items result)) 2))
+                     (= (length (provider-result-output-items result)) 3))
                 "Chat Completions streams produce a normalized continuing result")
+               (test-assert
+                (let ((item (first (provider-result-output-items result))))
+                  (and (chat-reasoning-item-p item)
+                       (string= (json-get item "content") "pondering")))
+                "streamed thinking persists as the leading reasoning item")
                (test-assert
                 (and call
                      (string= (json-get call "namespace") "fs")
