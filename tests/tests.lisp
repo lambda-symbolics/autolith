@@ -155,6 +155,7 @@
     (test-self-review-reminder)
     (test-skills)
     (test-skill-load-tool)
+    (test-skill-load-presentation)
     (test-mcp-configuration)
     (test-directory-configuration)
     (test-mcp-tools)

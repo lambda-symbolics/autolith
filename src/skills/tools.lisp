@@ -2,6 +2,26 @@
 
 ;;;; -- Skill Selection Tool --
 
+(defclass skill-load-result (tool-result)
+  ((name
+    :initarg :name
+    :reader skill-load-result-name
+    :type string
+    :documentation "The exact selected Skill name shown to the user.")
+   (newly-selected-p
+    :initarg :newly-selected-p
+    :reader skill-load-result-newly-selected-p
+    :type boolean
+    :documentation "True when this call selected the Skill for the first time."))
+  (:documentation
+   "A request-local Skill selection result with presentation metadata."))
+
+(defmethod tool-result-details ((result skill-load-result))
+  "Return bounded metadata for presenting one Skill selection."
+  (list :kind ':skill-load
+        :name (skill-load-result-name result)
+        :newly-selected-p (skill-load-result-newly-selected-p result)))
+
 (defclass skill-load-tool (tool)
   ()
   (:documentation
@@ -42,14 +62,20 @@
          (tool-context-configuration context)
          name)
       (declare (ignore metadata))
-      (tool-success
-       (if newly-selected-p
-           (format nil
-                   "Selected skill ~A for this logical turn. Autolith will inject its current :instructions string ephemerally into subsequent provider requests in this turn."
-                   name)
-           (format nil
-                   "Skill ~A is already selected for this logical turn. Its current :instructions string remains available ephemerally."
-                   name))))))
+      (make-instance
+       'skill-load-result
+       :name name
+       :newly-selected-p newly-selected-p
+       :content
+       (bounded-string
+        (if newly-selected-p
+            (format nil
+                    "Selected skill ~A for this logical turn. Autolith will inject its current :instructions string ephemerally into subsequent provider requests in this turn."
+                    name)
+            (format nil
+                    "Skill ~A is already selected for this logical turn. Its current :instructions string remains available ephemerally."
+                    name)))
+       :success-p t))))
 
 (-> skill-augment-tool-registry (tool-registry) tool-registry)
 (defun skill-augment-tool-registry (registry)

@@ -73,6 +73,9 @@ you can have a project local version of a skill if you like.
 - =skill.load= records the selected name and filesystem identity for the
   current logical turn
 - It returns a short confirmation that the model did not fuck up skill selection
+- The terminal finalizes a visible =◆ loaded skill: NAME= transcript marker
+  when selection succeeds; the marker survives ordinary redraws but is not
+  written to durable conversation history
 - At the next provider boundary, Autolith will reread the file and
   injects the current version of =:instructions= as request-local context
 - Selected Skills stack in catalog order
