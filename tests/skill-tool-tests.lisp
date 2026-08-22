@@ -142,9 +142,12 @@
                  (and (< (length (tool-result-content result)) 256)
                       (not (search secret-body
                                    (tool-result-content result)))
-                      (null (tool-result-details result))
+                      (equal (tool-result-details result)
+                             '(:kind :skill-load
+                               :name "alpha"
+                               :newly-selected-p t))
                       (null (tool-result-image-attachments result)))
-                 "the request-local tool result contains only bounded confirmation")
+                 "the request-local result contains bounded presentation metadata")
                 (let* ((after
                          (skill-request-contributions
                           configuration
@@ -168,6 +171,10 @@
                    (and (tool-result-success-p duplicate)
                         (search "already selected"
                                 (tool-result-content duplicate))
+                        (equal (tool-result-details duplicate)
+                               '(:kind :skill-load
+                                 :name "alpha"
+                                 :newly-selected-p nil))
                         (equal *skill-logical-turn-selection-names*
                                '("alpha")))
                      "repeated selection is idempotent")))))
@@ -194,6 +201,64 @@
                           (eq (context-contribution-class warning)
                               ':mandatory))
                      "deferred body failure becomes request-local warning")))))))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-skill-load-presentation () null)
+(defun test-skill-load-presentation ()
+  "Test finalized transcript markers for request-local Skill selections."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration
+                                :identifier "skill-load-presentation"))
+         (registry (skill-augment-tool-registry
+                    (make-instance 'tool-registry)))
+         (terminal (make-instance 'recording-terminal :columns 80))
+         (ui (terminal-ui-create :terminal terminal))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :tool-registry registry
+                          :ui ui))
+         (observer (application-agent-observer application))
+         (send-status
+           (callback-agent-observer-status-callback observer)))
+    (unwind-protect
+         (progn
+           (terminal-ui-start ui)
+           (recording-terminal-reset terminal)
+           (funcall
+            send-status
+            ':tool-call-completed
+            (list :tool "skill.load"
+                  :success-p t
+                  :details
+                  '(:kind :skill-load
+                    :name "code-review"
+                    :newly-selected-p t)))
+           (test-assert
+            (search "◆ loaded skill: code-review"
+                    (recording-terminal-output terminal))
+            "a successful Skill selection finalizes a visible transcript marker")
+           (recording-terminal-reset terminal)
+           (funcall
+            send-status
+            ':tool-call-completed
+            (list :tool "skill.load"
+                  :success-p t
+                  :details
+                  '(:kind :skill-load
+                    :name "code-review"
+                    :newly-selected-p nil)))
+           (test-assert
+            (search "◆ skill already loaded: code-review"
+                    (recording-terminal-output terminal))
+            "a repeated Skill selection remains visibly distinguishable"))
+      (ignore-errors (terminal-ui-stop ui))
       (uiop:delete-directory-tree root
                                   :validate t
                                   :if-does-not-exist ':ignore)))

@@ -2734,6 +2734,27 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
           application
           (application-tool-result-entry tool application record)))))
 
+(-> application--present-skill-load-result (application list) boolean)
+(defun application--present-skill-load-result (application details)
+  "Present a finalized transcript marker for one request-local Skill selection."
+  (let* ((result-details (getf details :details))
+         (name
+           (and (listp result-details)
+                (eq (getf result-details :kind) ':skill-load)
+                (getf result-details :name))))
+    (and (non-empty-string-p name)
+         (application-present
+          application
+          (list
+           (terminal-span
+            ':notice
+            (if (getf result-details :newly-selected-p)
+                "◆ loaded skill: "
+                "◆ skill already loaded: "))
+           (terminal-span
+            ':strong
+            (sanitize-text name :single-line-p t)))))))
+
 (-> application-agent-observer
     (application
      &key (:steering-function (option function))
@@ -2929,9 +2950,15 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
              (format nil "running ~A" (getf details :tool))))
            (:tool-call-completed
             (application-render-records application)
-            (when (string= (or (getf details :tool) "")
-                           "papercut.report")
-              (application--present-transient-tool-result application details))
+            (let ((tool-name (or (getf details :tool) "")))
+              (cond
+                ((string= tool-name "papercut.report")
+                 (application--present-transient-tool-result
+                  application details))
+                ((and (string= tool-name "skill.load")
+                      (getf details :success-p))
+                 (application--present-skill-load-result
+                  application details))))
             (application-set-activity application activity-label))
            (:steering-applied
             (application-render-records application)
