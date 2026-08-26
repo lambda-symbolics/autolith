@@ -68,7 +68,9 @@
      &key
        (stream *standard-output*)
        (input *standard-input*)
-       input-file-descriptor)
+       (input-file-descriptor
+         (and (eq input *standard-input*)
+              *api-key-input-file-descriptor*)))
   "Prompt for an OpenCode API key and save it to MANAGER's private store.
 
 OpenCode's model-list endpoint is public, so login cannot validate a key without

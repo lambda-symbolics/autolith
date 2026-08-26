@@ -182,15 +182,15 @@
                    (setf save-secret-use-active-p (secret-use-active-p))
                    (funcall original-save source credentials))))
           (lambda ()
-            (test-assert
-             (string=
-              (opencode-api-key-login
-               manager
-               :stream (make-string-output-stream)
-               :input (make-string-input-stream "")
-               :input-file-descriptor 23)
-              "OpenCode authentication was saved by Autolith.")
-             "OpenCode login reports successful private persistence")
+            (let ((*api-key-input-file-descriptor* 23))
+              (test-assert
+               (string=
+                (opencode-api-key-login
+                 manager
+                 :stream (make-string-output-stream)
+                 :input *standard-input*)
+                "OpenCode authentication was saved by Autolith.")
+                "OpenCode login reports successful private persistence"))
             (setf stored
                   (credential-source-load
                    (credential-manager-primary-source manager)))))
