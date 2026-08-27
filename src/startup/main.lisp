@@ -689,11 +689,16 @@ dependencies."
   (let* ((pristine-p (not (null (getopt* command ':pristine))))
          (immutable-p (or pristine-p
                           (not (null (getopt* command ':immutable)))))
+         (site-config-root-value (getopt* command ':site-config-root))
          (explicit-permission-mode (getopt* command ':permissions))
          (image-values (getopt* command ':images))
          (configuration
            (let ((base (configuration-create
-                        :immutable-p immutable-p :defer-provider-validation-p t)))
+                        :immutable-p immutable-p
+                        :site-config-root
+                        (and (non-empty-string-p site-config-root-value)
+                             (pathname site-config-root-value))
+                        :defer-provider-validation-p t)))
              ;; Keep provider validation deferred until executable user init.
              (reinitialize-instance
               base :fullscreen-p (or (not (null (getopt* command ':fullscreen)))
@@ -904,6 +909,12 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
                 :key ':pristine
                 :persistent t
                 :description "boot tracked source without private mutations or user init")
+   (make-option ':string
+                :long-name "site-config-root"
+                :key ':site-config-root
+                :parameter "DIRECTORY"
+                :persistent t
+                :description "load site configuration before user configuration")
    (make-option ':enum
                 :long-name "permissions"
                 :key ':permissions
@@ -1058,13 +1069,17 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
        (error 'configuration-error
               :message "run-job accepts only --input and --output options."))
      (let ((input (getopt* command ':input))
-           (output (getopt* command ':output)))
+           (output (getopt* command ':output))
+           (site-config-root-value (getopt* command ':site-config-root)))
        (unless (non-empty-string-p input)
          (error 'configuration-error :message "run-job requires --input FILE."))
        (unless (non-empty-string-p output)
          (error 'configuration-error :message "run-job requires --output FILE."))
        (let* ((configuration
                 (configuration-create
+                 :site-config-root
+                 (and (non-empty-string-p site-config-root-value)
+                      (pathname site-config-root-value))
                  :immutable-p (not (null (getopt* command ':immutable)))
                  :defer-provider-validation-p t))
               (permission-mode
@@ -1092,10 +1107,14 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
    :description "list known model identifiers and exit"
    :handler
    (lambda (command)
-     (declare (ignore command))
-     (let ((configuration
-             (configuration-create :immutable-p t
-                                    :defer-provider-validation-p t)))
+     (let* ((site-config-root-value (getopt* command ':site-config-root))
+            (configuration
+              (configuration-create
+               :site-config-root
+               (and (non-empty-string-p site-config-root-value)
+                    (pathname site-config-root-value))
+               :immutable-p t
+               :defer-provider-validation-p t)))
        (user-init-load configuration)
        (provider-bootstrap-configuration configuration)
        (dolist (model (main--known-model-identifiers))

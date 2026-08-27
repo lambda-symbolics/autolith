@@ -119,9 +119,9 @@ process-global fixture parent on exit; parallel runs need separate processes."
       (setf (sb-ext:symbol-global-value '*test-temporary-root*) previous)
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
 
-(-> test-configuration () configuration)
-(defun test-configuration ()
-  "Return an isolated configuration rooted in a fresh temporary directory."
+(-> test-configuration (&key (:site-config-root (option pathname))) configuration)
+(defun test-configuration (&key site-config-root)
+  "Return an isolated configuration with an optional SITE-CONFIG-ROOT."
   (let* ((parent (sb-ext:symbol-global-value '*test-temporary-root*))
          (root (uiop:ensure-directory-pathname
                 (merge-pathnames
@@ -138,10 +138,10 @@ process-global fixture parent on exit; parallel runs need separate processes."
                    :source-root source-root
                    :working-directory source-root
                    :config-root (merge-pathnames "config/" root)
+                   :site-config-root site-config-root
                    :data-root (merge-pathnames "data/" root)
                    :state-root (merge-pathnames "state/" root)
                    :cache-root (merge-pathnames "cache/" root)
-                   :config-root (merge-pathnames "config/" root)
                    :codex-auth-path (merge-pathnames "missing-auth.json" root)
                    :grok-bootstrap-auth-path
                    (merge-pathnames "missing-grok-auth.json" root)
