@@ -140,6 +140,9 @@
     "tools" (json-array
              (json-object "name" "run"
                           "description" "Search the web."
+                          "parameters" (json-object "type" "object"))
+             (json-object "name" "gist"
+                          "description" "Retrieve one page as Markdown."
                           "parameters" (json-object "type" "object"))))))
 
 (-> test-provider-request-tool-filtering () null)
@@ -152,11 +155,31 @@
          (schemas (provider-tests--search-filter-schemas)))
     (unwind-protect
          (progn
-           (test-assert
-            (= (length (provider-request-tool-namespaces
-                        base-configuration schemas :hosted-web-search-p t))
-               1)
-            "hosted search suppresses the duplicate local web namespace")
+           (let ((filtered
+                   (provider-request-tool-namespaces
+                    base-configuration schemas :hosted-web-search-p t))
+                 (web (find-if
+                       (lambda (entry)
+                         (json-string= (json-get entry "name") "web"))
+                       (coerce schemas 'list))))
+             (test-assert
+              (= (length filtered) 2)
+              "hosted search suppresses only the provider-backed web.run tool")
+             (test-assert
+              (and web
+                   (= (length (json-get web "tools")) 2))
+              "the unfiltered fixture advertises both web tools")
+             (let ((entry (find-if
+                           (lambda (candidate)
+                             (json-string= (json-get candidate "name") "web"))
+                           (coerce filtered 'list))))
+               (test-assert
+                (and entry
+                     (= (length (json-get entry "tools")) 1)
+                     (json-string=
+                      (json-get (aref (json-get entry "tools") 0) "name")
+                      "gist"))
+                "hosted search keeps the independent web.gist tool")))
            (test-assert
             (and (provider-hosted-web-search-tools-p
                   (list (json-object "type" "web_search_preview")))
@@ -171,15 +194,21 @@
                     (progn
                       (conversation-append-user-message conversation "inspect")
                       (provider-request-object provider conversation schemas)))
-                   (tools (json-get request "tools"))
-                   (namespace (aref tools 0)))
-              (test-assert
-               (and (= (length tools) 2)
-                    (json-string= (json-get namespace "type") "namespace")
-                    (json-string= (json-get namespace "name") "resource")
-                    (json-string= (json-get (aref tools 1) "type")
-                                  "tool_search"))
-               "Responses omits the local web namespace when search is disabled"))
+                  (tools (json-get request "tools"))
+                  (namespace (aref tools 0))
+                  (web (aref tools 1)))
+             (test-assert
+              (and (= (length tools) 3)
+                   (json-string= (json-get namespace "type") "namespace")
+                   (json-string= (json-get namespace "name") "resource")
+                   (json-string= (json-get web "name") "web")
+                   (= (length (json-get web "tools")) 1)
+                   (json-string=
+                    (json-get (aref (json-get web "tools") 0) "name")
+                    "gist")
+                   (json-string= (json-get (aref tools 2) "type")
+                                 "tool_search"))
+              "Responses keeps web.gist but omits web.run when search is disabled"))
            (let* ((conversation
                     (conversation-create disabled-configuration
                                          :identifier "chat-search-filter"))
@@ -196,12 +225,16 @@
                       (provider-request-object provider conversation schemas)))
                   (tools (json-get request "tools")))
              (test-assert
-              (and (= (length tools) 1)
+              (and (= (length tools) 2)
                    (string= (json-get
                              (json-get (aref tools 0) "function")
                              "description")
-                            "Read a resource."))
-              "Chat Completions omits local web schemas when search is disabled"))
+                            "Read a resource.")
+                   (string= (json-get
+                             (json-get (aref tools 1) "function")
+                             "description")
+                            "Retrieve one page as Markdown."))
+              "Chat Completions keeps web.gist but omits web.run when search is disabled"))
            (let* ((configuration
                     (configuration--clone
                      (configuration-with-model
@@ -217,10 +250,12 @@
                       (provider-request-object provider conversation schemas)))
                   (tools (json-get request "tools")))
              (test-assert
-              (and (= (length tools) 1)
+              (and (= (length tools) 2)
                    (string= (json-get (aref tools 0) "description")
-                            "Read a resource."))
-              "Anthropic omits local web schemas when search is disabled")))
+                            "Read a resource.")
+                   (string= (json-get (aref tools 1) "description")
+                            "Retrieve one page as Markdown."))
+              "Anthropic keeps web.gist but omits web.run when search is disabled")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 

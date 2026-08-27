@@ -89,16 +89,18 @@ backend search is enabled."
 
 (defmethod provider-responses-request-namespaces
     ((provider grok-subscription-provider) (tool-namespaces vector))
-  "Exclude the local web namespace, which Grok serves through backend search.
+  "Exclude the local web.run tool, which Grok serves through backend search.
 
 The standalone search endpoint behind web.run no longer exists on the Grok
-proxy, so the local tool could only fail."
+proxy, so the local tool could only fail. Independent web namespace tools
+such as web.gist page retrieval stay advertised."
   (declare (ignore provider))
-  (remove-if (lambda (entry)
-               (and (json-object-p entry)
-                    (json-string= (json-get entry "type") "namespace")
-                    (json-string= (json-get entry "name") "web")))
-             tool-namespaces))
+  (coerce
+   (loop for entry across tool-namespaces
+         for filtered = (provider-request--without-web-run entry)
+         when filtered
+           collect filtered)
+   'vector))
 
 (defmethod provider-responses-reasoning-summary
     ((provider grok-subscription-provider) (configuration configuration))

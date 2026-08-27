@@ -204,20 +204,48 @@
   "Return true when TOOLS contains a provider-hosted search declaration."
   (and (some #'provider-hosted-web-search-tool-p tools) t))
 
+(-> provider-request--without-web-run (json-object) (option json-object))
+(defun provider-request--without-web-run (entry)
+  "Return a copy of namespace ENTRY without web.run, or NIL when empty.
+
+web.run is the only provider-backed web search tool. Independent web
+namespace tools such as web.gist page retrieval keep working without
+provider search and stay advertised."
+  (if (and (json-object-p entry)
+           (json-string= (json-get entry "type") "namespace")
+           (json-string= (json-get entry "name") "web"))
+      (let ((tools
+              (remove "run"
+                      (coerce (json-get entry "tools") 'list)
+                      :key (lambda (tool)
+                             (and (json-object-p tool)
+                                  (json-get tool "name")))
+                      :test #'json-string=)))
+        (and tools
+             (json-object
+              "type" (json-get entry "type")
+              "name" (json-get entry "name")
+              "description" (json-get entry "description")
+              "tools" (coerce tools 'vector))))
+      entry))
+
 (-> provider-request-tool-namespaces
     (configuration vector &key (:hosted-web-search-p boolean))
     vector)
 (defun provider-request-tool-namespaces
     (configuration tool-namespaces &key hosted-web-search-p)
-  "Omit local web.run when search is disabled or a hosted search tool is served."
+  "Omit local web.run when search is disabled or a hosted search tool is served.
+
+Independent web namespace tools, such as web.gist page retrieval,
+stay available because they do not depend on provider web search."
   (if (or hosted-web-search-p
           (string= (configuration-web-search-mode configuration) "disabled"))
-      (remove-if
-       (lambda (entry)
-         (and (json-object-p entry)
-              (json-string= (json-get entry "type") "namespace")
-              (json-string= (json-get entry "name") "web")))
-       tool-namespaces)
+      (coerce
+       (loop for entry across tool-namespaces
+             for filtered = (provider-request--without-web-run entry)
+             when filtered
+               collect filtered)
+       'vector)
       tool-namespaces))
 
 
