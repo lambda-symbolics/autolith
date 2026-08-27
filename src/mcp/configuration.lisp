@@ -80,10 +80,12 @@
 
 (defparameter *mcp-registration-source-precedence*
   '((:tracked . 0)
-    (:config . 1)
-    (:directory . 2)
-    (:user . 3)
-    (:runtime . 4))
+    (:site-config . 1)
+    (:site . 2)
+    (:config . 3)
+    (:directory . 4)
+    (:user . 5)
+    (:runtime . 6))
   "The explicit low-to-high precedence of MCP registration sources.")
 
 (define-condition mcp-configuration-error (configuration-error)
@@ -239,7 +241,8 @@
     :initarg :source
     :reader mcp-server-registration-source
     :type keyword
-    :documentation "The tracked, config, directory, user, or runtime registration layer."))
+    :documentation
+    "The tracked, site-config, site, config, directory, user, or runtime registration layer."))
   (:documentation "One source-attributed layer in the MCP server registry."))
 
 
@@ -1150,10 +1153,7 @@ bound policy takes effect without reloading this file."
 (-> mcp--current-registration-source () keyword)
 (defun mcp--current-registration-source ()
   "Return the registration source appropriate to the current load context."
-  (if (and (boundp '*user-init-loading-p*)
-           (symbol-value '*user-init-loading-p*))
-      :user
-      :runtime))
+  *extension-registration-source*)
 
 (-> mcp--registration-source-rank (keyword) integer)
 (defun mcp--registration-source-rank (source)
