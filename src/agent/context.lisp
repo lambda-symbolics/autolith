@@ -24,7 +24,10 @@
   "The approximate request-token budget shared by advisory contributions.")
 
 (defvar *user-init-loading-p* nil
-  "True only while Autolith loads the user's executable configuration.")
+  "True only while Autolith loads executable filesystem configuration.")
+
+(defvar *extension-registration-source* ':runtime
+  "The source attributed to extension registrations in the current load context.")
 
 (defvar *context-contributors* nil
   "Portable contributor registrations in deterministic registration order.")
@@ -365,7 +368,7 @@
     string)
 (defun register-context-contributor
     (identifier function-designator
-     &key (source (if *user-init-loading-p* ':user ':runtime)))
+     &key (source *extension-registration-source*))
   "Register FUNCTION-DESIGNATOR under stable IDENTIFIER and return IDENTIFIER.
 
 The function receives one REQUEST-CONTEXT and returns NIL, one contribution,

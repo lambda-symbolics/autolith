@@ -34,6 +34,54 @@
            configuration (conversation-identifier conversation)))
     (values application controller relay conversation)))
 
+(-> test-localgroup-handoff-site-arguments () null)
+(defun test-localgroup-handoff-site-arguments ()
+  "Test detached replacements retain the configured site root."
+  (let* ((site-container
+           (uiop:ensure-directory-pathname
+            (merge-pathnames
+             (format nil "autolith-handoff-site-tests-~A/" (make-identifier))
+             (uiop:temporary-directory))))
+         (site-root (merge-pathnames "site/" site-container))
+         (configuration nil)
+         (root nil))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist site-root)
+           (setf configuration
+                 (test-configuration
+                  :site-config-root
+                  (uiop:ensure-directory-pathname (truename site-root)))
+                 root (test-configuration-root configuration))
+           (let* ((application
+                    (make-instance 'application
+                                   :configuration configuration
+                                   :permission-mode ':auto))
+                  (handoff-pathname (merge-pathnames "handoff.sexp" root))
+                  (arguments
+                    (localgroup-handoff--arguments application handoff-pathname)))
+             (test-assert
+              (equal arguments
+                     (list
+                      (namestring
+                       (merge-pathnames
+                        "bin/autolith"
+                        (configuration-source-root configuration)))
+                      "--permissions" "auto"
+                      "--site-config-root"
+                      (namestring
+                       (configuration-site-config-root configuration))
+                      "--localgroup-handoff" (namestring handoff-pathname)))
+              "a detached replacement preserves the exact site configuration root")))
+      (when root
+        (uiop:delete-directory-tree root
+                                    :validate t
+                                    :if-does-not-exist ':ignore))
+      (uiop:delete-directory-tree site-container
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-localgroup-handoff-records () null)
 (defun test-localgroup-handoff-records ()
   "Test private handoff records, startup identity, drafts, and registry ownership."

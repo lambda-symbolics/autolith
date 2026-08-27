@@ -95,10 +95,12 @@ Autolith reads =<trusted-directory>/.autolith/mcp.sexp=.
 - Matching anchors apply from outermost to nearest
 - A nearer file replaces an outer file's same-name server
 - Directory files override the global =mcp.sexp=
-- =init.lisp= and live registrations have higher precedence
+- Trusted-directory and user =init.lisp= registrations, plus live
+  registrations, have higher precedence
 
-A trusted anchor may also supply =.autolith/init.lisp=. Autolith loads
-these from outermost to nearest, then
+A trusted anchor may also supply =.autolith/init.lisp=. When a site
+configuration root is set, Autolith first loads its =init.lisp=. It then loads
+trusted directory files from outermost to nearest and finally
 =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp=.
 
 They are full-power Common Lisp in the =AUTOLITH= package. They can
@@ -161,7 +163,7 @@ namespace.
 As for commands:
 - =(mcp)= shows connection state.
 - =(mcp refresh= refreshes connections and tool discovery (does not reread config).
-- =(mcp reload)= rereads the global and active directory files plus =init.lisp=, closes old runtimes, and
+- =(mcp reload)= rereads the site, global, and active directory files plus =init.lisp=, closes old runtimes, and
 installs a fresh registry. =(cwd)= does the equivalent replacement before changing directory.
 
 A =notifications/tools/list_changed= notification marks one server
@@ -187,9 +189,12 @@ can register the same property list used by =mcp.sexp=:
 
 Precedence, low to high:
 
+- site =mcp.sexp=
+- site =init.lisp=
 - global =mcp.sexp=
 - active directory-scoped =mcp.sexp= files
-- =init.lisp=
+- trusted-directory =init.lisp= files, outermost to nearest
+- global user =init.lisp=
 - live runtime registrations
 
 A higher layer shadows the same case-sensitive name.

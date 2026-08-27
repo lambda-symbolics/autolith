@@ -130,7 +130,7 @@
   "The recursive lock protecting provider registration layers.")
 
 (defparameter *provider-registration-sources*
-  '(:builtin :user :runtime)
+  '(:builtin :site :user :runtime)
   "The provider registration sources ordered from lowest to highest precedence.")
 
 (defparameter *provider-model-cache-version* 2
@@ -158,9 +158,8 @@
 (-> provider--current-registration-source () keyword)
 (defun provider--current-registration-source ()
   "Return the registration source appropriate to the current load context."
-  (if (and (boundp '*user-init-loading-p*)
-           (symbol-value '*user-init-loading-p*))
-      ':user
+  (if (boundp '*extension-registration-source*)
+      (symbol-value '*extension-registration-source*)
       ':runtime))
 
 (-> provider--family-keyword (string) keyword)
@@ -383,9 +382,8 @@ return a MODEL-PROVIDER. MODEL-DISCOVERY, when supplied, receives CONFIGURATION
 and returns model strings or metadata property lists. The optional endpoint
 resolver returns the current model-discovery cache identity. AUTHENTICATOR, when
 supplied, receives the provider and the keyword arguments STREAM and
-OPEN-BROWSER-P. Registrations from user-init.lisp and live runtime registrations
-replace only the same source and shadow lower-precedence registrations with the
-same name."
+OPEN-BROWSER-P. Site, user, and live runtime registrations replace only the
+same source and shadow lower-precedence registrations with the same name."
   (unless (non-empty-string-p name)
     (error 'configuration-error
            :message "Provider names must not be empty."))

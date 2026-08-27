@@ -6346,10 +6346,11 @@
                       (list
                        'configuration-create
                         (lambda (&key source-root working-directory model
-                                     reasoning-effort codex-fast-mode-p
+                                     site-config-root reasoning-effort codex-fast-mode-p
                                      immutable-p defer-provider-validation-p
                                      &allow-other-keys)
                          (declare (ignore source-root
+                                    site-config-root
                                     defer-provider-validation-p))
                          (configuration--clone
                           configuration

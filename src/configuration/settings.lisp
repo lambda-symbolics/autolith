@@ -408,6 +408,12 @@ configuration can be created before executable user initialization loads."
     :reader configuration-config-root
     :type pathname
     :documentation "The root for user-editable Autolith configuration.")
+   (site-config-root
+    :initarg :site-config-root
+    :initform nil
+    :reader configuration-site-config-root
+    :type (option pathname)
+    :documentation "The optional site-managed configuration root.")
    (data-root
     :initarg :data-root
     :reader configuration-data-root
@@ -677,9 +683,42 @@ and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
       pathname
       (merge-pathnames pathname (uiop:getcwd))))
 
+(-> configuration--resolve-site-config-root
+    ((option pathname))
+    (option pathname))
+(defun configuration--resolve-site-config-root (site-config-root)
+  "Return SITE-CONFIG-ROOT as an existing canonical absolute directory."
+  (when site-config-root
+    (unless (uiop:absolute-pathname-p site-config-root)
+      (error 'configuration-error
+             :message
+             (format nil "Site configuration root ~S must be absolute."
+                     (namestring site-config-root))))
+    (handler-case
+        (let ((directory
+                (uiop:directory-exists-p
+                 (uiop:ensure-pathname site-config-root
+                                       :ensure-directory t
+                                       :want-non-wild t))))
+          (unless directory
+            (error 'configuration-error
+                   :message
+                   (format nil "Site configuration root ~S does not exist."
+                           (namestring site-config-root))))
+          (uiop:ensure-directory-pathname (truename directory)))
+      (configuration-error (condition)
+        (error condition))
+      (serious-condition (cause)
+        (error 'configuration-error
+               :message
+               (format nil "Could not resolve site configuration root ~S: ~A"
+                       (namestring site-config-root)
+                       cause))))))
+
 (-> configuration-create
     (&key (:source-root (option pathname))
           (:working-directory (option pathname))
+          (:site-config-root (option pathname))
           (:model (option string))
           (:reasoning-effort (option string))
           (:codex-fast-mode-p boolean)
@@ -700,7 +739,7 @@ and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
           (:management-repl-authentication-timeout (option integer)))
     configuration)
 (defun configuration-create
-    (&key source-root working-directory model reasoning-effort
+    (&key source-root working-directory site-config-root model reasoning-effort
       (codex-fast-mode-p nil codex-fast-mode-p-supplied-p)
       immutable-p defer-provider-validation-p
       (management-repl-enabled-p nil management-repl-enabled-p-supplied-p)
@@ -731,6 +770,13 @@ initialization registers the selected model."
                       "CODEX_HOME"
                       (merge-pathnames ".codex/" home)))
          (environment-source-root (uiop:getenv "AUTOLITH_SOURCE_ROOT"))
+         (environment-site-config-root
+           (uiop:getenv "AUTOLITH_SITE_CONFIG_ROOT"))
+         (selected-site-config-root
+           (configuration--resolve-site-config-root
+            (or site-config-root
+                (and (non-empty-string-p environment-site-config-root)
+                     (pathname environment-site-config-root)))))
          (selected-model (or model (uiop:getenv "AUTOLITH_MODEL") *default-model*))
          (selected-effort (or reasoning-effort
                               (uiop:getenv "AUTOLITH_REASONING_EFFORT")
@@ -789,6 +835,7 @@ initialization registers the selected model."
                    (uiop:ensure-directory-pathname
                     (or working-directory (uiop:getcwd)))
                    :config-root (merge-pathnames "autolith/" config-home)
+                   :site-config-root selected-site-config-root
                    :data-root (merge-pathnames "autolith/" data-home)
                    :state-root (merge-pathnames "autolith/" state-home)
                    :cache-root (merge-pathnames "autolith/" cache-home)
@@ -902,6 +949,8 @@ reasoning effort only when that effort is supported by the selected model."
                    :source-root (configuration-source-root configuration)
                    :working-directory effective-working-directory
                    :config-root (configuration-config-root configuration)
+                   :site-config-root
+                   (configuration-site-config-root configuration)
                    :data-root (configuration-data-root configuration)
                    :state-root (configuration-state-root configuration)
                    :cache-root (configuration-cache-root configuration)
@@ -1080,6 +1129,18 @@ reasoning effort only when that effort is supported by the selected model."
 (defun configuration-user-init-path (configuration)
   "Return the user-authored Lisp initialization pathname."
   (merge-pathnames "init.lisp" (configuration-config-root configuration)))
+
+(-> configuration-site-init-path (configuration) (option pathname))
+(defun configuration-site-init-path (configuration)
+  "Return the site-authored Lisp initialization pathname, when configured."
+  (let ((root (configuration-site-config-root configuration)))
+    (and root (merge-pathnames "init.lisp" root))))
+
+(-> configuration-site-mcp-path (configuration) (option pathname))
+(defun configuration-site-mcp-path (configuration)
+  "Return the site-authored native MCP pathname, when configured."
+  (let ((root (configuration-site-config-root configuration)))
+    (and root (merge-pathnames "mcp.sexp" root))))
 
 (-> configuration-directory-scopes-path (configuration) pathname)
 (defun configuration-directory-scopes-path (configuration)

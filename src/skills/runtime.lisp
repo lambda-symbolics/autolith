@@ -195,19 +195,24 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
 
 (-> skill-roots (configuration) list)
 (defun skill-roots (configuration)
-  "Return the effective project, user, and optional bundled skill roots."
+  "Return project, user, optional site, and bundled skill roots by precedence."
   (remove-duplicates
-   (list
-    (merge-pathnames
-     ".autolith/skills/"
-     (workspace-project-root
-      (configuration-working-directory configuration)))
-    (merge-pathnames "skills/"
-                     (configuration-config-root configuration))
-    (merge-pathnames "skills/"
-                     (configuration-source-root configuration)))
+   (remove
+    nil
+    (list
+     (merge-pathnames
+      ".autolith/skills/"
+      (workspace-project-root
+       (configuration-working-directory configuration)))
+     (merge-pathnames "skills/"
+                      (configuration-config-root configuration))
+     (let ((site-root (configuration-site-config-root configuration)))
+       (when site-root
+         (merge-pathnames "skills/" site-root)))
+     (merge-pathnames "skills/"
+                      (configuration-source-root configuration))))
    :test #'equal
-   :from-end nil))
+   :from-end t))
 
 (-> skill-catalog-for-configuration (configuration) skill-catalog)
 (defun skill-catalog-for-configuration (configuration)

@@ -83,7 +83,17 @@
 (-> skill-tests--roots-and-rendering () null)
 (defun skill-tests--roots-and-rendering ()
   "Test effective roots, root precedence, and bounded catalog rendering."
-  (let* ((base-configuration (test-configuration))
+  (let* ((site-root
+           (uiop:ensure-directory-pathname
+            (merge-pathnames
+             (format nil "autolith-skill-site-tests-~A/" (make-identifier))
+             (uiop:temporary-directory))))
+         (base-configuration
+           (progn
+             (ensure-directories-exist site-root)
+             (setf site-root
+                   (uiop:ensure-directory-pathname (truename site-root)))
+             (test-configuration :site-config-root site-root)))
          (root (test-configuration-root base-configuration))
          (project (merge-pathnames "project/" root))
          (working-directory (merge-pathnames "src/module/" project))
@@ -100,13 +110,14 @@
          (user-skills
            (merge-pathnames
             "skills/"
-            (configuration-config-root configuration))))
+            (configuration-config-root configuration)))
+         (site-skills (merge-pathnames "skills/" site-root)))
     (unwind-protect
          (progn
            (let ((roots (skill-roots configuration)))
              (test-assert
-              (= (length roots) 3)
-              "skill discovery has project, user, and bundled root positions")
+              (= (length roots) 4)
+              "skill discovery has project, user, site, and bundled roots")
              (test-assert
               (equal (first roots) project-skills)
               "only the effective Git root supplies project-local skills")
@@ -116,6 +127,11 @@
              (test-assert
               (equal
                (third roots)
+               site-skills)
+              "the site skill root follows the user root")
+             (test-assert
+              (equal
+               (fourth roots)
                (merge-pathnames
                 "skills/"
                 (configuration-source-root configuration)))
@@ -141,6 +157,27 @@
              "standard"
              "Standard Skill integration."
              "Standard instructions."))
+           (skill-tests--write
+            user-skills
+            "user-over-site/SKILL.sexp"
+            (skill-tests--definition
+             "user-over-site"
+             "User definition."
+             "User instructions."))
+           (skill-tests--write
+            site-skills
+            "user-over-site/SKILL.sexp"
+            (skill-tests--definition
+             "user-over-site"
+             "Site definition."
+             "Site instructions."))
+           (skill-tests--write
+            site-skills
+            "site-only/SKILL.sexp"
+            (skill-tests--definition
+             "site-only"
+             "Site-only definition."
+             "Site-only instructions."))
            (dotimes (index 8)
              (let ((name (format nil "skill-~D" index)))
                (skill-tests--write
@@ -162,6 +199,20 @@
                (truename
                 (merge-pathnames "winner/SKILL.sexp" project-skills)))
               "project-local skills take precedence over user skills")
+             (test-assert
+              (equal
+               (skill-metadata-pathname
+                (skill-catalog-find catalog "user-over-site"))
+               (truename
+                (merge-pathnames "user-over-site/SKILL.sexp" user-skills)))
+              "user skills take precedence over site skills")
+             (test-assert
+              (equal
+               (skill-metadata-pathname
+                (skill-catalog-find catalog "site-only"))
+               (truename
+                (merge-pathnames "site-only/SKILL.sexp" site-skills)))
+              "site skills participate before the bundled fallback")
              (test-assert
               (and (eq (skill-metadata-source-format standard) ':agent-skill)
                    (equal (skill-metadata-cache-root standard)
@@ -195,7 +246,8 @@
                 (skill-catalog-render-error ()
                   t))
               "a budget below protocol text signals a structured error")))
-      (skill-tests--delete-root root)))
+      (skill-tests--delete-root root)
+      (skill-tests--delete-root site-root)))
   nil)
 
 

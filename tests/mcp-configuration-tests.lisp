@@ -112,9 +112,20 @@
 (-> test-mcp-configuration () null)
 (defun test-mcp-configuration ()
   "Test strict native MCP parsing and layered registration transactions."
-  (let* ((configuration (test-configuration))
+  (let* ((site-root
+           (uiop:ensure-directory-pathname
+            (merge-pathnames
+             (format nil "autolith-site-tests-~A/" (make-identifier))
+             (uiop:temporary-directory))))
+         (configuration
+           (progn
+             (ensure-directories-exist site-root)
+             (setf site-root
+                   (uiop:ensure-directory-pathname (truename site-root)))
+             (test-configuration :site-config-root site-root)))
          (root (test-configuration-root configuration))
          (pathname (configuration-mcp-path configuration))
+         (site-pathname (configuration-site-mcp-path configuration))
          (registry-snapshot (mcp--registry-snapshot)))
     (unwind-protect
          (progn
@@ -732,29 +743,55 @@
               :transport (:type :stdio :command "/bin/true")
               :approval :prompt)
             :source ':config)
+           (register-mcp-server
+            '(:name "precedence"
+              :transport (:type :stdio :command "/bin/true")
+              :approval :deny)
+            :source ':site)
+           (register-mcp-server
+            '(:name "precedence"
+              :transport (:type :stdio :command "/bin/true")
+              :approval :allow)
+            :source ':directory)
            (test-assert
             (and
              (eq
               (mcp-server-registration-source
                (first (mcp-server-registrations)))
-              :runtime)
+              ':runtime)
              (eq (test-mcp-configuration--effective-approval "precedence")
-                 :allow))
+                 ':allow))
             "runtime MCP registration wins regardless of registration order")
            (mcp--remove-registration-source :runtime)
            (test-assert
             (eq (test-mcp-configuration--effective-approval "precedence")
-                :read-only)
+                ':read-only)
             "user MCP registration shadows config and tracked registrations")
            (mcp--remove-registration-source :user)
            (test-assert
-            (eq (test-mcp-configuration--effective-approval "precedence")
-                :prompt)
-            "config MCP registration shadows a tracked registration")
+            (eq
+             (mcp-server-registration-source
+              (first (mcp-server-registrations)))
+             ':directory)
+            "directory MCP registration shadows config and site registrations")
+           (mcp--remove-registration-source ':directory)
+           (test-assert
+            (eq
+             (mcp-server-registration-source
+              (first (mcp-server-registrations)))
+             ':config)
+            "config MCP registration shadows a site registration")
            (mcp--remove-registration-source :config)
            (test-assert
+            (eq
+             (mcp-server-registration-source
+              (first (mcp-server-registrations)))
+             ':site)
+            "site MCP registration shadows a tracked registration")
+           (mcp--remove-registration-source ':site)
+           (test-assert
             (eq (test-mcp-configuration--effective-approval "precedence")
-                :deny)
+                ':deny)
             "tracked MCP registration remains the lowest precedence")
            (test-assert
             (handler-case
@@ -788,6 +825,18 @@
               (equal before (mcp--registry-snapshot))
               "a rejected oversized MCP registry leaves live state intact"))
            (test-mcp-configuration--write
+            site-pathname
+            "(:version 1
+               :servers
+               ((:name \"layered\"
+                 :transport
+                 (:type :stdio :command \"/bin/true\")
+                 :approval :deny)
+                (:name \"site-only\"
+                 :transport
+                 (:type :stdio :command \"/bin/true\")
+                 :approval :allow)))")
+           (test-mcp-configuration--write
             pathname
             "(:version 1
                :servers
@@ -802,14 +851,29 @@
               :approval :deny)
             :source ':tracked)
            (mcp-configuration-load configuration)
+           (user-init-load configuration)
            (test-assert
             (eq
              (mcp-server-configuration-approval-policy
               (mcp-server-registration-configuration
                (first (mcp-server-registrations))))
              :read-only)
-            "the native config layer shadows a tracked server")
-           (let ((*user-init-loading-p* t))
+            "the native config layer shadows site and tracked servers")
+           (test-assert
+            (eq
+             (mcp-server-registration-source
+              (find
+               "site-only"
+               (mcp-server-registrations)
+               :test #'string=
+               :key
+               (lambda (registration)
+                 (mcp-server-configuration-name
+                  (mcp-server-registration-configuration registration)))))
+             ':site-config)
+            "site mcp.sexp survives executable-init loading below user config")
+           (let ((*user-init-loading-p* t)
+                 (*extension-registration-source* ':user))
              (register-mcp-server
               '(:name "layered"
                 :transport (:type :stdio :command "/bin/true")
@@ -854,5 +918,7 @@
               "a malformed reload leaves every prior MCP layer intact")))
       (mcp--registry-restore registry-snapshot)
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist ':ignore)))
+       root :validate t :if-does-not-exist ':ignore)
+      (uiop:delete-directory-tree
+       site-root :validate t :if-does-not-exist ':ignore)))
   nil)

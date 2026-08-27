@@ -353,7 +353,7 @@
     :initarg :source
     :reader application-command-registration-source
     :type keyword
-    :documentation "The runtime or user layer that contributed the command."))
+    :documentation "The site, user, or runtime layer that contributed the command."))
   (:documentation "One ordered, possibly shadowed command registration layer."))
 
 (defvar *application-command-registrations* nil
@@ -482,7 +482,7 @@
 (-> application-command--current-registration-source () keyword)
 (defun application-command--current-registration-source ()
   "Return the registration source appropriate to the current load context."
-  (if *user-init-loading-p* ':user ':runtime))
+  *extension-registration-source*)
 
 (-> application-command--effective-projections
     (list)

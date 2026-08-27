@@ -385,16 +385,47 @@ exit \"$status\""
      :directory directory
      :wait nil)))
 
+(-> localgroup-handoff--arguments (application pathname) list)
+(defun localgroup-handoff--arguments (application handoff-pathname)
+  "Return replacement launcher arguments for APPLICATION and HANDOFF-PATHNAME."
+  (let* ((configuration (application-configuration application))
+         (launcher (localgroup-handoff--launcher-pathname configuration)))
+    (append
+     (list (namestring launcher)
+           "--permissions"
+           (localgroup-handoff--permission-argument application))
+     (when (configuration-immutable-p configuration)
+       (list "--immutable"))
+     (let ((site-config-root
+             (configuration-site-config-root configuration)))
+       (when site-config-root
+         (list "--site-config-root"
+               (namestring site-config-root))))
+     (list "--localgroup-handoff" (namestring handoff-pathname)))))
+
 (-> localgroup-handoff--launch (application pathname) t)
 (defun localgroup-handoff--launch (application handoff-pathname)
   "Launch APPLICATION's detached replacement from HANDOFF-PATHNAME."
-  (localgroup-handoff--launch-for
-   (application-configuration application)
-   (localgroup-session-identifier
-    (application-localgroup-session application))
-   handoff-pathname
-   (localgroup-handoff--permission-argument application)
-   (configuration-immutable-p (application-configuration application))))
+  (let* ((configuration (application-configuration application))
+         (session-id
+           (localgroup-session-identifier
+            (application-localgroup-session application)))
+         (log-pathname
+           (localgroup-handoff-log-pathname configuration session-id))
+         (arguments
+           (localgroup-handoff--arguments application handoff-pathname)))
+    (ensure-directories-exist log-pathname)
+    (with-open-file (output log-pathname
+                            :direction ':output
+                            :if-exists ':append
+                            :if-does-not-exist ':create
+                            :external-format ':utf-8)
+      (sb-posix:chmod (namestring log-pathname) #o600)
+      (localgroup-handoff--launch-supervised
+       :arguments arguments
+       :handoff-pathname handoff-pathname
+       :directory (configuration-working-directory configuration)
+       :output output))))
 
 (-> localgroup-handoff--launch-for
     (configuration string pathname string boolean)
@@ -411,6 +442,11 @@ exit \"$status\""
                    "--permissions" permission-argument)
              (when immutable-p
                (list "--immutable"))
+             (let ((site-config-root
+                     (configuration-site-config-root configuration)))
+               (when site-config-root
+                 (list "--site-config-root"
+                       (namestring site-config-root))))
              (list "--localgroup-handoff" (namestring handoff-pathname)))))
       (ensure-directories-exist log-pathname)
       (with-open-file (output log-pathname

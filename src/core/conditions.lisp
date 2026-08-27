@@ -21,13 +21,18 @@
     :initarg :pathname
     :reader user-init-error-pathname
     :type pathname
-    :documentation "The user initialization file that could not be loaded.")
+    :documentation "The executable initialization file that could not be loaded.")
+   (layer
+    :initarg :layer
+    :reader user-init-error-layer
+    :type (member :site :directory :user)
+    :documentation "The configuration layer whose initialization failed.")
    (cause
     :initarg :cause
     :reader user-init-error-cause
     :type serious-condition
     :documentation "The underlying condition signaled while loading the file."))
-  (:documentation "Loading the user's executable Autolith configuration failed."))
+  (:documentation "Loading one executable Autolith configuration layer failed."))
 
 (define-condition working-directory-error (configuration-error)
   ((requested-path

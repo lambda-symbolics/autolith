@@ -262,14 +262,32 @@ stale Localgroup records itself.
 
 * Configure Autolith
 
-Autolith loads optional
-=${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp= after tracked code and a
-selected private image commit, before provider requests. It reloads on
-retained generation reconnect.
+Autolith loads the optional user file
+=${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp= after tracked code, a
+selected private image commit, and any site or trusted directory
+configuration. It reloads on retained generation reconnect.
 
 The file is ordinary Common Lisp in package =AUTOLITH=, with your full
 privileges. It is not copied into private replay or the pristine recovery
 image.
+
+Packagers may supply one separate, read-only configuration tree with
+=--site-config-root DIRECTORY= or =AUTOLITH_SITE_CONFIG_ROOT=. The directory
+must already exist and be absolute. It may contain =init.lisp=, =mcp.sexp=,
+=skills/=, and =agents/=. Site configuration loads before user configuration,
+so it provides defaults without replacing the user's normal XDG tree. A site
+=init.lisp= has the same full privileges as user initialization and is not a
+security boundary.
+
+Executable initialization loads in this order:
+
+1. site =init.lisp=
+2. trusted directory =.autolith/init.lisp= files, outermost to nearest
+3. the user XDG =init.lisp=
+
+Missing files are ordinary. A present file that cannot be read or evaluated
+fails startup or reload with its exact pathname. =directory-scopes.sexp=
+always remains user-owned.
 
 ** Active-image management endpoint
 
@@ -546,6 +564,7 @@ Roles load from these directories. First match wins:
 
 - =.autolith/agents/=
 - =${XDG_CONFIG_HOME:-~/.config}/autolith/agents/=
+- =<site-config-root>/agents/=
 - bundled roles
 
 A higher-precedence malformed role is reported, not silently replaced.

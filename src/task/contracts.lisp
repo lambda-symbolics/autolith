@@ -25,7 +25,7 @@
     :initarg :source
     :reader task-agent-definition-error-source
     :type keyword
-    :documentation "The project, user, bundled, or programmatic definition origin.")
+    :documentation "The project, user, site, bundled, or programmatic definition origin.")
    (line
     :initarg :line
     :initform nil

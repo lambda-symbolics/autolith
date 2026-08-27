@@ -46,6 +46,20 @@ developers, but I consider correct for self-modifiability.
   using the recovery image to either fix figure out the issue with your
   current image, or try to finish your task if that's a priority.
 
+* Configuration layers
+
+Autolith keeps packaged defaults separate from the user's XDG configuration.
+An optional absolute site configuration root supplies =init.lisp=, =mcp.sexp=,
+=skills/=, and =agents/=. Site definitions have lower precedence than the
+corresponding user definitions. Trusted directory configuration follows user
+native MCP configuration, while the user XDG =init.lisp= loads last among
+filesystem Lisp configuration. Live registrations remain independent runtime
+state. The user-owned =directory-scopes.sexp= is never read from the site root.
+
+The site layer is a deployment and composition mechanism, not a security
+boundary. Privileged operations must remain behind the supervisor boundary even
+when site or user Lisp replaces every guest-side definition.
+
 * Agent turns
 
 #+BEGIN_SRC text

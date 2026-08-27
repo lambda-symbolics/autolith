@@ -89,9 +89,9 @@
                   nil))))
       (and (visit root) t))))
 
-(-> test-configuration () configuration)
-(defun test-configuration ()
-  "Return an isolated configuration rooted in a fresh temporary directory."
+(-> test-configuration (&key (:site-config-root (option pathname))) configuration)
+(defun test-configuration (&key site-config-root)
+  "Return an isolated configuration with an optional SITE-CONFIG-ROOT."
   (let* ((root (uiop:ensure-directory-pathname
                 (merge-pathnames
                  (format nil "autolith-tests-~A/" (make-identifier))
@@ -106,6 +106,7 @@
                    :source-root source-root
                    :working-directory source-root
                    :config-root (merge-pathnames "config/" root)
+                   :site-config-root site-config-root
                    :data-root (merge-pathnames "data/" root)
                    :state-root (merge-pathnames "state/" root)
                    :cache-root (merge-pathnames "cache/" root)

@@ -636,11 +636,15 @@ dependencies."
   "Start one interactive Autolith session from COMMAND's parsed options."
   (main--register-local-source-trees)
   (let* ((immutable-p (not (null (getopt* command ':immutable))))
+         (site-config-root-value (getopt* command ':site-config-root))
          (explicit-permission-mode (getopt* command ':permissions))
          (image-values (getopt* command ':images))
          (configuration
            (configuration-create
             :immutable-p immutable-p
+            :site-config-root
+            (and (non-empty-string-p site-config-root-value)
+                 (pathname site-config-root-value))
             :defer-provider-validation-p t))
          (permission-mode
            (or explicit-permission-mode
@@ -832,6 +836,12 @@ path."
                 :key ':immutable
                 :persistent t
                 :description "disable source and configuration mutation")
+   (make-option ':string
+                :long-name "site-config-root"
+                :key ':site-config-root
+                :parameter "DIRECTORY"
+                :persistent t
+                :description "load site configuration before user configuration")
    (make-option ':enum
                 :long-name "permissions"
                 :key ':permissions

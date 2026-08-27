@@ -222,15 +222,26 @@
 
 (-> test-task-agent-discovery-precedence () null)
 (defun test-task-agent-discovery-precedence ()
-  "Test project, user, and bundled role precedence remains fail-closed."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
+  "Test project, user, site, and bundled role precedence remains fail-closed."
+  (let* ((site-root
+           (uiop:ensure-directory-pathname
+            (merge-pathnames
+             (format nil "autolith-agent-site-tests-~A/" (make-identifier))
+             (uiop:temporary-directory))))
+         (base-configuration
+           (progn
+             (ensure-directories-exist site-root)
+             (setf site-root
+                   (uiop:ensure-directory-pathname (truename site-root)))
+             (test-configuration :site-config-root site-root)))
+         (root          (test-configuration-root base-configuration))
          (configuration
-           (configuration--clone configuration :working-directory root))
+           (configuration--clone base-configuration :working-directory root))
          (project-directory (merge-pathnames ".autolith/agents/" root))
          (user-directory
            (merge-pathnames "agents/"
-                            (configuration-config-root configuration))))
+                            (configuration-config-root configuration)))
+         (site-directory (merge-pathnames "agents/" site-root)))
     (unwind-protect
          (progn
            (task-tests--write-native-form
@@ -242,9 +253,21 @@
             (task-tests--role-form
              "scout" "User scout" "User instructions."))
            (task-tests--write-native-form
+            (merge-pathnames "scout.sexp" site-directory)
+            (task-tests--role-form
+             "scout" "Site scout" "Site instructions."))
+           (task-tests--write-native-form
             (merge-pathnames "reviewer.sexp" user-directory)
             (task-tests--role-form
              "reviewer" "User reviewer" "Review as configured by the user."))
+           (task-tests--write-native-form
+            (merge-pathnames "reviewer.sexp" site-directory)
+            (task-tests--role-form
+             "reviewer" "Site reviewer" "Review as configured by the site."))
+           (task-tests--write-native-form
+            (merge-pathnames "librarian.sexp" site-directory)
+            (task-tests--role-form
+             "librarian" "Site librarian" "Research using site policy."))
            (task-tests--write-text
             (merge-pathnames "sonic.sexp" project-directory)
             "(:name \"sonic\" :description \"Missing instructions\")")
@@ -269,23 +292,31 @@
                      (task-find-agent-definition definitions "reviewer"))
                    (librarian
                      (task-find-agent-definition definitions "librarian"))
+                   (task
+                     (task-find-agent-definition definitions "task"))
                    (sonic-diagnostic
                      (task-find-agent-diagnostic diagnostics "sonic"))
                    (dupe-diagnostic
                      (task-find-agent-diagnostic diagnostics "dupe")))
                (test-assert
                 (and scout
-                     (eq (task-agent-definition-source scout) :project)
+                     (eq (task-agent-definition-source scout) ':project)
                      (string= (task-agent-definition-instructions scout)
                               "Project instructions."))
-                "project .sexp roles override user and bundled roles")
+                "project .sexp roles override user, site, and bundled roles")
                (test-assert
                 (and reviewer
-                     (eq (task-agent-definition-source reviewer) :user))
-                "user .sexp roles override bundled roles")
+                     (eq (task-agent-definition-source reviewer) ':user))
+                "user .sexp roles override site and bundled roles")
                (test-assert
                 (and librarian
-                     (eq (task-agent-definition-source librarian) :bundled))
+                     (eq (task-agent-definition-source librarian) ':site)
+                     (string= (task-agent-definition-instructions librarian)
+                              "Research using site policy."))
+                "site roles override bundled roles")
+               (test-assert
+                (and task
+                     (eq (task-agent-definition-source task) ':bundled))
                 "unclaimed roles retain their bundled definitions")
                (test-assert
                 (and (null (task-find-agent-definition definitions "sonic"))
@@ -298,7 +329,8 @@
                (test-assert
                 (and (task-find-agent-definition definitions "scout")
                      (task-find-agent-definition definitions "reviewer")
-                     (task-find-agent-definition definitions "librarian"))
+                     (task-find-agent-definition definitions "librarian")
+                     (task-find-agent-definition definitions "task"))
                 "one blocked role does not suppress unrelated definitions")
                (when
                    (= 2
@@ -320,7 +352,9 @@
                                  dupe-diagnostic))))
                   "case-normalized duplicate filenames fail closed before parsing")))))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+                                       :if-does-not-exist ':ignore)
+      (uiop:delete-directory-tree site-root :validate t
+                                            :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-agents-tool () null)

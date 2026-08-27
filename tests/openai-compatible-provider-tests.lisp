@@ -604,6 +604,37 @@
          (root (test-configuration-root configuration)))
     (unwind-protect
          (let ((provider (provider-create configuration)))
+           (flet ((register-layer (source model)
+                    "Register one provider layer for source-precedence testing."
+                    (let ((*extension-registration-source* source))
+                      (register-openai-compatible-provider
+                       :name "layered-openai"
+                       :endpoint "https://provider.invalid/v1/chat/completions"
+                       :models (list model)))))
+             (register-layer ':builtin "builtin/model")
+             (register-layer ':site "site/model")
+             (register-layer ':user "user/model")
+             (register-layer ':runtime "runtime/model")
+             (dolist (case '((:runtime . "runtime/model")
+                             (:user . "user/model")
+                             (:site . "site/model")
+                             (:builtin . "builtin/model")))
+               (let ((registration
+                       (provider-registration-find "layered-openai")))
+                 (test-assert
+                  (and
+                   (eq (provider-registration-source registration)
+                       (first case))
+                   (member (rest case)
+                           (mapcar #'provider-model-name
+                                   (provider-registration-models registration))
+                           :test #'string=))
+                  (format nil
+                          "~A provider registration is effective at its precedence layer"
+                          (first case))))
+               (unless (eq (first case) ':builtin)
+                 (unregister-provider "layered-openai"
+                                      :source (first case)))))
            (register-openai-compatible-provider
             :name "chatgpt"
             :endpoint "https://provider.invalid/v1/chat/completions"

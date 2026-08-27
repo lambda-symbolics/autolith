@@ -1055,6 +1055,7 @@ newly acquired lease."
   "Recreate PREVIOUS for reconnect while preserving explicit management settings."
   (configuration-create
    :working-directory (uiop:getcwd)
+   :site-config-root (configuration-site-config-root previous)
    :model (configuration-model previous)
    :reasoning-effort (configuration-reasoning-effort previous)
    :codex-fast-mode-p (configuration-codex-fast-mode-p previous)

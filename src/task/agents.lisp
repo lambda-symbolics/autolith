@@ -58,7 +58,7 @@
     :initarg :source
     :reader task-agent-definition-source
     :type keyword
-    :documentation "The bundled, user, project, or programmatic origin.")
+    :documentation "The bundled, site, user, project, or programmatic origin.")
    (pathname
     :initarg :pathname
     :initform nil
@@ -616,6 +616,13 @@ the offending object rather than only reporting that one was rejected."
   "Return the user child-agent directory under CONFIGURATION's config root."
   (merge-pathnames "agents/" (configuration-config-root configuration)))
 
+(-> task--site-agents-directory (configuration) (option pathname))
+(defun task--site-agents-directory (configuration)
+  "Return the optional site child-agent directory for CONFIGURATION."
+  (let ((site-root (configuration-site-config-root configuration)))
+    (when site-root
+      (merge-pathnames "agents/" site-root))))
+
 (-> task--project-agents-directory (configuration) (option pathname))
 (defun task--project-agents-directory (configuration)
   "Return the nearest project .autolith/agents directory, or NIL."
@@ -722,8 +729,8 @@ the offending object rather than only reporting that one was rejected."
 (defun task-discover-agents (configuration)
   "Discover effective roles and typed diagnostics by fail-closed precedence.
 
-Project basenames claim a name before parsing, followed by user basenames and
-then bundled roles. An invalid higher-precedence file therefore blocks only its
+Project basenames claim a name before parsing, followed by user, site, and
+bundled basenames. An invalid higher-precedence file therefore blocks only its
 own lower-precedence name. The second value contains diagnostics suitable for
 task.agents and for re-signaling when task.run requests a blocked role."
   (let ((claimed (make-hash-table :test #'equal))
@@ -734,8 +741,9 @@ task.agents and for re-signaling when task.run requests a blocked role."
                  (task-agent--load-origin directory source claimed)
                (setf definitions (nconc definitions new-definitions)
                      diagnostics (nconc diagnostics new-diagnostics)))))
-      (load-origin (task--project-agents-directory configuration) :project)
-      (load-origin (task--user-agents-directory configuration) :user))
+      (load-origin (task--project-agents-directory configuration) ':project)
+      (load-origin (task--user-agents-directory configuration) ':user)
+      (load-origin (task--site-agents-directory configuration) ':site))
     (dolist (definition (task-bundled-agent-definitions))
       (let ((name (task-agent-definition-name definition)))
         (unless (gethash name claimed)
