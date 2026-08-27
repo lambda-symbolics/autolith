@@ -232,6 +232,77 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-web-gist-tool () null)
+(defun test-web-gist-tool ()
+  "Test standalone web.gist page retrieval without network access."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation
+                  (conversation-create configuration :identifier "web-gist"))
+                (context
+                  (make-instance 'tool-context
+                                 :configuration configuration
+                                 :worker nil
+                                 :conversation conversation))
+                (tool (tool-registry-find (make-default-tool-registry)
+                                          "web" "gist")))
+           (test-assert tool "the default registry contains web.gist")
+           (test-assert
+            (gethash "url" (json-get (tool-parameters tool) "properties"))
+            "web.gist declares its url argument")
+           (test-assert
+            (null (tool-child-safe-p tool))
+            "web.gist stays unavailable to child agents like web.run")
+           (test-call-with-function-replacements
+            (list
+             (list
+              'fetch-gist:markdown-from-url
+              (lambda (url)
+                (test-assert
+                 (string= url "https://example.com/docs")
+                 "web.gist passes the requested URL to fetch-gist")
+                "# Example Page\n\nContent.")))
+            (lambda ()
+              (let ((result (tool-execute
+                             tool context
+                             (json-object "url" "https://example.com/docs"))))
+                (test-assert
+                 (and (tool-result-success-p result)
+                      (string= (tool-result-content result)
+                               "# Example Page\n\nContent."))
+                 "web.gist returns fetched Markdown as a successful result"))))
+           (test-call-with-function-replacements
+            (list
+             (list
+              'fetch-gist:markdown-from-url
+              (lambda (url)
+                (declare (ignore url))
+                (error "Fetching ~A returned HTTP status 404"
+                       "https://example.com/missing"))))
+            (lambda ()
+              (handler-case
+                  (progn (tool-execute
+                          tool context
+                          (json-object "url" "https://example.com/missing"))
+                         (test-assert nil "web.gist signals on a failed fetch"))
+                (tool-error (condition)
+                  (test-assert
+                   (and (string= (tool-error-tool-name condition) "web.gist")
+                        (search "HTTP status 404"
+                                (princ-to-string condition)))
+                   "web.gist reports fetch failures as web.gist tool errors")))))
+           (handler-case
+               (progn (tool-execute
+                       tool context (json-object "url" "file:///etc/passwd"))
+                      (test-assert nil "web.gist rejects non-HTTP URLs"))
+             (tool-error (condition)
+               (test-assert
+                (search "HTTP and HTTPS" (princ-to-string condition))
+                "web.gist rejects non-HTTP URLs with a clear message"))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-tool-registry () null)
 (defun test-tool-registry ()
   "Test tool schemas, dispatch failure handling, and runtime lifecycle cleanup."

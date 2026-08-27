@@ -327,6 +327,7 @@
     (test-papercut-resources)
     (test-tool-registry)
     (test-tool-result-overflow)
+    (test-web-gist-tool)
     (test-workspace-tools)
     (test-search-tools)
     (test-lisp-image-manifests)

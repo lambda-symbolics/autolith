@@ -425,6 +425,27 @@ let
     '';
   };
 
+  fetchGist = pkgs.sbcl.buildASDFSystem {
+    pname = "fetch-gist";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "lenny99";
+      repo = "fetch-gist";
+      rev = "018278496919985029a9a53cde7c5dfb998c573f";
+      hash = "sha256-3ZVSIFfR8vCEJyIcfSXxFlImpLnV2qEKxa90YDOCLZQ=";
+    };
+    lispLibs = with pkgs.sbclPackages; [
+      alexandria
+      babel
+      cl-ppcre
+      dexador
+      esrap
+      iterate
+      quri
+      serapeum
+    ];
+  };
+
   autolithSystem = pkgs.sbcl.buildASDFSystem {
     pname = "autolith";
     version = "0.46.1";
@@ -440,6 +461,7 @@ let
       colordiff
       clTermdown
       dexador
+      fetchGist
       ironclad
       opticl
       parenchek

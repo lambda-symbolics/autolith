@@ -21,6 +21,7 @@
                #:colordiff
                #:closer-mop
                #:dexador
+               #:fetch-gist
                #:flexi-streams
                #:idsmall
                #:image-daemon
@@ -134,6 +135,7 @@
                              (:file "self/discard")
                              (:file "self/exercise")
                              (:file "tools/web")
+                             (:file "tools/web-gist")
                              (:file "tools/defaults")
                              (:file "agent/runtime")
                              (:file "task/contracts")

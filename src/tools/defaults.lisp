@@ -314,7 +314,7 @@
 
 (-> default-tools--register-web (tool-registry) tool-registry)
 (defun default-tools--register-web (registry)
-  "Register the provider-backed web search tool in REGISTRY."
+  "Register the web search and web page retrieval tools in REGISTRY."
   (default-tools--register
    registry
    (list
@@ -322,6 +322,13 @@
     "web" "run"
     *web-run-description*
     (web-run-parameters)))
+  (default-tools--register
+   registry
+   (list
+    'web-gist-tool
+    "web" "gist"
+    "Fetch one web page over HTTP or HTTPS and return its content as Markdown, following redirects. Use it to retrieve a known page, for example a URL the user names or one found through search; it cannot search the web."
+    (web-gist-parameters)))
   registry)
 
 (-> default-tools--register-search (tool-registry worker) tool-registry)
