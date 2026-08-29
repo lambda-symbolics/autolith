@@ -22,7 +22,7 @@
          (progn
            (configuration-ensure-directories configuration)
            (multiple-value-bind (new-application controller relay conversation)
-               (test-localgroup--relay-application configuration)
+               (test-localgroup--nemo-relay-application configuration)
              (declare (ignore controller relay conversation))
              (setf application new-application
                    session (localgroup-start new-application)
@@ -131,7 +131,7 @@
          (progn
            (configuration-ensure-directories configuration)
            (multiple-value-bind (new-application controller relay conversation)
-               (test-localgroup--relay-application
+               (test-localgroup--nemo-relay-application
                 configuration :persisted-p t)
              (declare (ignore controller relay conversation))
              (setf application new-application))

@@ -321,6 +321,7 @@
          (recovery-input-storage-ready-p
            (or (not recovery-startup-p)
                (application-recovery-input-vault-import application))))
+    (observability-start (application-configuration application))
     (labels ((close-runtime-resources ()
                "Close APPLICATION's external runtimes at most once."
                (ignore-errors (localgroup-stop application))
@@ -338,6 +339,7 @@
                       (when worker
                         (lisp-worker-manager-stop worker))
                    (setf worker-stopped-p t)))
+               (ignore-errors (observability-stop))
                (conversation-picker-search-close
                 (application-conversation application))
                (application-release-conversation-lease application)

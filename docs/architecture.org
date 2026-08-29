@@ -218,6 +218,7 @@ Here's a rough, probably outdated map of the repository
 | Live mutation                 | =src/self/=, =src/state/{durable-mutations,image-commits}.lisp=                                  |
 | Images and recovery           | =src/startup/active-image.lisp=, =src/state/generations.lisp=, =recovery/=, =bin/=, sbcl-generations |
 | Configuration and transfer    | =src/configuration/=, =src/localgroup/=, =src/state/updates.lisp=, sexp-config                     |
+| Observability                  | =src/observability/nemo-relay-{ffi,support,toml,configuration,events}.lisp=, version-pinned NeMo Relay FFI, ATOF JSONL |
 
 Read [[file:guide.org][the guide]] for operating Autolith, and =AGENTS.md= for
 repository rules and development policy, especially using clankers.

@@ -270,6 +270,117 @@ retained generation reconnect.
 The file is ordinary Common Lisp in package =AUTOLITH=, with your full
 privileges. It is not copied into private replay or the pristine recovery
 image.
+** Relay observability
+
+Relay observability is disabled by default. When enabled, Autolith loads the
+version-pinned =nemo-relay-ffi= shared library through CFFI and passes its
+lifecycle events to NeMo Relay. One user turn is an Agent scope; provider
+attempts and tool calls are child LLM and Tool scopes. Concurrent tool workers
+receive the turn's propagation context, so their spans retain the Agent parent.
+
+Autolith accepts an explicit Relay =plugins.toml= PluginConfig file and does not use
+Relay's implicit =plugins.toml= discovery. The built-in =observability= component
+is always allowed. Every other static component kind is rejected unless it is
+named in =:allowed-component-kinds= as a custom observability component. Thus
+Relay guardrails, pricing, and unrelated plugin components cannot be enabled
+accidentally.
+
+A custom static kind allowlist entry is trusted code approval, not a claim that
+Relay metadata classifies the component as observability-only. Inspect custom
+plugin code before approving it.
+
+ATOF, ATIF, and OpenTelemetry configuration stays inside Relay's observability
+component:
+
+#+BEGIN_SRC toml
+version = 1
+
+[[components]]
+kind = "observability"
+enabled = true
+
+[components.config]
+version = 4
+enable_full_payloads = false
+
+[components.config.atof]
+enabled = true
+
+[[components.config.atof.sinks]]
+type = "file"
+output_directory = "/path/to/autolith/traces"
+filename = "events.jsonl"
+mode = "append"
+
+[components.config.atif]
+enabled = true
+agent_name = "Autolith"
+model_name = "unknown"
+output_directory = "/path/to/autolith/traces"
+filename_template = "trajectory-{session_id}.json"
+
+[components.config.opentelemetry]
+enabled = true
+
+[[components.config.opentelemetry.endpoints]]
+type = "gen_ai"
+endpoint = "http://localhost:4318/v1/traces"
+service_name = "autolith"
+#+END_SRC
+
+Use =[[plugins.dynamic]]= for manifest-backed custom native or worker plugins.
+Autolith resolves each =manifest= relative to the selected =plugins.toml=,
+validates the upstream manifest version, execution lane, capabilities,
+compatibility, defaults, and load metadata, then passes its nested =config=
+table to Relay's dynamic activation API. Upstream capabilities describe the
+execution lane and optional config schema, not plugin behavior. Each manifest
+ID must also be named in =:allowed-dynamic-plugin-ids= as trusted code approval:
+
+#+BEGIN_SRC toml
+[[plugins.dynamic]]
+manifest = "./plugins/example/relay-plugin.toml"
+
+[plugins.dynamic.config]
+mode = "audit"
+#+END_SRC
+
+#+BEGIN_SRC lisp
+(observability-configure
+ :allowed-dynamic-plugin-ids '("example.custom_observer"))
+#+END_SRC
+
+The bundled Nix package supplies the native library path but does not enable
+Relay. The following environment variables configure a source or packaged
+installation:
+
+| Variable | Default | Meaning |
+|-
+| =AUTOLITH_RELAY= | =off= | Enable Relay with =1=, =true=, =yes=, or =on=. |
+| =AUTOLITH_RELAY_CONFIG= | unset | Explicit =plugins.toml= or legacy JSON PluginConfig pathname. Required when Relay is enabled. |
+| =AUTOLITH_RELAY_LIBRARY= | installation-dependent | =nemo-relay-ffi= shared-library pathname. |
+| =AUTOLITH_RELAY_DYNAMIC_PLUGINS_CONFIG= | unset | Legacy JSON dynamic-plugin specification array pathname. Every plugin ID still requires =:allowed-dynamic-plugin-ids=. |
+
+The same settings can be selected for the current process with
+#+BEGIN_SRC lisp
+(observability-configure
+ :enabled t
+ :library "/path/to/libnemo_relay_ffi.dylib"
+ :config "/path/to/plugins.toml")
+#+END_SRC
+
+Use =:allowed-component-kinds= for explicitly approved custom static
+observability components. Use =:allowed-dynamic-plugin-ids= for manifest-backed
+plugins. Native Relay discovery files at =${XDG_CONFIG_HOME}/nemo-relay/plugins.toml=,
+=~/.config/nemo-relay/plugins.toml=, or =/etc/nemo-relay/plugins.toml= cause
+startup to fail rather than being merged implicitly.
+
+Use =:config-json= or =:plugin-config= instead of =:config= to supply the
+canonical PluginConfig directly. Local ATOF files contain provider and tool
+event payloads, so treat them as sensitive workspace data. Relay setup or
+export failures are non-fatal to the provider, tool, conversation, and
+shutdown paths; =observability-last-error= reports the latest diagnostic.
+
+
 
 ** Active-image management endpoint
 

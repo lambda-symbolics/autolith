@@ -734,6 +734,9 @@ model's effort choice to CONFIGURATION--CLONE."
                         :provider new-provider
                         :conversation (application-conversation application)
                         :tool-registry new-registry
+                        :session-id
+                        (and (typep old-agent 'agent)
+                             (agent-session-id old-agent))
                         :worker (application-worker application))
                        retirement-started-p t
                        failure-stage ':retire)
@@ -1209,6 +1212,9 @@ newly acquired lease."
                                             :provider provider
                                             :conversation conversation
                                             :tool-registry registry
+                                            :session-id
+                                            (and (typep (application-agent application) 'agent)
+                                                 (agent-session-id (application-agent application)))
                                             :worker worker))
                              (ui (application-terminal-ui-create)))
                         (setf new-application
@@ -1378,6 +1384,9 @@ newly acquired lease."
                               :conversation active-conversation
                               :tool-registry (application-tool-registry
                                               application)
+                              :session-id
+                              (and (typep (application-agent application) 'agent)
+                                   (agent-session-id (application-agent application)))
                               :worker (application-worker application))))
     (setf (application-configuration application) configuration
           (application-conversation application) active-conversation
@@ -1431,6 +1440,9 @@ command replaced the active conversation."
                     :provider provider
                     :conversation conversation
                     :tool-registry registry
+                    :session-id
+                    (and (typep (application-agent application) 'agent)
+                         (agent-session-id (application-agent application)))
                     :worker (application-worker application))))
              (setf completed-p t)
              (values provider registry agent)))
@@ -3315,6 +3327,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                (search *application-goal-complete-marker* text))
       (setf (getf (application-goal application) :status) ':complete)
       (application--record-goal application)
+      (observability-mark
+       :goal-completed
+       :objective (getf goal :objective))
       (application-present
        application
        (list (terminal-span ':success "✓ goal complete")

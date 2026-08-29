@@ -216,21 +216,30 @@ roots after resolving existing symlinks and the nearest existing parent."
               :merge-output-p t
               :output-limit output-limit
               :error-output-limit output-limit)))
-         (output (sandbox-result-output result))
-         (presented-output
-           (if (sandbox-result-output-truncated-p result)
-               (format nil
-                       "~A~%[combined output truncated after ~D characters]"
-                       output output-limit)
-               output)))
-    (if (sandbox-result-timed-out-p result)
-        (tool-failure
-         (format nil "The command was stopped after ~D seconds.~%~A"
-                 timeout presented-output))
-        (tool-success
-         (format nil "exit ~D~%~A"
-                 (sandbox-result-exit-code result)
-                 presented-output)))))
+          (output (sandbox-result-output result))
+          (exit-code (sandbox-result-exit-code result))
+          (presented-output
+            (if (sandbox-result-output-truncated-p result)
+                (format nil
+                        "~A~%[combined output truncated after ~D characters]"
+                        output output-limit)
+                output)))
+      (cond
+        ((sandbox-result-timed-out-p result)
+         (tool-failure
+          (format nil "The command was stopped after ~D seconds.~%~A"
+                  timeout presented-output)
+          :code ':timeout))
+        ((zerop exit-code)
+         (tool-success
+          (format nil "exit ~D~%~A"
+                  exit-code presented-output)))
+        (t
+         (tool-failure
+          (format nil "exit ~D~%~A"
+                  exit-code presented-output)
+          :code ':process-exit
+          :details (json-object "process.exit.code" exit-code))))))
 
 (defmethod tool-execute ((tool shell-run-tool)
                          (context tool-context)
