@@ -219,6 +219,7 @@ that a body returned. An artifact that cannot be written downgrades the state to
           (task-job-definition-summary job) definition-summary
           (task-job-definition job) nil
           (task-job-parent-agent job) nil
+          (task-job-observability-context job) nil
           (task-job-inherited-reference-p job) nil
           (task-job-inherited-reference-items job) nil
           (task-job-command-authorization-function job) nil
@@ -299,19 +300,22 @@ start under a cancelled ancestor, and hands over to the child."
                      (session-job-identifier job) reason)
              :identifier (job-identifier job)
              :reason reason)))
-  (let ((operation (tool-execution-job-operation-function job)))
-    (unless operation
-      (error 'tool-error
-             :message "The asynchronous tool operation is no longer available."
-             :tool-name (tool-execution-job-tool-name job)))
-    (funcall operation)))
+    (let ((operation (tool-execution-job-operation-function job)))
+      (unless operation
+        (error 'tool-error
+               :message "The asynchronous tool operation is no longer available."
+               :tool-name (tool-execution-job-tool-name job)))
+      (with-observability-context
+          (tool-execution-job-observability-context job)
+        (funcall operation))))
 
 (-> tool-execution-job--terminal-record
     (tool-execution-job keyword t (option string))
     (values list (option string) keyword))
 (defun tool-execution-job--terminal-record (job state result report)
   "Return JOB's bounded terminal tool record and release its operation closure."
-  (setf (tool-execution-job-operation-function job) nil)
+  (setf (tool-execution-job-operation-function job) nil
+        (tool-execution-job-observability-context job) nil)
   (let* ((tool-result-p (typep result 'tool-result))
          (successful-p (and tool-result-p (tool-result-success-p result)))
          (final-state
@@ -414,7 +418,9 @@ start under a cancelled ancestor, and hands over to the child."
                        :summary
                        (bounded-string summary
                                        :limit *tool-execution-summary-limit*)
-                       :operation-function operation-function))))
+                       :operation-function operation-function
+                       :observability-context
+                       (capture-observability-context)))))
     (handler-case
         (first
          (job-pool-submit-batch
@@ -509,6 +515,8 @@ guarantee."
          (root-conversation-identifier
            (task-parent-root-conversation-identifier parent-agent))
          (owner-identifiers (task-parent-owner-identifiers parent-agent))
+         (observability-context
+           (capture-observability-context))
          (reference-enabled-entries (make-hash-table :test #'eq))
          (reference-byte-limit nil)
          (inherited-reference-items nil))
@@ -555,6 +563,8 @@ guarantee."
                               :execution-identifier (make-identifier)
                               :session-order session-order
                               :definition (getf entry :definition)
+                              :observability-context
+                              observability-context
                               :item item
                               :parent-agent parent-agent
                               :inherited-reference-p inherited-p

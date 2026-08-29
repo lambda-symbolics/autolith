@@ -532,15 +532,15 @@
                (test-assert
                 (search "1x1, image/png" (tool-result-content result))
                 "fs.view-image reports the prepared image metadata"))
-             (let ((result (run "shell" "run"
-                                "command" "echo autolith-shell-works && exit 3")))
-               (test-assert (tool-result-success-p result)
-                            "shell.run reports command completion")
-               (test-assert (search "exit 3" (tool-result-content result))
-                            "shell.run reports nonzero exit codes")
-               (test-assert (search "autolith-shell-works"
-                                    (tool-result-content result))
-                            "shell.run captures combined output"))
+              (let ((result (run "shell" "run"
+                                 "command" "echo autolith-shell-works && exit 3")))
+                (test-assert (tool-result-success-p result)
+                             "shell.run reports command completion")
+                (test-assert (search "exit 3" (tool-result-content result))
+                             "shell.run reports nonzero exit codes")
+                (test-assert (search "autolith-shell-works"
+                                     (tool-result-content result))
+                             "shell.run captures combined output"))
              (test-assert
               (= (workspace-tool-shell-timeout
                   (json-object "timeout-seconds" 900))

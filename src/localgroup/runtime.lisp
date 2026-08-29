@@ -836,6 +836,10 @@ after the first-attach timeout instead of lingering."
                        (or detached-explicitly-p
                            (localgroup--initially-detached-p startup-values)))
                       (application-localgroup-session application) session)
+                (let ((agent (and (slot-boundp application 'agent)
+                                  (application-agent application))))
+                  (when (typep agent 'agent)
+                    (setf (agent-session-id agent) identifier)))
                (let ((terminal
                        (terminal-ui-terminal (application-ui application)))
                      (controller (application-input-controller application)))
