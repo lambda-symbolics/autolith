@@ -2,10 +2,10 @@
 
 ;;;; -- Localgroup Process Handoff Tests --
 
-(-> test-localgroup--relay-application
+(-> test-localgroup--nemo-relay-application
     (configuration &key (:persisted-p boolean))
     (values application application-input-controller localgroup-terminal conversation))
-(defun test-localgroup--relay-application (configuration &key persisted-p)
+(defun test-localgroup--nemo-relay-application (configuration &key persisted-p)
   "Return a leased APPLICATION with a foreground localgroup terminal relay."
   (let* ((direct
            (stream-terminal-create
@@ -48,7 +48,7 @@
          (progn
            (configuration-ensure-directories configuration)
            (multiple-value-bind (application controller relay conversation)
-               (test-localgroup--relay-application
+               (test-localgroup--nemo-relay-application
                 configuration :persisted-p t)
              (declare (ignore controller relay))
              (setf first-application application
@@ -79,7 +79,7 @@
                           (sb-posix:getpid)))
                   "replacement startup acknowledges its detached process identity"))
                (multiple-value-bind (application controller relay conversation)
-                   (test-localgroup--relay-application configuration)
+                   (test-localgroup--nemo-relay-application configuration)
                  (declare (ignore controller relay conversation))
                  (setf second-application application)
                  (let ((*localgroup-startup-record* record))
@@ -126,7 +126,7 @@
          (progn
            (configuration-ensure-directories configuration)
            (multiple-value-bind (new-application new-controller new-relay conversation)
-               (test-localgroup--relay-application configuration)
+               (test-localgroup--nemo-relay-application configuration)
              (declare (ignore conversation))
              (setf application new-application
                    controller new-controller
@@ -564,7 +564,7 @@
                       (configuration-ensure-directories configuration)
                       (multiple-value-bind
                             (new-application new-controller relay conversation)
-                          (test-localgroup--relay-application
+                          (test-localgroup--nemo-relay-application
                            configuration :persisted-p persisted-p)
                         (declare (ignore relay))
                         (setf application new-application
@@ -634,7 +634,7 @@
          (progn
            (configuration-ensure-directories configuration)
            (multiple-value-bind (new-application new-controller relay conversation)
-               (test-localgroup--relay-application
+               (test-localgroup--nemo-relay-application
                 configuration :persisted-p t)
              (declare (ignore relay conversation))
              (setf application new-application
