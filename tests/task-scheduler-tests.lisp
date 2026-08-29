@@ -1651,6 +1651,14 @@ exactly that race."
                      (= (execution-count) (1+ before))
                      (= authorization-count 1))
                 "a fast default shell job returns its ordinary result"))
+             (let* ((result (run-shell context "command" "exit 7"))
+                    (details (tool-result-details result)))
+               (test-assert
+                (and (not (tool-result-success-p result))
+                     (eq (tool-result-error-code result) ':process-exit)
+                     (json-object-p details)
+                     (= (json-get details "process.exit.code") 7))
+                 "a nonzero shell exit is preserved as a failed result through the execution scheduler"))
              (let* ((*tool-execution-blocking-grace-seconds* 0.01)
                     (before (execution-count))
                     (result

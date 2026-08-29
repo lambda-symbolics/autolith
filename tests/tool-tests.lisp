@@ -532,10 +532,17 @@
                (test-assert
                 (search "1x1, image/png" (tool-result-content result))
                 "fs.view-image reports the prepared image metadata"))
-             (let ((result (run "shell" "run"
-                                "command" "echo autolith-shell-works && exit 3")))
-               (test-assert (tool-result-success-p result)
-                            "shell.run reports command completion")
+             (let* ((result (run "shell" "run"
+                                  "command" "echo autolith-shell-works && exit 3"))
+                    (details (tool-result-details result)))
+               (test-assert (not (tool-result-success-p result))
+                            "shell.run fails on a nonzero exit code")
+               (test-assert (eq (tool-result-error-code result) ':process-exit)
+                            "shell.run identifies process-exit failures")
+               (test-assert
+                (and (json-object-p details)
+                     (= (json-get details "process.exit.code") 3))
+                "shell.run retains the process exit code in result details")
                (test-assert (search "exit 3" (tool-result-content result))
                             "shell.run reports nonzero exit codes")
                (test-assert (search "autolith-shell-works"

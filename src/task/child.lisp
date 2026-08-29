@@ -577,7 +577,9 @@ boundary cannot fit within that budget."
          (child
           (make-instance 'task-child-agent :configuration configuration
                          :provider provider :conversation conversation
-                         :tool-registry registry :worker worker
+                         :tool-registry registry
+                         :worker worker
+                         :session-id (agent-session-id parent)
                          :definition definition
                          :identity (task-job-identity job) :depth depth
                          :completion completion :orchestrator orchestrator :job
@@ -608,12 +610,15 @@ boundary cannot fit within that budget."
     (unwind-protect
          (progn
            (task-child-inherit-reference-history job conversation provider)
-           (let ((result
-                   (agent-run-user-turn
-                    child
-                    (getf (task-job-item job) :task)
-                    :observer observer
-                    :goal-context (task-child-goal-context job configuration))))
-             (task--assemble-child-result
-              job result child conversation completion)))
+           (with-observability-context
+               (task-job-observability-context job)
+             (let ((result
+                     (agent-run-user-turn
+                      child
+                      (getf (task-job-item job) :task)
+                      :observer observer
+                      :goal-context
+                      (task-child-goal-context job configuration))))
+               (task--assemble-child-result
+                job result child conversation completion))))
       (ignore-errors (lisp-worker-pool-stop-all worker)))))

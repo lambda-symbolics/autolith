@@ -38,6 +38,10 @@
   (declare (ignore provider))
   "ChatGPT")
 
+(defmethod observability-provider-name ((provider model-provider))
+  "Return the provider's account label to the observability facade."
+  (provider-account-label provider))
+
 (-> provider-authenticate
     (model-provider &key (:stream stream) (:open-browser-p boolean))
     string)
@@ -1498,28 +1502,29 @@ abandon the looping stream; the default reaction ignores the report."))
              tool-namespaces
              :goal-context goal-context
              :compaction-p compaction-p)
-          (multiple-value-bind (stream status raw-headers)
-              (provider--open-response-stream
-               provider
-               request
-               :credentials credentials
-               :conversation conversation)
-            (let* ((headers
-                     (provider--sanitize-wire-value raw-headers))
-                   (result
-                     (unwind-protect
-                          (progn
-                            (provider-note-response-headers provider headers)
-                            (unless (= status 200)
-                              (provider--signal-http-status-failure
-                               provider status
-                               :headers headers
-                               :raw-body stream))
-                            (provider-consume-stream
-                             provider stream headers event-callback))
-                       (provider--close-response-stream stream))))
-              (context-delivery-complete delivery)
-              result)))
+          (with-observed-provider-call (provider request)
+            (multiple-value-bind (stream status raw-headers)
+                (provider--open-response-stream
+                 provider
+                 request
+                 :credentials credentials
+                 :conversation conversation)
+              (let* ((headers
+                       (provider--sanitize-wire-value raw-headers))
+                     (result
+                       (unwind-protect
+                            (progn
+                              (provider-note-response-headers provider headers)
+                              (unless (= status 200)
+                                (provider--signal-http-status-failure
+                                 provider status
+                                 :headers headers
+                                 :raw-body stream))
+                              (provider-consume-stream
+                               provider stream headers event-callback))
+                         (provider--close-response-stream stream))))
+                (context-delivery-complete delivery)
+                result))))
         (dexador.error:http-request-unauthorized (condition)
           (provider-signal-http-failure provider condition))
         (http-request-failed (condition)
@@ -1747,16 +1752,19 @@ summary fallback."
           (let ((request
                   (provider-native-compaction-request-object
                    provider conversation tool-namespaces)))
-            (multiple-value-bind (body status raw-headers)
-                (provider--open-native-compaction
-                 provider request :credentials credentials :conversation conversation)
-              (let ((headers (provider--sanitize-wire-value raw-headers)))
-                (provider-note-response-headers provider headers)
-                (unless (= status 200)
-                  (provider--signal-http-status-failure
-                   provider status :headers headers :raw-body body))
-                (provider--decode-native-compaction-response
-                 provider body :status status :headers headers))))
+            (with-observed-provider-call (provider request)
+              (multiple-value-bind (body status raw-headers)
+                  (provider--open-native-compaction
+                   provider request
+                   :credentials credentials
+                   :conversation conversation)
+                (let ((headers (provider--sanitize-wire-value raw-headers)))
+                  (provider-note-response-headers provider headers)
+                  (unless (= status 200)
+                    (provider--signal-http-status-failure
+                     provider status :headers headers :raw-body body))
+                  (provider--decode-native-compaction-response
+                   provider body :status status :headers headers)))))
         (dexador.error:http-request-unauthorized (condition)
           (provider-signal-http-failure provider condition))
         (http-request-failed (condition)

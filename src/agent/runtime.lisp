@@ -111,6 +111,12 @@
     :reader agent-worker
     :type t
     :documentation "The disposable Lisp worker supplied to lisp.* calls.")
+   (session-id
+    :initarg :session-id
+    :initform nil
+    :accessor agent-session-id
+    :type (option string)
+    :documentation "The localgroup session identity associated with this agent.")
    (hurry-up-p
     :initarg :hurry-up-p
     :initform nil
@@ -416,7 +422,8 @@
      (:provider (option model-provider))
      (:conversation (option conversation))
      (:tool-registry (option tool-registry))
-     (:worker t))
+     (:worker t)
+     (:session-id (option string)))
     agent)
 (defun agent-create
     (&key
@@ -424,7 +431,8 @@
        provider
        conversation
        tool-registry
-       worker)
+       worker
+       session-id)
   "Create an agent, filling unspecified provider, conversation, registry, and worker roles."
   (unless (typep configuration 'configuration)
     (error 'configuration-error
@@ -435,8 +443,9 @@
                  :conversation (or conversation
                                    (conversation-create configuration))
                  :tool-registry (or tool-registry
-                                    (make-default-tool-registry))
-                 :worker (or worker (lisp-worker-pool-create configuration))))
+                                     (make-default-tool-registry))
+                 :worker (or worker (lisp-worker-pool-create configuration))
+                 :session-id session-id))
 
 (-> agent-run-user-turn
     (agent (or string user-message-input)
@@ -475,6 +484,7 @@
   (declare (ignore agent))
   nil)
 
+
 (defmethod agent-run-user-turn
     ((agent agent) (content string)
      &key (observer (make-instance 'agent-observer)) goal-context (tools-p t)
@@ -503,42 +513,44 @@
            :message "A user turn requires text or an image."
            :conversation-id (conversation-identifier (agent-conversation agent))
            :request-number nil))
-  (call-with-skill-logical-turn
-   content
-   (lambda ()
-     (with-lock-held ((agent-turn-lock agent))
-       (let ((conversation (agent-conversation agent)))
-         ;; Compact before appending CONTENT so the fresh question survives
-         ;; verbatim instead of being folded into the summary.
-         (when (agent-should-compact-p agent)
-           (agent-compact-conversation
-            agent observer
-            :tool-allowlist tool-allowlist
-            :tool-restriction-p tool-restriction-p))
-         (multiple-value-bind (item record)
-             (conversation-append-user-message
-              conversation
-              content
-              :pending-input-identifier pending-input-identifier
-              :automatic-p automatic-p)
-           (declare (ignore item))
-           (agent-observer-status
-            observer
-            :user-message-persisted
-            (append
-             (list :sequence (getf (rest record) :seq)
-                   :time (getf (rest record) :time))
-             (when pending-input-identifier
-               (list :pending-input-identifier pending-input-identifier)))))
-         (unwind-protect
-              (agent--run-provider-loop
-               agent observer
-               :goal-context goal-context
-               :tools-p tools-p
-               :tool-allowlist tool-allowlist
-               :tool-restriction-p tool-restriction-p)
-           (conversation-clear-ephemeral-input-items conversation)
-           (setf (conversation-turn-state conversation) nil)))))))
+  (with-observed-agent-turn
+      (agent content :automatic-p automatic-p)
+    (call-with-skill-logical-turn
+     content
+     (lambda ()
+       (with-lock-held ((agent-turn-lock agent))
+         (let ((conversation (agent-conversation agent)))
+           ;; Compact before appending CONTENT so the fresh question survives
+           ;; verbatim instead of being folded into the summary.
+           (when (agent-should-compact-p agent)
+             (agent-compact-conversation
+              agent observer
+              :tool-allowlist tool-allowlist
+              :tool-restriction-p tool-restriction-p))
+           (multiple-value-bind (item record)
+               (conversation-append-user-message
+                conversation
+                content
+                :pending-input-identifier pending-input-identifier
+                :automatic-p automatic-p)
+             (declare (ignore item))
+             (agent-observer-status
+              observer
+              :user-message-persisted
+              (append
+               (list :sequence (getf (rest record) :seq)
+                     :time (getf (rest record) :time))
+               (when pending-input-identifier
+                 (list :pending-input-identifier pending-input-identifier)))))
+           (unwind-protect
+                (agent--run-provider-loop
+                 agent observer
+                 :goal-context goal-context
+                 :tools-p tools-p
+                 :tool-allowlist tool-allowlist
+                 :tool-restriction-p tool-restriction-p)
+             (conversation-clear-ephemeral-input-items conversation)
+             (setf (conversation-turn-state conversation) nil))))))))
 
 
 ;;;; -- Provider and Persistence Flow --
@@ -568,13 +580,17 @@
   (lambda (event)
     (typecase event
       (provider-retry-event
-       (agent-observer-status
-        observer
-        :provider-retrying
-        (list :attempt (provider-retry-event-attempt event)
-              :maximum-attempts
-              (provider-retry-event-maximum-attempts event)
-              :delay (provider-retry-event-delay event))))
+       (let ((attempt (provider-retry-event-attempt event))
+             (maximum-attempts (provider-retry-event-maximum-attempts event))
+             (delay (provider-retry-event-delay event)))
+         (agent-observer-status
+          observer
+          :provider-retrying
+          (list :attempt attempt
+                :maximum-attempts maximum-attempts
+                :delay delay))
+         (observability-mark-provider-retry
+          attempt maximum-attempts delay)))
       (assistant-delta-event
        (agent-observer-status observer :provider-progress nil)
        (agent-observer-text observer (assistant-delta-event-text event)))
@@ -816,10 +832,31 @@
             :call-id call-id
             :command-authorization-function
             (lambda (command directory)
-              (agent-observer-authorize-command observer command directory))
+              (observability-mark
+               :tool-authorization-requested
+               :kind "command")
+              (let ((decision
+                      (agent-observer-authorize-command
+                       observer command directory)))
+                (when (eq decision ':deny)
+                  (observability-mark
+                   :tool-authorization-denied
+                   :kind "command"))
+                decision))
             :tool-authorization-function
             (lambda (tool arguments)
-              (agent-observer-authorize-tool observer tool arguments))))
+              (observability-mark
+               :tool-authorization-requested
+               :kind "tool"
+               :tool tool)
+              (let ((decision
+                      (agent-observer-authorize-tool observer tool arguments)))
+                (when (eq decision ':deny)
+                  (observability-mark
+                   :tool-authorization-denied
+                   :kind "tool"
+                   :tool tool))
+                decision))))
          (*workspace-tool-readable-roots*
            (and tool-restriction-p
                 (list
@@ -830,17 +867,18 @@
          (*resource-readable-schemes*
            (and tool-restriction-p '("workspace")))
          (real-start (get-internal-real-time))
-         (cpu-start  (get-internal-run-time))
+         (cpu-start (get-internal-run-time))
          (result nil)
          (condition nil))
     (handler-case
         (setf result
-              (if argument-error
-                  (tool-failure argument-error :code ':invalid-arguments)
-                  (tool-registry-execute-call
-                   (agent-tool-registry agent)
-                   call
-                   context)))
+              (with-observed-tool-call (call)
+                (if argument-error
+                    (tool-failure argument-error :code ':invalid-arguments)
+                    (tool-registry-execute-call
+                     (agent-tool-registry agent)
+                     call
+                     context))))
       (serious-condition (failure)
         (setf condition failure)))
     (list
@@ -913,12 +951,14 @@
              :call-id (json-get call "call_id")
              :tool (function-call-canonical-name call)))))
   (let* ((count (length plans))
+         (observability-context (capture-observability-context))
          (executions (make-array count))
          (record-timings-p (= count 1)))
     (if (= count 1)
         (setf (aref executions 0)
-              (agent--execute-tool-plan
-               agent (first plans) observer tool-restriction-p t))
+              (with-observability-context (observability-context)
+                (agent--execute-tool-plan
+                 agent (first plans) observer tool-restriction-p t)))
         (let ((next-index 0)
               (claim-lock (make-lock "Autolith tool wave claims"))
               (threads nil)
@@ -933,12 +973,13 @@
                        (unless index
                          (return))
                        (setf (aref executions index)
-                             (agent--execute-tool-plan
-                              agent
-                              (nth index plans)
-                              observer
-                              tool-restriction-p
-                              record-timings-p))))))
+                             (with-observability-context (observability-context)
+                               (agent--execute-tool-plan
+                                agent
+                                (nth index plans)
+                                observer
+                                tool-restriction-p
+                                record-timings-p)))))))
             (unwind-protect
                  (progn
                    (loop repeat
@@ -1162,8 +1203,12 @@ durable summary remains a handoff for another provider family."
        observer
        :compaction-completed
        (list :summary-characters (length summary)
-             :native-p (not (null native-item))))))
-  nil)
+             :native-p (not (null native-item))))
+      (observability-mark
+       :compaction-completed
+       :summary-characters (length summary)
+       :native-p (not (null native-item))))
+  nil))
 
 (-> agent--run-provider-loop
     (agent agent-observer &key (:goal-context (option string))

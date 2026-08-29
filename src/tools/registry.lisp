@@ -329,6 +329,13 @@
              :tool-name (tool-canonical-name tool)))
     decision))
 
+(defvar *tool-result-overflow-function* nil
+  "Function durably spilling one complete oversized tool result, or NIL.
+
+Bound per dispatched call. It receives the full result text and returns
+a resource URI where the complete text stays readable, or NIL when
+spilling is unavailable, in which case the tail is discarded as before.")
+
 (defclass tool-result ()
   ((content
     :initarg :content
@@ -349,6 +356,12 @@
     :type list
     :documentation
     "Ordered provider-visible strings and image attachments, when multimodal.")
+   (machine-details
+    :initarg :machine-details
+    :initform nil
+    :reader tool-result-machine-details
+    :type t
+    :documentation "Optional machine-readable result details.")
    (success-p
     :initarg :success-p
     :reader tool-result-success-p
@@ -365,7 +378,8 @@
 (defgeneric tool-result-details (result)
   (:documentation "Return RESULT's machine-readable details, or NIL when plain.")
   (:method ((result tool-result))
-    nil))
+    "Return the optional details attached to ordinary RESULT."
+    (tool-result-machine-details result)))
 
 (-> tool-result--normalize-content-blocks (list) list)
 (defun tool-result--normalize-content-blocks (blocks)
@@ -385,9 +399,9 @@
     (nreverse normalized)))
 
 (-> tool-success
-    (t &key (:image-attachments list) (:content-blocks list))
+    (t &key (:image-attachments list) (:content-blocks list) (:details t))
     tool-result)
-(defun tool-success (content &key image-attachments content-blocks)
+(defun tool-success (content &key image-attachments content-blocks details)
   "Return a successful bounded tool result with optional multimodal output."
   (when (and image-attachments content-blocks)
     (error 'tool-error
@@ -420,14 +434,9 @@
                              *tool-result-overflow-function*)
                    :image-attachments attachments
                    :content-blocks blocks
+                   :machine-details details
                    :success-p t)))
 
-(defvar *tool-result-overflow-function* nil
-  "Function durably spilling one complete oversized tool result, or NIL.
-
-Bound per dispatched call. It receives the full result text and returns
-a resource URI where the complete text stays readable, or NIL when
-spilling is unavailable, in which case the tail is discarded as before.")
 
 (-> tool--spill-result-text (tool-context string string) (option string))
 (defun tool--spill-result-text (context tool-name text)
@@ -441,13 +450,16 @@ spilling is unavailable, in which case the tail is discarded as before.")
     (error ()
       nil)))
 
-(-> tool-failure (t &key (:code (option keyword))) tool-result)
-(defun tool-failure (content &key code)
-  "Return a failed bounded tool result containing CONTENT and optional CODE."
+(-> tool-failure
+    (t &key (:code (option keyword)) (:details t))
+    tool-result)
+(defun tool-failure (content &key code details)
+  "Return a failed bounded tool result containing CONTENT and optional details."
   (make-instance 'tool-result
                  :content (bounded-string
                            content
                            :overflow-uri-function *tool-result-overflow-function*)
+                 :machine-details details
                  :success-p nil
                  :error-code code))
 

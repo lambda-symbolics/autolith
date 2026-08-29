@@ -4,7 +4,9 @@
   :license "ISC"
   :version "0.46.1"
   :serial t
-  :depends-on (#:cl-base64
+  :depends-on (#:cffi
+               #:cl-base64
+               #:cl-toml
                #:cl+ssl
                #:cl-colorist
                #:cl-exec-sandbox
@@ -49,6 +51,14 @@
                              (:file "core/conditions")
                              (:file "localgroup/protocol")
                              (:file "core/json")
+                             (:file "observability/nemo-relay-ffi")
+                             (:file "observability/nemo-relay-support")
+                             (:file "observability/nemo-relay-api")
+                             (:file "observability/nemo-relay-observability")
+                             (:file "observability/nemo-relay-toml")
+                             (:file "observability/nemo-relay-configuration")
+                             (:file "observability/nemo-relay-events")
+                             (:file "observability/provider-interface")
                              (:file "core/time")
                              (:file "core/source-files")
                              (:file "core/streams")
@@ -110,6 +120,7 @@
                              (:file "resource/item-identity")
                              (:file "inference/object")
                              (:file "tools/registry")
+                             (:file "observability/interface")
                              (:file "skills/tools")
                              (:file "mcp/tools")
                              (:file "tools/papercut")
@@ -136,6 +147,7 @@
                              (:file "tools/web")
                              (:file "tools/defaults")
                              (:file "agent/runtime")
+                             (:file "observability/nemo-relay-agent")
                              (:file "task/contracts")
                              (:file "inference/tools")
                              (:file "inference/frame")
@@ -150,6 +162,7 @@
                              (:file "task/runtime")
                              (:file "task/child")
                              (:file "task/scheduler")
+                             (:file "observability/nemo-relay-task")
                              (:file "task/tools")
                              (:file "terminal/protocol")
                              (:file "terminal/input")
@@ -204,6 +217,7 @@
                 :serial t
                 :components ((:file "test-support")
                              (:file "device-authentication-test-support")
+                             (:file "relay-tests")
                              (:file "stream-tests")
                              (:file "memory-tests")
                              (:file "papercut-tests")

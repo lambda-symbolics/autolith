@@ -290,6 +290,41 @@
                                     :if-does-not-exist ':ignore))))
   nil)
 
+(-> test-localgroup-agent-session-identity () null)
+(defun test-localgroup-agent-session-identity ()
+  "Test localgroup startup propagates its identity to Relay turn metadata."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application nil)
+         (agent nil)
+         (session nil))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (setf application
+                 (nth-value 0 (test-localgroup--application configuration)))
+           (setf agent
+                 (agent-create
+                  :configuration configuration
+                  :provider (make-instance 'model-provider)
+                  :conversation (application-conversation application)
+                  :tool-registry (make-instance 'tool-registry)
+                  :worker nil)
+                 (application-agent application) agent
+                 session (localgroup-start application))
+           (let ((session-id (localgroup-session-identifier session))
+                 (metadata (observability-agent-turn-metadata agent)))
+             (test-assert
+              (and (string= (agent-session-id agent) session-id)
+                   (string= (json-get metadata "session_id") session-id))
+             "localgroup startup propagates its identity to observability turn metadata")))
+      (when application
+        (localgroup-stop application))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-localgroup-protocol () null)
 (defun test-localgroup-protocol ()
   "Test bounded safe packets, private discovery, status, and control routing."

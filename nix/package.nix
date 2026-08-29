@@ -9,6 +9,7 @@ let
   expectedSbclVersion = lib.removeSuffix "\n" (builtins.readFile "${src}/sbcl.version");
   expectedSbclSourceHash = lib.removeSuffix "\n" (builtins.readFile "${src}/sbcl-source.sha256");
   fffSourceCommit = lib.removeSuffix "\n" (builtins.readFile "${src}/native/fff/commit");
+  nemoRelaySourceCommit = lib.removeSuffix "\n" (builtins.readFile "${src}/native/nemo-relay/commit");
 
   # Quicklisp's NYAML archive includes dangling symlinks in its unused test data.
   nyaml = pkgs.sbclPackages.nyaml.overrideAttrs (old: {
@@ -425,6 +426,32 @@ let
     '';
   };
 
+  nemoRelayFfi = pkgs.rustPlatform.buildRustPackage {
+    pname = "nemo-relay-ffi";
+    version = "0.9.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "NVIDIA";
+      repo = "NeMo-Relay";
+      rev = nemoRelaySourceCommit;
+      hash = "sha256-+SHJdO0L9BGxdzTosG3EHoKU44O60JadWLs+vjIh6BI=";
+    };
+    cargoHash = "sha256-T9ZMYmZg9fnpigjj7adnEC3hbfOk1v3JJWQ+0ZR8VQY=";
+    cargoBuildFlags = [ "-p" "nemo-relay-ffi" ];
+    doCheck = false;
+    nativeBuildInputs = [
+      pkgs.cmake
+      pkgs.pkg-config
+    ];
+    buildInputs = [ pkgs.openssl ];
+    installPhase = ''
+      runHook preInstall
+      install -Dm755 \
+        "$(find target -type f -name 'libnemo_relay_ffi${sharedLibrary}' -print -quit)" \
+        "$out/lib/libnemo_relay_ffi${sharedLibrary}"
+      runHook postInstall
+    '';
+  };
+
   autolithSystem = pkgs.sbcl.buildASDFSystem {
     pname = "autolith";
     version = "0.46.1";
@@ -434,6 +461,7 @@ let
       bordeaux-threads
       cl-base64
       cffi
+      cl-toml
       clingon
       closer-mop
       colorlisp
@@ -578,6 +606,7 @@ let
     export AUTOLITH_INSTALLATION_KIND=nix
     export COLORLISP_NATIVE_LIBRARY="${colorlispNativeLibrary}/lib/libcolorlisp-tree-sitter${sharedLibrary}"
     export AUTOLITH_FFF_LIBRARY="${fffLibrary}/lib/libfff_c${sharedLibrary}"
+    export AUTOLITH_RELAY_LIBRARY="${nemoRelayFfi}/lib/libnemo_relay_ffi${sharedLibrary}"
     ${sandboxEnvironment}
     export GIT_CONFIG_COUNT=1
     export GIT_CONFIG_KEY_0=safe.directory
@@ -751,6 +780,7 @@ pkgs.writeShellApplication {
     export AUTOLITH_SBCL_SOURCE_ROOT="${sbclSource}"
     export COLORLISP_NATIVE_LIBRARY="${colorlispNativeLibrary}/lib/libcolorlisp-tree-sitter${sharedLibrary}"
     export AUTOLITH_FFF_LIBRARY="${fffLibrary}/lib/libfff_c${sharedLibrary}"
+    export AUTOLITH_RELAY_LIBRARY="''${AUTOLITH_RELAY_LIBRARY:-${nemoRelayFfi}/lib/libnemo_relay_ffi${sharedLibrary}}"
     ${sandboxEnvironment}
 
     # The packaged source repository is root-owned in /nix/store. Permit Git
@@ -797,7 +827,7 @@ pkgs.writeShellApplication {
 
   passthru = {
     inherit autolithSystem clColorist clExecSandbox clifff clinedi clJobpond
-      colorlisp colorlispNativeLibrary fffLibrary idsmall imageIdentity
+      colorlisp colorlispNativeLibrary fffLibrary idsmall nemoRelayFfi imageIdentity
       imageValidation runtime sandboxHelper sbclGenerations sbclSource mcparen
       sbclWorkers sexpConfig sexpStore;
   };

@@ -1,6 +1,7 @@
 ql bordeaux-threads 2026-01-01
 ql cl-base64 2026-01-01
 ql cffi 2026-01-01
+ql cl-toml 2026-01-01
 ql clingon 2026-01-01
 ql closer-mop 2026-01-01
 ql dexador 2026-01-01

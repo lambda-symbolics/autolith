@@ -660,6 +660,8 @@
                 #:ordered-map-map
                 #:ordered-map-set
                 #:ordered-map-values)
+  (:import-from #:cl-toml
+                #:parse-file)
   (:import-from #:yason
                 #:false)
   (:export #:application-command
@@ -710,6 +712,21 @@
            #:run-tests
            #:unregister-application-command
            #:unregister-context-contributor
+           #:observability-configure
+           #:observability-enabled-p
+           #:observability-flush
+           #:observability-last-error
+           #:observability-output-pathname
+           #:observability-prepare-checkpoint
+           #:observability-start
+           #:observability-stop
+           #:capture-observability-context
+           #:observability-mark
+           #:observability-mark-provider-retry
+           #:with-observed-agent-turn
+           #:with-observed-provider-call
+           #:with-observed-tool-call
+           #:with-observability-context
            #:worker-main))
 
 (in-package #:autolith)

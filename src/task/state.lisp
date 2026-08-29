@@ -302,6 +302,13 @@ nesting depth, and lifecycle listeners."))
     :accessor task-job-parent-agent
     :type (option agent)
     :documentation "The parent session while this job remains live.")
+   (observability-context
+    :initarg :observability-context
+    :initform nil
+    :accessor task-job-observability-context
+    :type (option t)
+    :documentation
+    "The opaque parent observability context captured when this job was admitted.")
    (inherited-reference-p
     :initarg :inherited-reference-p
     :initform nil
@@ -379,6 +386,13 @@ parent, and borrowed capabilities are released at terminal state."))
     :accessor tool-execution-job-summary
     :type string
     :documentation "The bounded operation summary retained for inspection.")
+   (observability-context
+    :initarg :observability-context
+    :initform nil
+    :accessor tool-execution-job-observability-context
+    :type (option t)
+    :documentation
+    "The opaque observability context captured when this execution was admitted.")
    (operation-function
     :initarg :operation-function
     :accessor tool-execution-job-operation-function
@@ -477,12 +491,14 @@ parent, and borrowed capabilities are released at terminal state."))
     :initarg :orchestrator
     :reader task-child-agent-orchestrator
     :type task-orchestrator
+
     :documentation "The shared session task orchestrator.")
    (job :initarg :job :reader task-child-agent-job :type task-job
         :documentation
         "The lifecycle and progress record for this child."))
   (:documentation
    "A real in-process agent session that must finish through yield.submit."))
+
 
 (defmethod agent-hurry-up-p ((agent task-child-agent))
   "Return the live hurry-up policy shared by AGENT's task orchestrator."
