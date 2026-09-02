@@ -1557,6 +1557,82 @@
                       (test-assert
                          (and metadata present-p (null success))
                        "Relay marks the failed agent scope unsuccessful")))))
+             (let* ((configuration (test-configuration))
+                    (conversation nil)
+                    (worker nil)
+                    (registry nil)
+                    (agent nil)
+                    (run-result nil)
+                    (run-condition nil))
+               (unwind-protect
+                    (progn
+                      (configuration-ensure-directories configuration)
+                      (setf conversation
+                            (conversation-create
+                             configuration
+                             :identifier "relay-missing-lisp-eval")
+                            worker (lisp-worker-pool-create configuration)
+                            registry
+                            (task-augment-tool-registry
+                             (make-default-tool-registry))
+                            agent
+                            (agent-create
+                             :configuration configuration
+                             :provider
+                             (make-instance
+                              'scripted-provider
+                              :results
+                              (list
+                               (agent-test-result
+                                "lisp-eval-call"
+                                (list
+                                 (agent-test-call
+                                  :call-id "missing-form"
+                                  :namespace "lisp"
+                                  :name "eval"
+                                  :arguments
+                                  (json-encode
+                                   (json-object
+                                    "form"
+                                    (format nil
+                                            "(i-dont-exist ~S :title ~S)"
+                                            "lololo"
+                                            "ananan"))))))
+                               (agent-test-result
+                                "after-lisp-eval"
+                                (list (agent-test-message "handled")))))
+                             :conversation conversation
+                             :tool-registry registry
+                             :worker worker))
+                      (handler-case
+                          (setf run-result
+                                (agent-run-user-turn
+                                 agent
+                                 "evaluate missing form"))
+                        (serious-condition (condition)
+                          (setf run-condition condition)))
+                      (test-assert
+                       (null run-condition)
+                       "Relay-enabled lisp.eval failures do not escape the agent turn")
+                      (test-assert
+                       (and run-result
+                            (string= (provider-result-response-id run-result)
+                                     "after-lisp-eval"))
+                       "Relay-enabled lisp.eval failures reach the next provider round")
+                      (let ((outputs (agent-test-tool-outputs conversation)))
+                        (test-assert
+                         (and (= (length outputs) 1)
+                              (search "undefined"
+                                      (string-downcase (first outputs))))
+                         "Relay-enabled lisp.eval returns an ordinary tool failure")))
+                 (when registry
+                   (ignore-errors (tool-registry-close-runtime-state registry)))
+                 (when worker
+                   (ignore-errors (lisp-worker-manager-stop worker)))
+                 (uiop:delete-directory-tree
+                  (test-configuration-root configuration)
+                  :validate t
+                  :if-does-not-exist ':ignore)))
            (nemo-relay-shutdown)
            (setf *nemo-relay-configuration* saved-configuration
                  *nemo-relay-last-error* saved-error)
