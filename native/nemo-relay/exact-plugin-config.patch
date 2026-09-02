@@ -1,0 +1,80 @@
+diff --git a/crates/ffi/nemo_relay.h b/crates/ffi/nemo_relay.h
+index ae6c4410..87b0d404 100644
+--- a/crates/ffi/nemo_relay.h
++++ b/crates/ffi/nemo_relay.h
+@@ -2092,11 +2092,10 @@ NemoRelayStatus nemo_relay_otel_metric_subscriber_shutdown(const struct FfiOpenT
+  * **Experimental:** this API needs a production consumer before its lifecycle
+  * contract is considered stable.
+  *
+- * Relay discovers `plugins.toml` once during this startup call and layers
+- * `config_json` over the discovered configuration. Explicit values take
+- * precedence where both sources configure the same setting. Static components
+- * from the resolved configuration initialize before components appended by
+- * the dynamic plugins. Configuration files are not watched or reloaded.
++ * The supplied `config_json` is used exactly and Relay does not discover or
++ * layer any ambient `plugins.toml` configuration. Static components from the
++ * supplied configuration initialize before components appended by the dynamic
++ * plugins. Configuration files are not watched or reloaded.
+  * `dynamic_plugins_json` must contain at least one explicit dynamic-plugin
+  * activation specification; use `nemo_relay_initialize_plugins` for a
+  * static-only configuration.
+diff --git a/crates/ffi/src/api/mod.rs b/crates/ffi/src/api/mod.rs
+index 71312308..25928d3e 100644
+--- a/crates/ffi/src/api/mod.rs
++++ b/crates/ffi/src/api/mod.rs
+@@ -66,7 +66,7 @@ use nemo_relay::plugin::dynamic::{DynamicPluginActivationSpec, PluginHostActivation};
+ use nemo_relay::plugin::{
+     ConfigDiagnostic, DiagnosticLevel, Plugin, PluginConfig, PluginError,
+     PluginRegistrationContext, active_plugin_report, clear_plugin_configuration, deregister_plugin,
+-    initialize_plugins, list_plugin_kinds, register_plugin, validate_plugin_config,
++    initialize_plugins_exact, list_plugin_kinds, register_plugin, validate_plugin_config,
+ };
+ use nemo_relay_adaptive::plugin_component::register_adaptive_component;
+ use tokio::runtime::Runtime;
+diff --git a/crates/ffi/src/api/plugin.rs b/crates/ffi/src/api/plugin.rs
+index 6fb7d8f4..531a4bc0 100644
+--- a/crates/ffi/src/api/plugin.rs
++++ b/crates/ffi/src/api/plugin.rs
+@@ -10,7 +10,7 @@ use super::{
+     NemoRelayStatus, NemoRelayToolConditionalCb, NemoRelayToolExecInterceptCb,
+     NemoRelayToolSanitizeCb, Pin, Plugin, PluginConfig, PluginError, PluginHostActivation,
+     PluginRegistrationContext, active_plugin_report, c_char, c_str_to_json, c_str_to_string,
+-    clear_last_error, clear_plugin_configuration, deregister_plugin, initialize_plugins,
++    clear_last_error, clear_plugin_configuration, deregister_plugin, initialize_plugins_exact,
+     json_to_c_string, last_error_message, list_plugin_kinds, nemo_relay_string_free,
+     register_adaptive_component, register_plugin, set_last_error, status_from_plugin_error,
+     tokio_runtime, validate_plugin_config, wrap_event_metadata_injector_fn, wrap_event_sanitize_fn,
+@@ -168,11 +168,10 @@ fn lock_plugin_activation(
+ /// **Experimental:** this API needs a production consumer before its lifecycle
+ /// contract is considered stable.
+ ///
+-/// Relay discovers `plugins.toml` once during this startup call and layers
+-/// `config_json` over the discovered configuration. Explicit values take
+-/// precedence where both sources configure the same setting. Static components
+-/// from the resolved configuration initialize before components appended by
+-/// the dynamic plugins. Configuration files are not watched or reloaded.
++/// The supplied `config_json` is used exactly and Relay does not discover or
++/// layer any ambient `plugins.toml` configuration. Static components from the
++/// supplied configuration initialize before components appended by the dynamic
++/// plugins. Configuration files are not watched or reloaded.
+ /// `dynamic_plugins_json` must contain at least one explicit dynamic-plugin
+ /// activation specification; use `nemo_relay_initialize_plugins` for a
+ /// static-only configuration.
+@@ -247,7 +246,7 @@ pub unsafe extern "C" fn nemo_relay_initialize_with_dynamic_plugins(
+         Err(status) => return status,
+     };
+     let (activation, report) = match tokio_runtime().block_on(
+-        PluginHostActivation::activate_with_discovered_config(config, dynamic_plugins),
++        PluginHostActivation::activate(config, dynamic_plugins),
+     ) {
+         Ok(result) => result,
+         Err(error) => return status_from_plugin_error(&error),
+@@ -381,7 +380,7 @@ pub unsafe extern "C" fn nemo_relay_initialize_plugins(
+             return NemoRelayStatus::InvalidJson;
+         }
+     };
+-    let report = match tokio_runtime().block_on(initialize_plugins(config)) {
++    let report = match tokio_runtime().block_on(initialize_plugins_exact(config)) {
+         Ok(report) => report,
+         Err(err) => return status_from_plugin_error(&err),
+     };
