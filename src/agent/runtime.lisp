@@ -956,7 +956,7 @@
          (record-timings-p (= count 1)))
     (if (= count 1)
         (setf (aref executions 0)
-              (with-observability-context (observability-context)
+              (with-observability-context observability-context
                 (agent--execute-tool-plan
                  agent (first plans) observer tool-restriction-p t)))
         (let ((next-index 0)
@@ -973,7 +973,7 @@
                        (unless index
                          (return))
                        (setf (aref executions index)
-                             (with-observability-context (observability-context)
+                             (with-observability-context observability-context
                                (agent--execute-tool-plan
                                 agent
                                 (nth index plans)
