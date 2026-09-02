@@ -141,8 +141,15 @@ FUNCTION returns, including when it signals a condition."
 (-> nemo-relay--condition-summary (serious-condition) string)
 (defun nemo-relay--condition-summary (condition)
   "Return a bounded, non-secret description of CONDITION."
-  (declare (ignore condition))
-  "Autolith operation failed; inspect the terminal or conversation for details.")
+  (let ((message
+          (when (typep condition 'autolith-error)
+            (handler-case
+                (autolith-error-message condition)
+              (serious-condition ()
+                nil)))))
+    (if (and (stringp message) (non-empty-string-p message))
+        (subseq message 0 (min (length message) 512))
+        "Autolith operation failed; inspect the terminal or conversation for details.")))
 
 (-> nemo-relay--set-native-last-error (string) null)
 (defun nemo-relay--set-native-last-error (message)

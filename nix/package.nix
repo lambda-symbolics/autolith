@@ -435,6 +435,9 @@ let
       rev = nemoRelaySourceCommit;
       hash = "sha256-+SHJdO0L9BGxdzTosG3EHoKU44O60JadWLs+vjIh6BI=";
     };
+      patches = [
+        ../native/nemo-relay/exact-plugin-config.patch
+      ];
     cargoHash = "sha256-T9ZMYmZg9fnpigjj7adnEC3hbfOk1v3JJWQ+0ZR8VQY=";
     cargoBuildFlags = [ "-p" "nemo-relay-ffi" ];
     doCheck = false;

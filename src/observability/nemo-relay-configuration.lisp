@@ -585,18 +585,21 @@ components and dynamic plugins. Explicit values override environment discovery."
         (uiop:ensure-directory-pathname system-directory))))
      :test #'equal)))
 
-(-> nemo-relay--ensure-no-implicit-plugin-config () null)
-(defun nemo-relay--ensure-no-implicit-plugin-config ()
-  "Reject native Relay plugin files that would be discovered implicitly."
-  (let ((paths (remove-if-not #'uiop:file-exists-p
-                              (nemo-relay--implicit-plugin-config-paths))))
-    (when paths
-      (error 'nemo-relay-error
-             :message
-             (format nil
-                     "Relay implicit plugins.toml discovery is disabled; native discovery found ~{~A~^, ~}."
-                     paths)
-             :operation "Relay PluginConfig discovery")))
+(-> nemo-relay--ensure-no-implicit-plugin-config
+    (&key (:explicit-p boolean))
+    null)
+(defun nemo-relay--ensure-no-implicit-plugin-config (&key (explicit-p nil))
+  "Reject native Relay plugin files unless an explicit config is in use."
+  (unless explicit-p
+    (let ((paths (remove-if-not #'uiop:file-exists-p
+                                (nemo-relay--implicit-plugin-config-paths))))
+      (when paths
+        (error 'nemo-relay-error
+               :message
+               (format nil
+                       "Relay implicit plugins.toml discovery is disabled; native discovery found ~{~A~^, ~}."
+                       paths)
+               :operation "Relay PluginConfig discovery"))))
   nil)
 
 (-> nemo-relay--configuration-plugin-config-json
@@ -1057,7 +1060,7 @@ components and dynamic plugins. Explicit values override environment discovery."
 (defun nemo-relay-initialize-plugins
     (config &key (allowed-component-kinds nil))
   "Initialize allowed static observability components and return its report."
-  (nemo-relay--ensure-no-implicit-plugin-config)
+  (nemo-relay--ensure-no-implicit-plugin-config :explicit-p t)
   (let ((config-json
           (nemo-relay--normalize-observability-plugin-config
            config allowed-component-kinds)))
@@ -1081,7 +1084,7 @@ components and dynamic plugins. Explicit values override environment discovery."
 
 The first returned value is an opaque activation handle that must eventually be
 passed to RELAY-CLEAR-DYNAMIC-PLUGIN-ACTIVATION."
-  (nemo-relay--ensure-no-implicit-plugin-config)
+  (nemo-relay--ensure-no-implicit-plugin-config :explicit-p t)
   (let* ((config-json
            (nemo-relay--normalize-observability-plugin-config
             config allowed-component-kinds))
@@ -1251,7 +1254,12 @@ provider, tool, conversation, or shutdown behavior."
               (let ((activation nil))
                 (handler-case
                     (progn
-                      (nemo-relay--ensure-no-implicit-plugin-config)
+                      (nemo-relay--ensure-no-implicit-plugin-config
+                       :explicit-p
+                       (not (null
+                             (or (nemo-relay-configuration-config-path settings)
+                                 (nemo-relay-configuration-plugin-config-json
+                                  settings)))))
                       (let* ((plugin-config-json
                                (nemo-relay--configuration-plugin-config-json settings))
                              (dynamic-json

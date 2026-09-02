@@ -278,11 +278,12 @@ lifecycle events to NeMo Relay. One user turn is an Agent scope; provider
 attempts and tool calls are child LLM and Tool scopes. Concurrent tool workers
 receive the turn's propagation context, so their spans retain the Agent parent.
 
-Autolith accepts an explicit Relay =plugins.toml= PluginConfig file and does not use
-Relay's implicit =plugins.toml= discovery. The built-in =observability= component
-is always allowed. Every other static component kind is rejected unless it is
-named in =:allowed-component-kinds= as a custom observability component. Thus
-Relay guardrails, pricing, and unrelated plugin components cannot be enabled
+Autolith accepts an explicit Relay =plugins.toml= PluginConfig file and uses
+Relay's exact initialization APIs for it. Ambient =plugins.toml= configuration is
+not discovered or merged. The built-in =observability= component is always
+allowed. Every other static component kind is rejected unless it is named in
+=:allowed-component-kinds= as a custom observability component. Thus Relay
+guardrails, pricing, and unrelated plugin components cannot be enabled
 accidentally.
 
 A custom static kind allowlist entry is trusted code approval, not a claim that
@@ -370,9 +371,11 @@ The same settings can be selected for the current process with
 
 Use =:allowed-component-kinds= for explicitly approved custom static
 observability components. Use =:allowed-dynamic-plugin-ids= for manifest-backed
-plugins. Native Relay discovery files at =${XDG_CONFIG_HOME}/nemo-relay/plugins.toml=,
-=~/.config/nemo-relay/plugins.toml=, or =/etc/nemo-relay/plugins.toml= cause
-startup to fail rather than being merged implicitly.
+plugins.
+Relay startup requires an explicit PluginConfig. Native Relay discovery files at
+=${XDG_CONFIG_HOME}/nemo-relay/plugins.toml=, =~/.config/nemo-relay/plugins.toml=,
+or =/etc/nemo-relay/plugins.toml= cause startup without explicit config to fail.
+When an explicit config is supplied, these files are ignored and are not merged.
 
 Use =:config-json= or =:plugin-config= instead of =:config= to supply the
 canonical PluginConfig directly. Local ATOF files contain provider and tool

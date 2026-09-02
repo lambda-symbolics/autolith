@@ -129,6 +129,22 @@
                  (test-assert
                   failed-p
                   "Relay rejects native implicit plugin configuration"))
+                (test-assert
+                 (handler-case
+                     (progn
+                       (nemo-relay--ensure-no-implicit-plugin-config
+                        :explicit-p t)
+                       t)
+                   (serious-condition ()
+                     nil))
+                 "Relay allows explicit PluginConfig beside ambient discovery")
+                (test-assert
+                 (string= (nemo-relay--condition-summary
+                           (make-condition 'nemo-relay-error
+                                           :message "explicit Relay config failed"
+                                           :operation "Relay test"))
+                          "explicit Relay config failed")
+                 "Relay diagnostics retain safe Autolith error messages")
                (delete-file discovered-path)))
            (let ((output-directory (merge-pathnames "traces/" root)))
              (nemo-relay-test--write-config config-path output-directory)
@@ -1371,6 +1387,10 @@
          (let* ((root (nemo-relay-test--temporary-root))
                 (output-directory (merge-pathnames "events/" root))
                 (config-path (merge-pathnames "plugins.toml" root))
+                (ambient-config-path
+                  (merge-pathnames
+                   "nemo-relay/plugins.toml"
+                   (merge-pathnames "config/" root)))
                 (saved-configuration *nemo-relay-configuration*)
                 (saved-error *nemo-relay-last-error*)
                 (saved-xdg-config-home (uiop:getenv "XDG_CONFIG_HOME")))
@@ -1380,6 +1400,15 @@
                   "XDG_CONFIG_HOME"
                   (namestring (merge-pathnames "config/" root))
                   1)
+                 (uiop:ensure-all-directories-exist
+                  (list (uiop:pathname-directory-pathname ambient-config-path)))
+                 (with-open-file (stream ambient-config-path
+                                         :direction ':output
+                                         :if-exists ':supersede
+                                         :if-does-not-exist ':create
+                                         :external-format ':utf-8)
+                   (write-string "version = [" stream)
+                   (terpri stream))
                  (nemo-relay-test--write-config config-path output-directory)
                   (nemo-relay-configure
                   :enabled t
