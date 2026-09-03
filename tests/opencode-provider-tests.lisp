@@ -334,6 +334,76 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> opencode-provider-test--session-header () null)
+(defun opencode-provider-test--session-header ()
+  "Test that OpenCode transport sends its stable session caching header."
+  (let* ((registry-snapshot (provider--registry-snapshot))
+         (configuration (opencode-provider-test--configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "opencode-session"))
+         (provider (opencode-provider-create configuration))
+         (credentials
+           (make-instance 'oauth-credentials
+                          :access-token "synthetic-opencode-key"
+                          :account-id "opencode"
+                          :source-path #P"/tmp/opencode-test-key"))
+         (captured-headers nil))
+    (unwind-protect
+         (progn
+           (register-provider
+            "opencode-session-test"
+            :family ':opencode
+            :models '("opencode/session-test")
+            :endpoint *opencode-chat-completions-endpoint*
+            :factory
+            (lambda (selected &key reasoning-summaries-p)
+              (declare (ignore reasoning-summaries-p))
+              (opencode-provider-create selected))
+            :source ':runtime)
+           (test-call-with-function-replacements
+            (list
+             (list 'dexador:post
+                   (lambda (url &key headers &allow-other-keys)
+                     (declare (ignore url))
+                     (setf captured-headers headers)
+                     (values (make-string-input-stream "") 200 nil nil))))
+            (lambda ()
+              (provider-open-response-stream
+               provider
+               (json-object "model" "gpt-5.6-luna")
+               :credentials credentials
+               :conversation conversation)))
+           (test-assert
+            (string= (rest (assoc "x-opencode-session" captured-headers
+                                  :test #'string-equal))
+                     (provider-session-id provider))
+            "OpenCode transport sends the stable session caching header")
+           (test-assert
+            (string= (rest (assoc "x-opencode-session"
+                                  (openai-compatible-provider-headers provider)
+                                  :test #'string-equal))
+                     (provider-session-id provider))
+            "the OpenCode session header carries the provider session identity")
+           (let ((reconfigured
+                   (provider-with-configuration
+                    provider
+                    (configuration-with-model
+                     configuration "opencode/session-test"))))
+             (test-assert
+              (equal (openai-compatible-provider-headers reconfigured)
+                     (list (cons "x-opencode-session"
+                                 (provider-session-id provider))))
+              "OpenCode reconfiguration preserves the session caching header")
+             (test-assert
+              (string= (provider-session-id reconfigured)
+                       (provider-session-id provider))
+              "OpenCode reconfiguration preserves the session identity")))
+      (provider--registry-restore registry-snapshot)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
 (-> opencode-provider-test--discovery () null)
 (defun opencode-provider-test--discovery ()
   "Test OpenCode discovery namespacing, collisions, caching, and failures."
@@ -615,6 +685,7 @@
   (opencode-provider-test--login)
   (opencode-provider-test--authentication-bootstrap)
   (opencode-provider-test--request-model)
+  (opencode-provider-test--session-header)
   (opencode-provider-test--discovery)
   (opencode-provider-test--legacy-registry-snapshot)
   (opencode-provider-test--builtin-registration)
