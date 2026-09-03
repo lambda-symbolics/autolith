@@ -8,7 +8,9 @@
 ;;; Autolith's private store with an optional OPENCODE_API_KEY environment
 ;;; bootstrap. Tool names ride in the Chat Completions Base64 encoding
 ;;; inherited from OPENAI-COMPATIBLE-PROVIDER, so conversations persist in
-;;; the same namespaced shape regardless of the serving provider.
+;;; the same namespaced shape regardless of the serving provider. Every
+;;; request also carries the provider's stable session identifier in the
+;;; x-opencode-session header so the backend can pin caching.
 
 (defparameter *opencode-model-prefix* "opencode/"
   "The namespace distinguishing OpenCode models from other provider models.")
@@ -56,14 +58,19 @@
 
 (-> opencode-provider-create (configuration) opencode-chat-completions-provider)
 (defun opencode-provider-create (configuration)
-  "Create the OpenCode API key provider for CONFIGURATION."
-  (make-instance 'opencode-chat-completions-provider
-                 :configuration configuration
-                 :credential-manager (opencode-credential-manager-create
-                                      configuration)
-                 :session-id (make-identifier)
-                 :display-name "OpenCode"
-                 :family ':opencode))
+  "Create the OpenCode API key provider for CONFIGURATION.
+
+The provider's stable session identifier also rides as the x-opencode-session
+request header so the backend can pin caching to one session."
+  (let ((session-id (make-identifier)))
+    (make-instance 'opencode-chat-completions-provider
+                   :configuration configuration
+                   :credential-manager (opencode-credential-manager-create
+                                        configuration)
+                   :session-id session-id
+                   :headers (list (cons "x-opencode-session" session-id))
+                   :display-name "OpenCode"
+                   :family ':opencode)))
 
 (defmethod provider-request-object :around
     ((provider opencode-chat-completions-provider)
