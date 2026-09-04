@@ -11,7 +11,7 @@ ql quri 2026-01-01
 ql serapeum 2026-01-01
 ql yason 2026-01-01
 
-git fetch-gist https://github.com/lenny99/fetch-gist.git :ref 018278496919985029a9a53cde7c5dfb998c573f
+git fetch-gist https://github.com/lenny99/fetch-gist.git :ref 6b8188343a1ae20630c0242d7028a19ffa1d283a
 git cl-colorist https://github.com/luciusmagn/cl-colorist.git :ref a4b65e63f40248c091d8ccf6023ad6fef5de7f0d
 git clinedi https://github.com/luciusmagn/clinedi.git :ref de133d8467ed211369923285078cbfa456e1d92b
 git cl-jobpond https://github.com/luciusmagn/cl-jobpond.git :ref ee2e2eb0bd5080c52db55036f853c00671962178
