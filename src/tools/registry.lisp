@@ -384,6 +384,13 @@
          (push block normalized))))
     (nreverse normalized)))
 
+(defvar *tool-result-overflow-function* nil
+  "Function durably spilling one complete oversized tool result, or NIL.
+
+Bound per dispatched call. It receives the full result text and returns
+a resource URI where the complete text stays readable, or NIL when
+spilling is unavailable, in which case the tail is discarded as before.")
+
 (-> tool-success
     (t &key (:image-attachments list) (:content-blocks list))
     tool-result)
@@ -421,13 +428,6 @@
                    :image-attachments attachments
                    :content-blocks blocks
                    :success-p t)))
-
-(defvar *tool-result-overflow-function* nil
-  "Function durably spilling one complete oversized tool result, or NIL.
-
-Bound per dispatched call. It receives the full result text and returns
-a resource URI where the complete text stays readable, or NIL when
-spilling is unavailable, in which case the tail is discarded as before.")
 
 (-> tool--spill-result-text (tool-context string string) (option string))
 (defun tool--spill-result-text (context tool-name text)
