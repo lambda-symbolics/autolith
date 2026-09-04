@@ -52,8 +52,8 @@
   :version "ql-2025-06-22"))
 ("fetch-gist" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lenny99/fetch-gist.git" :ref "6b8188343a1ae20630c0242d7028a19ffa1d283a")
-  :version "git-6b8188343a1ae20630c0242d7028a19ffa1d283a"))
+  :initargs (:remote-url "https://github.com/lenny99/fetch-gist.git" :ref "f4d876b8592b7182dd0400cb178ca36c0c6247c5")
+  :version "git-f4d876b8592b7182dd0400cb178ca36c0c6247c5"))
 ("cl-colorist" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/cl-colorist.git" :ref "a4b65e63f40248c091d8ccf6023ad6fef5de7f0d")
