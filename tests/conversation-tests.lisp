@@ -1311,6 +1311,11 @@
           "--disable-debugger"
           "--non-interactive"
           "--eval" "(require :asdf)"
+          ;; Nix-wrapped SBCL binaries force-extend CL_SOURCE_REGISTRY with
+          ;; store paths, so ignore the inherited registry in-process before
+          ;; the locked project setup loads.
+          "--eval"
+          "(asdf:initialize-source-registry '(:source-registry :ignore-inherited-configuration))"
           "--eval"
           (format nil "(load ~S)"
                   (namestring (test-conversation--child-project-setup)))
