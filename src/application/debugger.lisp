@@ -353,7 +353,7 @@
                                  (callback-agent-observer-create
                                   :text-callback
                                   (lambda (delta)
-                                    (with-lock-held ((text-lock))
+                                    (with-lock-held (text-lock)
                                       (setf text
                                             (bounded-string
                                              (concatenate 'string text delta)
@@ -381,7 +381,7 @@
                            :tool-allowlist
                            '("resource.read" "search.files" "search.glob"
                              "search.content" "debugger.propose"))
-                          (with-lock-held ((text-lock))
+                          (with-lock-held (text-lock)
                             (with-lock-held ((application-debugger-lock session))
                               (setf (application-debugger-explanation session)
                                     (bounded-string text)))))
