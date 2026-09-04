@@ -21,6 +21,26 @@
     (write-string content stream))
   pathname)
 
+(-> release-script-tests--isolation-arguments () list)
+(defun release-script-tests--isolation-arguments ()
+  "Return env arguments removing inherited Autolith state variables.
+
+Nix-wrapped environments export active-image and runtime state that must
+not leak into launcher fixtures. Tests re-add the variables they need
+after these removals because env applies arguments in order."
+  (mapcan (lambda (variable)
+            (list "-u" variable))
+          (list "AUTOLITH_ACTIVE_CORE"
+                "AUTOLITH_ASDF_CACHE"
+                "AUTOLITH_CRASH_POINTER"
+                "AUTOLITH_FFF_LIBRARY"
+                "AUTOLITH_INSTALLATION_KIND"
+                "AUTOLITH_NIX_SOURCE_ROOT"
+                "AUTOLITH_RECOVERY_CORE"
+                "AUTOLITH_RECOVERY_SESSION_POINTER"
+                "AUTOLITH_SBCL_SOURCE_ROOT"
+                "AUTOLITH_SOURCE_ROOT")))
+
 (-> release-script-tests--run
     (list &key (:directory (option pathname)) (:environment list)
                (:ignore-error-status boolean) (:output t))
@@ -32,9 +52,10 @@
 Expected failures capture their diagnostics separately, so a tolerant caller
 can assert on the exact failure message through the second return value."
   (uiop:run-program
-   (if environment
-       (append (list "env") environment command)
-       command)
+   (append (list "env")
+           (release-script-tests--isolation-arguments)
+           environment
+           command)
    :directory directory
    :ignore-error-status ignore-error-status
    :output output
@@ -634,10 +655,11 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
                      "update handoff bypasses crash recovery unchanged"))
       (release-script-tests--write-file log "")
       (let* ((command
-               (format nil
-                       "env ~{~A~^ ~} ~A fixture-argument"
-                       (mapcar #'uiop:escape-shell-token environment)
-                       (uiop:escape-shell-token (namestring launcher))))
+                 (format nil
+                         "env ~{~A~^ ~} ~{~A~^ ~} ~A fixture-argument"
+                         (release-script-tests--isolation-arguments)
+                         (mapcar #'uiop:escape-shell-token environment)
+                         (uiop:escape-shell-token (namestring launcher))))
              (output
                (with-input-from-string (input (format nil "y~%"))
                  (uiop:run-program
@@ -660,10 +682,11 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
           (delete-file pathname)))
       (release-script-tests--write-file log "")
       (let* ((command
-               (format nil
-                       "env ~{~A~^ ~} ~A fixture-argument"
-                       (mapcar #'uiop:escape-shell-token environment)
-                       (uiop:escape-shell-token (namestring launcher))))
+                 (format nil
+                         "env ~{~A~^ ~} ~{~A~^ ~} ~A fixture-argument"
+                         (release-script-tests--isolation-arguments)
+                         (mapcar #'uiop:escape-shell-token environment)
+                         (uiop:escape-shell-token (namestring launcher))))
              (output
                (with-input-from-string (input (format nil "n~%"))
                  (uiop:run-program
