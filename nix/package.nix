@@ -431,17 +431,12 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lenny99";
       repo = "fetch-gist";
-      rev = "6b8188343a1ae20630c0242d7028a19ffa1d283a";
-      hash = "sha256-SmyoXDWwpQeewI8/p68udJzfF7YPhD9LqA90PSo8DLo=";
+      rev = "f4d876b8592b7182dd0400cb178ca36c0c6247c5";
+      hash = "sha256-Bz618rseuXOSX3eqBwqyp5vt8vxXRKsPYDQrwAW+Foc=";
     };
     lispLibs = with pkgs.sbclPackages; [
-      alexandria
-      babel
       dexador
-      iterate
       plump
-      quri
-      serapeum
     ];
   };
 
