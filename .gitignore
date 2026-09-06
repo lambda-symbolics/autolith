@@ -6,3 +6,7 @@ result
 .bundle-libs/
 dist/
 var/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
