@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_directory=$(CDPATH='' cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repository_root=$(CDPATH='' cd -P -- "$script_directory/../.." && pwd)
+artifact_directory=${HARBOR_ARTIFACT_DIR:-$repository_root/var/harbor/artifacts}
+cache_directory=${HARBOR_BUILD_CACHE_DIR:-$repository_root/var/harbor/build-cache/linux-amd64}
+docker_platform=linux/amd64
+docker_image=${HARBOR_BUILD_IMAGE:-ubuntu:20.04@sha256:c664f8f86ed5a386b0a340d981b8f81714e21a8b9c73f658c4bea56aa179d54a}
+relay_cli_commit=ba60230bb3042136b580ad24d36c1f472c46d112
+relay_ffi_commit=5a2381e4234024309f20262a091d1d6ab088b655
+autolith_rust_toolchain=1.97.1
+relay_rust_toolchain=1.96.1
+relay_cli_target=x86_64-unknown-linux-musl
+
+cd "$repository_root"
+repository_url=$(git remote get-url origin)
+commit=$(git rev-parse HEAD)
+branch=$(git branch --show-current)
+
+if [[ -n $(git status --porcelain) ]]; then
+  printf 'Commit all benchmark source changes before building artifacts.\n' >&2
+  exit 1
+fi
+
+if [[ -z $branch ]]; then
+  printf 'build-autolith requires a named branch whose HEAD is pushed.\n' >&2
+  exit 1
+fi
+
+remote_commit=$(git ls-remote "$repository_url" "refs/heads/$branch" | awk 'NR == 1 { print $1 }')
+if [[ $remote_commit != "$commit" ]]; then
+  printf 'Push %s at %s before building the benchmark artifacts.\n' "$branch" "$commit" >&2
+  exit 1
+fi
+
+mkdir -p "$artifact_directory" "$cache_directory"
+artifact_directory=$(CDPATH='' cd -P -- "$artifact_directory" && pwd)
+cache_directory=$(CDPATH='' cd -P -- "$cache_directory" && pwd)
+
+printf 'Building benchmark artifacts from Autolith %s for %s.\n' "$commit" "$docker_platform"
+docker run --rm \
+  --platform "$docker_platform" \
+  --env AUTOLITH_REPOSITORY_URL="$repository_url" \
+  --env AUTOLITH_COMMIT="$commit" \
+  --env NEMO_RELAY_CLI_COMMIT="$relay_cli_commit" \
+  --env NEMO_RELAY_FFI_COMMIT="$relay_ffi_commit" \
+  --env AUTOLITH_RUST_TOOLCHAIN="$autolith_rust_toolchain" \
+  --env NEMO_RELAY_RUST_TOOLCHAIN="$relay_rust_toolchain" \
+  --env NEMO_RELAY_CLI_TARGET="$relay_cli_target" \
+  --volume "$artifact_directory:/artifacts" \
+  --volume "$cache_directory:/root" \
+  "$docker_image" \
+  bash -lc '
+    set -euo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    export PATH="$HOME/.cargo/bin:$PATH"
+
+    apt-get update
+    apt-get install --yes \
+      binutils bubblewrap build-essential ca-certificates cmake curl file git \
+      libicu-dev libssl-dev libz-dev libzstd-dev musl-tools pkg-config sbcl
+    git config --global --add safe.directory "*"
+
+    if [[ ! -x $HOME/.cargo/bin/rustup ]]; then
+      curl --fail --location --show-error --retry 3 --proto "=https" --tlsv1.2 \
+        https://sh.rustup.rs |
+        sh -s -- -y --default-toolchain "$AUTOLITH_RUST_TOOLCHAIN" --profile minimal
+    else
+      rustup toolchain install "$AUTOLITH_RUST_TOOLCHAIN" --profile minimal
+      rustup default "$AUTOLITH_RUST_TOOLCHAIN"
+    fi
+    export PATH="$HOME/.cargo/bin:$PATH"
+    rustup toolchain install "$NEMO_RELAY_RUST_TOOLCHAIN" --profile minimal
+    rustup target add \
+      --toolchain "$NEMO_RELAY_RUST_TOOLCHAIN" \
+      "$NEMO_RELAY_CLI_TARGET"
+
+    rm -rf /work
+    mkdir -p /work/output
+
+    git clone --filter=blob:none --no-checkout "$AUTOLITH_REPOSITORY_URL" /work/autolith
+    git -C /work/autolith checkout --detach "$AUTOLITH_COMMIT"
+    test "$(git -C /work/autolith rev-parse HEAD)" = "$AUTOLITH_COMMIT"
+    cd /work/autolith
+    ./script/ci-package-release /work/output
+
+    git clone --filter=blob:none --no-checkout \
+      https://github.com/NVIDIA/NeMo-Relay.git /work/nemo-relay-cli
+    git -C /work/nemo-relay-cli checkout --detach "$NEMO_RELAY_CLI_COMMIT"
+    test "$(git -C /work/nemo-relay-cli rev-parse HEAD)" = "$NEMO_RELAY_CLI_COMMIT"
+    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+    cargo +"$NEMO_RELAY_RUST_TOOLCHAIN" build \
+      --manifest-path /work/nemo-relay-cli/Cargo.toml \
+      --release --locked --target "$NEMO_RELAY_CLI_TARGET" \
+      -p nemo-relay-cli
+    relay_cli=/work/nemo-relay-cli/target/$NEMO_RELAY_CLI_TARGET/release/nemo-relay
+    test "$($relay_cli --version)" = "nemo-relay 0.9.0"
+
+    git clone --filter=blob:none --no-checkout \
+      https://github.com/NVIDIA/NeMo-Relay.git /work/nemo-relay-ffi
+    git -C /work/nemo-relay-ffi checkout --detach "$NEMO_RELAY_FFI_COMMIT"
+    test "$(git -C /work/nemo-relay-ffi rev-parse HEAD)" = "$NEMO_RELAY_FFI_COMMIT"
+    git -C /work/nemo-relay-ffi apply \
+      /work/autolith/native/nemo-relay/exact-plugin-config.patch
+    cargo +"$NEMO_RELAY_RUST_TOOLCHAIN" build \
+      --manifest-path /work/nemo-relay-ffi/Cargo.toml \
+      --release --locked -p nemo-relay-ffi
+
+    shopt -s nullglob
+    archives=(/work/output/autolith-*.tar.gz)
+    checksums=(/work/output/autolith-*.tar.gz.sha256)
+    if (( ${#archives[@]} != 1 || ${#checksums[@]} != 1 )); then
+      printf "Expected one Autolith archive and checksum.\n" >&2
+      exit 1
+    fi
+
+    cp "${archives[0]}" "${checksums[0]}" /artifacts/
+    install -m 755 "$relay_cli" /artifacts/nemo-relay
+    install -m 644 \
+      /work/nemo-relay-ffi/target/release/libnemo_relay_ffi.so \
+      /artifacts/libnemo_relay_ffi.so
+    cd /artifacts
+    sha256sum nemo-relay > nemo-relay.sha256
+    sha256sum libnemo_relay_ffi.so > libnemo_relay_ffi.so.sha256
+    cat > benchmark-build.txt <<EOF
+Autolith repository: $AUTOLITH_REPOSITORY_URL
+Autolith commit: $AUTOLITH_COMMIT
+NeMo Relay repository: https://github.com/NVIDIA/NeMo-Relay.git
+NeMo Relay CLI commit: $NEMO_RELAY_CLI_COMMIT
+NeMo Relay CLI version: 0.9.0
+NeMo Relay FFI commit: $NEMO_RELAY_FFI_COMMIT
+Docker platform: linux/amd64
+EOF
+  '
+
+printf 'Artifacts written to %s\n' "$artifact_directory"

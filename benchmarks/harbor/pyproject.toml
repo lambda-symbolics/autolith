@@ -1,0 +1,21 @@
+[project]
+name = "autolith-harbor-benchmarks"
+version = "0.1.0"
+description = "Harbor comparisons for Autolith, Codex, and Pi"
+requires-python = ">=3.12"
+dependencies = [
+  "harbor @ git+https://github.com/harbor-framework/harbor.git@c29f416af4b02ef593d6874f88b59d38bf164646",
+  "toml>=0.10.2,<1",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4,<9",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["../.."]
+testpaths = ["tests"]
