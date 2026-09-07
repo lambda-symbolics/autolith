@@ -667,12 +667,22 @@
       (setf result (nconc result (list addition))))
     result))
 
+(-> image-commit--write-comment (stream string) null)
+(defun image-commit--write-comment (stream text)
+  "Write every line of replay metadata TEXT as a Lisp comment to STREAM."
+  (with-input-from-string (input text)
+    (loop for line = (read-line input nil nil)
+          while line
+          do (format stream ";;;; ~A~%" line)))
+  (terpri stream)
+  nil)
+
 (-> image-commit--write-entry (stream list) null)
 (defun image-commit--write-entry (stream entry)
   "Write one replay ENTRY as executable Common Lisp to STREAM."
-  (format stream ";;;; Mutation ~A: ~A~2%"
-          (getf entry :id)
-          (getf entry :target))
+  (image-commit--write-comment
+   stream
+   (format nil "Mutation ~A: ~A" (getf entry :id) (getf entry :target)))
   (case (getf entry :kind)
     (:definition
      (format stream
@@ -699,7 +709,8 @@
    pathname
    (lambda (stream)
      (format stream ";;;; Autolith image reconstruction script~%")
-     (format stream ";;;; Commit ~A: ~A~2%" identifier title)
+     (image-commit--write-comment
+      stream (format nil "Commit ~A: ~A" identifier title))
      (format stream "(in-package #:autolith)~2%")
      (dolist (entry entries)
        (image-commit--write-entry stream entry)))))
