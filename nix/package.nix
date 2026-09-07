@@ -429,7 +429,7 @@ let
     pname = "fetch-gist";
     version = "0.1.0";
     src = pkgs.fetchFromGitHub {
-      owner = "lenny99";
+      owner = "lambda-symbolics";
       repo = "fetch-gist";
       rev = "f4d876b8592b7182dd0400cb178ca36c0c6247c5";
       hash = "sha256-Bz618rseuXOSX3eqBwqyp5vt8vxXRKsPYDQrwAW+Foc=";
