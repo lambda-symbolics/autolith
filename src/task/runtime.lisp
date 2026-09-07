@@ -492,6 +492,9 @@ under the progress lock before releasing it to other threads."
 
 (defun task-progress-note-status (job status details)
   "Update JOB's normalized progress from one child observer STATUS event."
+  (let ((observer (task-orchestrator-status-observer (task-job-orchestrator job))))
+    (when observer
+      (funcall observer job status details)))
   (let ((progress (task-job-progress job))
         (event nil)
         (now (get-internal-real-time)))

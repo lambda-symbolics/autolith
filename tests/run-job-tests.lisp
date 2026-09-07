@@ -37,9 +37,52 @@
   "Read one test result artifact through the safe reader."
   (run-job-read-file pathname))
 
+(-> run-job-tests--request-budget () null)
+(defun run-job-tests--request-budget ()
+  "Check durable progress and reject the first request beyond a job's budget."
+  (let* ((root (run-job-tests--temporary-directory))
+         (path (merge-pathnames "result.progress.sexp" root))
+         (request (run-job-validate-envelope
+                   (append (run-job-tests--request-form)
+                           '(:max-provider-requests 2))))
+         (job (make-instance 'task-job :execution-identifier "trace-budget")))
+    (unwind-protect
+         (progn
+           (setf (run-job-request-progress-path request) path)
+           (let ((observer (run-job-progress-observer request)))
+             (dotimes (index 2)
+               (funcall observer job ':provider-request-started nil)
+               (funcall observer job ':provider-request-completed
+                        (list :usage '(("input_tokens" 7) ("output_tokens" 3)))))
+             (let* ((saved (run-job-read-file path))
+                    (fields (rest saved)))
+               (test-assert (= 2 (getf fields :provider-requests))
+                            "progress retains aggregate request count")
+               (test-assert (= 14 (second (assoc "input_tokens" (getf fields :usage)
+                                                :test #'string=)))
+                            "progress retains aggregate token usage"))
+             (test-assert
+              (handler-case
+                  (progn (funcall observer job ':provider-request-started nil) nil)
+                (run-job-error (condition)
+                  (eq (run-job-error-category condition) ':request-budget)))
+              "request budget stops dispatch before a third provider request")))
+      (uiop:delete-directory-tree root :validate t)))
+  (dolist (invalid '(0 -1 "2" 2.5 10001))
+    (test-assert
+     (handler-case
+         (progn
+           (run-job-validate-envelope
+            (append (run-job-tests--request-form) (list :max-provider-requests invalid)))
+           nil)
+       (run-job-error () t))
+     "invalid request limits fail before provider initialization"))
+  nil)
+
 (-> run-run-job-tests () null)
 (defun run-run-job-tests ()
   "Test parsing, validation, serialization, permissions, CLI, and one caller role seam."
+  (run-job-tests--request-budget)
   (let ((request (run-job-validate-envelope (run-job-tests--request-form))))
     (test-assert
      (and (string= (run-job-request-identifier request) "job-1")

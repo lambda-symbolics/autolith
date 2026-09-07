@@ -686,7 +686,8 @@ The input is exactly one bounded data-only S-expression:
                    :properties (("answer" (:type :string)))
                    :required ("answer")
                    :additional-properties nil)
- :timeout-seconds 900)
+ :timeout-seconds 900
+ :max-provider-requests 200)
 #+END_SRC
 
 The supplied output contract applies only to that run and does not alter the
@@ -696,6 +697,17 @@ as =(:autolith-job-result :version 1 ...)=. Structured objects and arrays use
 Failures use stable categories and statuses =:failed=, =:cancelled=, or
 =:timed-out=. Successful jobs use =:succeeded= and include the contracted
 result. Trace and usage fields are included when available.
+
+The optional =:max-provider-requests= accepts 1 through 10000. It caps
+aggregate child provider rounds before dispatch, including delegated children.
+Omitting it retains the ordinary agent loop limit. This is a request ceiling,
+not a currency budget; provider prices and output lengths still apply.
+The runner atomically publishes =result.progress.sexp= beside =result.sexp= on
+provider and tool boundaries. It records the caller job ID, trace ID, request
+count, cumulative usage and last event. A caller can retain this artifact and
+its own evidence checkpoints after interruption, then put resume context into
+the next job's opaque =:input=. The runner does not own a research queue or
+interpret the caller's checkpoint schema.
 
 Headless execution never opens an approval picker. =auto= classifies shell
 commands and denies decisions that would require approval. =sandbox= permits
