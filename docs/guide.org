@@ -704,7 +704,9 @@ Omitting it retains the ordinary agent loop limit. This is a request ceiling,
 not a currency budget; provider prices and output lengths still apply.
 The runner atomically publishes =result.progress.sexp= beside =result.sexp= on
 provider and tool boundaries. It records the caller job ID, trace ID, request
-count, cumulative usage and last event. A caller can retain this artifact and
+count, cumulative token/cache counters and last event. Per-item provider
+attribution remains in the conversation trace, not the progress artifact.
+A caller can retain this artifact and
 its own evidence checkpoints after interruption, then put resume context into
 the next job's opaque =:input=. The runner does not own a research queue or
 interpret the caller's checkpoint schema.
