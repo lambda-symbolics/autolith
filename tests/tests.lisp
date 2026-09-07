@@ -137,6 +137,8 @@
   (test-nemo-relay-home-implicit-discovery)
   (test-nemo-relay-disabled-wrappers)
   (test-nemo-relay-unavailable-library)
+  (test-nemo-relay-configured-library-selection)
+  (test-nemo-relay-checkpoint-detach)
   (test-nemo-relay-exporter-configuration)
   (test-nemo-relay-adapter-surface)
   (test-nemo-relay-context-propagation)

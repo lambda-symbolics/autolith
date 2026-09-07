@@ -278,10 +278,11 @@ lifecycle events to NeMo Relay. One user turn is an Agent scope; provider
 attempts and tool calls are child LLM and Tool scopes. Concurrent tool workers
 receive the turn's propagation context, so their spans retain the Agent parent.
 
-Autolith accepts an explicit Relay =plugins.toml= PluginConfig file. Relay then
-applies its normal discovery and configuration merge rules. The built-in
-=observability= component is always allowed. Every other static component kind
-in Autolith's explicit configuration is rejected unless it is named in
+Autolith accepts an explicit Relay =plugins.toml= PluginConfig file. Native Relay
+configuration discovery is disabled while Autolith observability is active, so
+any discovered file is rejected before activation. The built-in =observability=
+component is always allowed. Every other static component kind in Autolith's
+explicit configuration is rejected unless it is named in
 =:allowed-component-kinds= as a custom observability component.
 
 A custom static kind allowlist entry is trusted code approval, not a claim that
@@ -321,7 +322,7 @@ filename_template = "trajectory-{session_id}.json"
 [components.config.opentelemetry]
 enabled = true
 
-[[components.config.opentelemetry.endpoints]]
+[[components.config.opentelemetry.traces]]
 type = "gen_ai"
 endpoint = "http://localhost:4318/v1/traces"
 service_name = "autolith"
@@ -329,11 +330,11 @@ service_name = "autolith"
 
 Use =[[plugins.dynamic]]= for manifest-backed custom native or worker plugins.
 Autolith resolves each =manifest= relative to the selected =plugins.toml=,
-validates the upstream manifest version, execution lane, capabilities,
-compatibility, defaults, and load metadata, then passes its nested =config=
-table to Relay's dynamic activation API. Upstream capabilities describe the
-execution lane and optional config schema, not plugin behavior. Each manifest
-ID must also be named in =:allowed-dynamic-plugin-ids= as trusted code approval:
+extracts =plugin.id= and =plugin.kind= for its allowlist policy, then passes the
+manifest reference and nested =config= table to Relay's dynamic activation API.
+Relay validates the complete manifest, including compatibility, capabilities,
+defaults, load metadata, and any integrity fields. Each manifest ID must also
+be named in =:allowed-dynamic-plugin-ids= as trusted code approval:
 
 #+BEGIN_SRC toml
 [[plugins.dynamic]]
@@ -369,10 +370,10 @@ The same settings can be selected for the current process with
 
 Use =:allowed-component-kinds= for explicitly approved custom static
 observability components. Use =:allowed-dynamic-plugin-ids= for manifest-backed
-plugins. Autolith requires an explicit PluginConfig; when it is supplied, native
-Relay discovery files at =${XDG_CONFIG_HOME}/nemo-relay/plugins.toml=,
-=~/.config/nemo-relay/plugins.toml=, or =/etc/nemo-relay/plugins.toml= may also
-be discovered and merged by Relay.
+plugins. Autolith requires an explicit PluginConfig. Native Relay discovery
+files at =${XDG_CONFIG_HOME}/nemo-relay/plugins.toml=,
+=~/.config/nemo-relay/plugins.toml=, or =/etc/nemo-relay/plugins.toml= are
+rejected rather than merged when observability is enabled.
 
 Use =:config-json= or =:plugin-config= instead of =:config= to supply the
 canonical PluginConfig directly. Local ATOF files contain provider and tool

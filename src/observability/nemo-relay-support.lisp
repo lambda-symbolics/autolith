@@ -65,8 +65,8 @@ Known non-observability built-ins are never authorized by the custom allowlist."
 (defvar *nemo-relay-configuration* nil
   "The explicitly configured Relay settings, or NIL for environment discovery.")
 
-(defvar *nemo-relay-observability-library-loaded-p* nil
-  "Whether the direct Relay observability foreign library has been loaded.")
+(defvar *nemo-relay-native-library* nil
+  "The loaded CFFI foreign library used by Relay.")
 
 (defvar *nemo-relay-runtime-lock*
   (make-lock "Autolith Relay runtime")
@@ -154,7 +154,7 @@ FUNCTION returns, including when it signals a condition."
 (-> nemo-relay--set-native-last-error (string) null)
 (defun nemo-relay--set-native-last-error (message)
   "Copy MESSAGE into Relay's native thread-local diagnostic when available."
-  (when *nemo-relay-observability-library-loaded-p*
+  (when *nemo-relay-native-library*
     (handler-case
         (nemo-relay--call-with-c-strings
          (list message)
@@ -274,9 +274,21 @@ FUNCTION returns, including when it signals a condition."
       (funcall function (cffi:null-pointer))))
 
 
+(-> nemo-relay--release-native-library () null)
+(defun nemo-relay--release-native-library ()
+  "Close and forget the loaded Relay foreign library."
+  (let ((library *nemo-relay-native-library*))
+    (setf *nemo-relay-native-library* nil)
+    (when library
+      (ignore-errors
+        (cffi:close-foreign-library library))))
+  nil)
+
 (-> nemo-relay--load-library ((option string)) t)
 (defun nemo-relay--load-library (library-path)
-  "Load the configured Relay shared library through CFFI."
-  (if library-path
-      (cffi:load-foreign-library library-path)
-      (cffi:use-foreign-library nemo-relay-ffi)))
+  "Load and retain the configured Relay shared library through CFFI."
+  (nemo-relay--release-native-library)
+  (setf *nemo-relay-native-library*
+        (if library-path
+            (cffi:load-foreign-library library-path)
+            (cffi:use-foreign-library nemo-relay-ffi))))
