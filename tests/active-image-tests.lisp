@@ -54,19 +54,28 @@
          (script (merge-pathnames "probe/reconstruct.lisp" root)))
     (unwind-protect
          (progn
-           (ensure-directories-exist script)
+           (image-commit-write-script
+            script :identifier identifier
+            :title (format nil "Multiline metadata~%(error \"Executed title.\")")
+            :entries
+            (list
+             (list :kind ':definition :id "generic"
+                   :target "(defgeneric image-commit-test-operation)"
+                   :source "(defgeneric image-commit-test-operation (value))")
+             (list :kind ':definition
+                   :id (format nil "method~%(error \"Executed identifier.\")")
+                   :target (format nil "(defmethod image-commit-test-operation nil~%  (integer))")
+                   :source "(defmethod image-commit-test-operation ((value integer)) (+ value 7))")
+             (list :kind ':legacy :id "assertion" :target "result"
+                   :source "(assert (= 42 (image-commit-test-operation 35)))")))
+           (test-assert
+            (null (image-commit-replay-probe configuration script identifier))
+            "generated replay executes methods without evaluating multiline metadata")
+           (delete-file script)
            (with-open-file (stream script
                                    :direction ':output
                                    :if-exists ':supersede
                                    :if-does-not-exist ':create
-                                   :external-format ':utf-8)
-             (format stream "(in-package #:autolith)~%"))
-           (test-assert
-            (null (image-commit-replay-probe configuration script identifier))
-            "a clean Autolith process loads a valid private replay script")
-           (with-open-file (stream script
-                                   :direction ':output
-                                   :if-exists ':supersede
                                    :external-format ':utf-8)
              (format stream "(in-package #:autolith)~%(error \"Broken replay.\")~%"))
            (test-assert
