@@ -77,7 +77,9 @@
            (mapcar (lambda (name) (cons name (uiop:getenv name)))
                    '("AUTOLITH_RELAY"
                      "AUTOLITH_RELAY_CONFIG"
-                     "AUTOLITH_RELAY_LIBRARY"))))
+                     "AUTOLITH_RELAY_LIBRARY")))
+         (application-configuration (test-configuration))
+         (application-root (test-configuration-root application-configuration)))
     (unwind-protect
          (progn
            (dolist (name (mapcar #'first saved-environment))
@@ -94,6 +96,11 @@
                     nil)
                 (nemo-relay-error () t))
               "Relay requires an explicit PluginConfig"))
+             (test-assert
+              (typep
+               (nemo-relay--runtime-configuration application-configuration)
+               'nemo-relay-configuration)
+              "Relay ignores the Autolith application configuration argument")
            (nemo-relay-test--write-config config-path output-directory)
            (nemo-relay-test--write-exporter-json json-path output-directory)
            (let* ((settings
@@ -150,7 +157,10 @@
         (if (rest entry)
             (sb-posix:setenv (first entry) (rest entry) 1)
             (sb-posix:unsetenv (first entry))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)
+       (uiop:delete-directory-tree application-root
+                                   :validate t
+                                   :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-nemo-relay-toml-dynamic-plugins () null)

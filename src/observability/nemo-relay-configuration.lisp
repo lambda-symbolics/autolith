@@ -730,10 +730,14 @@ Relay owns validation of the complete manifest during activation."
         normalized))))
 
 (-> nemo-relay--runtime-configuration ((option configuration)) nemo-relay-configuration)
-(defun nemo-relay--runtime-configuration (configuration)
-  "Resolve Relay settings against CONFIGURATION and environment."
-  (or configuration
-      *nemo-relay-configuration*
+(defun nemo-relay--runtime-configuration (application-configuration)
+  "Resolve Relay settings from process state and environment.
+
+APPLICATION-CONFIGURATION belongs to Autolith's application settings and is
+accepted by the startup protocol without selecting Relay settings; the caller
+uses it separately when deriving output paths."
+  (declare (ignore application-configuration))
+  (or *nemo-relay-configuration*
       (let ((config-path
               (let ((value (uiop:getenv "AUTOLITH_RELAY_CONFIG")))
                 (and (non-empty-string-p value)
