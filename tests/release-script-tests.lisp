@@ -639,13 +639,20 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
         (declare (ignore output error-output))
         (test-assert (= status 76)
                      "update handoff bypasses crash recovery unchanged"))
-      (multiple-value-bind (output error-output status)
-          (release-script-tests--run
-           (list (namestring launcher) "--from-source" "data" "import" "fixture-data-failure")
-           :environment environment :ignore-error-status t)
-        (declare (ignore error-output))
-        (test-assert (and (= status 1) (not (search "/recovery/launcher.lisp" output)))
-                     "a noninteractive data failure returns without starting recovery"))
+      (dolist (arguments '(("data" "import" "fixture-data-failure")
+                           ("--permissions" "auto" "run-job"
+                            "--input" "fixture-data-failure" "--output" "result.sexp")))
+        (release-script-tests--write-file log "")
+        (multiple-value-bind (output error-output status)
+            (release-script-tests--run
+             (append (list (namestring launcher) "--from-source") arguments)
+             :environment environment :ignore-error-status t)
+          (declare (ignore error-output))
+          (test-assert
+           (and (= status 1)
+                (not (search "/recovery/launcher.lisp" output))
+                (= 1 (count #\Newline (uiop:read-file-string log))))
+           "a failed batch command exits once without recovery or repeated work")))
       (dolist (arguments '(("update") ("--update") ("update" "extra")))
         (release-script-tests--write-file log "")
         (multiple-value-bind (output error-output status)

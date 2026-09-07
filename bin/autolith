@@ -299,7 +299,8 @@ fi
 
 restore_terminal
 
-if [[ "$data_requested" == true ]]; then
+if [[ "$data_requested" == true || "$run_job_requested" == true ]]; then
+  # Batch failures belong to their caller; recovery must not repeat paid work.
   exit "$status"
 fi
 
