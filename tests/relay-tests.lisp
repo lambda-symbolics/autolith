@@ -275,69 +275,57 @@
    "Relay accepts an explicitly allowlisted custom component")
   nil)
 
-(-> nemo-relay-test--valid-rust-dynamic-manifest () json-object)
-(defun nemo-relay-test--valid-rust-dynamic-manifest ()
-  "Return a complete valid native dynamic-plugin manifest for tests."
-  (json-object
-   "manifest_version" 1
-   "plugin"
-   (json-object
-    "id" "example.custom_observer"
-    "kind" "rust_dynamic")
-   "compat"
-   (json-object
-    "relay" ">=0.8.0,<1.0"
-    "native_api" "1")
-   "defaults" (json-object "enabled" false)
-   "capabilities" (json-object "items" (json-array "plugin_native"))
-   "load"
-   (json-object
-    "library" "libcustom.dylib"
-    "symbol" "nemo_relay_register_plugin")))
-
-(-> nemo-relay-test--manifest-rejected-p (json-object) boolean)
-(defun nemo-relay-test--manifest-rejected-p (manifest)
-  "Return true when MANIFEST fails local upstream-shape checks."
-  (handler-case
-      (progn
-        (nemo-relay--validate-dynamic-plugin-manifest
-         manifest #P"/tmp/relay-plugin.toml")
-        nil)
-    (nemo-relay-error () t)))
-
 (-> test-nemo-relay-dynamic-manifest-metadata () null)
 (defun test-nemo-relay-dynamic-manifest-metadata ()
-  "Test strict validation of dynamic-plugin manifest metadata."
-  (let ((manifest (nemo-relay-test--valid-rust-dynamic-manifest)))
-    (test-assert
-     (not (nemo-relay-test--manifest-rejected-p manifest))
-     "Relay accepts a complete native dynamic-plugin manifest")
-    (setf (gethash "manifest_version" manifest) 2)
-    (test-assert
-     (nemo-relay-test--manifest-rejected-p manifest)
-     "Relay rejects an unsupported manifest version")
-    (setf (gethash "manifest_version" manifest) 1
-          (gethash "capabilities" manifest)
-          (json-object "items" (json-array "plugin_worker")))
-    (test-assert
-     (nemo-relay-test--manifest-rejected-p manifest)
-     "Relay rejects a capability from the opposite execution lane")
-    (setf (gethash "capabilities" manifest)
-          (json-object "items" (json-array "plugin_native"))
-          (gethash "load" manifest)
-          (json-object "runtime" "python" "entrypoint" "custom:register"))
-    (test-assert
-     (nemo-relay-test--manifest-rejected-p manifest)
-     "Relay rejects worker load fields for a native plugin")
-    (setf (gethash "load" manifest)
-          (json-object
-           "library" "libcustom.dylib"
-           "symbol" "nemo_relay_register_plugin")
-          (gethash "defaults" manifest)
-          (json-object "enabled" t))
-    (test-assert
-     (nemo-relay-test--manifest-rejected-p manifest)
-     "Relay rejects enabled-by-default dynamic plugins"))
+  "Test that Autolith extracts only dynamic-plugin policy identity."
+  (let* ((root (nemo-relay-test--temporary-root))
+         (manifest-path (merge-pathnames "relay-plugin.toml" root)))
+    (uiop:ensure-all-directories-exist
+     (list (uiop:pathname-directory-pathname manifest-path)))
+    (labels ((write-plugin (plugin-id kind)
+               "Write the identity section of a test plugin manifest."
+               (with-open-file (stream manifest-path
+                                       :direction ':output
+                                       :if-exists ':supersede
+                                       :if-does-not-exist ':create
+                                       :external-format ':utf-8)
+                 (format stream
+                         "[plugin]~%id = ~S~%kind = ~S~%"
+                         plugin-id kind))))
+      (unwind-protect
+           (progn
+             (write-plugin "example.custom_observer" "rust_dynamic")
+             (multiple-value-bind (plugin-id kind resolved-path)
+                 (nemo-relay--dynamic-plugin-manifest-metadata manifest-path)
+               (test-assert
+                (and (string= plugin-id "example.custom_observer")
+                     (string= kind "rust_dynamic")
+                     (equal resolved-path (truename manifest-path)))
+                "Relay extracts dynamic-plugin identity without requiring upstream fields"))
+             (write-plugin "example.custom_observer" "unsupported")
+             (test-assert
+              (handler-case
+                  (progn
+                    (nemo-relay--dynamic-plugin-manifest-metadata manifest-path)
+                    nil)
+                (nemo-relay-error () t))
+              "Relay rejects unsupported dynamic-plugin kinds")
+             (with-open-file (stream manifest-path
+                                     :direction ':output
+                                     :if-exists ':supersede
+                                     :if-does-not-exist ':create
+                                     :external-format ':utf-8)
+               (write-string "[plugin]~%kind = \"rust_dynamic\"~%" stream))
+             (test-assert
+              (handler-case
+                  (progn
+                    (nemo-relay--dynamic-plugin-manifest-metadata manifest-path)
+                    nil)
+                (nemo-relay-error () t))
+              "Relay rejects manifests without a plugin ID"))
+        (uiop:delete-directory-tree root
+                                    :validate t
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-nemo-relay-home-implicit-discovery () null)
@@ -499,15 +487,13 @@
          (saved-configuration *nemo-relay-configuration*)
          (saved-runtime *nemo-relay-runtime*)
          (saved-error *nemo-relay-last-error*)
-         (saved-library *nemo-relay-observability-library*)
-         (saved-loaded-p *nemo-relay-observability-library-loaded-p*))
+         (saved-library *nemo-relay-native-library*))
     (unwind-protect
          (progn
            (setf *nemo-relay-configuration* nil
                  *nemo-relay-runtime* nil
                  *nemo-relay-last-error* nil
-                 *nemo-relay-observability-library* nil
-                 *nemo-relay-observability-library-loaded-p* nil)
+                 *nemo-relay-native-library* nil)
            (nemo-relay-configure
             :enabled t
             :config-json "{\"version\":1,\"components\":[]}"
@@ -522,10 +508,68 @@
       (setf *nemo-relay-configuration* saved-configuration
             *nemo-relay-runtime* saved-runtime
             *nemo-relay-last-error* saved-error
-            *nemo-relay-observability-library* saved-library
-            *nemo-relay-observability-library-loaded-p* saved-loaded-p)
+            *nemo-relay-native-library* saved-library)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+(-> test-nemo-relay-configured-library-selection () null)
+(defun test-nemo-relay-configured-library-selection ()
+  "Test that direct Relay calls use the configured library pathname."
+  (let* ((library "/custom/path/libnemo_relay_ffi.dylib")
+         (saved-environment (uiop:getenv "AUTOLITH_RELAY_LIBRARY"))
+         (selected nil))
+    (unwind-protect
+         (progn
+           (sb-posix:unsetenv "AUTOLITH_RELAY_LIBRARY")
+           (let ((*nemo-relay-configuration*
+                   (nemo-relay-configuration-create
+                    :enabled-p t
+                    :library-path library))
+                 (*nemo-relay-runtime* nil)
+                 (*nemo-relay-native-library* nil))
+             (test-call-with-function-replacements
+              (list
+               (list 'nemo-relay--load-library
+                     (lambda (path)
+                       (setf selected path
+                             *nemo-relay-native-library* ':fake)
+                       ':fake)))
+              (lambda ()
+                (nemo-relay--ensure-native-library)))
+             (test-assert (string= selected library)
+                          "Relay direct calls select the configured library")
+             (test-assert (eq *nemo-relay-native-library* ':fake)
+                          "Relay direct calls retain the selected library")))
+      (tests--restore-environment "AUTOLITH_RELAY_LIBRARY"
+                                  saved-environment)))
+  nil)
+
+(-> test-nemo-relay-checkpoint-detach () null)
+(defun test-nemo-relay-checkpoint-detach ()
+  "Test that checkpoint preparation closes all process-local Relay state."
+  (let ((closed nil)
+        (*nemo-relay-runtime* nil)
+        (*nemo-relay-native-library* ':fake)
+        (*nemo-relay-last-error* "stale")
+        (*nemo-relay-propagation-context-json* "{}")
+        (*nemo-relay-instrumentation-suppressed-p* t))
+    (test-call-with-function-replacements
+     (list
+      (list 'cffi:close-foreign-library
+            (lambda (library)
+              (setf closed library)
+              t)))
+     (lambda ()
+       (nemo-relay--detach-for-checkpoint)
+       (test-assert (eq closed ':fake)
+                    "checkpoint preparation closes the Relay library")
+       (test-assert (and (null *nemo-relay-native-library*)
+                         (null *nemo-relay-runtime*)
+                         (null *nemo-relay-last-error*)
+                         (null *nemo-relay-propagation-context-json*)
+                         (null *nemo-relay-instrumentation-suppressed-p*))
+                    "checkpoint preparation clears process-local Relay state")))
+  nil))
 
 (-> nemo-relay-test--record (t t t) null)
 (defun nemo-relay-test--record (lock events entry)
@@ -711,10 +755,22 @@
        (let* ((root (nemo-relay-test--temporary-root))
               (output-directory (merge-pathnames "events/" root))
               (config-path (merge-pathnames "plugins.toml" root))
+              (config-home (merge-pathnames "config/" root))
               (saved-configuration *nemo-relay-configuration*)
-              (saved-error *nemo-relay-last-error*))
+              (saved-error *nemo-relay-last-error*)
+              (saved-environment
+                (mapcar (lambda (name) (cons name (uiop:getenv name)))
+                        '("HOME"
+                          "USERPROFILE"
+                          "XDG_CONFIG_HOME"
+                          "AUTOLITH_RELAY_LIBRARY"))))
+         (uiop:ensure-all-directories-exist (list config-home))
          (unwind-protect
               (progn
+                (sb-posix:setenv "XDG_CONFIG_HOME" (namestring config-home) 1)
+                (sb-posix:unsetenv "HOME")
+                (sb-posix:unsetenv "USERPROFILE")
+                (sb-posix:unsetenv "AUTOLITH_RELAY_LIBRARY")
                 (nemo-relay-test--write-config config-path output-directory)
                 (nemo-relay-configure
                  :enabled t
@@ -742,10 +798,17 @@
                                "Relay exposes the configured ATOF output")
                   (test-assert (search "autolith.test.mark"
                                        (nemo-relay-test--read-text output))
-                               "ATOF receives lifecycle marks")))
+                               "ATOF receives lifecycle marks"))
+                (nemo-relay--detach-for-checkpoint)
+                (test-assert (null *nemo-relay-runtime*)
+                             "checkpoint preparation detaches Relay runtime")
+                (test-assert (nemo-relay-start)
+                             "Relay restarts after checkpoint detachment"))
            (nemo-relay-shutdown)
            (setf *nemo-relay-configuration* saved-configuration
                  *nemo-relay-last-error* saved-error)
+           (dolist (entry saved-environment)
+             (tests--restore-environment (first entry) (rest entry)))
            (uiop:delete-directory-tree root
                                        :validate t
                                        :if-does-not-exist ':ignore))))

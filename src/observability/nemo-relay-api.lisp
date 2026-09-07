@@ -2,9 +2,6 @@
 
 ;;;; -- Relay Native Handles --
 
-(defvar *nemo-relay-observability-library* nil
-  "The foreign library handle loaded for direct Relay observability calls.")
-
 (defclass nemo-relay-handle ()
   ((pointer
     :initarg :pointer
@@ -30,14 +27,23 @@
          :operation operation
          :status status))
 
+(-> nemo-relay--configured-library-path () (option string))
+(defun nemo-relay--configured-library-path ()
+  "Return the active Relay library pathname or its environment fallback."
+  (let ((environment-path (uiop:getenv "AUTOLITH_RELAY_LIBRARY")))
+    (or (and *nemo-relay-runtime*
+             (nemo-relay-configuration-library-path
+              (nemo-relay-runtime-configuration *nemo-relay-runtime*)))
+        (and *nemo-relay-configuration*
+             (nemo-relay-configuration-library-path *nemo-relay-configuration*))
+        (and (non-empty-string-p environment-path) environment-path))))
+
 (-> nemo-relay--ensure-native-library () t)
 (defun nemo-relay--ensure-native-library ()
-  "Load the configured Relay library for a direct observability operation."
-  (unless *nemo-relay-observability-library-loaded-p*
+  "Load the active Relay library for a direct observability operation."
+  (unless *nemo-relay-native-library*
     (handler-case
-        (setf *nemo-relay-observability-library*
-              (nemo-relay--load-library (uiop:getenv "AUTOLITH_RELAY_LIBRARY"))
-              *nemo-relay-observability-library-loaded-p* t)
+        (nemo-relay--load-library (nemo-relay--configured-library-path))
       (serious-condition (condition)
         (nemo-relay--signal-error
          (format nil "Unable to load the NeMo Relay foreign library: ~A"

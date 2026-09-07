@@ -64,10 +64,6 @@
     :reader nemo-relay-runtime-configuration
     :type nemo-relay-configuration
     :documentation "The settings used to start this Relay runtime.")
-   (library
-    :initarg :library
-    :reader nemo-relay-runtime-library
-    :documentation "The loaded CFFI foreign library handle.")
    (activation
     :initarg :activation
     :initform nil
@@ -482,7 +478,7 @@ CONFIG-JSON and PLUGIN-CONFIG accept the JSON document directly. DYNAMIC-PLUGINS
 names Relay's optional dynamic-plugin specification array. ALLOWED-COMPONENT-KINDS
 and ALLOWED-DYNAMIC-PLUGIN-IDS explicitly authorize custom observability
 components and dynamic plugins. Explicit values override environment discovery."
-  (when *nemo-relay-runtime*
+  (when (or *nemo-relay-runtime* *nemo-relay-native-library*)
     (nemo-relay-shutdown))
   (let ((arguments nil))
     (when enabled-p-supplied-p
@@ -548,21 +544,18 @@ components and dynamic plugins. Explicit values override environment discovery."
         (uiop:ensure-directory-pathname system-directory))))
      :test #'equal)))
 
-(-> nemo-relay--ensure-no-implicit-plugin-config
-    (&key (:explicit-p boolean))
-    null)
-(defun nemo-relay--ensure-no-implicit-plugin-config (&key (explicit-p nil))
-  "Reject native Relay plugin files unless an explicit config is in use."
-  (unless explicit-p
-    (let ((paths (remove-if-not #'uiop:file-exists-p
-                                (nemo-relay--implicit-plugin-config-paths))))
-      (when paths
-        (error 'nemo-relay-error
-               :message
-               (format nil
-                       "Relay implicit plugins.toml discovery is disabled; native discovery found ~{~A~^, ~}."
-                       paths)
-               :operation "Relay PluginConfig discovery"))))
+(-> nemo-relay--ensure-no-implicit-plugin-config () null)
+(defun nemo-relay--ensure-no-implicit-plugin-config ()
+  "Reject native Relay plugin files before explicit configuration activation."
+  (let ((paths (remove-if-not #'uiop:file-exists-p
+                              (nemo-relay--implicit-plugin-config-paths))))
+    (when paths
+      (error 'nemo-relay-error
+             :message
+             (format nil
+                     "Relay implicit plugins.toml discovery is disabled; native discovery found ~{~A~^, ~}."
+                     paths)
+             :operation "Relay PluginConfig discovery")))
   nil)
 
 (-> nemo-relay--configuration-plugin-config-json
@@ -606,286 +599,35 @@ components and dynamic plugins. Explicit values override environment discovery."
                        context key)
                :operation "Relay dynamic-plugin configuration"))))
 
-(-> nemo-relay--toml-required-object (json-object string string) json-object)
-(defun nemo-relay--toml-required-object (object key context)
-  "Return JSON object KEY from OBJECT or signal a manifest error."
-  (let ((value (json-get object key)))
-    (if (json-object-p value)
-        value
-        (error 'nemo-relay-error
-               :message
-               (format nil "Relay ~A requires an object field ~A."
-                       context key)
-               :operation "Relay dynamic-plugin manifest"))))
-
-(-> nemo-relay--toml-optional-string (json-object string string) (option string))
-(defun nemo-relay--toml-optional-string (object key context)
-  "Validate optional non-empty string KEY in OBJECT."
-  (multiple-value-bind (value present-p)
-      (gethash key object)
-    (cond
-      ((not present-p)
-       nil)
-      ((and (stringp value) (non-empty-string-p value))
-       value)
-      (t
-       (error 'nemo-relay-error
-              :message
-              (format nil "Relay ~A field ~A must be a non-empty string."
-                      context key)
-              :operation "Relay dynamic-plugin manifest")))))
-
-(-> nemo-relay--toml-boolean-p (t) boolean)
-(defun nemo-relay--toml-boolean-p (value)
-  "Return true when VALUE is one of the TOML boolean values."
-  (or (eq value t) (eq value false)))
-
-(-> nemo-relay--toml-capability-items (json-object) list)
-(defun nemo-relay--toml-capability-items (manifest-document)
-  "Read and validate Relay's dynamic-plugin capability declarations."
-  (let* ((capabilities
-           (nemo-relay--toml-required-object
-            manifest-document "capabilities" "plugin manifest"))
-         (value (json-get capabilities "items")))
-    (unless (or (vectorp value) (listp value))
-      (error 'nemo-relay-error
-             :message
-             "Relay plugin manifest capabilities.items must be an array."
-             :operation "Relay dynamic-plugin manifest"))
-    (let ((items (if (vectorp value) (coerce value 'list) value)))
-      (unless (and (plusp (length items))
-                   (every #'non-empty-string-p items))
-        (error 'nemo-relay-error
-               :message
-               "Relay plugin manifest capabilities.items must contain non-empty strings."
-               :operation "Relay dynamic-plugin manifest"))
-      (dolist (item items)
-        (unless (member item '("plugin_native" "plugin_worker" "config_schema")
-                         :test #'string=)
-          (error 'nemo-relay-error
-                 :message
-                 (format nil "Unsupported Relay dynamic-plugin capability: ~A" item)
-                 :operation "Relay dynamic-plugin manifest")))
-      (when (/= (length items)
-                (length (remove-duplicates items :test #'string=)))
-        (error 'nemo-relay-error
-               :message
-               "Relay plugin manifest capabilities.items must not contain duplicates."
-               :operation "Relay dynamic-plugin manifest"))
-      items)))
-
-(-> nemo-relay--toml-local-path-p (string) boolean)
-(defun nemo-relay--toml-local-path-p (value)
-  "Return true when VALUE is a local filesystem path rather than a URI/share."
-  (and (not (uiop:string-prefix-p "//" value))
-       (not (uiop:string-prefix-p "\\\\" value))
-       (not (uiop:string-prefix-p "file:" (string-downcase value)))
-       (not (search "://" value))))
-
-(-> nemo-relay--validate-dynamic-plugin-manifest
-    (json-object pathname)
+(-> nemo-relay--dynamic-plugin-manifest-identity
+    (json-object)
     (values string string))
-(defun nemo-relay--validate-dynamic-plugin-manifest
-    (manifest-document manifest-path)
-  "Validate upstream dynamic-plugin manifest metadata and return its identity."
-  (let* ((manifest-version (json-get manifest-document "manifest_version"))
-         (plugin
-           (nemo-relay--toml-required-object
-            manifest-document "plugin" "plugin manifest"))
-         (plugin-id
-           (nemo-relay--toml-required-string plugin "id" "plugin manifest"))
-         (kind
-           (nemo-relay--toml-required-string plugin "kind" "plugin manifest"))
-         (compat
-           (nemo-relay--toml-required-object
-            manifest-document "compat" "plugin manifest"))
-         (defaults
-           (nemo-relay--toml-required-object
-            manifest-document "defaults" "plugin manifest"))
-         (capabilities (nemo-relay--toml-capability-items manifest-document))
-         (load
-           (nemo-relay--toml-required-object
-            manifest-document "load" "plugin manifest")))
-    (unless (and (integerp manifest-version) (= manifest-version 1))
+(defun nemo-relay--dynamic-plugin-manifest-identity (manifest-document)
+  "Read the plugin identity needed for Autolith's dynamic-plugin policy.
+
+Relay owns validation of the complete manifest during activation."
+  (let ((plugin (json-get manifest-document "plugin")))
+    (unless (json-object-p plugin)
       (error 'nemo-relay-error
-             :message
-             (format nil
-                     "Relay dynamic-plugin manifest ~A requires manifest_version = 1."
-                     manifest-path)
+             :message "Relay plugin manifest requires a [plugin] table."
              :operation "Relay dynamic-plugin manifest"))
-    (unless (member kind '("rust_dynamic" "worker") :test #'string=)
-      (error 'nemo-relay-error
-             :message (format nil "Unsupported Relay dynamic plugin kind: ~A" kind)
-             :operation "Relay dynamic-plugin manifest"))
-    (nemo-relay--toml-optional-string plugin "name" "plugin manifest")
-    (nemo-relay--toml-optional-string plugin "version" "plugin manifest")
-    (nemo-relay--toml-optional-string manifest-document "description" "plugin manifest")
-    (multiple-value-bind (source source-present-p)
-        (gethash "source" manifest-document)
-      (when source-present-p
-        (unless (json-object-p source)
-          (error 'nemo-relay-error
-                 :message "Relay plugin manifest source must be an object."
-                 :operation "Relay dynamic-plugin manifest"))
-        (nemo-relay--toml-optional-string source "manifest_root" "plugin manifest")
-        (nemo-relay--toml-optional-string source "artifact" "plugin manifest")))
-    (multiple-value-bind (integrity integrity-present-p)
-        (gethash "integrity" manifest-document)
-      (when integrity-present-p
-        (unless (json-object-p integrity)
-          (error 'nemo-relay-error
-                 :message "Relay plugin manifest integrity must be an object."
-                 :operation "Relay dynamic-plugin manifest"))
-        (nemo-relay--toml-optional-string integrity "sha256" "plugin manifest")
-        (nemo-relay--toml-optional-string integrity "signature" "plugin manifest")))
-    (multiple-value-bind (enabled enabled-present-p)
-        (gethash "enabled" defaults)
-      (when enabled-present-p
-        (unless (nemo-relay--toml-boolean-p enabled)
-          (error 'nemo-relay-error
-                 :message
-                 "Relay plugin manifest defaults.enabled must be a boolean."
-                 :operation "Relay dynamic-plugin manifest"))
-        (when (eq enabled t)
-          (error 'nemo-relay-error
-                 :message
-                 "Relay dynamic-plugin manifests must set defaults.enabled = false."
-                 :operation "Relay dynamic-plugin manifest"))))
-    (let* ((native-api
-             (nemo-relay--toml-optional-string compat "native_api" "plugin manifest"))
-           (worker-protocol
-             (nemo-relay--toml-optional-string
-              compat "worker_protocol" "plugin manifest")))
-      (nemo-relay--toml-required-string compat "relay" "plugin manifest")
-      (if (string= kind "rust_dynamic")
-          (progn
-            (unless (and native-api (string= native-api "1"))
-              (error 'nemo-relay-error
-                     :message
-                     "rust_dynamic plugins must declare compat.native_api = \"1\"."
-                     :operation "Relay dynamic-plugin manifest"))
-            (when worker-protocol
-              (error 'nemo-relay-error
-                     :message
-                     "rust_dynamic plugins must not declare compat.worker_protocol."
-                     :operation "Relay dynamic-plugin manifest")))
-          (progn
-            (unless (and worker-protocol
-                         (string= worker-protocol "grpc-v1"))
-              (error 'nemo-relay-error
-                     :message
-                     "worker plugins must declare compat.worker_protocol = \"grpc-v1\"."
-                     :operation "Relay dynamic-plugin manifest"))
-            (when native-api
-              (error 'nemo-relay-error
-                     :message
-                     "worker plugins must not declare compat.native_api."
-                     :operation "Relay dynamic-plugin manifest")))))
-    (let* ((runtime
-             (nemo-relay--toml-optional-string load "runtime" "plugin manifest"))
-           (entrypoint
-             (nemo-relay--toml-optional-string load "entrypoint" "plugin manifest"))
-           (library
-             (nemo-relay--toml-optional-string load "library" "plugin manifest"))
-           (symbol
-             (nemo-relay--toml-optional-string load "symbol" "plugin manifest"))
-           (worker-fields-p (or runtime entrypoint))
-           (native-fields-p (or library symbol)))
-      (when (or (and worker-fields-p native-fields-p)
-                (and (not worker-fields-p) (not native-fields-p)))
+    (let ((plugin-id
+            (nemo-relay--toml-required-string
+             plugin "id" "plugin manifest"))
+          (kind
+            (nemo-relay--toml-required-string
+             plugin "kind" "plugin manifest")))
+      (unless (member kind '("rust_dynamic" "worker") :test #'string=)
         (error 'nemo-relay-error
-               :message
-               "Relay plugin manifest load must declare exactly one execution lane."
+               :message (format nil "Unsupported Relay dynamic plugin kind: ~A" kind)
                :operation "Relay dynamic-plugin manifest"))
-      (if (string= kind "rust_dynamic")
-          (progn
-            (when worker-fields-p
-              (error 'nemo-relay-error
-                     :message
-                     "rust_dynamic plugins must not declare worker load fields."
-                     :operation "Relay dynamic-plugin manifest"))
-            (unless (and library symbol)
-              (error 'nemo-relay-error
-                     :message
-                     "rust_dynamic plugins require load.library and load.symbol."
-                     :operation "Relay dynamic-plugin manifest")))
-          (progn
-            (when native-fields-p
-              (error 'nemo-relay-error
-                     :message
-                     "worker plugins must not declare native load fields."
-                     :operation "Relay dynamic-plugin manifest"))
-            (unless (and runtime entrypoint)
-              (error 'nemo-relay-error
-                     :message
-                     "worker plugins require load.runtime and load.entrypoint."
-                     :operation "Relay dynamic-plugin manifest"))
-            (unless (member runtime '("python" "rust" "command") :test #'string=)
-              (error 'nemo-relay-error
-                     :message (format nil "Unsupported worker runtime: ~A" runtime)
-                     :operation "Relay dynamic-plugin manifest")))))
-    (let ((has-native-p
-             (not (null (member "plugin_native" capabilities :test #'string=))))
-          (has-worker-p
-             (not (null (member "plugin_worker" capabilities :test #'string=))))
-          (has-schema-p
-             (not (null (member "config_schema" capabilities :test #'string=)))))
-      (if (string= kind "rust_dynamic")
-          (progn
-            (unless has-native-p
-              (error 'nemo-relay-error
-                     :message
-                     "rust_dynamic plugins must declare plugin_native."
-                     :operation "Relay dynamic-plugin manifest"))
-            (when has-worker-p
-              (error 'nemo-relay-error
-                     :message
-                     "rust_dynamic plugins must not declare plugin_worker."
-                     :operation "Relay dynamic-plugin manifest")))
-          (progn
-            (unless has-worker-p
-              (error 'nemo-relay-error
-                     :message
-                     "worker plugins must declare plugin_worker."
-                     :operation "Relay dynamic-plugin manifest"))
-            (when has-native-p
-              (error 'nemo-relay-error
-                     :message
-                     "worker plugins must not declare plugin_native."
-                     :operation "Relay dynamic-plugin manifest"))))
-      (multiple-value-bind (schema schema-present-p)
-          (gethash "config_schema" manifest-document)
-        (cond
-          ((and has-schema-p (not schema-present-p))
-           (error 'nemo-relay-error
-                  :message
-                  "Relay plugin manifest config_schema capability requires [config_schema]."
-                  :operation "Relay dynamic-plugin manifest"))
-          ((and (not has-schema-p) schema-present-p)
-           (error 'nemo-relay-error
-                  :message
-                  "Relay plugin manifest [config_schema] requires the config_schema capability."
-                  :operation "Relay dynamic-plugin manifest"))
-          (schema-present-p
-           (unless (json-object-p schema)
-             (error 'nemo-relay-error
-                    :message "Relay plugin manifest config_schema must be an object."
-                    :operation "Relay dynamic-plugin manifest"))
-           (let ((path
-                   (nemo-relay--toml-required-string
-                    schema "path" "plugin manifest config_schema")))
-             (unless (nemo-relay--toml-local-path-p path)
-               (error 'nemo-relay-error
-                      :message
-                      "Relay plugin manifest config_schema.path must be a local path."
-                      :operation "Relay dynamic-plugin manifest")))))))
-      (values plugin-id kind)))
+      (values plugin-id kind))))
 
 (-> nemo-relay--dynamic-plugin-manifest-metadata
     ((or pathname string) &optional pathname)
     (values string string pathname))
 (defun nemo-relay--dynamic-plugin-manifest-metadata (manifest-value &optional base)
-  "Load and validate one dynamic-plugin manifest from MANIFEST-VALUE."
+  "Load one dynamic-plugin manifest and extract its policy identity."
   (let* ((manifest-path
            (if base
                (nemo-relay--absolute-pathname manifest-value base)
@@ -901,9 +643,8 @@ components and dynamic plugins. Explicit values override environment discovery."
              :operation "Relay dynamic-plugin manifest"))
     (let ((manifest-path (truename manifest-file)))
       (multiple-value-bind (plugin-id kind)
-          (nemo-relay--validate-dynamic-plugin-manifest
-           (nemo-relay--read-toml-document manifest-path)
-           manifest-path)
+          (nemo-relay--dynamic-plugin-manifest-identity
+           (nemo-relay--read-toml-document manifest-path))
         (values plugin-id kind manifest-path)))))
 
 (-> nemo-relay--toml-dynamic-plugin-spec (json-object pathname integer) json-object)
@@ -991,12 +732,12 @@ components and dynamic plugins. Explicit values override environment discovery."
 (-> nemo-relay--runtime-configuration ((option configuration)) nemo-relay-configuration)
 (defun nemo-relay--runtime-configuration (configuration)
   "Resolve Relay settings against CONFIGURATION and environment."
-  (or *nemo-relay-configuration*
+  (or configuration
+      *nemo-relay-configuration*
       (let ((config-path
               (let ((value (uiop:getenv "AUTOLITH_RELAY_CONFIG")))
                 (and (non-empty-string-p value)
                      (nemo-relay--absolute-pathname value)))))
-        (declare (ignore configuration))
         (nemo-relay-configuration-create :config config-path))))
 
 ;;;; -- Plugin Lifecycle --
@@ -1023,7 +764,7 @@ components and dynamic plugins. Explicit values override environment discovery."
 (defun nemo-relay-initialize-plugins
     (config &key (allowed-component-kinds nil))
   "Initialize allowed static observability components and return its report."
-  (nemo-relay--ensure-no-implicit-plugin-config :explicit-p t)
+  (nemo-relay--ensure-no-implicit-plugin-config)
   (let ((config-json
           (nemo-relay--normalize-observability-plugin-config
            config allowed-component-kinds)))
@@ -1047,7 +788,7 @@ components and dynamic plugins. Explicit values override environment discovery."
 
 The first returned value is an opaque activation handle that must eventually be
 passed to RELAY-CLEAR-DYNAMIC-PLUGIN-ACTIVATION."
-  (nemo-relay--ensure-no-implicit-plugin-config :explicit-p t)
+  (nemo-relay--ensure-no-implicit-plugin-config)
   (let* ((config-json
            (nemo-relay--normalize-observability-plugin-config
             config allowed-component-kinds))
@@ -1198,19 +939,11 @@ provider, tool, conversation, or shutdown behavior."
               (let ((activation nil))
                 (handler-case
                     (progn
-                      (nemo-relay--ensure-no-implicit-plugin-config
-                       :explicit-p
-                       (not (null
-                             (or (nemo-relay-configuration-config-path settings)
-                                 (nemo-relay-configuration-plugin-config-json
-                                  settings)))))
+                      (nemo-relay--ensure-no-implicit-plugin-config)
                       (let* ((plugin-config-json
                                (nemo-relay--configuration-plugin-config-json settings))
                              (dynamic-json
-                               (nemo-relay--configuration-dynamic-plugins-json settings))
-                             (library
-                               (nemo-relay--load-library
-                                (nemo-relay-configuration-library-path settings))))
+                               (nemo-relay--configuration-dynamic-plugins-json settings)))
                         (let ((report nil))
                           (if dynamic-json
                               (multiple-value-bind (new-activation new-report)
@@ -1240,7 +973,6 @@ provider, tool, conversation, or shutdown behavior."
                                 (make-instance
                                  'nemo-relay-runtime
                                  :configuration settings
-                                 :library library
                                  :activation activation
                                  :plugin-config-json plugin-config-json
                                  :report report
@@ -1260,6 +992,7 @@ provider, tool, conversation, or shutdown behavior."
                       (ignore-errors
                         (nemo-relay-clear-dynamic-plugin-activation activation)))
                     (ignore-errors (%nemo-relay-clear-plugin-configuration))
+                    (nemo-relay--release-native-library)
                     (nemo-relay--set-last-error
                      (format nil "Relay startup failed: ~A"
                              (nemo-relay--condition-summary condition)))
@@ -1284,7 +1017,7 @@ provider, tool, conversation, or shutdown behavior."
 
 (-> nemo-relay-shutdown () null)
 (defun nemo-relay-shutdown ()
-  "Flush and clear Relay's active plugin configuration idempotently."
+  "Flush, clear, and unload Relay's active plugin configuration idempotently."
   (with-lock-held (*nemo-relay-runtime-lock*)
     (let ((runtime *nemo-relay-runtime*))
       (when runtime
@@ -1298,14 +1031,15 @@ provider, tool, conversation, or shutdown behavior."
               (nemo-relay-clear-dynamic-plugin-activation
                (nemo-relay-runtime-activation runtime)))
             (ignore-errors
-              (%nemo-relay-clear-plugin-configuration))))
-    nil)))
+              (%nemo-relay-clear-plugin-configuration)))))
+    (nemo-relay--release-native-library)
+    nil))
 
 (-> nemo-relay--detach-for-checkpoint () null)
 (defun nemo-relay--detach-for-checkpoint ()
-  "Drop process-local Relay handles before a checkpoint image is saved."
-  (setf *nemo-relay-runtime* nil
-        *nemo-relay-last-error* nil
+  "Clear native Relay state before a checkpoint image is saved."
+  (nemo-relay-shutdown)
+  (setf *nemo-relay-last-error* nil
         *nemo-relay-propagation-context-json* nil
         *nemo-relay-instrumentation-suppressed-p* nil)
   nil)
