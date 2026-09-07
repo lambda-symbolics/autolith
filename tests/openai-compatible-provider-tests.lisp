@@ -1084,14 +1084,14 @@
                       (and delivery
                            (= (length messages) 3)
                            (string= (json-get system-message "role") "system")
-                           (string= system-content
-                                    (system-prompt provider-configuration))
-                           (null (search "keep the active goal" system-content))
+                           (search (system-prompt provider-configuration)
+                                   system-content)
+                           (search "keep the active goal" system-content)
                            (null (search "Temporary context" system-content))
                            (string= (json-get context-message "role") "user")
-                           (search "keep the active goal" context-content)
+                           (null (search "keep the active goal" context-content))
                            (search "Temporary context" context-content)))
-                    "goal and mutable context trail cacheable conversation history")
+                    "role instructions stay in system context rather than restarting the task after each tool result")
                    (test-assert
                     (null (json-get request "prompt_cache_key"))
                     "generic OpenAI-compatible requests omit unsupported cache fields")

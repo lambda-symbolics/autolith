@@ -625,13 +625,13 @@ message, which thinking-mode providers require passed back."
          (context-message
            (unless compaction-p
              (openai-compatible--chat-context-message
-              (list goal-context
-                    (and delivery (context-delivery-rendered delivery))))))
+              (list (and delivery (context-delivery-rendered delivery))))))
          (messages
            (append
             (list
              (openai-compatible--chat-system-message
               (list (system-prompt configuration)
+                    (and (not compaction-p) goal-context)
                     (and compaction-p *compaction-instructions*))))
             (openai-compatible--chat-input-messages input-items)
             (when context-message (list context-message))))
@@ -1002,4 +1002,3 @@ the registry's unique-name dispatch."
            :usage usage
            :turn-state nil
            :turn-completion turn-completion))))))
-
