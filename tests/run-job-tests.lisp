@@ -53,14 +53,26 @@
              (dotimes (index 2)
                (funcall observer job ':provider-request-started nil)
                (funcall observer job ':provider-request-completed
-                        (list :usage '(("input_tokens" 7) ("output_tokens" 3)))))
+                        (list :usage
+                              (list (list "input_tokens" 7)
+                                    (list "output_tokens" 3)
+                                    (list "cached_input_tokens" 4)
+                                    (list "attribution"
+                                          (make-string 131072 :initial-element #\x))))))
              (let* ((saved (run-job-read-file path))
                     (fields (rest saved)))
                (test-assert (= 2 (getf fields :provider-requests))
                             "progress retains aggregate request count")
                (test-assert (= 14 (second (assoc "input_tokens" (getf fields :usage)
                                                 :test #'string=)))
-                            "progress retains aggregate token usage"))
+                            "progress retains aggregate token usage")
+               (test-assert (= 8 (second (assoc "cached_input_tokens" (getf fields :usage)
+                                               :test #'string=)))
+                            "progress retains aggregate cache usage")
+               (test-assert (and (null (assoc "attribution" (getf fields :usage)
+                                            :test #'string=))
+                                 (< (length (uiop:read-file-string path)) 2048))
+                            "large provider attribution cannot inflate job progress"))
              (test-assert
               (handler-case
                   (progn (funcall observer job ':provider-request-started nil) nil)
