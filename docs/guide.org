@@ -709,6 +709,10 @@ its own evidence checkpoints after interruption, then put resume context into
 the next job's opaque =:input=. The runner does not own a research queue or
 interpret the caller's checkpoint schema.
 
+The launcher returns a failed =run-job= exit status directly. It does not start
+crash recovery or automatically re-execute the job, even for a provider failure.
+The caller owns retry and resumption policy and must retain the result artifact.
+
 Headless execution never opens an approval picker. =auto= classifies shell
 commands and denies decisions that would require approval. =sandbox= permits
 only sandboxed commands. =full= permits full command execution. External tool
