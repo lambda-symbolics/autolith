@@ -42,6 +42,13 @@
           :type t :documentation "The caller-owned opaque data tree.")
    (output-contract :initarg :output-contract :reader run-job-request-output-contract
                     :type list :documentation "The validated native task output contract.")
+   (maximum-requests :initarg :maximum-requests :initform nil
+                     :reader run-job-request-maximum-requests
+                     :type (option (integer 1))
+                     :documentation "Optional aggregate child provider-request ceiling.")
+   (progress-path :initform nil :accessor run-job-request-progress-path
+                  :type (option pathname)
+                  :documentation "Controller-owned progress artifact next to the result.")
    (timeout-seconds :initarg :timeout-seconds :reader run-job-request-timeout-seconds
                     :type (integer 1) :documentation "The wall-clock job deadline."))
   (:documentation "One validated version-one non-interactive job request."))
@@ -231,7 +238,7 @@
   (handler-case
       (task--plist-alist
        (rest form)
-       '(:version :id :role :prompt :input :output-contract :timeout-seconds)
+       '(:version :id :role :prompt :input :output-contract :timeout-seconds :max-provider-requests)
        :source ':programmatic)
     (task-agent-definition-error (condition)
       (run-job--error ':invalid-envelope "~A" condition))))
@@ -251,7 +258,11 @@
              (prompt (required :prompt))
              (input (required :input))
              (contract-source (required :output-contract))
-             (timeout (required :timeout-seconds)))
+             (timeout (required :timeout-seconds))
+             (maximum-requests (task--alist-value :max-provider-requests pairs)))
+        (unless (or (null maximum-requests)
+                    (typep maximum-requests '(integer 1 10000)))
+          (run-job--error ':invalid-envelope ":MAX-PROVIDER-REQUESTS must be between 1 and 10000."))
         (unless (eql version 1)
           (run-job--error ':unsupported-version "Unsupported job version ~S." version))
         (unless (and (non-empty-string-p identifier) (<= (length identifier) 256))
@@ -271,7 +282,7 @@
           (make-instance 'run-job-request
                          :identifier identifier :role (string-downcase role)
                          :prompt prompt :input input :output-contract contract
-                         :timeout-seconds timeout))))))
+                         :timeout-seconds timeout :maximum-requests maximum-requests))))))
 
 
 (-> run-job--recover-identifier (t) string)
@@ -503,6 +514,8 @@
              (unless orchestrator
                (run-job--error ':runtime-unavailable
                                "The task runtime is unavailable."))
+             (setf (task-orchestrator-status-observer orchestrator)
+                   (run-job-progress-observer request))
              (task-agent-definition-validate-tools-available
               definition (application-tool-registry application))
              (multiple-value-bind (jobs inline)
@@ -619,7 +632,9 @@
             (setf form (run-job-read-file input-path)
                   identifier (run-job--recover-identifier form)
                   request (run-job-validate-envelope form)
-                  identifier (run-job-request-identifier request))
+                  identifier (run-job-request-identifier request)
+                  (run-job-request-progress-path request)
+                  (make-pathname :type "progress.sexp" :defaults (pathname output-path)))
             (multiple-value-bind (status result trace-id usage category message)
                 (funcall
                  executor

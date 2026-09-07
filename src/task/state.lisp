@@ -192,7 +192,12 @@
   (:documentation "A normalized, thread-safe child progress snapshot."))
 
 (defclass task-orchestrator nil
-  ((pool
+  ((status-observer
+    :initform nil
+    :accessor task-orchestrator-status-observer
+    :type (option function)
+    :documentation "Optional controller called at child provider and tool boundaries; may signal to stop execution.")
+   (pool
     :initarg :pool
     :reader task-orchestrator-pool
     :type job-pool

@@ -175,6 +175,7 @@
                              (:file "application/lisp-machine")
                              (:file "terminal/responsive-input")
                              (:file "task/job-boundary")
+                             (:file "task/job-progress")
                              (:file "application/recovery-input-vault")
                              (:file "localgroup/runtime")
                              (:file "localgroup/handoff")
