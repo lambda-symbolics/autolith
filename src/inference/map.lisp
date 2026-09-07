@@ -56,6 +56,8 @@
                (:contract t)
                (:budget (option rlm-budget))
                (:capabilities (option keyword))
+               (:model (option string))
+               (:effort (option string))
                (:provider (option model-provider))
                (:configuration (option configuration))
                (:source-registry (option tool-registry))
@@ -63,7 +65,7 @@
                (:activity-callback (option function)))
     list)
 (defun rlm-map
-    (tasks &key context contract budget capabilities provider configuration
+    (tasks &key context contract budget capabilities model effort provider configuration
                 source-registry (concurrency *rlm-map-default-concurrency*)
                 activity-callback)
   "Fan TASKS out as inference frames sharing one budget subtree.
@@ -80,13 +82,10 @@ fails the remaining frames without discarding the finished ones."
     (rlm--note-activity
      activity-callback
      (format nil "starting ~D frame~:P" (length items)))
-    (multiple-value-bind (environment-provider environment-configuration)
-        (if (and provider configuration)
-            (values provider configuration)
-            (rlm--environment))
-      (let* ((provider (or provider environment-provider))
-             (configuration (or configuration environment-configuration))
-             (source-registry
+    (multiple-value-bind (provider configuration)
+        (rlm--resolve-environment :model model :effort effort
+                                  :provider provider :configuration configuration)
+      (let* ((source-registry
                (or source-registry
                    (when (eq capabilities ':read)
                      (rlm--environment-registry))))

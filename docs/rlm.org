@@ -279,3 +279,11 @@ providers depend on this, and real providers report usage.
   =src/inference/environment.lisp=.
 - Model-decided auto-mode command permissions:
   =src/inference/permission.lisp=.
+
+* Per-call model routing
+
+=rlm.infer=, =rlm.map=, and =rlm.complete= accept optional =model= and
+=effort= arguments. Autolith validates the selected model and its supported
+reasoning effort before starting the subtree. A map uses one route for every
+frame. A root completion uses its selected route for its environment and child
+inferences. Nested calls inherit the enclosing route and cannot override it.
