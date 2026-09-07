@@ -274,6 +274,9 @@
 (define-test-suite search-tool
   test-search-tools)
 
+(define-test-suite web-tool
+  test-web-gist-tool)
+
 (define-test-suite lisp-worker
   test-lisp-image-manifests
   test-lisp-worker-protocol
