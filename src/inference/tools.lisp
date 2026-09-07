@@ -102,9 +102,20 @@
    (tool-integer-property
     "Recursion depth allowed below the frame. Ignored inside a frame.")))
 
-(-> rlm--shared-frame-parameters () list)
-(defun rlm--shared-frame-parameters ()
-  "Return the contract, capability, and allowance tool schema properties."
+(-> rlm--routing-parameters () list)
+(defun rlm--routing-parameters ()
+  "Return the optional model routing tool schema properties."
+  (list
+   "model"
+   (tool-string-property
+    "Optional supported model for this RLM subtree. Nested calls inherit their enclosing run's route.")
+   "effort"
+   (tool-string-property
+    "Optional reasoning effort supported by the selected model. Nested calls inherit their enclosing run's route.")))
+
+(-> rlm--shared-frame-parameters (&optional boolean) list)
+(defun rlm--shared-frame-parameters (&optional nested-p)
+  "Return frame parameters, exposing routing only to root callers."
   (append
    (list
     "contract"
@@ -118,6 +129,7 @@
      "enum" (json-array "none" "read")
      "description"
      "Frame capabilities: none for a pure call over the views, read to also allow workspace resource reads, content search, and nested rlm calls."))
+   (unless nested-p (rlm--routing-parameters))
    (rlm--allowance-parameters)))
 
 (-> rlm-infer-tool-create
@@ -142,7 +154,7 @@
            "views"
            (rlm--views-parameter
             "Read-only context views. Each view carries text, a resource URI, or a stored context object reference, plus an optional label.")
-           (rlm--shared-frame-parameters))
+           (rlm--shared-frame-parameters (not (null budget))))
     '("task"))))
 
 (-> rlm-map-tool-create
@@ -181,7 +193,7 @@
            "concurrency"
            (tool-integer-property
             "How many frames run at once.")
-           (rlm--shared-frame-parameters))
+           (rlm--shared-frame-parameters (not (null budget))))
     '("tasks"))))
 
 (-> rlm-complete-tool-create
@@ -216,9 +228,9 @@
                     "Resource whose observation becomes the context.")
              "object" (tool-string-property
                        "Stored context object reference: context:<sha256> or the bare digest.")))
-           ;; Root runs return whatever finish records and decide their own
-           ;; decomposition, so only the allowance parameters apply.
-           (rlm--allowance-parameters))
+           ;; Root completions choose their own decomposition and result shape.
+           (append (rlm--routing-parameters)
+                   (rlm--allowance-parameters)))
     '("task" "context"))))
 
 (-> rlm--frame-tool-allowlist () list)
@@ -481,6 +493,34 @@ filesystem paths are only a programmatic Lisp designator."
          (list ':tool tool-name
                ':activity (format nil "~A · ~A" tool-name activity)))))))
 
+(-> rlm--tool-routing-option (hash-table string) (option string))
+(defun rlm--tool-routing-option (arguments name)
+  "Return optional non-empty string routing argument NAME."
+  (let ((value (gethash name arguments)))
+    (cond ((null value)
+           nil)
+          ((non-empty-string-p value)
+           value)
+          (t
+           (error 'rlm-inference-error
+                  :message (format nil "The ~A route must be a non-empty string."
+                                   name))))))
+
+(-> rlm--tool-routing
+    (rlm-frame-tool tool-context hash-table)
+    (values model-provider configuration))
+(defun rlm--tool-routing (tool context arguments)
+  "Resolve one tool call's validated route without widening nested authority."
+  (let ((model (rlm--tool-routing-option arguments "model"))
+        (effort (rlm--tool-routing-option arguments "effort")))
+    (when (and (rlm-frame-tool--budget tool) (or model effort))
+      (error 'rlm-inference-error
+             :message "Nested RLM calls inherit the enclosing run's model and effort."))
+    (rlm--resolve-environment
+     :model model :effort effort
+     :provider (or (rlm-frame-tool--provider tool) (rlm--environment))
+     :configuration (tool-context-configuration context))))
+
 (defmethod tool-execute
     ((tool rlm-infer-tool) (context tool-context) (arguments hash-table))
   "Run one inference frame and return its value, trace, and remaining budget."
@@ -498,8 +538,9 @@ filesystem paths are only a programmatic Lisp designator."
              (capabilities (rlm--tool-capabilities
                             (gethash "capabilities" arguments)))
              (budget (rlm--tool-budget tool arguments task))
-             (provider (or (rlm-frame-tool--provider tool)
-                           (rlm--environment)))
+             (routing (multiple-value-list (rlm--tool-routing tool context arguments)))
+             (provider (first routing))
+             (configuration (second routing))
              (activity-callback
                (rlm--tool-activity-callback tool context)))
         (multiple-value-bind (value trace-identifier)
@@ -509,7 +550,7 @@ filesystem paths are only a programmatic Lisp designator."
                    :budget budget
                    :capabilities capabilities
                    :provider provider
-                   :configuration (tool-context-configuration context)
+                   :configuration configuration
                    :source-registry (tool-context-registry context)
                    :activity-callback activity-callback)
           (tool-success
@@ -568,8 +609,9 @@ filesystem paths are only a programmatic Lisp designator."
                                        :calls *rlm-complete-call-budget*
                                        :tokens *rlm-complete-token-budget*
                                        :depth *rlm-complete-depth-budget*))
-             (provider (or (rlm-frame-tool--provider tool)
-                           (rlm--environment)))
+             (routing (multiple-value-list (rlm--tool-routing tool context arguments)))
+             (provider (first routing))
+             (configuration (second routing))
              (activity-callback
                (rlm--tool-activity-callback tool context)))
         (multiple-value-bind (value trace-identifier)
@@ -577,7 +619,7 @@ filesystem paths are only a programmatic Lisp designator."
                           :context object
                           :budget budget
                           :provider provider
-                          :configuration (tool-context-configuration context)
+                          :configuration configuration
                           :activity-callback activity-callback)
           (let* ((printed (rlm--result-sexp value))
                  (value-fields
@@ -652,8 +694,9 @@ filesystem paths are only a programmatic Lisp designator."
              (capabilities (rlm--tool-capabilities
                             (gethash "capabilities" arguments)))
              (budget (rlm--tool-budget tool arguments "rlm.map"))
-             (provider (or (rlm-frame-tool--provider tool)
-                           (rlm--environment)))
+             (routing (multiple-value-list (rlm--tool-routing tool context arguments)))
+             (provider (first routing))
+             (configuration (second routing))
              (concurrency (rlm--bounded-tool-integer
                            arguments "concurrency"
                            *rlm-map-default-concurrency*
@@ -666,7 +709,7 @@ filesystem paths are only a programmatic Lisp designator."
                         :budget budget
                         :capabilities capabilities
                         :provider provider
-                        :configuration (tool-context-configuration context)
+                        :configuration configuration
                         :source-registry (tool-context-registry context)
                         :concurrency concurrency
                         :activity-callback activity-callback)))

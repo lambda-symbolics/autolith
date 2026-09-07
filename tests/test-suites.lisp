@@ -396,6 +396,7 @@
   test-rlm-frame-registry
   test-rlm-framed-inference
   test-rlm-infer-tool
+  test-rlm-tool-routing
   test-rlm-map
   test-rlm-map-tool
   test-rlm-policies
