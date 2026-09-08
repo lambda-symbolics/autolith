@@ -150,6 +150,7 @@
                              (:file "inference/permission")
                              (:file "inference/endpoint")
                              (:file "inference/environment")
+                             (:file "inference/distill")
                              (:file "task/agents")
                              (:file "task/state")
                              (:file "task/runtime")

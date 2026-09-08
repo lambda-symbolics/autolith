@@ -294,6 +294,21 @@ strict writer's #A array forms."
   (with-standard-io-syntax
     (write-to-string value :readably nil :escape t :circle t :pretty t)))
 
+(-> rlm--bounded-excerpt (string (integer 2)) string)
+(defun rlm--bounded-excerpt (text limit)
+  "Return TEXT bounded to LIMIT characters, keeping its head and tail.
+
+Both ends of a long text usually carry the signal, so the excerpt
+keeps them around a marker naming the dropped middle."
+  (if (<= (length text) limit)
+      text
+      (let ((head (ceiling limit 2))
+            (tail (floor limit 2)))
+        (format nil "~A~%[... ~D characters dropped ...]~%~A"
+                (subseq text 0 head)
+                (- (length text) limit)
+                (subseq text (- (length text) tail))))))
+
 (-> rlm--value-preview (string) string)
 (defun rlm--value-preview (printed)
   "Return PRINTED bounded to the preview limit, keeping its head and tail.
@@ -301,15 +316,7 @@ strict writer's #A array forms."
 A large value's conclusion often sits at its end, so the preview keeps
 both ends and names the dropped middle; the complete value stays
 retrievable through the stored context object referenced beside it."
-  (let ((limit *rlm-tool-value-preview-characters*))
-    (if (<= (length printed) limit)
-        printed
-        (let ((head (ceiling limit 2))
-              (tail (floor limit 2)))
-          (format nil "~A~%[... ~D characters dropped ...]~%~A"
-                  (subseq printed 0 head)
-                  (- (length printed) limit)
-                  (subseq printed (- (length printed) tail)))))))
+  (rlm--bounded-excerpt printed *rlm-tool-value-preview-characters*))
 
 (-> rlm--tool-resource-registry (tool-context) resource-registry)
 (defun rlm--tool-resource-registry (context)

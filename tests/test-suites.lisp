@@ -398,6 +398,8 @@
   test-rlm-map
   test-rlm-map-tool
   test-rlm-policies
+  test-rlm-distill-validation
+  test-rlm-distill
   test-rlm-trace-resource
   test-rlm-endpoint
   test-rlm-environment-reuse
