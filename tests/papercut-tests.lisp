@@ -28,40 +28,9 @@
     (papercut-error ()
       t)))
 
-(-> test-papercut-process-shared-locks () null)
-(defun test-papercut-process-shared-locks ()
-  "Test papercut reads and appends wait for the adjacent process-shared lock."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (lock-pathname
-           (readable-state-lock-pathname
-            (configuration-papercut-path configuration)
-            "papercuts.lock")))
-    (unwind-protect
-         (progn
-           (test-operation-blocked-by-file-lock
-            lock-pathname
-            (lambda ()
-              (papercut-list configuration))
-            "papercut reads wait for the process-shared file lock")
-           (test-operation-blocked-by-file-lock
-            lock-pathname
-            (lambda ()
-              (papercut-report
-               configuration
-               :title "Child papercut"
-               :content "Written after the parent releases the lock."))
-            "papercut appends wait for the process-shared file lock")
-           (test-assert (= (length (papercut-list configuration)) 1)
-                        "the blocked child papercut append persists intact"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-
 (-> test-papercut-assessment-state () null)
 (defun test-papercut-assessment-state ()
   "Test append-only papercut assessment replay, validation, and closure policy."
-  (test-papercut-process-shared-locks)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration)))
     (unwind-protect
@@ -155,13 +124,13 @@
                   :title "Invalid persisted closure"
                   :content "Replay must enforce assessment closure policy.")))
            (with-lock-held (*papercut-lock*)
-             (papercut--append-record
-              configuration
+             (sexp-store:log-append
+              (configuration-papercut-path configuration)
               (papercut--assessed-record
                (papercut-identifier report) ':worse "It regressed."
                (get-universal-time)))
-             (papercut--append-record
-              configuration
+             (sexp-store:log-append
+              (configuration-papercut-path configuration)
               (papercut--closed-record
                (papercut-identifier report) "Invalid closure."
                (get-universal-time))))

@@ -203,7 +203,7 @@
                   data-root :replace-p t)))))
       (let* ((path (configuration-agenda-path configuration))
              (old (mapcar #'agenda--record->form
-                          (agenda-state-records (agenda--read configuration))))
+                          (agenda-state-records (agenda--read configuration :lock-held-p t))))
              (merged (data-transfer--merge-agendas old (getf archive :agendas) path)))
         (unless (equal old merged)
           (add (data-transfer--plan-write

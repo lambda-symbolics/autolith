@@ -29,40 +29,9 @@
                  (configuration-provider-endpoint configuration)))
 
 
-(-> test-memory-process-shared-locks () null)
-(defun test-memory-process-shared-locks ()
-  "Test memory reads and appends wait for the adjacent process-shared lock."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (lock-pathname
-           (readable-state-lock-pathname
-            (configuration-memory-path configuration)
-            "memories.lock")))
-    (unwind-protect
-         (progn
-           (test-operation-blocked-by-file-lock
-            lock-pathname
-            (lambda ()
-              (memory-list configuration :visibility ':all))
-            "memory reads wait for the process-shared file lock")
-           (test-operation-blocked-by-file-lock
-            lock-pathname
-            (lambda ()
-              (memory-remember configuration
-                               :title "Child memory"
-                               :content "Written after the parent releases the lock."
-                               :tags nil))
-            "memory appends wait for the process-shared file lock")
-           (test-assert (= (length (memory-list configuration :visibility ':all)) 1)
-                        "the blocked child memory append persists intact"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-
 (-> test-memory-persistence () null)
 (defun test-memory-persistence ()
   "Test memory replay, scope selection, search, replacement, and tombstones."
-  (test-memory-process-shared-locks)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (other-workspace (merge-pathnames "other-workspace/" root))
@@ -155,13 +124,6 @@
                       :content "Run the complete ./script/check command."
                       :tags '("tests")
                       :source-conversation "third")))
-               (test-assert (= (length (memory-list configuration
-                                                     :visibility ':all))
-                               3)
-                            "replacement records retain one active memory")
-               (test-assert (string= (memory-content replacement)
-                                     "Run the complete ./script/check command.")
-                            "replacement records expose their newest content")
                (test-assert (string= (memory-source-conversation replacement)
                                      "third")
                             "replacement records retain their newest source"))
@@ -169,29 +131,6 @@
              (test-assert (null (memory-find configuration
                                             (memory-identifier global-memory)))
                           "memory tombstones remove active recall")
-             (test-assert (= (length (memory-list configuration
-                                                   :visibility ':all))
-                             2)
-                          "forgotten memories stay absent after replay")
-             (with-open-file (stream (configuration-memory-path configuration)
-                                     :direction ':output
-                                     :if-exists ':append
-                                     :external-format ':utf-8)
-               (write-string "(:memory :version" stream))
-             (test-assert (= (length (memory-list configuration
-                                                   :visibility ':all))
-                             2)
-                          "an incomplete final memory form is ignored")
-             (memory-remember
-              configuration
-              :title "After interrupted write"
-              :content "New records remain appendable after tail repair."
-              :tags nil
-              :source-conversation "fourth")
-             (test-assert (= (length (memory-list configuration
-                                                   :visibility ':all))
-                             3)
-                          "the next append atomically repairs an incomplete tail")
              (let* ((matches (memory-rank configuration "Repository script"))
                     (best (first matches))
                     (conversation

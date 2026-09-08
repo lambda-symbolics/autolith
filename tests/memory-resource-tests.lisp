@@ -81,7 +81,11 @@
                           :tags '("resource-uri-fixture")
                           :source-conversation "memory-resource-first")))
     (with-recursive-lock-held (*memory-lock*)
-      (memory--append-record configuration (memory--record memory)))
+      (memory--transact
+       configuration
+       (lambda (active)
+         (declare (ignore active))
+         (values (list (memory--record memory)) nil t))))
     memory))
 
 
@@ -641,7 +645,7 @@
                       (length
                        (first
                         (multiple-value-list
-                         (memory--read-forms
+                         (sexp-store:log-read
                           (configuration-memory-path configuration)))))))
              (let* ((workspace-before
                       (read-resource context "memory:workspace"))
@@ -762,7 +766,7 @@
                         (forms
                           (nth-value
                            0
-                           (memory--read-forms
+                           (sexp-store:log-read
                             (configuration-memory-path configuration))))
                         (last-record (first (last forms))))
                    (test-assert
@@ -826,7 +830,11 @@
                        (= before (form-count)))
                   "stale memory resource edits append nothing"))
                (with-recursive-lock-held (*memory-lock*)
-                 (memory--append-record configuration (memory--record fixture)))
+                 (memory--transact
+                  configuration
+                  (lambda (active)
+                    (declare (ignore active))
+                    (values (list (memory--record fixture)) nil t))))
                (test-assert
                 (tool-result-success-p
                  (edit-resource

@@ -102,7 +102,7 @@
 (defun agenda--item-form-p (form version)
   "Return true when FORM is one complete portable agenda item for VERSION."
   (handler-case
-      (and (consp form)
+      (and (sexp-store:record-shape-p form)
            (eq (first form) ':item)
            (let ((properties (rest form)))
              (and (= (length properties)
@@ -130,7 +130,7 @@
 (defun agenda--record-form-p (form version)
   "Return true when FORM is one complete portable workspace agenda for VERSION."
   (handler-case
-      (and (consp form)
+      (and (sexp-store:record-shape-p form)
            (eq (first form) ':agenda)
            (let* ((properties (rest form))
                   (items (getf properties :items)))
@@ -155,8 +155,8 @@
 (defun agenda--form-p (form)
   "Return true when FORM is one supported workspace-agenda state."
   (handler-case
-      (let ((version (and (listp form) (third form))))
-        (and (= (length form) 5)
+      (let ((version (and (sexp-store:record-shape-p form) (third form))))
+        (and version (= (length form) 5)
              (eq (first form) ':agendas)
              (eq (second form) ':version)
              (member version (list *agenda-legacy-version* *agenda-version*))
@@ -204,40 +204,42 @@
   "Return a fresh directory-ordered copy of workspace agenda RECORDS."
   (sort (copy-list records) #'string< :key #'workspace-agenda-directory))
 
-(-> agenda--read (configuration) agenda-state)
-(defun agenda--read (configuration)
-  "Read CONFIGURATION's workspace agendas or return empty state."
-  (block nil
-    (let ((pathname (configuration-agenda-path configuration)))
-      (unless (probe-file pathname)
-        (return (make-instance 'agenda-state)))
-      (handler-case
-          (multiple-value-bind (form sole-form-p)
-              (snapshot-read pathname)
-            (unless (and sole-form-p (agenda--form-p form))
-              (error 'agenda-error
-                     :message (format nil
-                                      "Workspace agendas at ~A are malformed or unsupported."
-                                      pathname)
-                     :pathname pathname
-                     :operation ':read
-                     :cause nil))
-            (make-instance
-             'agenda-state
-             :records
-             (agenda--sort-records
-              (mapcar (lambda (record)
-                        (agenda--record-form->record record (third form)))
-                      (fifth form)))))
-        (agenda-error (condition)
-          (error condition))
-        (error (cause)
-          (error 'agenda-error
-                 :message (format nil "Could not read agendas at ~A: ~A"
-                                  pathname cause)
-                 :pathname pathname
-                 :operation ':read
-                 :cause cause))))))
+(-> agenda--store (configuration) sexp-store:snapshot-store)
+(defun agenda--store (configuration)
+  "Describe the agenda snapshot schema and product-owned state paths."
+  (let ((pathname (configuration-agenda-path configuration)))
+    (make-instance
+     'sexp-store:snapshot-store
+     :pathname pathname
+     :lock-pathname (readable-state-lock-pathname pathname "agendas.lock")
+     :initial-state (lambda () (make-instance 'agenda-state))
+     :validator #'agenda--form-p
+     :decoder
+     (lambda (form)
+       (make-instance
+        'agenda-state
+        :records (agenda--sort-records
+                  (mapcar (lambda (record)
+                            (agenda--record-form->record record (third form)))
+                          (fifth form)))))
+     :encoder #'agenda--state-form)))
+
+(-> agenda--store-error (sexp-store:store-error) nil)
+(defun agenda--store-error (cause)
+  "Translate storage CAUSE without changing the agenda corruption policy."
+  (error 'agenda-error
+         :message (sexp-store:store-error-message cause)
+         :pathname (sexp-store:store-error-pathname cause)
+         :operation (sexp-store:store-error-operation cause)
+         :cause cause))
+
+(-> agenda--read (configuration &key (:lock-held-p boolean)) agenda-state)
+(defun agenda--read (configuration &key lock-held-p)
+  "Read fresh agenda state, optionally under a caller's coordinated store lock."
+  (handler-case
+      (sexp-store:store-read (agenda--store configuration) :lock-held-p lock-held-p)
+    (sexp-store:store-error (cause)
+      (agenda--store-error cause))))
 
 (-> agenda-load (configuration) agenda-state)
 (defun agenda-load (configuration)
@@ -276,21 +278,6 @@
         :version *agenda-version*
         :records (mapcar #'agenda--record->form
                          (agenda-state-records state))))
-
-(-> agenda--write (configuration agenda-state) null)
-(defun agenda--write (configuration state)
-  "Atomically persist workspace agenda STATE with private permissions."
-  (let ((pathname (configuration-agenda-path configuration)))
-    (handler-case
-        (snapshot-write pathname (agenda--state-form state))
-      (error (cause)
-        (error 'agenda-error
-               :message (format nil "Could not persist agendas at ~A: ~A"
-                                pathname cause)
-               :pathname pathname
-               :operation ':write
-               :cause cause))))
-  nil)
 
 (-> agenda-directory-name
     (configuration (or pathname string) &key (:require-existing-p boolean))
@@ -474,9 +461,7 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
                             :directory directory
                             :items (append items (list item))))
            (records (agenda--replace-record (agenda-state-records state)
-                                            replacement))
-           (replacement-state (make-instance 'agenda-state :records records)))
-      (agenda--write configuration replacement-state)
+                                             replacement)))
       (setf (agenda-state-records state) records)
       item)))
 
@@ -541,7 +526,6 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
                                  :test #'string=)))
            (records (agenda--replace-record (agenda-state-records state)
                                             replacement-record)))
-      (agenda--write configuration (make-instance 'agenda-state :records records))
       (setf (agenda-state-records state) records)
       replacement-item)))
 
@@ -567,8 +551,6 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
                              (agenda-state-records state)
                              :key #'workspace-agenda-directory
                              :test #'string=))))
-          (agenda--write configuration
-                         (make-instance 'agenda-state :records records))
           (setf (agenda-state-records state) records)
           t))))
 
@@ -688,7 +670,6 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
               (agenda-state-records state)
               replacement
               :remove-directory (and move-p source-name))))
-      (agenda--write configuration (make-instance 'agenda-state :records records))
       (setf (agenda-state-records state) records)
       replacement)))
 
@@ -697,29 +678,19 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
 
 (-> agenda--call-with-transaction (configuration agenda-state function) t)
 (defun agenda--call-with-transaction (configuration state function)
-  "Call FUNCTION with freshly read state under process-local and file locks."
+  "Apply FUNCTION to private state and install it only after durable publication."
   (with-recursive-lock-held (*agenda-lock*)
-    (let* ((pathname (configuration-agenda-path configuration))
-           (lock-pathname
-             (readable-state-lock-pathname pathname "agendas.lock")))
-      (handler-case
-          (call-with-file-lock
-           lock-pathname
-           (lambda ()
-             (let* ((current (agenda--read configuration))
-                    (value (funcall function current)))
-               (setf (agenda-state-records state)
-                     (agenda-state-records current))
-               value)))
-        (agenda-error (condition)
-          (error condition))
-        (error (cause)
-          (error 'agenda-error
-                 :message (format nil "Could not lock agendas at ~A: ~A"
-                                  lock-pathname cause)
-                 :pathname lock-pathname
-                 :operation ':lock
-                 :cause cause))))))
+    (handler-case
+        (sexp-store:store-transact
+         (agenda--store configuration)
+         (lambda (current)
+           (let ((value (funcall function current)))
+             (values current value (not (null value)))))
+         :publish (lambda (committed)
+                    (setf (agenda-state-records state)
+                          (agenda-state-records committed))))
+      (sexp-store:store-error (cause)
+        (agenda--store-error cause)))))
 
 (-> agenda-add
     (&key (:configuration configuration) (:state agenda-state)

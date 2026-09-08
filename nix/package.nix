@@ -298,14 +298,14 @@ let
 
   sexpStore = pkgs.sbcl.buildASDFSystem {
     pname = "sexp-store";
-    version = "0.3.0";
+    version = "0.4.0";
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "sexp-store";
-      rev = "815ef23b48b9bd9ef974ada28b9e8c1b5cf11b1f";
-      hash = "sha256-ulkpH9fxM+9nobkrBRQwTal6U0gqou6iiR+N38jcf/I=";
+      rev = "e26d616ab6161e787196202a2fac66bef82eff7b";
+      hash = "sha256-oTQyIg6FEQoo2GNTGWBr5VaA3/SxAGpg4LF5XYEyJxw=";
     };
-    lispLibs = [ lsCompat ];
+    lispLibs = [ lsCompat lsFlock ];
   };
 
   sbclWorkers = pkgs.sbcl.buildASDFSystem {

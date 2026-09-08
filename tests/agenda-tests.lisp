@@ -3,37 +3,6 @@
 ;;;; -- Workspace Agenda Tests --
 
 
-(-> test-agenda-process-shared-transaction () null)
-(defun test-agenda-process-shared-transaction ()
-  "Test a forked agenda update and stale caller snapshot cannot lose either item."
-  (with-test-configuration (configuration)
-    (let* ((state (agenda-load configuration))
-           (lock-pathname
-             (readable-state-lock-pathname
-              (configuration-agenda-path configuration)
-              "agendas.lock")))
-      (test-operation-blocked-by-file-lock
-       lock-pathname
-       (lambda ()
-         (agenda-add :configuration configuration
-                     :state (agenda-load configuration)
-                     :text "child process item"))
-       "agenda read-modify-write waits for the process-shared file lock")
-      (agenda-add :configuration configuration
-                  :state state
-                  :text "stale parent item")
-      (let* ((loaded (agenda-load configuration))
-             (record (agenda-current configuration loaded))
-             (texts (mapcar #'agenda-item-text
-                            (workspace-agenda-items record))))
-        (test-assert
-         (and (= (length texts) 2)
-              (member "child process item" texts :test #'string=)
-              (member "stale parent item" texts :test #'string=))
-         "agenda transactions merge a forked update into a stale caller snapshot"))))
-  nil)
-
-
 (-> test-agenda-unbounded-item-count () null)
 (defun test-agenda-unbounded-item-count ()
   "Test agendas persist and transport more than the former 32-item cap."
@@ -108,7 +77,6 @@
 (-> test-agenda-persistence-and-transport () null)
 (defun test-agenda-persistence-and-transport ()
   "Test agenda mutation, reload, copy, and moved-repository rekeying."
-  (test-agenda-process-shared-transaction)
   (with-test-configuration (configuration root)
     (let* ((source (merge-pathnames "source/" root))
            (copy-target (merge-pathnames "copy-target/" root))

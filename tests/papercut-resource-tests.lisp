@@ -46,7 +46,11 @@
                          :content content
                          :source-conversation "papercut-resource-fixture")))
     (with-lock-held (*papercut-lock*)
-      (papercut--append-record configuration (papercut--record papercut)))
+      (papercut--transact
+       configuration
+       (lambda (active)
+         (declare (ignore active))
+         (values (list (papercut--record papercut)) nil t))))
     papercut))
 
 

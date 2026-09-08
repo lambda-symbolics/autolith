@@ -243,10 +243,10 @@
         :assessment (papercut-resource--assessment-snapshot papercut)))
 
 (-> papercut-resource--collection-observation-unlocked
-    (papercut-collection-resource tool-context)
+    (papercut-collection-resource tool-context list)
     papercut-observation)
-(defun papercut-resource--collection-observation-unlocked (resource context)
-  "Observe RESOURCE while the caller holds the papercut lock."
+(defun papercut-resource--collection-observation-unlocked (resource context active)
+  "Observe RESOURCE from private ACTIVE transaction state."
   (let* ((configuration (tool-context-configuration context))
          (workspace (papercut--workspace configuration)))
     (unless (string= workspace (papercut-resource-workspace resource))
@@ -254,7 +254,7 @@
              :uri               (resource-uri resource)
              :expected-revision "workspace-context"
              :actual-revision   nil))
-    (let* ((papercuts (papercut--list-unlocked configuration))
+    (let* ((papercuts (papercut--workspace-reports configuration active))
            (snapshot
              (papercut-resource--collection-snapshot workspace papercuts)))
       (make-instance 'papercut-observation
@@ -287,10 +287,10 @@
                    :snapshot   snapshot)))
 
 (-> papercut-resource--item-observation-unlocked
-    (papercut-item-resource tool-context)
+    (papercut-item-resource tool-context list)
     papercut-observation)
-(defun papercut-resource--item-observation-unlocked (resource context)
-  "Observe one exact active RESOURCE while the caller holds the papercut lock."
+(defun papercut-resource--item-observation-unlocked (resource context active)
+  "Observe one exact RESOURCE from private ACTIVE transaction state."
   (let* ((configuration (tool-context-configuration context))
          (workspace (papercut--workspace configuration)))
     (unless (string= workspace (papercut-resource-workspace resource))
@@ -300,7 +300,7 @@
              :actual-revision   nil))
     (let ((papercut
             (find (papercut-resource-identifier resource)
-                  (papercut--list-unlocked configuration)
+                  (papercut--workspace-reports configuration active)
                   :test #'string=
                   :key #'papercut-identifier)))
       (unless papercut
@@ -309,21 +309,26 @@
       (papercut-resource--item-observation-from-report resource papercut))))
 
 (-> papercut-resource--current-observation-unlocked
-    (papercut-resource tool-context)
+    (papercut-resource tool-context list)
     papercut-observation)
-(defun papercut-resource--current-observation-unlocked (resource context)
-  "Return RESOURCE's current observation while the caller holds the papercut lock."
+(defun papercut-resource--current-observation-unlocked (resource context active)
+  "Return RESOURCE's current observation from private ACTIVE transaction state."
   (etypecase resource
     (papercut-collection-resource
-     (papercut-resource--collection-observation-unlocked resource context))
+     (papercut-resource--collection-observation-unlocked resource context active))
     (papercut-item-resource
-     (papercut-resource--item-observation-unlocked resource context))))
+     (papercut-resource--item-observation-unlocked resource context active))))
 
 (defmethod resource-observe
     ((resource papercut-resource) (context tool-context))
-  "Observe one current-workspace papercut resource under the papercut lock."
+  "Observe one papercut resource under the process-local and store locks."
   (with-lock-held (*papercut-lock*)
-    (papercut-resource--current-observation-unlocked resource context)))
+    (papercut--transact
+     (tool-context-configuration context)
+     (lambda (active)
+       (values nil
+               (papercut-resource--current-observation-unlocked resource context active)
+               nil)))))
 
 
 ;;;; -- Conversation Observation State --
@@ -457,7 +462,7 @@
 (defmethod resource-apply-operations
     ((resource papercut-resource) (context tool-context)
      &key base-revision operations)
-  "Apply exactly one revision-gated append-only mutation to RESOURCE."
+  "Validate the revision and publish one papercut mutation in a single transaction."
   (unless (and (listp operations) (= (length operations) 1))
     (error 'tool-error
            :message "papercut: resources require exactly one operation per resource.edit call."
@@ -469,75 +474,68 @@
       (with-lock-held (*papercut-lock*)
         (with-recursive-lock-held
             ((conversation-resource-observation-lock conversation))
-          (let* ((state
-                   (resource-item-find-observation-state
-                    conversation resource base-revision))
-                 (base-observation
-                   (resource-observation-state-observation state))
-                 (current
-                   (handler-case
-                       (papercut-resource--current-observation-unlocked
-                        resource context)
-                     (papercut-resource-not-found ()
-                       (error 'resource-revision-stale
-                              :uri               (resource-uri resource)
-                              :expected-revision base-revision
-                              :actual-revision   nil)))))
-            (unless (and
-                     (string= (resource-observation-revision current)
-                              (resource-observation-revision base-observation))
-                     (equal (papercut-observation-snapshot current)
-                            (papercut-observation-snapshot base-observation)))
-              (error 'resource-revision-stale
-                     :uri               (resource-uri resource)
-                     :expected-revision base-revision
-                     :actual-revision
-                     (resource-observation-revision current)))
-            (case (getf operation :kind)
+          (let* ((state (resource-item-find-observation-state
+                         conversation resource base-revision))
+                 (base-observation (resource-observation-state-observation state))
+                 (papercut
+                   (papercut--transact
+                    configuration
+                    (lambda (active)
+                      (let ((current
+                              (handler-case
+                                  (papercut-resource--current-observation-unlocked
+                                   resource context active)
+                                (papercut-resource-not-found ()
+                                  (error 'resource-revision-stale
+                                         :uri (resource-uri resource)
+                                         :expected-revision base-revision
+                                         :actual-revision nil)))))
+                        (unless (and
+                                 (string= (resource-observation-revision current)
+                                          (resource-observation-revision base-observation))
+                                 (equal (papercut-observation-snapshot current)
+                                        (papercut-observation-snapshot base-observation)))
+                          (error 'resource-revision-stale
+                                 :uri (resource-uri resource)
+                                 :expected-revision base-revision
+                                 :actual-revision (resource-observation-revision current))))
+                      (ecase (getf operation :kind)
+                        (:report
+                         (papercut--report-unlocked
+                          configuration :title (getf operation :title)
+                                        :content (getf operation :content)
+                                        :source-conversation
+                                        (conversation-identifier conversation)))
+                        (:assess
+                         (papercut--assess-unlocked
+                          configuration (papercut-resource-identifier resource)
+                          :active active :verdict (getf operation :verdict)
+                                         :note (getf operation :note)))
+                        (:close
+                         (papercut--mark-closed-unlocked
+                          configuration (papercut-resource-identifier resource)
+                          (getf operation :resolution) :active active)))))))
+            (ecase (getf operation :kind)
               (:report
-               (let* ((papercut
-                        (papercut--report-unlocked
-                         configuration
-                         (getf operation :title)
-                         (getf operation :content)
-                         (conversation-identifier conversation)))
-                      (item-resource
-                        (papercut-resource--make-item
-                         (papercut-identifier papercut)
-                         (papercut-workspace papercut))))
+               (let ((item-resource
+                       (papercut-resource--make-item
+                        (papercut-identifier papercut) (papercut-workspace papercut))))
                  (values
-                  (papercut-resource--item-observation-from-report
-                   item-resource papercut)
-                  (format nil "Reported papercut ~A."
-                          (papercut-identifier papercut))
+                  (papercut-resource--item-observation-from-report item-resource papercut)
+                  (format nil "Reported papercut ~A." (papercut-identifier papercut))
                   (resource-uri item-resource))))
               (:assess
-               (let ((papercut
-                       (papercut--assess-unlocked
-                        configuration
-                        (papercut-resource-identifier resource)
-                        (getf operation :verdict)
-                        (getf operation :note))))
-                 (values
-                  (papercut-resource--item-observation-from-report
-                   resource papercut)
-                  (format nil "Assessed papercut ~A as ~(~A~)."
-                          (papercut-resource-identifier resource)
-                          (getf operation :verdict))
-                  nil)))
+               (values
+                (papercut-resource--item-observation-from-report resource papercut)
+                (format nil "Assessed papercut ~A as ~(~A~)."
+                        (papercut-resource-identifier resource) (getf operation :verdict))
+                nil))
               (:close
-               (let* ((resolution (getf operation :resolution))
-                      (papercut
-                        (papercut--mark-closed-unlocked
-                         configuration
-                         (papercut-resource-identifier resource)
-                         resolution)))
-                 (values
-                  (papercut-resource--closed-observation
-                   resource papercut resolution)
-                  (format nil "Closed papercut ~A."
-                          (papercut-resource-identifier resource))
-                  nil))))))))))
+               (values
+                (papercut-resource--closed-observation
+                 resource papercut (getf operation :resolution))
+                (format nil "Closed papercut ~A." (papercut-resource-identifier resource))
+                nil)))))))))
 
 
 ;;;; -- Resource Tool Methods --

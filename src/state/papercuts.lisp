@@ -213,194 +213,109 @@
 
 ;;;; -- Readable Log --
 
-(-> papercut--call-with-file-lock (configuration function) t)
-(defun papercut--call-with-file-lock (configuration function)
-  "Call FUNCTION while holding CONFIGURATION's process-shared papercut lock."
-  (let* ((pathname (configuration-papercut-path configuration))
-         (lock-pathname
-           (readable-state-lock-pathname pathname "papercuts.lock")))
-    (handler-case
-        (call-with-file-lock lock-pathname function)
-      (papercut-error (condition)
-        (error condition))
-      (error (cause)
-        (error 'papercut-error
-               :message (format nil "Could not lock papercuts at ~A: ~A"
-                                lock-pathname
-                                cause)
-               :pathname lock-pathname
-               :identifier nil)))))
-
-(-> papercut--append-record-unlocked (configuration list) null)
-(defun papercut--append-record-unlocked (configuration record)
-  "Append papercut RECORD while the caller holds the process-shared lock."
+(-> papercut--store (configuration) sexp-store:log-store)
+(defun papercut--store (configuration)
+  "Describe papercut paths and lifecycle validation for the transaction store."
   (let ((pathname (configuration-papercut-path configuration)))
-    (handler-case
-        (log-append
-         pathname
-         record
-         :initial-forms
-         (list (list :papercuts :version *papercut-format-version*)))
-      (error (cause)
-        (error 'papercut-error
-               :message (format nil "Could not append papercut: ~A" cause)
-               :pathname pathname
-               :identifier nil))))
-  nil)
+    (make-instance
+     'sexp-store:log-store
+     :pathname pathname
+     :lock-pathname (readable-state-lock-pathname pathname "papercuts.lock")
+     :header (list :papercuts :version *papercut-format-version*)
+     :header-validator
+     (lambda (form)
+       (sexp-store:record-check form :tag ':papercuts
+                               :versions (list *papercut-format-version*)))
+     :validator (lambda (form) (keywordp (first form)))
+     :initial-state (lambda () (cons (make-hash-table :test #'equal)
+                                     (make-hash-table :test #'equal)))
+     :reducer (lambda (state record)
+                (papercut--reduce-record pathname state record))
+     :finalizer #'papercut--sort-active)))
 
-(-> papercut--append-record (configuration list) null)
-(defun papercut--append-record (configuration record)
-  "Append one complete papercut RECORD under the process-shared lock."
-  (papercut--call-with-file-lock
-   configuration
-   (lambda ()
-     (papercut--append-record-unlocked configuration record))))
-
-(-> papercut--read-forms-unlocked (pathname) (values list boolean))
-(defun papercut--read-forms-unlocked (pathname)
-  "Read complete papercut forms while the caller holds the process-shared lock."
-  (handler-case
-      (log-read pathname)
-    (error (cause)
-      (error 'papercut-error
-             :message (format nil "Malformed persistent papercut data: ~A"
-                              cause)
-             :pathname pathname
-             :identifier nil))))
-
-(-> papercut--read-forms (pathname) (values list boolean))
-(defun papercut--read-forms (pathname)
-  "Read complete papercut forms under the adjacent process-shared lock."
-  (let ((lock-pathname
-          (readable-state-lock-pathname pathname "papercuts.lock")))
-    (handler-case
-        (call-with-file-lock
-         lock-pathname
-         (lambda ()
-           (papercut--read-forms-unlocked pathname)))
-      (papercut-error (condition)
-        (error condition))
-      (error (cause)
-        (error 'papercut-error
-               :message (format nil "Could not lock papercuts at ~A: ~A"
-                                lock-pathname cause)
-               :pathname lock-pathname
-               :identifier nil)))))
-
-(-> papercut--replay-unlocked (configuration) list)
-(defun papercut--replay-unlocked (configuration)
-  "Replay the readable log and return all papercuts."
-  (let ((pathname (configuration-papercut-path configuration)))
-    (multiple-value-bind (records incomplete-final-form-p)
-          (papercut--read-forms-unlocked pathname)
-      (declare (ignore incomplete-final-form-p))
-      (when (and (probe-file pathname) (null records))
-        (error 'papercut-error
-               :message "The persistent papercut file has no complete header."
-               :pathname pathname
-               :identifier nil))
-      (when records
-        (let ((header (first records)))
-          (unless (and (listp header)
-                       (eq (first header) :papercuts)
-                       (eql (getf (rest header) :version)
-                            *papercut-format-version*))
-            (error 'papercut-error
-                   :message "The persistent papercut header is missing or unsupported."
-                   :pathname pathname
-                   :identifier nil))))
-      (let ((seen (make-hash-table :test #'equal))
-            (active (make-hash-table :test #'equal)))
-        (dolist (record (rest records))
-          (unless (and (listp record) (keywordp (first record)))
-            (error 'papercut-error
-                   :message "A persistent papercut record is not a keyword list."
-                   :pathname pathname
-                   :identifier nil))
-          (case (first record)
-            (:papercut
-             (let* ((papercut (papercut--record->papercut pathname record))
-                    (identifier (papercut-identifier papercut)))
-               (when (gethash identifier seen)
-                 (error 'papercut-error
-                        :message (format nil
-                                         "Persistent papercut identifier ~A occurs more than once."
-                                         identifier)
-                        :pathname pathname
-                        :identifier identifier))
-               (setf (gethash identifier seen) t
-                     (gethash identifier active) papercut)))
-              (:papercut-assessed
-               (destructuring-bind (identifier verdict note assessed-at)
-                   (papercut--validate-assessed-record pathname record)
-                 (let ((papercut (gethash identifier active)))
-                   (unless papercut
-                     (error 'papercut-error
-                            :message (format nil
-                                             "Papercut assessment references inactive or unknown identifier ~A."
-                                             identifier)
-                            :pathname pathname
-                            :identifier identifier))
-                   (setf (papercut-assessment-verdict papercut) verdict
-                         (papercut-assessment-note papercut) note
-                         (papercut-assessed-at papercut) assessed-at))))
-            (:papercut-closed
-             (let ((identifier
-                     (papercut--validate-closed-record pathname record)))
-               (unless (gethash identifier seen)
-                 (error 'papercut-error
-                        :message (format nil
-                                         "Papercut closure references unknown identifier ~A."
-                                         identifier)
-                        :pathname pathname
-                        :identifier identifier))
-               (unless (gethash identifier active)
-                 (error 'papercut-error
-                        :message (format nil
-                                         "Papercut identifier ~A is closed more than once."
-                                         identifier)
-                        :pathname pathname
-                        :identifier identifier))
-                (when (member
-                       (papercut-assessment-verdict (gethash identifier active))
-                       '(:worse :unchanged :too-early))
-                  (error 'papercut-error
-                         :message (format nil
-                                          "Papercut ~A closure conflicts with its latest ~A assessment."
-                                          identifier
-                                          (papercut-assessment-verdict
-                                           (gethash identifier active)))
-                         :pathname pathname
-                         :identifier identifier))
-               (remhash identifier active)))
-            (otherwise
+(-> papercut--reduce-record (pathname cons list) cons)
+(defun papercut--reduce-record (pathname state record)
+  "Apply one report, assessment, or closure to private lifecycle STATE."
+  (let ((seen (first state))
+        (active (rest state)))
+    (case (first record)
+      (:papercut
+       (let* ((papercut (papercut--record->papercut pathname record))
+              (identifier (papercut-identifier papercut)))
+         (when (gethash identifier seen)
+           (error 'papercut-error
+                  :message (format nil
+                                   "Persistent papercut identifier ~A occurs more than once."
+                                   identifier)
+                  :pathname pathname
+                  :identifier identifier))
+         (setf (gethash identifier seen) t
+               (gethash identifier active) papercut)))
+      (:papercut-assessed
+       (destructuring-bind (identifier verdict note assessed-at)
+           (papercut--validate-assessed-record pathname record)
+         (let ((papercut (gethash identifier active)))
+           (unless papercut
              (error 'papercut-error
-                    :message (format nil "Unsupported persistent papercut record ~S."
-                                     (first record))
+                    :message (format nil
+                                     "Papercut assessment references inactive or unknown identifier ~A."
+                                     identifier)
                     :pathname pathname
-                    :identifier nil))))
-        (sort (loop for papercut being the hash-values of active
-                    collect papercut)
-              (lambda (left right)
-                (or (> (papercut-reported-at left)
-                       (papercut-reported-at right))
-                    (and (= (papercut-reported-at left)
-                            (papercut-reported-at right))
-                         (string< (papercut-identifier left)
-                                  (papercut-identifier right))))))))))
+                    :identifier identifier))
+           (setf (papercut-assessment-verdict papercut) verdict
+                 (papercut-assessment-note papercut) note
+                 (papercut-assessed-at papercut) assessed-at))))
+      (:papercut-closed
+       (let ((identifier (papercut--validate-closed-record pathname record)))
+         (unless (gethash identifier seen)
+           (error 'papercut-error
+                  :message (format nil "Papercut closure references unknown identifier ~A."
+                                   identifier)
+                  :pathname pathname
+                  :identifier identifier))
+         (unless (gethash identifier active)
+           (error 'papercut-error
+                  :message (format nil "Papercut identifier ~A is closed more than once."
+                                   identifier)
+                  :pathname pathname
+                  :identifier identifier))
+         (when (member (papercut-assessment-verdict (gethash identifier active))
+                       '(:worse :unchanged :too-early))
+           (error 'papercut-error
+                  :message (format nil
+                                   "Papercut ~A closure conflicts with its latest ~A assessment."
+                                   identifier
+                                   (papercut-assessment-verdict (gethash identifier active)))
+                  :pathname pathname
+                  :identifier identifier))
+         (remhash identifier active)))
+      (otherwise
+       (error 'papercut-error
+              :message (format nil "Unsupported persistent papercut record ~S."
+                               (first record))
+              :pathname pathname
+              :identifier nil)))
+    state))
 
-(-> papercut--load-unlocked (configuration) list)
-(defun papercut--load-unlocked (configuration)
-  "Return papercuts, translating malformed data into PAPERCUT-ERROR."
+(-> papercut--sort-active (cons) list)
+(defun papercut--sort-active (state)
+  "Return active reports in deterministic newest-first presentation order."
+  (sort (loop for papercut being the hash-values of (rest state) collect papercut)
+        (lambda (left right)
+          (or (> (papercut-reported-at left) (papercut-reported-at right))
+              (and (= (papercut-reported-at left) (papercut-reported-at right))
+                   (string< (papercut-identifier left)
+                            (papercut-identifier right)))))))
+
+(-> papercut--transact (configuration function) t)
+(defun papercut--transact (configuration update)
+  "Apply UPDATE through the store, translating storage failures for callers."
   (handler-case
-      (papercut--replay-unlocked configuration)
-    (papercut-error (condition)
-      (error condition))
-    (error (condition)
+      (sexp-store:store-transact (papercut--store configuration) update)
+    (sexp-store:store-error (cause)
       (error 'papercut-error
-             :message (format nil "Malformed persistent papercut data: ~A"
-                              condition)
-             :pathname (configuration-papercut-path configuration)
+             :message (sexp-store:store-error-message cause)
+             :pathname (sexp-store:store-error-pathname cause)
              :identifier nil))))
 
 
@@ -411,23 +326,23 @@
   "Return CONFIGURATION's current workspace identity used by papercut records."
   (namestring (configuration-working-directory configuration)))
 
-(-> papercut--list-unlocked (configuration) list)
-(defun papercut--list-unlocked (configuration)
-  "Return current-workspace papercuts while the caller holds the papercut lock."
+(-> papercut--workspace-reports (configuration list) list)
+(defun papercut--workspace-reports (configuration active)
+  "Select current-workspace reports from ACTIVE transaction state."
   (let ((workspace (papercut--workspace configuration)))
     (remove-if-not
      (lambda (papercut)
        (string= workspace (papercut-workspace papercut)))
-     (papercut--load-unlocked configuration))))
+     active)))
 
 (-> papercut-list (configuration) list)
 (defun papercut-list (configuration)
   "Return papercuts reported in CONFIGURATION's current workspace, newest first."
   (with-lock-held (*papercut-lock*)
-    (papercut--call-with-file-lock
+    (papercut--transact
      configuration
-     (lambda ()
-       (papercut--list-unlocked configuration)))))
+     (lambda (active)
+       (values nil (papercut--workspace-reports configuration active) nil)))))
 
 (-> papercut-find (configuration string) (option papercut))
 (defun papercut-find (configuration identifier)
@@ -463,10 +378,12 @@ matching reports for :AMBIGUOUS."
       (values nil ':missing nil)))
 
 (-> papercut--report-unlocked
-    (configuration non-empty-string non-empty-string (option string))
-    papercut)
-(defun papercut--report-unlocked (configuration title content source-conversation)
-  "Append one validated report while the caller holds the papercut lock."
+    (configuration &key (:title non-empty-string) (:content non-empty-string)
+                        (:source-conversation (option string)))
+    (values list papercut boolean))
+(defun papercut--report-unlocked
+    (configuration &key title content source-conversation)
+  "Return a new validated report record and the report to publish."
   (let ((papercut
           (make-instance
            'papercut
@@ -476,8 +393,7 @@ matching reports for :AMBIGUOUS."
            :title title
            :content content
            :source-conversation source-conversation)))
-    (papercut--append-record-unlocked configuration (papercut--record papercut))
-    papercut))
+    (values (list (papercut--record papercut)) papercut t)))
 
 (-> papercut-report
     (configuration &key (:title string) (:content string)
@@ -496,24 +412,27 @@ matching reports for :AMBIGUOUS."
              :pathname (configuration-papercut-path configuration)
              :identifier nil))
     (with-lock-held (*papercut-lock*)
-      (papercut--call-with-file-lock
+      (papercut--transact
        configuration
-       (lambda ()
+       (lambda (active)
+         (declare (ignore active))
          (papercut--report-unlocked
-           configuration validated-title validated-content source-conversation))))))
+          configuration :title validated-title :content validated-content
+                        :source-conversation source-conversation))))))
 
 (-> papercut--assess-unlocked
     (configuration non-empty-string
-                   (member :improved :worse :unchanged :too-early)
-                   non-empty-string)
-    papercut)
-(defun papercut--assess-unlocked (configuration identifier verdict note)
-  "Assess one active report while the caller holds the papercut lock."
+     &key (:active list) (:verdict (member :improved :worse :unchanged :too-early))
+          (:note non-empty-string))
+    (values list papercut boolean))
+(defun papercut--assess-unlocked (configuration identifier &key active verdict note)
+  "Return the assessment event and its updated report from private state."
   (let ((papercut
           (find identifier
-                (papercut--list-unlocked configuration)
+                (papercut--workspace-reports configuration active)
                 :test #'string=
-                :key #'papercut-identifier)))
+                :key #'papercut-identifier))
+        (assessed-at (get-universal-time)))
     (unless papercut
       (error 'papercut-error
              :message (format nil
@@ -521,14 +440,12 @@ matching reports for :AMBIGUOUS."
                               identifier)
              :pathname (configuration-papercut-path configuration)
              :identifier identifier))
-    (let ((assessed-at (get-universal-time)))
-      (papercut--append-record-unlocked
-       configuration
-       (papercut--assessed-record identifier verdict note assessed-at))
-      (setf (papercut-assessment-verdict papercut) verdict
-            (papercut-assessment-note papercut) note
-            (papercut-assessed-at papercut) assessed-at))
-    papercut))
+    (setf (papercut-assessment-verdict papercut) verdict
+          (papercut-assessment-note papercut) note
+          (papercut-assessed-at papercut) assessed-at)
+    (values
+     (list (papercut--assessed-record identifier verdict note assessed-at))
+     papercut t)))
 
 (-> papercut-assess
     (configuration string &key (:verdict keyword) (:note string))
@@ -549,24 +466,26 @@ matching reports for :AMBIGUOUS."
           (papercut--validate-text
            note "assessment note" *papercut-assessment-note-limit*)))
     (with-lock-held (*papercut-lock*)
-      (papercut--call-with-file-lock
+      (papercut--transact
        configuration
-       (lambda ()
+       (lambda (active)
          (papercut--assess-unlocked
-           configuration identifier verdict validated-note))))))
+          configuration identifier :active active :verdict verdict
+                                   :note validated-note))))))
 
 (-> papercut--mark-closed-unlocked
-    (configuration non-empty-string non-empty-string)
-    papercut)
-(defun papercut--mark-closed-unlocked (configuration identifier resolution)
-  "Close one validated active report while the caller holds the papercut lock."
+    (configuration non-empty-string non-empty-string &key (:active list))
+    (values list papercut boolean))
+(defun papercut--mark-closed-unlocked
+    (configuration identifier resolution &key active)
+  "Return a closure event after checking the workspace and assessment policy."
   (let* ((workspace (papercut--workspace configuration))
          (papercut
            (find-if
             (lambda (candidate)
               (and (string= identifier (papercut-identifier candidate))
                    (string= workspace (papercut-workspace candidate))))
-            (papercut--load-unlocked configuration))))
+            active)))
     (unless papercut
       (error 'papercut-error
              :message (format nil
@@ -583,10 +502,9 @@ matching reports for :AMBIGUOUS."
                               (papercut-assessment-verdict papercut))
              :pathname (configuration-papercut-path configuration)
              :identifier identifier))
-    (papercut--append-record-unlocked
-     configuration
-     (papercut--closed-record identifier resolution (get-universal-time)))
-    papercut))
+    (values
+     (list (papercut--closed-record identifier resolution (get-universal-time)))
+     papercut t)))
 
 (-> papercut-mark-closed (configuration string &key (:resolution string)) papercut)
 (defun papercut-mark-closed (configuration identifier &key resolution)
@@ -600,11 +518,11 @@ matching reports for :AMBIGUOUS."
           (papercut--validate-text
            resolution "closure resolution" *papercut-resolution-limit*)))
     (with-lock-held (*papercut-lock*)
-      (papercut--call-with-file-lock
+      (papercut--transact
        configuration
-       (lambda ()
+       (lambda (active)
          (papercut--mark-closed-unlocked
-           configuration identifier validated-resolution))))))
+          configuration identifier validated-resolution :active active))))))
 
 
 ;;;; -- Presentation Values --

@@ -278,7 +278,7 @@
             (lambda (record)
               (or (null workspace)
                   (equal workspace (workspace-agenda-directory record))))
-            (agenda-state-records (agenda--read configuration))))
+            (agenda-state-records (agenda--read configuration :lock-held-p t))))
          (agenda-forms (mapcar #'agenda--record->form agendas))
          (linked (loop for agenda in agendas append
                    (loop for item in (workspace-agenda-items agenda)

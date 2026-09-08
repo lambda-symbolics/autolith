@@ -196,154 +196,72 @@
 
 ;;;; -- Readable Log --
 
-(-> memory--call-with-file-lock (configuration function) t)
-(defun memory--call-with-file-lock (configuration function)
-  "Call FUNCTION while holding CONFIGURATION's process-shared memory lock."
-  (let* ((pathname (configuration-memory-path configuration))
-         (lock-pathname
-           (readable-state-lock-pathname pathname "memories.lock")))
-    (handler-case
-        (call-with-file-lock lock-pathname function)
-      (memory-error (condition)
-        (error condition))
-      (error (cause)
-        (error 'memory-error
-               :message (format nil "Could not lock persistent memories at ~A: ~A"
-                                lock-pathname
-                                cause)
-               :pathname lock-pathname
-               :identifier nil)))))
-
-(-> memory--append-record-unlocked (configuration list) null)
-(defun memory--append-record-unlocked (configuration record)
-  "Append memory RECORD while the caller holds the process-shared memory lock."
+(-> memory--store (configuration) sexp-store:log-store)
+(defun memory--store (configuration)
+  "Describe the memory schema, reducer, and product-owned paths."
   (let ((pathname (configuration-memory-path configuration)))
-    (handler-case
-        (log-append
-         pathname
-         record
-         :initial-forms
-         (list (list :memories :version *memory-format-version*)))
-      (error (cause)
-        (error 'memory-error
-               :message (format nil "Could not append persistent memory: ~A"
-                                cause)
-               :pathname pathname
-               :identifier nil))))
-  nil)
+    (make-instance
+     'sexp-store:log-store
+     :pathname pathname
+     :lock-pathname (readable-state-lock-pathname pathname "memories.lock")
+     :header (list :memories :version *memory-format-version*)
+     :header-validator
+     (lambda (form)
+       (sexp-store:record-check form :tag ':memories
+                               :versions (list *memory-format-version*)))
+     :validator (lambda (form) (keywordp (first form)))
+     :initial-state (lambda () (make-hash-table :test #'equal))
+     :reducer (lambda (active record)
+                (memory--reduce-record pathname active record))
+     :finalizer #'memory--sort-active)))
 
-(-> memory--append-record (configuration list) null)
-(defun memory--append-record (configuration record)
-  "Append one complete memory RECORD under the process-shared memory lock."
-  (memory--call-with-file-lock
-   configuration
-   (lambda ()
-     (memory--append-record-unlocked configuration record))))
+(-> memory--reduce-record (pathname hash-table list) hash-table)
+(defun memory--reduce-record (pathname active record)
+  "Apply one memory replacement or attributed tombstone to fresh ACTIVE state."
+  (case (first record)
+    (:memory
+     (let ((memory (memory--record->memory pathname record)))
+       (setf (gethash (memory-identifier memory) active) memory)))
+    (:memory-forgotten
+     (let ((identifier (getf (rest record) :id))
+           (source-conversation (getf (rest record) :source-conversation)))
+       (unless (and (eql (getf (rest record) :version) *memory-format-version*)
+                    (non-empty-string-p identifier)
+                    (typep (getf (rest record) :time) 'timestamp)
+                    (or (null source-conversation)
+                        (non-empty-string-p source-conversation)))
+         (error 'memory-error
+                :message "A memory tombstone has invalid metadata."
+                :pathname pathname
+                :identifier (and (stringp identifier) identifier)))
+       (remhash identifier active)))
+    (otherwise
+     (error 'memory-error
+            :message (format nil "Unsupported persistent memory record ~S."
+                             (first record))
+            :pathname pathname
+            :identifier nil)))
+  active)
 
-(-> memory--read-forms-unlocked (pathname) (values list boolean))
-(defun memory--read-forms-unlocked (pathname)
-  "Read complete memory forms while the caller holds the process-shared lock."
+(-> memory--sort-active (hash-table) list)
+(defun memory--sort-active (active)
+  "Return active memories in deterministic newest-first retrieval order."
+  (sort (loop for memory being the hash-values of active collect memory)
+        (lambda (left right)
+          (or (> (memory-updated-at left) (memory-updated-at right))
+              (and (= (memory-updated-at left) (memory-updated-at right))
+                   (string< (memory-identifier left)
+                            (memory-identifier right)))))))
+
+(-> memory--transact (configuration function) t)
+(defun memory--transact (configuration update)
+  "Apply UPDATE through the store, translating storage failures for callers."
   (handler-case
-      (log-read pathname)
-    (error (cause)
+      (sexp-store:store-transact (memory--store configuration) update)
+    (sexp-store:store-error (cause)
       (error 'memory-error
-             :message (format nil "Malformed persistent memory data: ~A"
-                              cause)
-             :pathname pathname
-             :identifier nil))))
-
-(-> memory--read-forms (pathname) (values list boolean))
-(defun memory--read-forms (pathname)
-  "Read complete memory forms under the adjacent process-shared lock."
-  (let ((lock-pathname
-          (readable-state-lock-pathname pathname "memories.lock")))
-    (handler-case
-        (call-with-file-lock
-         lock-pathname
-         (lambda ()
-           (memory--read-forms-unlocked pathname)))
-      (memory-error (condition)
-        (error condition))
-      (error (cause)
-        (error 'memory-error
-               :message (format nil "Could not lock persistent memories at ~A: ~A"
-                                lock-pathname cause)
-               :pathname lock-pathname
-               :identifier nil)))))
-
-(-> memory--replay-unlocked (configuration) list)
-(defun memory--replay-unlocked (configuration)
-  "Replay the readable log and return all active memories."
-  (let ((pathname (configuration-memory-path configuration)))
-    (multiple-value-bind (records incomplete-final-form-p)
-          (memory--read-forms-unlocked pathname)
-      (declare (ignore incomplete-final-form-p))
-      (when (and (probe-file pathname) (null records))
-        (error 'memory-error
-               :message "The persistent memory file has no complete header."
-               :pathname pathname
-               :identifier nil))
-      (when records
-        (let ((header (first records)))
-          (unless (and (listp header)
-                       (eq (first header) :memories)
-                       (eql (getf (rest header) :version)
-                            *memory-format-version*))
-            (error 'memory-error
-                   :message "The persistent memory header is missing or unsupported."
-                   :pathname pathname
-                   :identifier nil))))
-      (let ((active (make-hash-table :test #'equal)))
-        (dolist (record (rest records))
-          (unless (and (listp record) (keywordp (first record)))
-            (error 'memory-error
-                   :message "A persistent memory record is not a keyword list."
-                   :pathname pathname
-                   :identifier nil))
-          (case (first record)
-            (:memory
-             (let ((memory (memory--record->memory pathname record)))
-               (setf (gethash (memory-identifier memory) active) memory)))
-            (:memory-forgotten
-             (let ((identifier (getf (rest record) :id))
-                   (source-conversation
-                     (getf (rest record) :source-conversation)))
-               (unless (and (eql (getf (rest record) :version)
-                                 *memory-format-version*)
-                            (non-empty-string-p identifier)
-                            (typep (getf (rest record) :time) 'timestamp)
-                            (or (null source-conversation)
-                                (non-empty-string-p source-conversation)))
-                 (error 'memory-error
-                        :message "A memory tombstone has invalid metadata."
-                        :pathname pathname
-                        :identifier (and (stringp identifier) identifier)))
-               (remhash identifier active)))
-            (otherwise
-             (error 'memory-error
-                    :message (format nil "Unsupported persistent memory record ~S."
-                                     (first record))
-                    :pathname pathname
-                    :identifier nil))))
-        (sort (loop for memory being the hash-values of active collect memory)
-              (lambda (left right)
-                (or (> (memory-updated-at left) (memory-updated-at right))
-                    (and (= (memory-updated-at left) (memory-updated-at right))
-                         (string< (memory-identifier left)
-                                  (memory-identifier right))))))))))
-
-(-> memory--load-unlocked (configuration) list)
-(defun memory--load-unlocked (configuration)
-  "Return active memories, translating malformed data into MEMORY-ERROR."
-  (handler-case
-      (memory--replay-unlocked configuration)
-    (memory-error (condition)
-      (error condition))
-    (error (condition)
-      (error 'memory-error
-             :message (format nil "Malformed persistent memory data: ~A"
-                              condition)
-             :pathname (configuration-memory-path configuration)
+             :message (sexp-store:store-error-message cause)
+             :pathname (sexp-store:store-error-pathname cause)
              :identifier nil))))
 
 
@@ -373,13 +291,15 @@
 (defun memory-list (configuration &key (visibility :relevant))
   "Return active memories selected by VISIBILITY, newest first."
   (with-recursive-lock-held (*memory-lock*)
-    (memory--call-with-file-lock
+    (memory--transact
      configuration
-     (lambda ()
-       (remove-if-not
-        (lambda (memory)
-          (memory--visible-p memory configuration visibility))
-        (memory--load-unlocked configuration))))))
+     (lambda (active)
+       (values nil
+               (remove-if-not
+                (lambda (memory)
+                  (memory--visible-p memory configuration visibility))
+                active)
+               nil)))))
 
 (-> memory-find (configuration string) (option memory))
 (defun memory-find (configuration identifier)
@@ -418,14 +338,13 @@
              :pathname (configuration-memory-path configuration)
              :identifier identifier))
     (with-recursive-lock-held (*memory-lock*)
-      (memory--call-with-file-lock
+      (memory--transact
        configuration
-       (lambda ()
-         (let* ((active (memory--load-unlocked configuration))
-                (existing (and identifier
-                               (find identifier active
-                                     :test #'string=
-                                     :key #'memory-identifier))))
+       (lambda (active)
+         (let ((existing (and identifier
+                              (find identifier active
+                                    :test #'string=
+                                    :key #'memory-identifier))))
            (when (and identifier (null existing))
              (error 'memory-error
                     :message (format nil "Memory ~A does not exist." identifier)
@@ -455,9 +374,7 @@
                      :content validated-content
                      :tags validated-tags
                      :source-conversation source-conversation)))
-             (memory--append-record-unlocked
-              configuration (memory--record memory))
-             memory)))))))
+             (values (list (memory--record memory)) memory t))))))))
 
 (-> memory-forget
     (configuration string &key (:source-conversation (option string)))
@@ -471,11 +388,10 @@
            :pathname (configuration-memory-path configuration)
            :identifier identifier))
   (with-recursive-lock-held (*memory-lock*)
-    (memory--call-with-file-lock
+    (memory--transact
      configuration
-     (lambda ()
-       (let ((memory (find identifier
-                           (memory--load-unlocked configuration)
+     (lambda (active)
+       (let ((memory (find identifier active
                            :test #'string=
                            :key #'memory-identifier)))
          (unless memory
@@ -483,14 +399,13 @@
                   :message (format nil "Memory ~A does not exist." identifier)
                   :pathname (configuration-memory-path configuration)
                   :identifier identifier))
-         (memory--append-record-unlocked
-          configuration
-          (list :memory-forgotten
-                :version *memory-format-version*
-                :id identifier
-                :time (get-universal-time)
-                :source-conversation source-conversation))
-         memory)))))
+         (values
+          (list (list :memory-forgotten
+                      :version *memory-format-version*
+                      :id identifier
+                      :time (get-universal-time)
+                      :source-conversation source-conversation))
+          memory t))))))
 
 (-> memory--search-terms (string) list)
 (defun memory--search-terms (query)
