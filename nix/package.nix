@@ -83,12 +83,18 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "image-daemon";
-      rev = "fb530e996ab83f91b79d316b93c98517b7e25bfd";
-      hash = "sha256-B231xdSn7nuB1zEWricG7lPEx3HeYnrgWDSOuw94YpA=";
+      rev = "9941c1c3673cf6159d73127c67efb488b31f9856";
+      hash = "sha256-oSQqdayMbSTRj7IrzO6hHHNfoCpPZPW7d9NWnOT+PTs=";
     };
+    systems = [ "image-daemon" "image-daemon/runtime" ];
     lispLibs = [
       idsmall
       pkgs.sbclPackages.ironclad
+      pkgs.sbclPackages.bordeaux-threads
+      pkgs.sbclPackages.serapeum
+      lsFlock
+      sexpStore
+      structlisp
     ];
   };
 

@@ -186,33 +186,27 @@ exit \"$status\""
 (-> localgroup-handoff--write
     (application localgroup-session keyword)
     pathname)
+
 (defun localgroup-handoff--write (application session mode)
   "Publish APPLICATION's detached-process handoff for SESSION and MODE."
   (let ((conversation (application-conversation application)))
     (unless (conversation-persisted-p conversation)
-      (conversation-append-record conversation
-                                  (list :localgroup-handoff :mode mode))))
+      (conversation-append-record conversation (list :localgroup-handoff :mode mode))))
   (let* ((configuration (application-configuration application))
          (conversation (application-conversation application))
          (pathname
-           (localgroup-handoff--pathname
-            configuration (localgroup-session-identifier session)))
-         (draft
-           (line-editor-text
-            (terminal-ui-editor (application-ui application))))
+          (localgroup-handoff--pathname configuration
+                                        (image-daemon:daemon-runtime-identifier
+                                         session)))
+         (draft (line-editor-text (terminal-ui-editor (application-ui application))))
          (record
-           (list :localgroup-handoff
-                 :version *localgroup-handoff-version*
-                 :session-id (localgroup-session-identifier session)
-                 :token (localgroup-session-token session)
-                 :created-at (localgroup-session-created-at session)
-                 :mode mode
-                 :state ':pending
-                 :fresh-conversation-p nil
-                 :old-pid (sb-posix:getpid)
-                 :replacement-pid nil
-                 :conversation-id (conversation-identifier conversation)
-                 :draft draft)))
+          (list :localgroup-handoff :version *localgroup-handoff-version* :session-id
+                (image-daemon:daemon-runtime-identifier session) :token
+                (image-daemon:daemon-runtime-token session) :created-at
+                (image-daemon:daemon-runtime-created-at session) :mode mode :state
+                ':pending :fresh-conversation-p nil :old-pid (sb-posix:getpid)
+                :replacement-pid nil :conversation-id
+                (conversation-identifier conversation) :draft draft)))
     (localgroup-handoff--write-record pathname record)
     pathname))
 
@@ -400,15 +394,16 @@ exit \"$status\""
      :wait nil)))
 
 (-> localgroup-handoff--launch (application pathname) t)
+
 (defun localgroup-handoff--launch (application handoff-pathname)
   "Launch APPLICATION's detached replacement from HANDOFF-PATHNAME."
-  (localgroup-handoff--launch-for
-   (application-configuration application)
-   (localgroup-session-identifier
-    (application-localgroup-session application))
-   handoff-pathname
-   (localgroup-handoff--permission-argument application)
-   (configuration-immutable-p (application-configuration application))))
+  (localgroup-handoff--launch-for (application-configuration application)
+                                  (image-daemon:daemon-runtime-identifier
+                                   (application-localgroup-session application))
+                                  handoff-pathname
+                                  (localgroup-handoff--permission-argument application)
+                                  (configuration-immutable-p
+                                   (application-configuration application))))
 
 (-> localgroup-handoff--launch-for
     (configuration string pathname string boolean)
@@ -553,23 +548,16 @@ detach is immediate and never interrupts session work."
 (-> localgroup-handoff--replacement-ready-p
     (configuration string string integer)
     boolean)
-(defun localgroup-handoff--replacement-ready-p
-    (configuration session-id token old-pid)
+
+(defun localgroup-handoff--replacement-ready-p (configuration session-id token old-pid)
   "Return true when SESSION-ID names a live replacement distinct from OLD-PID."
   (let* ((pathname (localgroup-registry-pathname configuration session-id))
-         (record (localgroup--read-endpoint-record pathname)))
-    (and record
-         (/= (getf (rest record) :pid) old-pid)
+         (record (image-daemon:daemon-registry-read pathname)))
+    (and record (/= (getf (rest record) :pid) old-pid)
          (string= (getf (rest record) :token) token)
          (handler-case
-             (eq
-              (first
-               (daemon-call
-                (getf (rest record) :port)
-                token
-                ':status))
-              ':ok)
-           (error () nil)))))
+          (eq (first (daemon-call (getf (rest record) :port) token ':status)) ':ok)
+          (error nil nil)))))
 
 (-> localgroup-handoff--wait-for-replacement
     (configuration string string integer)
@@ -800,6 +788,7 @@ detach is immediate and never interrupts session work."
 ;;;; -- Main-Thread Handoff --
 
 (-> application-localgroup-request-handoff (application keyword) list)
+
 (defun application-localgroup-request-handoff (application mode)
   "Schedule MODE process handoff without disturbing the running agent.
 
@@ -807,43 +796,41 @@ Detaching is a terminal-side event: the agent keeps working and never
 observes it. Queued work and steering stay in the durable snapshot the
 replacement restores, so detaching changes nothing about the session."
   (unless (member mode '(:detach :take-over))
-    (error 'localgroup-error
-           :message "The localgroup handoff mode is invalid."
+    (error 'localgroup-error :message "The localgroup handoff mode is invalid."
            :operation ':handoff))
   (let ((session (application-localgroup-session application))
         (controller (application-input-controller application)))
     (unless (and session controller)
-      (error 'localgroup-error
-             :message "The localgroup session is not ready for handoff."
-             :operation ':handoff))
-    (with-lock-held ((localgroup-session-lock session))
+      (error 'localgroup-error :message
+             "The localgroup session is not ready for handoff." :operation ':handoff))
+    (with-lock-held ((image-daemon:daemon-runtime-lock session))
       (setf (localgroup-session-paused-p session) nil)
       (unless (localgroup-session-handoff-running-p session)
         (setf (localgroup-session-handoff-mode session)
-              (if (or (eq mode ':take-over)
-                      (null (localgroup-session-handoff-mode session)))
-                  mode
-                  (localgroup-session-handoff-mode session)))))
+                (if (or (eq mode ':take-over)
+                        (null (localgroup-session-handoff-mode session)))
+                    mode
+                    (localgroup-session-handoff-mode session)))))
     (with-lock-held ((application-input-controller-lock controller))
       (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller)))
-    (list :ok :operation mode
-          :scheduled-p t
-          :session-id (localgroup-session-identifier session)
-          :old-pid (sb-posix:getpid))))
+    (list :ok :operation mode :scheduled-p t :session-id
+          (image-daemon:daemon-runtime-identifier session) :old-pid (sb-posix:getpid))))
 
 (-> application-localgroup-handoff-pending-p (application) boolean)
+
 (defun application-localgroup-handoff-pending-p (application)
   "Return true while APPLICATION has pending or running process handoff."
   (let ((session (application-localgroup-session application)))
     (and session
          (not
           (null
-           (with-lock-held ((localgroup-session-lock session))
+           (with-lock-held ((image-daemon:daemon-runtime-lock session))
              (or (localgroup-session-handoff-mode session)
                  (localgroup-session-handoff-running-p session))))))))
 
 (-> application-localgroup-ready-handoff-p (application) boolean)
+
 (defun application-localgroup-ready-handoff-p (application)
   "Return true when a scheduled handoff could be taken right now.
 
@@ -857,22 +844,21 @@ scheduler tests that must not disturb the armed mode."
            (zerop live))
          (not
           (null
-           (with-lock-held ((localgroup-session-lock session))
+           (with-lock-held ((image-daemon:daemon-runtime-lock session))
              (and (not (localgroup-session-handoff-running-p session))
                   (localgroup-session-handoff-mode session))))))))
 
 (-> application-localgroup-take-ready-handoff (application) (option keyword))
+
 (defun application-localgroup-take-ready-handoff (application)
   "Consume APPLICATION's pending handoff when no child jobs remain."
   (let ((session (application-localgroup-session application)))
-    (unless session
-      (return-from application-localgroup-take-ready-handoff nil))
+    (unless session (return-from application-localgroup-take-ready-handoff nil))
     (multiple-value-bind (live active)
         (localgroup--task-counts application)
       (declare (ignore active))
-      (when (plusp live)
-        (return-from application-localgroup-take-ready-handoff nil)))
-    (with-lock-held ((localgroup-session-lock session))
+      (when (plusp live) (return-from application-localgroup-take-ready-handoff nil)))
+    (with-lock-held ((image-daemon:daemon-runtime-lock session))
       (unless (localgroup-session-handoff-running-p session)
         (prog1 (localgroup-session-handoff-mode session)
           (setf (localgroup-session-handoff-mode session) nil))))))
@@ -917,105 +903,167 @@ recalled draft lives only in this editor, not in the snapshot."
 (-> localgroup-handoff--remove-replacement-registry
     (configuration string string integer)
     null)
+
 (defun localgroup-handoff--remove-replacement-registry
-    (configuration session-id token old-pid)
+       (configuration session-id token old-pid)
   "Remove a failed replacement registry record without deleting the old endpoint."
   (let* ((pathname (localgroup-registry-pathname configuration session-id))
-         (record (localgroup--read-endpoint-record pathname)))
-    (when (and record
-               (/= (getf (rest record) :pid) old-pid)
-               (string= (getf (rest record) :token) token))
+         (record (image-daemon:daemon-registry-read pathname)))
+    (when
+        (and record (/= (getf (rest record) :pid) old-pid)
+             (string= (getf (rest record) :token) token))
       (localgroup--remove-stale-record pathname record)))
   nil)
 
 (-> application-localgroup-run-handoff (application keyword t) null)
+
 (defun application-localgroup-run-handoff (application mode controller)
   "Launch APPLICATION's detached replacement and stop after authenticated readiness."
-  (application-input-controller-call-with-reader-paused
-   controller
-   (lambda ()
-     (let* ((session (application-localgroup-session application))
-            (configuration (application-configuration application))
-            (conversation-id
-              (conversation-identifier (application-conversation application)))
-            (session-id (localgroup-session-identifier session))
-            (token (localgroup-session-token session))
-            (old-pid (sb-posix:getpid))
-            (handoff-pathname nil)
-            (process nil)
-            (lease-released-p nil)
-            (held-lease-p
-              (and (slot-boundp application 'conversation-lease)
-                   (application-conversation-lease application)))
-            (gate-p nil)
-            (completed-p nil)
-            (primary-ready-p nil))
-       (with-lock-held ((application-input-controller-lock controller))
-         (setf primary-ready-p
-               (localgroup-handoff--primary-ready-p controller))
-         (when primary-ready-p
-           (setf (application-input-controller-localgroup-handoff-p controller) t
-                 gate-p t)))
-       (unless primary-ready-p
-         (application-localgroup-request-handoff application mode)
-         (return-from application-localgroup-run-handoff nil))
-       (multiple-value-bind (live active)
-           (localgroup--task-counts application)
-         (declare (ignore active))
-         (when (plusp live)
-           (with-lock-held ((application-input-controller-lock controller))
-             (setf (application-input-controller-localgroup-handoff-p controller) nil
-                   gate-p nil))
-           (application-localgroup-request-handoff application mode)
-           (return-from application-localgroup-run-handoff nil)))
-       (with-lock-held ((localgroup-session-lock session))
-         (setf (localgroup-session-handoff-running-p session) t))
-       (unwind-protect
-            (progn
-              (setf handoff-pathname
-                    (localgroup-handoff--write application session mode))
-              (application-release-conversation-lease application)
-              (setf lease-released-p (not (null held-lease-p))
-                    process
-                    (funcall *localgroup-handoff-launch-function*
-                             application handoff-pathname))
-              (unless
-                  (funcall *localgroup-handoff-wait-function*
-                           configuration session-id token old-pid)
-                (error 'localgroup-error
-                       :message
-                       (format nil
-                               "The detached replacement did not start within ~D seconds. See ~A."
-                               *localgroup-handoff-start-timeout-seconds*
-                               (namestring
-                                (localgroup-handoff-log-pathname
-                                 configuration session-id)))
-                       :operation ':handoff
-                       :session-id session-id))
-              (setf completed-p t)
-              (application-input-controller--prepare-shutdown
-               controller ':localgroup-detach))
-         (unless completed-p
-           (when process
-             (handler-case
-                 (funcall *localgroup-handoff-stop-function*
-                          process handoff-pathname)
-               (localgroup-error (condition)
-                 (application-input-controller--prepare-shutdown
-                  controller ':localgroup-handoff-failed)
-                 (error condition))))
-           (localgroup-handoff--remove-replacement-registry
-            configuration session-id token old-pid)
-           (when lease-released-p
-             (localgroup-handoff--restore-lease application conversation-id))
-           (when handoff-pathname
-             (localgroup-handoff--delete-state-pathnames handoff-pathname))
-           (with-lock-held ((localgroup-session-lock session))
-             (setf (localgroup-session-handoff-running-p session) nil))
-           (when gate-p
-             (with-lock-held ((application-input-controller-lock controller))
-               (setf (application-input-controller-localgroup-handoff-p controller)
-                     nil))))))))
+  (application-input-controller-call-with-reader-paused controller
+                                                        (lambda ()
+                                                          (let* ((session
+                                                                  (application-localgroup-session
+                                                                   application))
+                                                                 (configuration
+                                                                  (application-configuration
+                                                                   application))
+                                                                 (conversation-id
+                                                                  (conversation-identifier
+                                                                   (application-conversation
+                                                                    application)))
+                                                                 (session-id
+                                                                  (image-daemon:daemon-runtime-identifier
+                                                                   session))
+                                                                 (token
+                                                                  (image-daemon:daemon-runtime-token
+                                                                   session))
+                                                                 (old-pid
+                                                                  (sb-posix:getpid))
+                                                                 (handoff-pathname nil)
+                                                                 (process nil)
+                                                                 (lease-released-p nil)
+                                                                 (held-lease-p
+                                                                  (and
+                                                                   (slot-boundp
+                                                                    application
+                                                                    'conversation-lease)
+                                                                   (application-conversation-lease
+                                                                    application)))
+                                                                 (gate-p nil)
+                                                                 (completed-p nil)
+                                                                 (primary-ready-p nil))
+                                                            (with-lock-held ((application-input-controller-lock
+                                                                              controller))
+                                                              (setf primary-ready-p
+                                                                      (localgroup-handoff--primary-ready-p
+                                                                       controller))
+                                                              (when primary-ready-p
+                                                                (setf (application-input-controller-localgroup-handoff-p
+                                                                       controller)
+                                                                        t
+                                                                      gate-p t)))
+                                                            (unless primary-ready-p
+                                                              (application-localgroup-request-handoff
+                                                               application mode)
+                                                              (return-from
+                                                                  application-localgroup-run-handoff
+                                                                nil))
+                                                            (multiple-value-bind
+                                                                (live active)
+                                                                (localgroup--task-counts
+                                                                 application)
+                                                              (declare (ignore active))
+                                                              (when (plusp live)
+                                                                (with-lock-held ((application-input-controller-lock
+                                                                                  controller))
+                                                                  (setf (application-input-controller-localgroup-handoff-p
+                                                                         controller)
+                                                                          nil
+                                                                        gate-p nil))
+                                                                (application-localgroup-request-handoff
+                                                                 application mode)
+                                                                (return-from
+                                                                    application-localgroup-run-handoff
+                                                                  nil)))
+                                                            (with-lock-held ((image-daemon:daemon-runtime-lock
+                                                                              session))
+                                                              (setf (localgroup-session-handoff-running-p
+                                                                     session)
+                                                                      t))
+                                                            (unwind-protect
+                                                                (progn
+                                                                 (setf handoff-pathname
+                                                                         (localgroup-handoff--write
+                                                                          application
+                                                                          session mode))
+                                                                 (application-release-conversation-lease
+                                                                  application)
+                                                                 (setf lease-released-p
+                                                                         (not
+                                                                          (null
+                                                                           held-lease-p))
+                                                                       process
+                                                                         (funcall
+                                                                          *localgroup-handoff-launch-function*
+                                                                          application
+                                                                          handoff-pathname))
+                                                                 (unless
+                                                                     (funcall
+                                                                      *localgroup-handoff-wait-function*
+                                                                      configuration
+                                                                      session-id token
+                                                                      old-pid)
+                                                                   (error
+                                                                    'localgroup-error
+                                                                    :message
+                                                                    (format nil
+                                                                            "The detached replacement did not start within ~D seconds. See ~A."
+                                                                            *localgroup-handoff-start-timeout-seconds*
+                                                                            (namestring
+                                                                             (localgroup-handoff-log-pathname
+                                                                              configuration
+                                                                              session-id)))
+                                                                    :operation ':handoff
+                                                                    :session-id
+                                                                    session-id))
+                                                                 (setf completed-p t)
+                                                                 (application-input-controller--prepare-shutdown
+                                                                  controller
+                                                                  ':localgroup-detach))
+                                                              (unless completed-p
+                                                                (when process
+                                                                  (handler-case
+                                                                   (funcall
+                                                                    *localgroup-handoff-stop-function*
+                                                                    process
+                                                                    handoff-pathname)
+                                                                   (localgroup-error
+                                                                    (condition)
+                                                                    (application-input-controller--prepare-shutdown
+                                                                     controller
+                                                                     ':localgroup-handoff-failed)
+                                                                    (error condition))))
+                                                                (localgroup-handoff--remove-replacement-registry
+                                                                 configuration session-id
+                                                                 token old-pid)
+                                                                (when lease-released-p
+                                                                  (localgroup-handoff--restore-lease
+                                                                   application
+                                                                   conversation-id))
+                                                                (when handoff-pathname
+                                                                  (localgroup-handoff--delete-state-pathnames
+                                                                   handoff-pathname))
+                                                                (with-lock-held ((image-daemon:daemon-runtime-lock
+                                                                                  session))
+                                                                  (setf (localgroup-session-handoff-running-p
+                                                                         session)
+                                                                          nil))
+                                                                (when gate-p
+                                                                  (with-lock-held ((application-input-controller-lock
+                                                                                    controller))
+                                                                    (setf (application-input-controller-localgroup-handoff-p
+                                                                           controller)
+                                                                            nil))))))))
   nil)
 
 (-> localgroup-handoff-finish-startup (application) null)

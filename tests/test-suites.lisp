@@ -477,11 +477,9 @@
   test-localgroup-terminal-restart
   test-localgroup-picker-waits-for-relayed-input
   test-localgroup-remote-detach-never-pauses-reader
-  test-localgroup-blocking-read-lifecycle
   test-localgroup-detached-terminal-lifecycle
   test-localgroup-protocol
   test-localgroup-orphan-reconciliation
-  test-localgroup-attachment-close-safety
   test-localgroup-attachments)
 
 (define-test-suite localgroup-handoff

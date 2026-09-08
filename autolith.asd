@@ -24,7 +24,7 @@
                #:fetch-gist
                #:flexi-streams
                #:idsmall
-               #:image-daemon
+               #:image-daemon/runtime
                #:ironclad/mac/siphash
                #:ls-flock
                #:bordeaux-threads

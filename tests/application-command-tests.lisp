@@ -899,6 +899,7 @@
   nil)
 
 (-> test-application-authentication-command () null)
+
 (defun test-application-authentication-command ()
   "Test /auth and (auth) share selection, explicit naming, and direct output."
   (let ((application (make-instance 'application))
@@ -907,27 +908,20 @@
         (authenticated-method nil))
     (test-call-with-function-replacements
      (list
-      (list
-       'application--pick-authentication-provider
-       (lambda (candidate)
-         (declare (ignore candidate))
-         (setf picked-p t)
-         "grok"))
-      (list
-       'application-authenticate
-       (lambda (candidate provider-name &optional method)
-         (declare (ignore candidate))
-         (setf authenticated-provider provider-name
-               authenticated-method method)
-         nil)))
+      (list 'application--pick-authentication-provider
+            (lambda (candidate) (declare (ignore candidate)) (setf picked-p t) "grok"))
+      (list 'application-authenticate
+            (lambda (candidate provider-name &optional method)
+              (declare (ignore candidate))
+              (setf authenticated-provider provider-name
+                    authenticated-method method)
+              nil)))
      (lambda ()
        (let ((*application-command-interactive-p* t))
          (test-assert
-          (eq (application--builtin-authentication-command application)
-              ':continue)
+          (eq (application--builtin-authentication-command application) ':continue)
           "argument-free auth completes through the canonical command")
-         (test-assert
-          (and picked-p (string= authenticated-provider "grok"))
+         (test-assert (and picked-p (string= authenticated-provider "grok"))
           "argument-free auth picks and authenticates one provider")
          (setf picked-p nil
                authenticated-provider nil
@@ -937,16 +931,15 @@
               ':continue)
           "named auth completes through the canonical command")
          (test-assert
-          (and (not picked-p)
-               (string= authenticated-provider "anthropic")
+          (and (not picked-p) (string= authenticated-provider "anthropic")
                (null authenticated-method))
           "named auth bypasses selection and preserves the provider name")
          (setf authenticated-provider nil
                authenticated-method nil)
          (test-assert
-          (eq (application--builtin-authentication-command
-               application "chatgpt" "device")
-              ':continue)
+          (eq
+           (application--builtin-authentication-command application "chatgpt" "device")
+           ':continue)
           "auth accepts an explicit ChatGPT authentication method")
          (test-assert
           (and (string= authenticated-provider "chatgpt")
@@ -954,80 +947,65 @@
           "auth passes the explicit authentication method through unchanged")))))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
-         (conversation (conversation-create configuration
-                                            :identifier "callable-auth"))
-         (terminal (make-instance 'stream-terminal
-                                  :input-stream (make-string-input-stream "")
-                                  :output-stream (make-string-output-stream)
-                                  :input-file-descriptor -1
-                                  :columns 80))
+         (conversation (conversation-create configuration :identifier "callable-auth"))
+         (terminal
+          (make-instance 'stream-terminal :input-stream (make-string-input-stream "")
+                         :output-stream (make-string-output-stream)
+                         :input-file-descriptor -1 :columns 80))
          (application
-           (make-instance 'application
-                          :configuration configuration
-                          :conversation conversation
-                          :ui (terminal-ui-create :terminal terminal)))
+          (make-instance 'application :configuration configuration :conversation
+                         conversation :ui (terminal-ui-create :terminal terminal)))
          (picked-p nil)
          (authenticated-provider nil)
          (authenticated-method nil))
     (unwind-protect
-         (test-call-with-function-replacements
-          (list
-           (list
-            'application--pick-authentication-provider
-            (lambda (candidate)
-              (declare (ignore candidate))
-              (setf picked-p t)
-              "grok"))
-           (list
-            'application-authenticate
-            (lambda (candidate provider-name &optional method)
-              (declare (ignore candidate))
-              (setf authenticated-provider provider-name
-                    authenticated-method method)
-              nil)))
-          (lambda ()
-            (test-assert
-             (eq (application-run-lisp-input application "(auth)") ':continue)
-             "callable auth with no provider completes through local Lisp")
-            (test-assert
-             (and picked-p (string= authenticated-provider "grok"))
-             "callable auth with no provider opens provider selection")
-            (setf picked-p nil
-                  authenticated-provider nil
-                  authenticated-method nil)
-            (test-assert
-             (eq (application-run-lisp-input
-                  application "(auth \"anthropic\")")
-                 ':continue)
-             "callable auth with a provider completes through local Lisp")
-            (test-assert
-             (and (not picked-p)
-                  (string= authenticated-provider "anthropic")
-                  (null authenticated-method))
-             "callable auth with a provider bypasses selection")
-            (setf authenticated-provider nil
-                  authenticated-method nil)
-            (test-assert
-             (eq (application-run-lisp-input
-                  application "(auth \"chatgpt\" \"device\")")
-                 ':continue)
-             "callable auth accepts an explicit authentication method")
-            (test-assert
-             (and (string= authenticated-provider "chatgpt")
-                  (string= authenticated-method "device"))
-             "callable auth passes its authentication method through")))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+        (test-call-with-function-replacements
+         (list
+          (list 'application--pick-authentication-provider
+                (lambda (candidate)
+                  (declare (ignore candidate))
+                  (setf picked-p t)
+                  "grok"))
+          (list 'application-authenticate
+                (lambda (candidate provider-name &optional method)
+                  (declare (ignore candidate))
+                  (setf authenticated-provider provider-name
+                        authenticated-method method)
+                  nil)))
+         (lambda ()
+           (test-assert (eq (application-run-lisp-input application "(auth)") ':continue)
+            "callable auth with no provider completes through local Lisp")
+           (test-assert (and picked-p (string= authenticated-provider "grok"))
+            "callable auth with no provider opens provider selection")
+           (setf picked-p nil
+                 authenticated-provider nil
+                 authenticated-method nil)
+           (test-assert
+            (eq (application-run-lisp-input application "(auth \"anthropic\")")
+                ':continue)
+            "callable auth with a provider completes through local Lisp")
+           (test-assert
+            (and (not picked-p) (string= authenticated-provider "anthropic")
+                 (null authenticated-method))
+            "callable auth with a provider bypasses selection")
+           (setf authenticated-provider nil
+                 authenticated-method nil)
+           (test-assert
+            (eq (application-run-lisp-input application "(auth \"chatgpt\" \"device\")")
+                ':continue)
+            "callable auth accepts an explicit authentication method")
+           (test-assert
+            (and (string= authenticated-provider "chatgpt")
+                 (string= authenticated-method "device"))
+            "callable auth passes its authentication method through")))
+      (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
+                                             ':ignore)))
   (let* ((terminal-output (make-string-output-stream))
          (captured-output (make-string-output-stream))
          (terminal
-           (make-instance 'stream-terminal
-                          :input-stream (make-string-input-stream "")
-                          :output-stream terminal-output
-                          :input-file-descriptor -1
-                          :styled-p t
-                          :columns 80))
+          (make-instance 'stream-terminal :input-stream (make-string-input-stream "")
+                         :output-stream terminal-output :input-file-descriptor -1
+                         :styled-p t :columns 80))
          (ui (terminal-ui-create :terminal terminal))
          (application (make-instance 'application :ui ui))
          (provider (make-instance 'application-authentication-test-provider))
@@ -1035,25 +1013,16 @@
          (started-p nil))
     (test-call-with-function-replacements
      (list
-      (list
-       'application--authentication-provider
-       (lambda (candidate provider-name)
-         (declare (ignore candidate))
-         (test-assert (string= provider-name "grok")
-                      "auth forwards the selected provider name")
-         provider))
-      (list
-       'terminal-ui-stop
-       (lambda (candidate)
-         (declare (ignore candidate))
-         (setf stopped-p t)
-         nil))
-      (list
-       'terminal-ui-start
-       (lambda (candidate)
-         (declare (ignore candidate))
-         (setf started-p t)
-         nil)))
+      (list 'application--authentication-provider
+            (lambda (candidate provider-name)
+              (declare (ignore candidate))
+              (test-assert (string= provider-name "grok")
+               "auth forwards the selected provider name")
+              provider))
+      (list 'terminal-ui-stop
+            (lambda (candidate) (declare (ignore candidate)) (setf stopped-p t) nil))
+      (list 'terminal-ui-start
+            (lambda (candidate) (declare (ignore candidate)) (setf started-p t) nil)))
      (lambda ()
        (let ((*standard-output* captured-output))
          (application-authenticate application "grok"))))
@@ -1065,8 +1034,7 @@
                 terminal-output)
             (application-authentication-test-provider-styled-p provider)
             (application-authentication-test-provider-open-browser-p provider)
-            (= (application-authentication-test-provider-input-file-descriptor
-                provider)
+            (= (application-authentication-test-provider-input-file-descriptor provider)
                -1))
        "auth uses the direct styled terminal and restores terminal ownership")
       (test-assert
@@ -1074,22 +1042,16 @@
             (search "Open the provider login page now." terminal-text)
             (search "Provider authentication was saved." terminal-text))
        "auth immediately presents provider identity, instructions, and completion")
-      (test-assert
-       (not (search "Open the provider login page now." captured-text))
+      (test-assert (not (search "Open the provider login page now." captured-text))
        "callable auth does not buffer login instructions in local Lisp output")))
   (let* ((terminal
-           (make-instance 'application-authentication-test-localgroup-terminal
-                          :direct-terminal nil
-                          :events (list '(:paste "sek")
-                                        ':backspace
-                                        '(:insert "cret")
-                                        ':submit)))
+          (make-instance 'application-authentication-test-localgroup-terminal
+                         :direct-terminal nil :events
+                         (list '(:paste "sek") ':backspace '(:insert "cret") ':submit)))
          (attachment-stream (make-string-output-stream))
          (controller
-           (make-instance 'localgroup-attachment
-                          :socket nil
-                          :stream attachment-stream
-                          :mode ':control))
+          (make-instance 'image-daemon:attachment :socket nil :stream attachment-stream
+                         :mode ':control))
          (ui (terminal-ui-create :terminal terminal))
          (application (make-instance 'application :ui ui))
          (suspended-during-authentication-p nil)
@@ -1097,94 +1059,85 @@
          (paste-input nil)
          (line-input nil)
          (provider
-           (make-instance
-            'application-authentication-test-provider
-            :read-input-p t
-            :activity-callback
-            (lambda ()
-              (setf suspended-during-authentication-p
-                    (terminal-ui-live-output-suspended-p ui))
-              (let ((history-length
-                      (length (localgroup-terminal-history-text terminal))))
-                (terminal-ui-stream-update
-                 ui
-                 :rows (list (list (terminal-span ':plain "Deferred stream row.")))
-                 :tail "Deferred stream tail.")
-                (terminal-ui-append-finalized
-                 ui ':deferred-auth "Deferred finalized row.")
-                (terminal-ui--paint-live ui)
-                (setf repaint-during-authentication-p
-                      (/= history-length
-                          (length
-                           (localgroup-terminal-history-text terminal))))))))
+          (make-instance 'application-authentication-test-provider :read-input-p t
+                         :activity-callback
+                         (lambda ()
+                           (setf suspended-during-authentication-p
+                                   (terminal-ui-live-output-suspended-p ui))
+                           (let ((history-length
+                                  (length (image-daemon:relay-history-text terminal))))
+                             (terminal-ui-stream-update ui :rows
+                                                        (list
+                                                         (list
+                                                          (terminal-span ':plain
+                                                                         "Deferred stream row.")))
+                                                        :tail "Deferred stream tail.")
+                             (terminal-ui-append-finalized ui ':deferred-auth
+                                                           "Deferred finalized row.")
+                             (terminal-ui--paint-live ui)
+                             (setf repaint-during-authentication-p
+                                     (/= history-length
+                                         (length
+                                          (image-daemon:relay-history-text
+                                           terminal))))))))
          (stopped-p nil)
          (started-p nil))
-    (setf (localgroup-terminal-controller terminal) controller
+    (setf (image-daemon:relay-controller terminal) controller
           (terminal-interactive-p terminal) t)
     (terminal-ui-start ui)
     (unwind-protect
-         (progn
-           (test-call-with-function-replacements
-            (list
-             (list
-              'application--authentication-provider
-              (lambda (candidate provider-name)
-                (declare (ignore candidate provider-name))
-                provider))
-             (list
-              'terminal-ui-stop
-              (lambda (candidate)
-                (declare (ignore candidate))
-                (setf stopped-p t)
-                nil))
-             (list
-              'terminal-ui-start
-              (lambda (candidate)
-                (declare (ignore candidate))
-                (setf started-p t)
-                nil)))
-             (lambda ()
-               (application-authenticate application "grok")
-               (setf paste-input
-                     (application-authentication-test-provider-input provider)
-                     (application-authentication-test-provider-input provider) nil
-                     (application-authentication-test-localgroup-terminal-events terminal)
-                     (list '(:line "line-secret")))
-               (application-authenticate application "grok")
-               (setf line-input
-                     (application-authentication-test-provider-input provider))))
-           (let ((history (localgroup-terminal-history-text terminal)))
-             (test-assert
-              (and (not stopped-p)
-                   (not started-p)
-                   (terminal-ui-started-p ui)
-                   (eq (localgroup-terminal-controller terminal) controller)
-                   (not (application-authentication-test-provider-styled-p provider)))
-              "localgroup auth preserves the attached plain terminal transport")
-             (test-assert
-              (and suspended-during-authentication-p
-                   (not repaint-during-authentication-p)
-                   (not (terminal-ui-live-output-suspended-p ui))
-                   (zerop (length (terminal-ui-deferred-live-appended-text ui)))
-                   (zerop (length (terminal-ui-deferred-live-appended-display ui))))
-              "localgroup auth defers concurrent live output until resume")
-             (test-assert
-              (and (typep
-                    (application-authentication-test-provider-stream provider)
+        (progn
+         (test-call-with-function-replacements
+          (list
+           (list 'application--authentication-provider
+                 (lambda (candidate provider-name)
+                   (declare (ignore candidate provider-name))
+                   provider))
+           (list 'terminal-ui-stop
+                 (lambda (candidate)
+                   (declare (ignore candidate))
+                   (setf stopped-p t)
+                   nil))
+           (list 'terminal-ui-start
+                 (lambda (candidate)
+                   (declare (ignore candidate))
+                   (setf started-p t)
+                   nil)))
+          (lambda ()
+            (application-authenticate application "grok")
+            (setf paste-input (application-authentication-test-provider-input provider)
+                  (application-authentication-test-provider-input provider) nil
+                  (application-authentication-test-localgroup-terminal-events terminal)
+                    (list '(:line "line-secret")))
+            (application-authenticate application "grok")
+            (setf line-input (application-authentication-test-provider-input provider))))
+         (let ((history (image-daemon:relay-history-text terminal)))
+           (test-assert
+            (and (not stopped-p) (not started-p) (terminal-ui-started-p ui)
+                 (eq (image-daemon:relay-controller terminal) controller)
+                 (not (application-authentication-test-provider-styled-p provider)))
+            "localgroup auth preserves the attached plain terminal transport")
+           (test-assert
+            (and suspended-during-authentication-p (not repaint-during-authentication-p)
+                 (not (terminal-ui-live-output-suspended-p ui))
+                 (zerop (length (terminal-ui-deferred-live-appended-text ui)))
+                 (zerop (length (terminal-ui-deferred-live-appended-display ui))))
+            "localgroup auth defers concurrent live output until resume")
+           (test-assert
+            (and
+             (typep (application-authentication-test-provider-stream provider)
                     'application-authentication-output-stream)
-                   (null
-                    (application-authentication-test-provider-input-file-descriptor
-                     provider))
-                   (string= paste-input "secret")
-                   (string= line-input "line-secret"))
-              "localgroup auth accepts pasted, edited, and completed hidden lines")
-             (test-assert
-              (and (search "Authenticating provider grok." history)
-                   (search "Open the provider login page now." history)
-                   (search "Provider authentication was saved." history)
-                   (search "Deferred stream row." history)
-                   (search "Deferred finalized row." history))
-              "localgroup auth shows direct and deferred output in order of ownership")))
+             (null
+              (application-authentication-test-provider-input-file-descriptor provider))
+             (string= paste-input "secret") (string= line-input "line-secret"))
+            "localgroup auth accepts pasted, edited, and completed hidden lines")
+           (test-assert
+            (and (search "Authenticating provider grok." history)
+                 (search "Open the provider login page now." history)
+                 (search "Provider authentication was saved." history)
+                 (search "Deferred stream row." history)
+                 (search "Deferred finalized row." history))
+            "localgroup auth shows direct and deferred output in order of ownership")))
       (terminal-ui-stop ui)))
   nil)
 

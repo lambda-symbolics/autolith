@@ -1582,11 +1582,12 @@ are forwarded to TERMINAL-UI-SELECT."
 (-> application-authentication-input-stream--controller-p
     (application-authentication-input-stream)
     boolean)
+
 (defun application-authentication-input-stream--controller-p (stream)
   "Return true while STREAM's localgroup terminal has a controller."
   (let ((terminal (application-authentication-input-stream-terminal stream)))
-    (with-lock-held ((localgroup-terminal-lock terminal))
-      (not (null (localgroup-terminal-controller terminal))))))
+    (with-lock-held ((image-daemon:relay-lock terminal))
+      (not (null (image-daemon:relay-controller terminal))))))
 
 (-> application-authentication-input-stream--fill
     (application-authentication-input-stream)
