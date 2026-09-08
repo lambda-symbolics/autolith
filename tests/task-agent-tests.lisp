@@ -702,157 +702,38 @@
                                        :if-does-not-exist ':ignore)))
   nil)
 
+
 (-> test-task-native-output-contracts () null)
 (defun test-task-native-output-contracts ()
-  "Test recursive native output schemas and exact JSON boundary conversion."
-  (let* ((schema
-           (task-output-schema-normalize
-            '(:type :object
-              :properties
-              (("enabled" (:type :boolean))
-               ("nothing" (:type :null))
-               ("items"
-                (:type :array
-                 :items
-                 (:type :object
-                  :properties
-                  (("name" (:type :string))
-                   ("score" (:type :number)))
-                  :required ("name")
-                  :additional-properties nil)
-                 :min-items 1
-                 :max-items 2)))
-              :required ("enabled" "nothing" "items")
-              :additional-properties nil)
-            :source ':programmatic
-            :definition-name "recursive"))
-         (provider-schema (task-output-schema->json schema))
-         (candidate
-           (task-json-decode
-            "{\"enabled\":false,\"nothing\":null,\"items\":[{\"name\":\"one\",\"score\":1.5}]}")))
-    (test-assert (task-output-schema-valid-p candidate schema)
-                 "recursive provider JSON satisfies its native output DSL")
+  "Test product provenance and tool conditions around generic output contracts."
+  (let ((condition
+          (handler-case
+              (progn
+                (task-output-schema-normalize
+                 '(:type :array) :pathname #P"role.sexp" :source ':programmatic
+                 :definition-name "invalid-output")
+                nil)
+            (task-agent-definition-error (condition) condition))))
     (test-assert
-     (and (string= (json-get provider-schema "type") "object")
-          (eq (json-get provider-schema "additionalProperties") false)
-          (vectorp (json-get provider-schema "required"))
-          (string=
-           (json-get
-            (json-get
-             (json-get (json-get provider-schema "properties") "items")
-             "items")
-            "type")
-           "object"))
-     "native recursive schemas convert to JSON only at the provider boundary")
-    (test-assert
-     (not
-      (task-output-schema-valid-p
-       (task-json-decode
-        "{\"enabled\":null,\"nothing\":false,\"items\":[{\"name\":\"one\"}]}")
-       schema))
-     "recursive validation keeps JSON false distinct from JSON null")
-    (test-assert
-     (not
-      (task-output-schema-valid-p
-       (task-json-decode
-        "{\"enabled\":false,\"nothing\":null,\"items\":[{\"name\":\"one\",\"extra\":1}]}")
-       schema))
-     "recursive validation enforces nested additional-property policy"))
-  (let* ((enum-schema
-           (task-output-schema-normalize
-            '(:enum (nil :null t))
-            :source ':programmatic
-            :definition-name "enum"))
-         (provider-enum
-           (json-get (task-output-schema->json enum-schema) "enum")))
-    (test-assert
-     (and (= (length provider-enum) 3)
-          (eq (aref provider-enum 0) false)
-          (eq (aref provider-enum 1) :null)
-          (eq (aref provider-enum 2) t))
-     "native NIL and :NULL become distinct JSON false and null enum values"))
-  (dolist
-      (case
-       '(((:type :array) :items)
-         ((:type :object
-           :properties (("known" (:type :string)))
-           :required ("missing"))
-          :required)
-         ((:type :object
-           :properties
-           (("same" (:type :string))
-            ("same" (:type :integer))))
-          :properties)
-         ((:type :boolean :enum (nil :null)) :enum)))
-    (destructuring-bind (invalid-schema expected-field) case
-      (let ((condition
-              (handler-case
-                  (progn
-                    (task-output-schema-normalize
-                     invalid-schema
-                     :source ':programmatic
-                     :definition-name "invalid-output")
-                    nil)
-                (task-agent-definition-error (error)
-                  error))))
-        (test-assert
-         (and condition
-              (eq (task-agent-definition-error-field condition)
-                  expected-field)
-              (eq (task-agent-definition-error-source condition)
-                  :programmatic)
-              (string=
-               (task-agent-definition-error-definition-name condition)
-               "invalid-output"))
-         (format nil "invalid recursive output field ~S has a typed diagnostic"
-                 expected-field)))))
-  (let* ((provider-value
-           (task-json-decode
-            "{\"z\":null,\"a\":[false,true,{\"quote\":\"a\\\"b\\n\"}],\"n\":2.5}"))
-         (native-value (task-json->sexp provider-value))
-         (entries (rest native-value))
-         (array (second (assoc "a" entries :test #'string=))))
-    (test-assert
-     (and (eq (first native-value) :object)
-          (equal (mapcar #'first entries) '("a" "n" "z"))
-          (eq (first array) :array)
-          (null (second array))
-          (eq (third array) t)
-          (eq (second (assoc "z" entries :test #'string=)) :null))
-     "provider JSON becomes sorted tagged readable s-expression data")
-    (test-assert
-     (equal native-value
-            (task-json->sexp (task-sexp->json native-value)))
-     "tagged objects, arrays, false, null, numbers, and escaped strings round trip")
-    (test-assert
-     (handler-case
-         (progn
-           (task-sexp->json
-            '(:object ("duplicate" 1) ("duplicate" 2)))
-           nil)
-       (task-error ()
-         t))
-     "tagged native objects reject duplicate keys during reconstruction")
-    (test-assert
-     (handler-case
-         (progn
-           (task-sexp->json '("untagged" nil :null))
-           nil)
-       (task-error ()
-         t))
-     "untagged lists cannot cross the durable task result boundary")
-    (test-assert
-     (handler-case
-         (progn
-           (task-json-decode
-            "{\"complete\":true} false"
-            :tool-name "yield.submit")
-           nil)
-       (task-error (condition)
-         (string= (tool-error-tool-name condition) "yield.submit")))
-     "task JSON decoding rejects trailing values with canonical tool metadata"))
+     (and condition
+          (eq (task-agent-definition-error-field condition) ':items)
+          (eq (task-agent-definition-error-source condition) ':programmatic)
+          (equal (task-agent-definition-error-pathname condition) #P"role.sexp")
+          (string= (task-agent-definition-error-definition-name condition) "invalid-output"))
+     "generic schema diagnostics include exact child-role provenance"))
+  (test-assert
+   (handler-case
+       (progn (task-json-decode "{} false" :tool-name "yield.submit") nil)
+     (task-error (condition)
+       (string= (tool-error-tool-name condition) "yield.submit")))
+   "exact JSON failures include the canonical task tool name")
+  (test-assert
+   (handler-case
+       (progn (task-json->sexp #\x) nil)
+     (task-yield-error (condition)
+       (string= (tool-error-tool-name condition) "yield.submit")))
+   "generic output-value failures propagate as typed yield failures")
   nil)
-
 (-> test-task-yield-contract () null)
 (defun test-task-yield-contract ()
   "Test exact yield semantics through provider JSON argument decoding."

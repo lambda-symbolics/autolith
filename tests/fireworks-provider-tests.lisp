@@ -2,6 +2,14 @@
 
 ;;;; -- Fireworks API Key Provider Tests --
 
+(-> fireworks-provider-test--chat-event (json-object string &optional t) json-object)
+(defun fireworks-provider-test--chat-event (delta response-id &optional finish-reason)
+  "Return one Chat Completions event for inherited provider routing checks."
+  (json-object "id" response-id
+               "choices" (json-array
+                          (json-object "delta" delta
+                                       "finish_reason" finish-reason))))
+
 (-> fireworks-provider-test--configuration () configuration)
 (defun fireworks-provider-test--configuration ()
   "Return an isolated configuration selecting the Fireworks model."
@@ -202,7 +210,7 @@
                ,(concatenate
                  'string
                  (test-sse-event-string
-                  (openai-compatible-provider-tests--stream-event
+                  (fireworks-provider-test--chat-event
                    (json-object "content" "complete") "inherited-chat" "stop"))
                  (test-sse-event-string
                   (json-object
@@ -217,7 +225,7 @@
                5)
               ("output truncation"
                ,(test-sse-event-string
-                 (openai-compatible-provider-tests--stream-event
+                 (fireworks-provider-test--chat-event
                   (json-object) "inherited-chat" "length"))
                provider-incomplete-response)
               ("[DONE] before terminal"
@@ -225,12 +233,12 @@
                response-stream-error)
               ("clean EOF before terminal"
                ,(test-sse-event-string
-                 (openai-compatible-provider-tests--stream-event
+                 (fireworks-provider-test--chat-event
                   (json-object "content" "partial") "inherited-chat"))
                response-stream-error)
               ("clean EOF after finish reason"
                ,(test-sse-event-string
-                 (openai-compatible-provider-tests--stream-event
+                 (fireworks-provider-test--chat-event
                   (json-object) "inherited-chat" "stop"))
                response-stream-error))))
       (assert-cases
@@ -245,32 +253,38 @@
        "Nous Chat"
        (allocate-instance (find-class 'nous-chat-completions-provider))
        chat-cases))
-    (dolist
-        (case
-         `(("normal completion"
-            ,(list (anthropic-provider-test--message-start)
-                   (anthropic-provider-test--message-delta "end_turn")
-                   (json-object "type" "message_stop"))
-            provider-result)
-           ("output truncation"
-            ,(list (anthropic-provider-test--message-start)
-                   (anthropic-provider-test--message-delta "max_tokens")
-                   (json-object "type" "message_stop"))
-            provider-incomplete-response)
-           ("clean EOF before terminal"
-            ,(list (anthropic-provider-test--message-start))
-            response-stream-error)))
-      (destructuring-bind (name events expected-type) case
-        (let ((outcome
-                (handler-case
-                    (anthropic-provider-test--consume
-                     (allocate-instance (find-class 'nous-messages-provider))
-                     events)
-                  (provider-error (condition)
-                    condition))))
+    (dolist (case '(("end_turn" provider-result)
+                    ("max_tokens" provider-incomplete-response)
+                    (nil response-stream-error)))
+      (destructuring-bind (stop-reason expected-type) case
+        (let* ((events
+                 (append
+                  (list (json-object
+                         "type" "message_start"
+                         "message" (json-object "id" "inherited-messages"
+                                                "type" "message"
+                                                "role" "assistant"
+                                                "content" #()
+                                                "usage" (json-object "input_tokens" 1
+                                                                     "output_tokens" 0))))
+                  (when stop-reason
+                    (list (json-object
+                           "type" "message_delta"
+                           "delta" (json-object "stop_reason" stop-reason)
+                           "usage" (json-object "output_tokens" 1))
+                          (json-object "type" "message_stop")))))
+               (source (apply #'concatenate 'string
+                              (mapcar #'test-sse-event-string events)))
+               (outcome
+                 (handler-case
+                     (with-input-from-string (stream source)
+                       (provider-consume-stream
+                        (allocate-instance (find-class 'nous-messages-provider))
+                        stream nil #'identity))
+                   (provider-error (condition) condition))))
           (test-assert
            (typep outcome expected-type)
-           (format nil "Nous Messages ~A yields ~A" name expected-type))))))
+           (format nil "Nous Messages ~A yields ~A" stop-reason expected-type))))))
   nil)
 
 (-> test-fireworks-provider () null)

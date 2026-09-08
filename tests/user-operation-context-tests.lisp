@@ -50,8 +50,8 @@
                   (provider-items-before
                     (copy-tree (conversation-input-items conversation)))
                   (*context-contributors* nil)
-                  (*context-next-request-delivered*
-                    (make-hash-table :test #'equal))
+                  (*context-resolver*
+                    (cl-llm-provider-api:make-context-resolver))
                   (*context-last-deliveries*
                     (make-hash-table :test #'equal))
                   (*context-last-delivery-order* nil))

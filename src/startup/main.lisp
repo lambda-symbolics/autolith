@@ -237,7 +237,7 @@
   nil)
 
 (-> application--expected-error-entry
-    (application autolith-error)
+    (application (or autolith-error cl-llm-provider-api:provider-api-error))
     list)
 (defun application--expected-error-entry (application condition)
   "Return the transcript entry describing expected CONDITION."
@@ -250,7 +250,9 @@
                      condition)
              (format nil "~A" condition))))
 
-(-> application-handle-expected-error (application autolith-error) null)
+(-> application-handle-expected-error
+    (application (or autolith-error cl-llm-provider-api:provider-api-error))
+    null)
 (defun application-handle-expected-error (application condition)
   "Present expected CONDITION without abandoning APPLICATION's active path."
   (application-set-activity application nil)
@@ -1094,7 +1096,7 @@ both update the packaged installation and exit without starting a session."
   "Run the Autolith command described by ARGUMENTS with stable exit classification."
   (handler-case
       (main-dispatch arguments)
-    (autolith-error (condition)
+    ((or autolith-error cl-llm-provider-api:provider-api-error) (condition)
       (format *error-output* "Autolith could not start: ~A~%" condition)
       (uiop:quit 64)))
   nil)

@@ -160,16 +160,13 @@
   nous-authentication-test--serialized-refresh
   nous-authentication-test--refresh-redaction)
 
+
 (define-test-suite provider
   test-provider-deferred-tool-loading
   test-provider-request
   test-provider-request-tool-filtering
   test-provider-native-compaction
   test-provider-rate-limits
-  test-provider-usage-normalization
-  test-provider-stream-decoding
-  test-provider-stream-failures
-  test-provider-stream-error-classification
   test-provider-transport-boundary
   test-provider-credential-echo-containment
   test-provider-authentication-retries
@@ -210,17 +207,10 @@
 (define-test-suite anthropic-provider
   anthropic-provider-test--selection
   anthropic-provider-test--credential-source
-  anthropic-provider-test--request-conversion-failures
-  anthropic-provider-test--request-encoding
   anthropic-provider-test--ephemeral-cache-boundary
-  anthropic-provider-test--portable-content
   anthropic-provider-test--inherited-reference-order
   anthropic-provider-test--compaction-request
-  anthropic-provider-test--transport
-  anthropic-provider-test--stream-decoding
-  anthropic-provider-test--stop-reasons
-  anthropic-provider-test--stream-ordering
-  anthropic-provider-test--stream-lifecycle)
+  anthropic-provider-test--transport)
 
 (define-test-suite nous-provider
   nous-provider-test--registration-and-discovery

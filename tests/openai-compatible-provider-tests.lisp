@@ -1,118 +1,5 @@
 (in-package #:autolith)
 
-;;;; -- OpenAI-Compatible Provider Tests --
-
-(-> openai-compatible-provider-tests--stream-event
-    (json-object string &optional t)
-    json-object)
-(defun openai-compatible-provider-tests--stream-event (delta response-id
-                                                        &optional finish-reason)
-  "Return one Chat Completions stream event containing DELTA."
-  (json-object
-   "id" response-id
-   "choices"
-   (json-array
-    (json-object
-     "delta" delta
-     "finish_reason" finish-reason))))
-
-(-> openai-compatible-provider-tests--terminal-semantics
-    (openai-compatible-provider)
-    null)
-(defun openai-compatible-provider-tests--terminal-semantics (provider)
-  "Test Chat Completions terminal and structured-error outcomes by case."
-  (labels ((consume (source)
-             "Consume SOURCE and return either its result or typed condition."
-             (handler-case
-                 (provider-consume-stream
-                  provider
-                  (make-string-input-stream source)
-                  '(("x-request-id" . "chat-terminal-request"))
-                  #'identity)
-               (provider-error (condition)
-                 condition)))
-
-           (finish-source (reason &key (done-p t))
-             "Return a Chat stream with REASON followed by usage and optional DONE."
-             (concatenate
-              'string
-              (test-sse-event-string
-               (openai-compatible-provider-tests--stream-event
-                (json-object "content" "partial")
-                "chat-terminal-response"))
-              (test-sse-event-string
-               (openai-compatible-provider-tests--stream-event
-                (json-object) "chat-terminal-response" reason))
-              (test-sse-event-string
-               (json-object
-                "id" "chat-terminal-response"
-                "choices" (json-array)
-                "usage"
-                (json-object "prompt_tokens" 4
-                             "completion_tokens" 2
-                             "total_tokens" 6)))
-              (if done-p (format nil "data: [DONE]~%~%") ""))))
-    (dolist
-        (case
-         `(("normal completion" ,(finish-source "stop") provider-result)
-           ("output truncation"
-            ,(finish-source "length") provider-incomplete-response)
-           ("unknown finish reason"
-            ,(finish-source "future_reason") provider-protocol-error)
-           ("[DONE] before terminal"
-            ,(concatenate
-              'string
-              (test-sse-event-string
-               (openai-compatible-provider-tests--stream-event
-                (json-object "content" "partial") "chat-terminal-response"))
-              (format nil "data: [DONE]~%~%"))
-            response-stream-error)
-           ("clean EOF before terminal"
-            ,(test-sse-event-string
-              (openai-compatible-provider-tests--stream-event
-               (json-object "content" "partial") "chat-terminal-response"))
-            response-stream-error)
-           ("clean EOF after finish reason"
-            ,(finish-source "stop" :done-p nil)
-            response-stream-error)
-           ("permanent structured error"
-            ,(test-sse-event-string
-              (json-object
-               "error"
-               (json-object "code" "invalid_request_error"
-                            "message" "invalid request")))
-            provider-error)
-           ("transient structured error"
-            ,(test-sse-event-string
-              (json-object
-               "error"
-               (json-object "code" "server_error"
-                            "message" "try again")))
-            provider-retryable-error)))
-      (destructuring-bind (name source expected-type) case
-        (let ((outcome (consume source)))
-          (test-assert
-           (typep outcome expected-type)
-           (format nil "Chat Completions ~A yields ~A" name expected-type))
-          (when (typep outcome 'provider-incomplete-response)
-            (test-assert
-             (and (string= (provider-incomplete-response-reason outcome) "length")
-                  (string= (provider-error-request-id outcome)
-                           "chat-terminal-request")
-                  (string= (provider-error-response-id outcome)
-                           "chat-terminal-response")
-                  (not (typep outcome 'provider-retryable-error)))
-             "Chat truncation retains sanitized terminal metadata"))
-          (when (typep outcome 'response-stream-error)
-            (test-assert
-             (typep outcome 'provider-retryable-error)
-             "unterminated Chat streams remain retryable"))
-          (when (string= name "permanent structured error")
-            (test-assert
-             (not (typep outcome 'provider-retryable-error))
-             "permanent Chat stream errors do not retry"))))))
-  nil)
-
 (-> openai-compatible-provider-tests--save-key
     (configuration string string)
     oauth-credentials)
@@ -872,644 +759,312 @@
   nil)
 
 (-> test-openai-compatible-provider () null)
+
+
 (defun test-openai-compatible-provider ()
   "Test registration, request projection, authentication, and stream decoding."
   (let ((registry-snapshot (provider--registry-snapshot))
         (configuration nil)
         (root nil)
-        (key (make-string 12 :initial-element #\k)))
+        (key (make-string 12 :initial-element #\LATIN_SMALL_LETTER_K)))
     (unwind-protect
-         (progn
-           (register-openai-compatible-provider
-            :name "test-openai"
-            :description "Synthetic OpenAI-compatible endpoint"
-            :family ':test-openai
-            :models
-            '((:name "test/chat-model"
-               :description "Synthetic chat model"
-               :context-window 123456
-               :reasoning-efforts ("none" "high")))
-            :endpoint "https://provider.invalid/v1/chat/completions"
-            :headers '(("X-Test-Provider" . "synthetic"))
-            :reasoning-parameter "reasoning_effort")
-           (setf configuration
-                 (test-configuration)
-                 root
-                 (test-configuration-root configuration))
-           (openai-compatible-provider-tests--save-key
-            configuration "test-openai" key)
-           (let ((pathname (configuration-api-keys-path configuration)))
+        (progn
+         (register-openai-compatible-provider :name "test-openai" :description
+                                              "Synthetic OpenAI-compatible endpoint"
+                                              :family ':test-openai :models
+                                              '((:name "test/chat-model" :description
+                                                 "Synthetic chat model" :context-window
+                                                 123456 :reasoning-efforts
+                                                 ("none" "high")))
+                                              :endpoint
+                                              "https://provider.invalid/v1/chat/completions"
+                                              :headers
+                                              '(("X-Test-Provider" . "synthetic"))
+                                              :reasoning-parameter "reasoning_effort")
+         (setf configuration (test-configuration)
+               root (test-configuration-root configuration))
+         (openai-compatible-provider-tests--save-key configuration "test-openai" key)
+         (let ((pathname (configuration-api-keys-path configuration)))
+           (test-assert (probe-file pathname)
+            "API keys are persisted in the private provider-key store")
+           (let ((mode (sb-posix:stat-mode (sb-posix:stat (namestring pathname)))))
+             (test-assert (= (logand mode 511) 384)
+              "the provider-key store has mode 0600")))
+         (let* ((model "test/chat-model")
+                (provider-configuration (configuration-with-model configuration model))
+                (provider (provider-create provider-configuration))
+                (registration (provider-registration-find "test-openai"))
+                (metadata (provider-model-for model))
+                (astra-model (provider-model-for "gpt-6-astra"))
+                (built-in-models
+                 (append
+                  (list "gpt-6-astra" "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
+                  (mapcar (lambda (entry) (getf entry ':name))
+                          *gemini-code-assist-models*)
+                  (list "grok-4.6" "grok-4.5" "accounts/fireworks/models/kimi-k3"
+                        "accounts/fireworks/models/qwen3p7-plus" "claude-opus-5"
+                        "claude-sonnet-5" "claude-haiku-4-5-20251001")))
+                (model-identifiers (provider-model-identifiers))
+                (model-position (position model model-identifiers :test #'string=)))
+           (test-assert
+            (and model-position
+                 (equal built-in-models
+                        (subseq model-identifiers 0 (length built-in-models)))
+                 (>= model-position (length built-in-models)))
+            "registered models appear after the built-in provider models")
+           (test-assert
+            (and astra-model (= (provider-model-context-window astra-model) 272000)
+                 (equal (provider-model-reasoning-efforts astra-model)
+                        '("low" "medium" "high" "xhigh" "max" "ultra")))
+            "ChatGPT exposes gpt-6-astra with current Codex metadata")
+           (test-assert
+            (and registration
+                 (string= (provider-registration-description registration)
+                          "Synthetic OpenAI-compatible endpoint"))
+            "provider registrations retain their display metadata")
+           (test-assert
+            (and metadata (= (provider-model-context-window metadata) 123456)
+                 (equal (provider-model-reasoning-efforts metadata) '("none" "high")))
+            "registered models retain context and reasoning metadata")
+           (test-assert
+            (and (equal (configuration--reasoning-efforts-for model) '("none" "high"))
+                 (string= (configuration-reasoning-effort provider-configuration)
+                          "none"))
+            "model selection uses the registered reasoning efforts")
+           (test-assert
+            (and (typep provider 'openai-compatible-provider)
+                 (typep provider 'chat-completions-provider)
+                 (eq (provider-wire-protocol provider) ':chat-completions)
+                 (eq (provider-family provider) ':test-openai)
+                 (openai-compatible-provider-stream-usage-p provider)
+                 (string= (configuration-provider-endpoint provider-configuration)
+                          "https://provider.invalid/v1/chat/completions"))
+            "registered models create the configured OpenAI-compatible provider")
+           (let* ((reconfiguration
+                   (configuration-with-reasoning-effort provider-configuration "high"))
+                  (reconfigured (provider-with-configuration provider reconfiguration)))
              (test-assert
-              (probe-file pathname)
-              "API keys are persisted in the private provider-key store")
-             (let ((mode (sb-posix:stat-mode (sb-posix:stat (namestring pathname)))))
+              (and (eq (class-of reconfigured) (class-of provider))
+                   (eq (provider-configuration reconfigured) reconfiguration)
+                   (eq (model-provider-registration reconfigured)
+                       (model-provider-registration provider))
+                   (eq (provider-credential-manager reconfigured)
+                       (provider-credential-manager provider))
+                   (string= (provider-session-id reconfigured)
+                            (provider-session-id provider))
+                   (string= (openai-compatible-provider-display-name reconfigured)
+                            "test-openai")
+                   (eq (openai-compatible-provider-family reconfigured) ':test-openai)
+                   (equal (openai-compatible-provider-headers reconfigured)
+                          '(("X-Test-Provider" . "synthetic")))
+                   (not
+                    (eq (openai-compatible-provider-headers reconfigured)
+                        (openai-compatible-provider-headers provider)))
+                   (string=
+                    (openai-compatible-provider-reasoning-parameter reconfigured)
+                    "reasoning_effort")
+                   (openai-compatible-provider-stream-usage-p reconfigured))
+              "OpenAI-compatible reconfiguration composes session and wire initargs"))
+           (let ((application
+                  (make-instance 'application :configuration provider-configuration)))
+             (test-assert
+              (search "test-openai / test/chat-model"
+                      (application--models-description application))
+              "/models describes registered provider models")
+             (let ((named-provider
+                    (application--authentication-provider application "test-openai")))
                (test-assert
-                (= (logand mode #o777) #o600)
-                "the provider-key store has mode 0600")))
-            (let* ((model "test/chat-model")
-                   (provider-configuration
-                     (configuration-with-model configuration model))
-                   (provider (provider-create provider-configuration))
-                   (registration (provider-registration-find "test-openai"))
-                   (metadata (provider-model-for model))
-                    (astra-model (provider-model-for "gpt-6-astra"))
-                   (built-in-models
-                     (append
-                       (list "gpt-6-astra"
-                             "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
-                      (mapcar (lambda (entry) (getf entry ':name))
-                              *gemini-code-assist-models*)
-                      (list "grok-4.6"
-                            "grok-4.5"
-                            "accounts/fireworks/models/kimi-k3"
-                            "accounts/fireworks/models/qwen3p7-plus"
-                            "claude-opus-5"
-                            "claude-sonnet-5"
-                            "claude-haiku-4-5-20251001")))
-                   (model-identifiers (provider-model-identifiers))
-                   (model-position
-                     (position model model-identifiers :test #'string=)))
-              (test-assert
-               (and model-position
-                    (equal built-in-models
-                           (subseq model-identifiers 0 (length built-in-models)))
-                    (>= model-position (length built-in-models)))
-               "registered models appear after the built-in provider models")
-              (test-assert
-               (and astra-model
-                    (= (provider-model-context-window astra-model) 272000)
-                    (equal (provider-model-reasoning-efforts astra-model)
-                           '("low" "medium" "high" "xhigh" "max" "ultra")))
-               "ChatGPT exposes gpt-6-astra with current Codex metadata")
+                (and (typep named-provider 'openai-compatible-provider)
+                     (string= (openai-compatible-provider-display-name named-provider)
+                              "test-openai"))
+                "/auth PROVIDER selects the named registration")))
+           (unregister-provider "test-openai" :source ':runtime)
+           (test-assert
+            (handler-case
+             (progn
+              (application--validate-provider-registration provider
+                                                           provider-configuration)
+              nil)
+             (configuration-error nil t))
+            "reload rejects a lost active custom provider instead of falling back")
+           (let* ((output (make-string-output-stream))
+                  (message
+                   (openai-compatible-provider-tests--call-with-input
+                    (format nil "~A~%" key)
+                    (lambda (input)
+                      (let ((*standard-input* input) (*standard-output* output))
+                        (provider-authenticate provider :stream output :open-browser-p
+                                               nil))))))
              (test-assert
-              (and registration
-                   (string= (provider-registration-description registration)
-                            "Synthetic OpenAI-compatible endpoint"))
-              "provider registrations retain their display metadata")
-             (test-assert
-              (and metadata
-                   (= (provider-model-context-window metadata) 123456)
-                   (equal (provider-model-reasoning-efforts metadata)
-                          '("none" "high")))
-              "registered models retain context and reasoning metadata")
-             (test-assert
-              (and (equal (configuration--reasoning-efforts-for model)
-                          '("none" "high"))
-                   (string= (configuration-reasoning-effort
-                             provider-configuration)
-                            "none"))
-              "model selection uses the registered reasoning efforts")
-             (test-assert
-              (and (typep provider 'openai-compatible-provider)
-                   (typep provider 'chat-completions-provider)
-                   (eq (provider-wire-protocol provider) ':chat-completions)
-                   (eq (provider-family provider) ':test-openai)
-                   (openai-compatible-provider-stream-usage-p provider)
-                   (string= (configuration-provider-endpoint provider-configuration)
-                            "https://provider.invalid/v1/chat/completions"))
-              "registered models create the configured OpenAI-compatible provider")
-              (let* ((reconfiguration
-                       (configuration-with-reasoning-effort
-                        provider-configuration "high"))
-                     (reconfigured
-                       (provider-with-configuration provider reconfiguration)))
-                (test-assert
-                 (and (eq (class-of reconfigured) (class-of provider))
-                      (eq (provider-configuration reconfigured) reconfiguration)
-                      (eq (model-provider-registration reconfigured)
-                          (model-provider-registration provider))
-                      (eq (provider-credential-manager reconfigured)
-                          (provider-credential-manager provider))
-                      (string= (provider-session-id reconfigured)
-                               (provider-session-id provider))
-                      (string= (openai-compatible-provider-display-name
-                                reconfigured)
-                               "test-openai")
-                      (eq (openai-compatible-provider-family reconfigured)
-                          ':test-openai)
-                      (equal (openai-compatible-provider-headers reconfigured)
-                             '(("X-Test-Provider" . "synthetic")))
-                      (not (eq (openai-compatible-provider-headers reconfigured)
-                               (openai-compatible-provider-headers provider)))
-                      (string= (openai-compatible-provider-reasoning-parameter
-                                reconfigured)
-                               "reasoning_effort")
-                      (openai-compatible-provider-stream-usage-p reconfigured))
-                 "OpenAI-compatible reconfiguration composes session and wire initargs"))
-             (let ((application
-                     (make-instance 'application
-                                    :configuration provider-configuration)))
-               (test-assert
-                (search "test-openai / test/chat-model"
-                        (application--models-description application))
-                "/models describes registered provider models")
-               (let ((named-provider
-                       (application--authentication-provider
-                        application "test-openai")))
+              (and (search "API key was saved" message) (not (search key message))
+                   (not (search key (get-output-stream-string output)))
+                   (not (secret-use-active-p)))
+              "API-key authentication replaces keys without exposing them"))
+           (let ((conversation
+                  (conversation-create provider-configuration :identifier
+                                       "openai-compatible-request"))
+                 (tools
+                  (json-array
+                   (json-object "type" "namespace" "name" "fs" "tools"
+                                (json-array
+                                 (json-object "type" "function" "name" "read"
+                                              "description" "Read one file." "strict"
+                                              false "parameters"
+                                              (json-object "type" "object")))))))
+             (conversation-append-user-message conversation "Read the file.")
+             (multiple-value-bind (request delivery)
+                 (provider-request-object provider conversation tools :goal-context
+                                          "keep the active goal" :compaction-p nil)
+               (let* ((messages (json-get request "messages"))
+                      (stream-options (json-get request "stream_options"))
+                      (wire-tools (json-get request "tools"))
+                      (wire-tool (aref wire-tools 0))
+                      (wire-function (json-get wire-tool "function")))
                  (test-assert
-                  (and (typep named-provider 'openai-compatible-provider)
-                       (string= (openai-compatible-provider-display-name
-                                 named-provider)
-                                "test-openai"))
-                  "/auth PROVIDER selects the named registration")))
-             (unregister-provider "test-openai" :source ':runtime)
-             (test-assert
-              (handler-case
-                  (progn
-                    (application--validate-provider-registration
-                     provider provider-configuration)
-                    nil)
-                (configuration-error () t))
-              "reload rejects a lost active custom provider instead of falling back")
-              (let* ((output (make-string-output-stream))
-                     (message
-                       (openai-compatible-provider-tests--call-with-input
-                        (format nil "~A~%" key)
-                        (lambda (input)
-                          (let ((*standard-input* input)
-                                (*standard-output* output))
-                            (provider-authenticate provider
-                                                   :stream output
-                                                   :open-browser-p nil))))))
-               (test-assert
-                (and (search "API key was saved" message)
-                     (not (search key message))
-                     (not (search key (get-output-stream-string output)))
-                     (not (secret-use-active-p)))
-                "API-key authentication replaces keys without exposing them"))
-             (let ((conversation
-                     (conversation-create provider-configuration
-                                          :identifier "openai-compatible-request"))
-                   (tools
-                     (json-array
-                      (json-object
-                       "type" "namespace"
-                       "name" "fs"
-                       "tools"
-                       (json-array
-                        (json-object
-                         "type" "function"
-                         "name" "read"
-                         "description" "Read one file."
-                         "strict" false
-                         "parameters"
-                         (json-object "type" "object")))))))
-               (conversation-append-user-message conversation "Read the file.")
-               (multiple-value-bind (request delivery)
-                   (provider-request-object
-                    provider conversation tools
-                    :goal-context "keep the active goal"
-                    :compaction-p nil)
-                 (let* ((messages (json-get request "messages"))
-                        (stream-options (json-get request "stream_options"))
-                        (wire-tools (json-get request "tools"))
-                        (wire-tool (aref wire-tools 0))
-                        (wire-function (json-get wire-tool "function")))
-                   (test-assert
-                    (and (vectorp messages)
-                         (search "Read the file" (json-encode messages)))
-                    "Chat Completions requests carry projected conversation messages")
-                   (test-assert
-                    (and (json-object-p stream-options)
-                         (eq (json-get stream-options "include_usage") t))
-                    "Chat Completions requests ask for final streaming usage")
-                   (test-assert
-                    (let* ((system-message (aref messages 0))
-                           (context-message
-                             (aref messages (1- (length messages))))
-                           (system-content
-                             (json-get system-message "content"))
-                           (context-content
-                             (json-get context-message "content")))
-                      (and delivery
-                           (= (length messages) 3)
-                           (string= (json-get system-message "role") "system")
-                           (string= system-content
-                                    (system-prompt provider-configuration))
-                           (null (search "keep the active goal" system-content))
-                           (null (search "Temporary context" system-content))
-                           (string= (json-get context-message "role") "user")
-                           (search "keep the active goal" context-content)
-                           (search "Temporary context" context-content)))
-                    "goal and mutable context trail cacheable conversation history")
-                   (test-assert
-                    (null (json-get request "prompt_cache_key"))
-                    "generic OpenAI-compatible requests omit unsupported cache fields")
-                   (test-assert
-                    (and (vectorp wire-tools)
-                         (string= (json-get wire-tool "type") "function")
-                         (json-object-p wire-function)
-                         (not (find #\. (json-get wire-function "name")))
-                         (json-object-p (json-get wire-function "parameters")))
-                    "namespaced tools use a grammar-safe Chat Completions function wrapper"))))
-             (register-openai-compatible-provider
-              :name "test-openai-no-stream-usage"
-              :models '("test/no-stream-usage")
-              :endpoint "https://provider.invalid/v1/chat/completions"
-              :stream-usage-p nil)
-             (let* ((opt-out-configuration
-                      (configuration-with-model
-                       configuration "test/no-stream-usage"))
-                    (opt-out-provider
-                      (provider-create opt-out-configuration))
-                    (opt-out-conversation
-                      (conversation-create
-                       opt-out-configuration
-                       :identifier "openai-compatible-no-stream-usage")))
-               (conversation-append-user-message opt-out-conversation "Hello.")
-               (multiple-value-bind (request delivery)
-                   (provider-request-object opt-out-provider
-                                            opt-out-conversation
-                                            #())
-                 (declare (ignore delivery))
+                  (and (vectorp messages)
+                       (search "Read the file" (json-encode messages)))
+                  "Chat Completions requests carry projected conversation messages")
                  (test-assert
-                  (and (not (openai-compatible-provider-stream-usage-p
-                             opt-out-provider))
-                       (null (json-get request "stream_options")))
-                  "registered providers can omit unsupported stream options")))
-              (let ((conversation
-                      (conversation-create provider-configuration
-                                           :identifier "openai-compatible-compaction")))
-                (conversation-append-user-message conversation "Compact this history.")
-                (multiple-value-bind (request delivery)
-                    (provider-request-object provider conversation #()
-                                             :compaction-p t)
-                  (let* ((messages (json-get request "messages"))
-                         (system-message (aref messages 0)))
-                    (test-assert
-                     (and (null delivery)
-                          (string= (json-get system-message "role") "system")
-                          (search *compaction-instructions*
-                                  (json-get system-message "content"))
-                          (= 1
-                             (count "system" messages
-                                    :key (lambda (message)
-                                           (json-get message "role"))
-                                    :test #'string=)))
-                     "compaction also uses one leading system message"))))
-             (let* ((call-a
-                      (json-object
-                       "type" "function_call"
-                       "call_id" "call-a"
-                       "namespace" "fs"
-                       "name" "read"
-                       "arguments" "{}"))
-                    (call-b
-                      (json-object
-                       "type" "function_call"
-                       "call_id" "call-b"
-                       "namespace" "fs"
-                       "name" "write"
-                       "arguments" "{}"))
-                    (tool-output
-                      (json-object
-                       "type" "function_call_output"
-                       "call_id" "call-a"
-                       "output" "done"))
-                    (reasoning-item
-                      (json-object
-                       "type" "reasoning_content"
-                       "content" "let me think"))
-                    (messages
-                      (openai-compatible--chat-input-messages
-                       (list reasoning-item call-a call-b tool-output))))
+                  (and (json-object-p stream-options)
+                       (eq (json-get stream-options "include_usage") t))
+                  "Chat Completions requests ask for final streaming usage")
+                 (test-assert
+                  (let* ((system-message (aref messages 0))
+                         (context-message (aref messages (1- (length messages))))
+                         (system-content (json-get system-message "content"))
+                         (context-content (json-get context-message "content")))
+                    (and delivery (= (length messages) 3)
+                         (string= (json-get system-message "role") "system")
+                         (string= system-content
+                                  (system-prompt provider-configuration))
+                         (null (search "keep the active goal" system-content))
+                         (null (search "Temporary context" system-content))
+                         (string= (json-get context-message "role") "user")
+                         (search "keep the active goal" context-content)
+                         (search "Temporary context" context-content)))
+                  "goal and mutable context trail cacheable conversation history")
+                 (test-assert (null (json-get request "prompt_cache_key"))
+                  "generic OpenAI-compatible requests omit unsupported cache fields")
+                 (test-assert
+                  (and (vectorp wire-tools)
+                       (string= (json-get wire-tool "type") "function")
+                       (json-object-p wire-function)
+                       (not (find #\FULL_STOP (json-get wire-function "name")))
+                       (json-object-p (json-get wire-function "parameters")))
+                  "namespaced tools use a grammar-safe Chat Completions function wrapper"))))
+           (register-openai-compatible-provider :name "test-openai-no-stream-usage"
+                                                :models '("test/no-stream-usage")
+                                                :endpoint
+                                                "https://provider.invalid/v1/chat/completions"
+                                                :stream-usage-p nil)
+           (let* ((opt-out-configuration
+                   (configuration-with-model configuration "test/no-stream-usage"))
+                  (opt-out-provider (provider-create opt-out-configuration))
+                  (opt-out-conversation
+                   (conversation-create opt-out-configuration :identifier
+                                        "openai-compatible-no-stream-usage")))
+             (conversation-append-user-message opt-out-conversation "Hello.")
+             (multiple-value-bind (request delivery)
+                 (provider-request-object opt-out-provider opt-out-conversation #())
+               (declare (ignore delivery))
                (test-assert
-                (and (= (length messages) 2)
-                     (string= (json-get (first messages) "role") "assistant")
-                     (= (length (json-get (first messages) "tool_calls")) 2))
-                "multiple function calls share one Chat Completions assistant message")
-               (test-assert
-                (string= (json-get (first messages) "reasoning_content")
-                         "let me think")
-                "captured thinking rides on the same round's tool-call message")
-               (test-assert
-                (family-private-item-p reasoning-item)
-                "thinking items stay private to their producing family")
-               (test-assert
-                (string= (json-get (second messages) "role") "tool")
-                "Chat Completions tool results follow the grouped assistant message"))
-              (openai-compatible-provider-tests--terminal-semantics provider)
-             (let* ((text-event
-                      (openai-compatible-provider-tests--stream-event
-                       (json-object "content" "hello")
-                       "chat-test"))
-                    (reasoning-event
-                      (openai-compatible-provider-tests--stream-event
-                       (json-object "reasoning_content" "pondering")
-                       "chat-test"))
-                    (first-tool
-                      (json-object
-                       "index" 0
-                       "id" "call-test"
-                       "function"
-                       (json-object
-                        "name" (openai-compatible--wire-tool-name "fs" "read")
-                        "arguments" "{\"path\":")))
-                    (second-tool
-                      (json-object
-                       "index" 0
-                       "function"
-                       (json-object "arguments" "\"x\"}")))
-                    (first-tool-event
-                      (openai-compatible-provider-tests--stream-event
-                       (json-object
-                        "tool_calls" (json-array first-tool))
-                       "chat-test"))
-                    (second-tool-event
-                      (openai-compatible-provider-tests--stream-event
-                       (json-object
-                        "tool_calls" (json-array second-tool))
-                       "chat-test"))
-                     (usage
-                       (json-object
-                        "prompt_tokens" 7
-                        "completion_tokens" 3
-                        "total_tokens" 10))
-                     (finish-event
-                       (openai-compatible-provider-tests--stream-event
-                        (json-object)
-                        "chat-test"
-                        "tool_calls"))
-                     (usage-event
-                       (json-object
-                        "id" "chat-test"
-                        "choices" (json-array)
-                        "usage" usage))
-                    (source
-                      (concatenate
-                       'string
-                       (format nil "data:~%~%")
-                       (test-sse-event-string reasoning-event)
-                       (test-sse-event-string text-event)
-                       (test-sse-event-string first-tool-event)
-                       (test-sse-event-string second-tool-event)
-                       (test-sse-event-string finish-event)
-                        (test-sse-event-string usage-event)
-                       (format nil "data: [DONE]~%~%")))
-                    (events nil)
-                    (result
-                      (provider-consume-stream
-                       provider
-                       (make-string-input-stream source)
-                       nil
-                       (lambda (event) (push event events))))
-                    (call (first (provider-result-tool-calls result))))
-               (test-assert
-                (and (string= (provider-result-response-id result) "chat-test")
-                     (eq (provider-result-turn-completion result) ':continue)
-                     (= (length (provider-result-output-items result)) 3)
-                     (= (json-get (provider-result-usage result) "prompt_tokens") 7)
-                     (= (json-get (provider-result-usage result) "completion_tokens") 3))
-                "Chat Completions streams produce usage-aware continuing results")
-               (test-assert
-                (let ((item (first (provider-result-output-items result))))
-                  (and (chat-reasoning-item-p item)
-                       (string= (json-get item "content") "pondering")))
-                "streamed thinking persists as the leading reasoning item")
-               (test-assert
-                (and call
-                     (string= (json-get call "namespace") "fs")
-                     (string= (json-get call "name") "read")
-                     (string= (json-get call "arguments") "{\"path\":\"x\"}"))
-                "fragmented Chat Completions tool calls become namespaced calls")
-               (test-assert
-                (and (find-if (lambda (event)
-                                (typep event 'assistant-delta-event))
-                             events)
-                     (find-if (lambda (event)
-                                (typep event 'provider-completed-event))
-                             events))
-                "Chat Completions streams emit assistant and completion events")
-               (test-assert
-                (handler-case
-                    (progn
-                      (provider-consume-stream
-                       provider
-                       (make-string-input-stream
-                        (test-sse-event-string text-event))
-                       nil
-                       #'identity)
-                      nil)
-                  (response-stream-error () t))
-                "truncated Chat Completions streams remain retryable failures"))
-                (test-assert
-                 (handler-case
-                     (progn
-                       (provider-consume-stream
-                        provider
-                        (make-string-input-stream (format nil "data: {~%~%"))
-                        nil
-                        #'identity)
-                       nil)
-                   (provider-protocol-error (condition)
-                     (not (typep condition 'provider-retryable-error))))
-                 "malformed Chat Completions events are terminal protocol failures")
-              (let* ((tool-event
-                       (openai-compatible-provider-tests--stream-event
-                        (json-object
-                         "tool_calls"
-                         (json-array
-                          (json-object
-                           "index" 0
-                           "id" "call-empty"
-                           "function"
-                           (json-object
-                            "name"
-                            (openai-compatible--wire-tool-name "fs" "read")))))
-                        "chat-empty"))
-                     (finish-event
-                       (openai-compatible-provider-tests--stream-event
-                        (json-object) "chat-empty" "tool_calls"))
-                     (result
-                       (provider-consume-stream
-                        provider
-                        (make-string-input-stream
-                         (concatenate
-                          'string
-                          (test-sse-event-string tool-event)
-                          (test-sse-event-string finish-event)
-                          (format nil "data: [DONE]~%~%")))
-                        nil
-                        #'identity))
-                     (call (first (provider-result-tool-calls result))))
-                (test-assert
-                 (and call (string= (json-get call "arguments") "{}"))
-                 "empty Chat Completions tool arguments normalize to an object"))
-              (dolist (case
-                       (list
-                        (list "missing call id"
-                              (json-object
-                               "index" 0
-                               "function"
-                               (json-object "name" "read" "arguments" "{}")))
-                        (list "missing function name"
-                              (json-object
-                               "index" 0
-                               "id" "call-missing-name"
-                               "function"
-                               (json-object "arguments" "{}")))))
-                (let* ((tool-event
-                         (openai-compatible-provider-tests--stream-event
-                          (json-object "tool_calls" (json-array (second case)))
-                          "chat-incomplete"))
-                       (finish-event
-                         (openai-compatible-provider-tests--stream-event
-                          (json-object) "chat-incomplete" "tool_calls"))
-                       (source
-                         (concatenate
-                          'string
-                          (test-sse-event-string tool-event)
-                          (test-sse-event-string finish-event)
-                          (format nil "data: [DONE]~%~%"))))
-                    (test-assert
-                     (handler-case
-                         (progn
-                           (provider-consume-stream
-                            provider
-                            (make-string-input-stream source)
-                            nil
-                            #'identity)
-                           nil)
-                       (provider-protocol-error (condition)
-                         (not (typep condition 'provider-retryable-error))))
-                     (format nil
-                             "Chat Completions rejects ~A as a terminal protocol failure"
-                             (first case)))))
-              (dolist (item
-                       (list
-                        (json-object "type" 17 "role" "assistant")
-                        (json-object "type" "message" "role" 17)
-                        (json-object "type" 17 "summary" (json-array))))
-                (test-assert
-                 (and (null (response-item-assistant-text item))
-                      (null (response-item-reasoning-summary item))
-                      (not (function-call-item-p item)))
-                 "non-string response discriminators are ignored safely"))
-              (let* ((malformed-event
-                       (openai-compatible-provider-tests--stream-event
-                        (json-object
-                         "content" 17
-                         "tool_calls"
-                         (json-array
-                          (json-object
-                           "index" 0
-                           "id" 17
-                           "function"
-                           (json-object "name" 17 "arguments" 17))))
-                        "chat-malformed"))
-                     (finish-event
-                       (openai-compatible-provider-tests--stream-event
-                        (json-object) "chat-malformed" "stop"))
-                     (source
-                       (concatenate
-                        'string
-                        (test-sse-event-string malformed-event)
-                        (test-sse-event-string finish-event)
-                        (format nil "data: [DONE]~%~%"))))
-                (test-assert
-                 (handler-case
-                     (progn
-                       (provider-consume-stream
-                        provider
-                        (make-string-input-stream source)
-                        nil
-                        #'identity)
-                       nil)
-                    (provider-protocol-error (condition)
-                      (not (typep condition 'provider-retryable-error))))
-                  "malformed tool fields become terminal protocol failures"))
+                (and (not (openai-compatible-provider-stream-usage-p opt-out-provider))
+                     (null (json-get request "stream_options")))
+                "registered providers can omit unsupported stream options")))
+           (let ((conversation
+                  (conversation-create provider-configuration :identifier
+                                       "openai-compatible-compaction")))
+             (conversation-append-user-message conversation "Compact this history.")
+             (multiple-value-bind (request delivery)
+                 (provider-request-object provider conversation #() :compaction-p t)
+               (let* ((messages (json-get request "messages"))
+                      (system-message (aref messages 0)))
+                 (test-assert
+                  (and (null delivery)
+                       (string= (json-get system-message "role") "system")
+                       (search *compaction-instructions*
+                               (json-get system-message "content"))
+                       (= 1
+                          (count "system" messages :key
+                                 (lambda (message) (json-get message "role")) :test
+                                 #'string=)))
+                  "compaction also uses one leading system message"))))
            (let* ((prompt-provider
-                    (openai-compatible-provider-create
-                     configuration
-                     :name "prompt-openai"
-                     :family ':prompt-openai
-                     :headers nil
-                     :reasoning-parameter nil))
-                   (prompt-output (make-string-output-stream))
-                   (message
-                     (openai-compatible-provider-tests--call-with-input
-                      "prompt-key\n"
-                      (lambda (input)
-                        (let ((*standard-input* input)
-                              (*standard-output* prompt-output))
-                          (provider-authenticate prompt-provider
-                                                 :stream prompt-output
-                                                 :open-browser-p nil))))))
+                   (openai-compatible-provider-create configuration :name
+                                                      "prompt-openai" :family
+                                                      ':prompt-openai :headers nil
+                                                      :reasoning-parameter nil))
+                  (prompt-output (make-string-output-stream))
+                  (message
+                   (openai-compatible-provider-tests--call-with-input "prompt-keyn"
+                    (lambda (input)
+                      (let ((*standard-input* input) (*standard-output* prompt-output))
+                        (provider-authenticate prompt-provider :stream prompt-output
+                                               :open-browser-p nil))))))
              (test-assert
               (and (search "API key was saved" message)
                    (not (search "prompt-key" message))
-                   (not (search "prompt-key"
-                                (get-output-stream-string prompt-output))))
+                   (not
+                    (search "prompt-key" (get-output-stream-string prompt-output))))
               "API-key authentication stores prompted keys without echoing them")
              (test-assert
               (api-key-credential-available-p
                (provider-credential-manager prompt-provider))
               "prompted API keys are available to later requests"))
            (let ((empty-manager
-                   (api-key-credential-manager-create
-                    :provider-name "empty-test"
-                    :pathname (configuration-api-keys-path configuration))))
+                  (api-key-credential-manager-create :provider-name "empty-test"
+                                                     :pathname
+                                                     (configuration-api-keys-path
+                                                      configuration))))
              (test-assert
               (typep (credential-manager-primary-source empty-manager)
                      'autolith-credential-source)
               "API-key sources use the private credential-source contract")
-             (test-assert
-              (not (api-key-credential-available-p empty-manager))
+             (test-assert (not (api-key-credential-available-p empty-manager))
               "missing API keys are reported as unavailable")
-             (test-assert
-              (not (secret-use-active-p))
+             (test-assert (not (secret-use-active-p))
               "API-key availability checks release request-scope secret accounting"))
-           (register-provider
-            "chatgpt"
-            :source ':user
-            :family ':codex
-            :models '("shadow/chatgpt")
-            :factory
-            (lambda (configuration &key reasoning-summaries-p)
-              (declare (ignore configuration reasoning-summaries-p))
-              (make-instance 'model-provider)))
+           (register-provider "chatgpt" :source ':user :family ':codex :models
+                              '("shadow/chatgpt") :factory
+                              (lambda (configuration &key reasoning-summaries-p)
+                                (declare (ignore configuration reasoning-summaries-p))
+                                (make-instance 'model-provider)))
            (test-assert
-            (and (member "shadow/chatgpt" (provider-model-identifiers)
-                         :test #'string=)
-                 (not (member "gpt-5.6-sol" (provider-model-identifiers)
-                              :test #'string=)))
+            (and (member "shadow/chatgpt" (provider-model-identifiers) :test #'string=)
+                 (not
+                  (member "gpt-5.6-sol" (provider-model-identifiers) :test #'string=)))
             "a higher-precedence provider registration hides its shadowed models")
            (configuration-ensure-directories configuration)
            (let ((pathname (configuration-user-init-path configuration)))
-             (with-open-file (stream pathname
-                                     :direction ':output
-                                     :if-exists ':supersede
-                                     :if-does-not-exist ':create
-                                     :external-format ':utf-8)
-               (write-string
-                "(register-openai-compatible-provider
+             (with-open-file
+                 (stream pathname :direction ':output :if-exists ':supersede
+                  :if-does-not-exist ':create :external-format ':utf-8)
+               (write-string "(register-openai-compatible-provider
                     :name \"init-openai\"
                     :description \"Provider from init.lisp\"
                     :endpoint \"https://init.invalid/v1/chat/completions\"
                     :models '(\"init/chat-model\"))"
-                stream))
-             (test-assert
-              (equal (user-init-load configuration) pathname)
+                             stream))
+             (test-assert (equal (user-init-load configuration) pathname)
               "init.lisp loads an OpenAI-compatible provider registration")
              (let ((registration (provider-registration-find "init-openai")))
                (test-assert
                 (and registration
                      (eq (provider-registration-source registration) ':user)
-                     (member "init/chat-model"
-                             (provider-model-identifiers)
-                             :test #'string=))
+                     (member "init/chat-model" (provider-model-identifiers) :test
+                             #'string=))
                 "init.lisp provider registrations expose user models"))
              (delete-file pathname)
              (user-init-load configuration)
              (test-assert
-              (not (member "init/chat-model"
-                           (provider-model-identifiers)
-                           :test #'string=))
+              (not
+               (member "init/chat-model" (provider-model-identifiers) :test #'string=))
               "removing init.lisp removes its provider registrations")))
-      (provider--registry-restore registry-snapshot)
-      (when root
-        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
-  nil))
+         (provider--registry-restore registry-snapshot)
+         (when root
+           (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
+                                                  ':ignore))))
+    nil))
 
 (-> test-openai-compatible-tool-name-recovery () null)
 (defun test-openai-compatible-tool-name-recovery ()

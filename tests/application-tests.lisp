@@ -7915,7 +7915,13 @@
              (and (typep handled-condition 'provider-protocol-error)
                   (string= (provider-error-response-id handled-condition)
                            "compact-empty"))
-             "provider protocol failures use expected error presentation")))
+             "provider protocol failures use expected error presentation")
+            (test-assert
+             (eq (application--call-with-command-debugger
+                  application
+                  (lambda () (application-run-message application "compact")))
+                 ':failed)
+             "provider failures from commands bypass the Lisp debugger")))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

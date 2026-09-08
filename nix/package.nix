@@ -31,16 +31,29 @@ let
   clLlmProviderApi = pkgs.sbcl.buildASDFSystem {
     pname = "cl-llm-provider-api";
     version = "0.2.0";
+    systems = [
+      "cl-llm-provider-api"
+      "cl-llm-provider-api/wire"
+      "cl-llm-provider-api/dexador"
+      "cl-llm-provider-api/context"
+      "cl-llm-provider-api/contracts"
+    ];
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "cl-llm-provider-api";
-      rev = "a25e9b141628e682933fc9d45fc7cfb00a6dcdd2";
-      hash = "sha256-1bhh/lniQRksPGQp0X9lACgzdHOLo23Ux/J7qRMhwew=";
+      rev = "259e13553f4365eaf6d40370654b7055560d6508";
+      hash = "sha256-hwZdEgLc4uUvJSRsQTAKTXqtZILOpj6WENLUxb/r6gs=";
     };
     lispLibs = with pkgs.sbclPackages; [
       babel
       bordeaux-threads
       ironclad
+      yason
+      dexador
+      cl_plus_ssl
+      usocket
+      clinkerTranscript
+      clRfc8628
     ];
   };
 

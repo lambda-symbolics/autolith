@@ -177,81 +177,6 @@
     :documentation "The underlying request or response failure."))
   (:documentation "A provider's dynamic model list could not be refreshed."))
 
-(define-condition provider-error (autolith-error)
-  ((status
-    :initarg :status
-    :reader provider-error-status
-    :type (option integer)
-    :documentation "The provider HTTP status, if a response was received.")
-   (code
-    :initarg :code
-    :initform nil
-    :reader provider-error-code
-    :type (option string)
-    :documentation "The provider's structured error code, if supplied.")
-   (request-id
-    :initarg :request-id
-    :reader provider-error-request-id
-    :type (option string)
-    :documentation "The provider request identifier, if supplied.")
-   (response-id
-    :initarg :response-id
-    :initform nil
-    :reader provider-error-response-id
-    :type (option string)
-    :documentation "The failed response identifier, if supplied.")
-   (response
-    :initarg :response
-    :reader provider-error-response
-    :type (option string)
-    :documentation "A bounded provider response safe for display."))
-  (:documentation "A model-provider request failed."))
-
-(define-condition provider-protocol-error (provider-error)
-  ()
-  (:documentation "A provider returned a terminal protocol-invalid response."))
-
-(define-condition provider-retryable-error
-    (llm-provider-api:provider-retryable-error provider-error)
-  ()
-  (:documentation "A transient provider failure eligible for bounded retry.
-Inherits the library condition so the shared retry ladder recognizes it."))
-
-(define-condition provider-incomplete-response (provider-error)
-  ((reason
-    :initarg :reason
-    :reader provider-incomplete-response-reason
-    :type non-empty-string
-    :documentation "The provider's incomplete response reason, or unknown."))
-  (:documentation "A terminal provider response that ended incomplete."))
-
-(define-condition provider-resample-requested
-    (llm-provider-api:provider-resample-requested provider-retryable-error)
-  ()
-  (:documentation
-   "A provider reported a degenerate generation loop worth resampling.
-The trigger, attempt, and budget slots come from the library condition."))
-
-(define-condition provider-transport-error (provider-retryable-error)
-  ()
-  (:documentation
-   "A transient provider connection failure eligible for reconnection."))
-
-(define-condition response-stream-error (provider-transport-error)
-  ()
-  (:documentation "A provider stream ended without a valid terminal event."))
-
-(define-condition response-stream-limit-error
-    (llm-provider-api:provider-stream-limit-error response-stream-error)
-  ()
-  (:default-initargs :status nil :request-id nil :response nil)
-  (:documentation
-   "The shared SSE decoder rejected an oversized provider stream."))
-
-(define-condition provider-unauthorized (provider-error)
-  ()
-  (:documentation "A bounded provider attempt was rejected as unauthorized."))
-
 
 ;;;; -- Persistence and Tool Conditions --
 
@@ -653,3 +578,9 @@ Codes let tests and callers discriminate failures without pinning prose.")
      stream
       "Checkpoint ~A is publishing, but a tool runtime could not resume."
       (checkpoint-runtime-resume-warning-generation-id condition)))))
+
+
+(defmethod autolith-error-message
+    ((condition cl-llm-provider-api:provider-api-error))
+  "Return the portable provider failure explanation."
+  (cl-llm-provider-api:provider-api-error-message condition))

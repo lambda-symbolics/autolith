@@ -2206,7 +2206,8 @@ reaches the very next provider request."
                :return-values-p return-values-p
                :debug-condition-p
                (lambda (condition)
-                 (not (typep condition 'autolith-error))))
+                 (not (typep condition
+                             '(or autolith-error cl-llm-provider-api:provider-api-error)))))
             (declare (ignore restart-names selected-restart-name))
             (if (eq debugger-status ':aborted)
                 (values ':aborted condition)
@@ -2221,7 +2222,7 @@ reaches the very next provider request."
              active-image-corruption)
          (condition)
           (application-raise-fatal application condition signal-backtrace))
-        (autolith-error (condition)
+        ((or autolith-error cl-llm-provider-api:provider-api-error) (condition)
           (funcall expected-error-function application condition)
           (values ':failed (princ-to-string condition)))
         (serious-condition (condition)
@@ -3616,7 +3617,7 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
              active-image-corruption)
          (condition)
           (application-raise-fatal application condition signal-backtrace))
-        (autolith-error (condition)
+        ((or autolith-error cl-llm-provider-api:provider-api-error) (condition)
           (application--record-turn-aborted
            application condition
            :turn-start-sequence turn-start-sequence

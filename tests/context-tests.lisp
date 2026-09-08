@@ -16,45 +16,6 @@
   "CONTEXT-DELIVERY-EVIDENCE-MUST-NOT-BE-RETAINED"
   "An evidence sentinel that retained diagnostics must discard.")
 
-(-> context-tests--stacked (request-context) list)
-(defun context-tests--stacked (context)
-  "Return overlapping contributions used to exercise request resolution."
-  (declare (ignore context))
-  (list
-   (make-context-contribution
-    :identifier "generic"
-    :instruction "Use the generic path."
-    :priority 5)
-   (make-context-contribution
-    :identifier "specific"
-    :instruction "Use the specific path."
-    :priority 20
-    :supersedes '("generic"))
-   (make-context-contribution
-    :identifier "stacked"
-    :instruction "Also preserve the surrounding form."
-    :priority 10)
-   (make-context-contribution
-    :identifier "duplicate-low"
-    :instruction "Use the weaker duplicate."
-    :priority 1
-    :deduplication-key "duplicate")
-   (make-context-contribution
-    :identifier "duplicate-high"
-    :instruction "Use the stronger duplicate."
-    :priority 2
-    :deduplication-key "duplicate")
-   (make-context-contribution
-    :identifier "conflict-low"
-    :instruction "Choose the weaker conflict."
-    :priority 3
-    :conflict-group "mode")
-   (make-context-contribution
-    :identifier "conflict-high"
-    :instruction "Choose the stronger conflict."
-    :priority 4
-    :conflict-group "mode")))
-
 (-> context-tests--next-request (request-context) (option context-contribution))
 (defun context-tests--next-request (context)
   "Return one edge-triggered contribution while its fixture is active."
@@ -88,25 +49,6 @@
   (make-context-contribution
    :identifier "serialized"
    :instruction "Serialized contributor invocation."))
-
-(-> context-tests--mandatory (request-context) list)
-(defun context-tests--mandatory (context)
-  "Return mandatory and advisory values used to exercise the budget."
-  (declare (ignore context))
-  (list
-   (make-context-contribution
-    :identifier "mandatory"
-    :instruction "Always retain this requirement."
-    :class ':mandatory
-    :priority -100)
-   (make-context-contribution
-    :identifier "high"
-    :instruction "Keep this compact high-priority advice."
-    :priority 100)
-   (make-context-contribution
-    :identifier "low"
-    :instruction (make-string 200 :initial-element #\x)
-    :priority 1)))
 
 (-> context-tests--sensitive (request-context) context-contribution)
 (defun context-tests--sensitive (context)
@@ -155,7 +97,7 @@
 (defun context-tests--serialized-invocation (configuration conversation)
   "Test that a concurrent request cannot invoke contributors through the lock."
   (let* ((*context-contributors* nil)
-         (*context-next-request-delivered* (make-hash-table :test #'equal))
+         (*context-resolver* (cl-llm-provider-api:make-context-resolver))
          (*context-last-deliveries* (make-hash-table :test #'equal))
          (*context-last-delivery-order* nil)
          (state (list 0))
@@ -167,7 +109,7 @@
          (thread-error nil))
     (register-context-contributor "serialized" 'context-tests--serialized)
     (let ((registrations *context-contributors*)
-          (receipts *context-next-request-delivered*)
+          (receipts *context-resolver*)
           (deliveries *context-last-deliveries*)
           (delivery-order *context-last-delivery-order*))
       (with-lock-held (*context-contributor-invocation-lock*)
@@ -175,7 +117,7 @@
               (make-thread
                (lambda ()
                  (let ((*context-contributors* registrations)
-                       (*context-next-request-delivered* receipts)
+                       (*context-resolver* receipts)
                        (*context-last-deliveries* deliveries)
                        (*context-last-delivery-order* delivery-order)
                        (*context-test-invocation-state* state))
@@ -235,7 +177,7 @@
             (handler-case
                 (progn
                   (register-context-contributor
-                   "session-state" 'context-tests--mandatory
+                   "session-state" 'context-tests--sensitive
                    :source ':built-in)
                   nil)
               (configuration-error ()
@@ -249,106 +191,20 @@
 
 (-> test-request-local-context () null)
 (defun test-request-local-context ()
-  "Test contributor stacking, lifecycle, budgeting, failures, and projection."
+  "Test contributor registration, product diagnostics, and request projection."
   (context-tests--defining-form)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (conversation (conversation-create configuration
                                             :identifier "context-test"))
          (*context-contributors* nil)
-         (*context-next-request-delivered* (make-hash-table :test #'equal))
+         (*context-resolver* (cl-llm-provider-api:make-context-resolver))
          (*context-last-deliveries* (make-hash-table :test #'equal))
          (*context-last-delivery-order* nil)
          (*context-test-next-request-p* t))
     (unwind-protect
          (progn
            (conversation-append-user-message conversation "inspect this request")
-           (register-context-contributor "stacked" 'context-tests--stacked
-                                         :source ':built-in)
-           (let* ((delivery
-                    (context-resolve-request configuration conversation #()))
-                  (rendered (context-delivery-rendered delivery)))
-             (test-assert
-              (and (search "specific path" rendered)
-                   (search "preserve the surrounding form" rendered))
-              "compatible context contributions stack in one request")
-             (test-assert (not (search "generic path" rendered))
-                          "explicit supersession removes generic advice")
-             (test-assert
-              (and (search "stronger duplicate" rendered)
-                   (not (search "weaker duplicate" rendered)))
-              "deduplication retains the highest-priority equivalent advice")
-             (test-assert
-              (and (search "stronger conflict" rendered)
-                   (not (search "weaker conflict" rendered)))
-              "explicit conflict groups select one strongest contribution"))
-           (register-context-contributor "next" 'context-tests--next-request)
-           (let ((first (context-resolve-request configuration conversation #())))
-             (test-assert (search "next completed request"
-                                  (context-delivery-rendered first))
-                          "a next-request contribution is initially active")
-             (context-delivery-complete first))
-           (let ((second (context-resolve-request configuration conversation #())))
-             (test-assert
-              (not (search "next completed request"
-                           (or (context-delivery-rendered second) "")))
-              "a completed response consumes next-request advice"))
-           (setf *context-test-next-request-p* nil)
-           (context-resolve-request configuration conversation #())
-           (setf *context-test-next-request-p* t)
-           (test-assert
-            (search "next completed request"
-                    (context-delivery-rendered
-                     (context-resolve-request configuration conversation #())))
-            "a later activation may deliver the same next-request advice again")
-           (clrhash *context-next-request-delivered*)
-           (let ((other-conversation
-                   (conversation-create configuration
-                                        :identifier "context-test-other")))
-             (let ((first
-                     (context-resolve-request configuration conversation #())))
-               (context-delivery-complete first))
-             (let ((first
-                     (context-resolve-request configuration
-                                              other-conversation
-                                              #())))
-               (context-delivery-complete first))
-             (test-assert
-              (not (search "next completed request"
-                           (or (context-delivery-rendered
-                                (context-resolve-request configuration
-                                                         conversation
-                                                         #()))
-                               "")))
-              "another conversation cannot erase a next-request receipt")
-             (setf *context-test-next-request-p* nil)
-             (context-resolve-request configuration conversation #())
-             (setf *context-test-next-request-p* t)
-             (test-assert
-              (search "next completed request"
-                      (context-delivery-rendered
-                       (context-resolve-request configuration conversation #())))
-              "inactive advice clears the receipt only for its conversation")
-             (test-assert
-              (not (search "next completed request"
-                           (or (context-delivery-rendered
-                                (context-resolve-request configuration
-                                                         other-conversation
-                                                         #()))
-                               "")))
-              "conversation-local cleanup preserves another conversation's receipt"))
-           (setf *context-contributors* nil
-                 *context-advice-token-budget* 20)
-           (register-context-contributor "budget" 'context-tests--mandatory)
-           (let ((delivery
-                   (context-resolve-request configuration conversation #())))
-             (test-assert
-              (find "mandatory" (context-delivery-contributions delivery)
-                    :test #'string=
-                    :key #'context-contribution-identifier)
-              "mandatory context never competes for the advice budget")
-             (test-assert (context-delivery-omitted delivery)
-                          "advice beyond the token budget is omitted visibly"))
            (setf *context-contributors* nil)
            (register-context-contributor "failure" 'context-tests--failure)
            (let ((delivery
@@ -464,8 +320,7 @@
                  (gethash "context-diagnostic-33"
                           *context-last-deliveries*))
             "context diagnostics evict the oldest conversation first")
-           (setf *context-contributors* nil
-                 *context-advice-token-budget* 1500)
+           (setf *context-contributors* nil)
            (register-context-contributor "next" 'context-tests--next-request)
            (let* ((provider (provider-create configuration))
                   (before (copy-list
@@ -485,6 +340,14 @@
              (test-assert
               (equal before (conversation-input-items conversation))
               "context request assembly never mutates durable conversation input"))
+           (let ((delivery (context-resolve-request configuration conversation #())))
+             (test-assert (context-delivery-contributions delivery)
+                          "request projection alone does not consume delivery state")
+             (context-delivery-complete delivery)
+             (test-assert
+              (null (context-delivery-contributions
+                     (context-resolve-request configuration conversation #())))
+              "product completion forwards successful delivery to the generic resolver"))
            (let ((request
                    (make-instance 'request-context
                                   :configuration configuration

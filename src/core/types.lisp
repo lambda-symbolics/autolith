@@ -18,14 +18,6 @@
   "The subset of persistent memories selected for one operation."
   '(member :relevant :global :workspace :all))
 
-(deftype context-contribution-lifetime ()
-  "The request lifetime declared by one ephemeral context contribution."
-  '(member :next-request :turn :while-relevant :until-success))
-
-(deftype context-contribution-class ()
-  "Whether a context contribution competes for the advice budget."
-  '(member :advice :mandatory))
-
 (deftype tool-conversation-persistence ()
   "The lifetime of one tool call and its correlated provider result."
   '(member :durable :next-response))

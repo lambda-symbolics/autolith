@@ -12,6 +12,9 @@
                #:cl-rfc8628
                #:clinker-transcript
                #:cl-llm-provider-api
+               #:cl-llm-provider-api/dexador
+               #:cl-llm-provider-api/context
+               #:cl-llm-provider-api/contracts
                #:cl-skills
                #:cl-termdown
                #:clifff
@@ -62,7 +65,6 @@
                              (:file "state/updates")
                              (:file "configuration/preferences")
                              (:file "configuration/permissions")
-                              (:file "provider/transport")
                              (:file "provider/authentication")
                              (:file "provider/chatgpt/authentication")
                              (:file "provider/gemini/authentication")
@@ -106,7 +108,6 @@
                              (:file "provider/openrouter/client")
                              (:file "provider/mistral/authentication")
                              (:file "provider/mistral/client")
-                             (:file "provider/usage")
                              (:file "provider/builtins")
                              (:file "resource/protocol")
                              (:file "resource/item-identity")

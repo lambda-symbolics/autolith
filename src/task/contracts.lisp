@@ -98,10 +98,6 @@
     :reasoning-effort :output :blocking-p)
   "The complete native child-role plist vocabulary.")
 
-(defparameter *task-output-types*
-  '(:object :array :string :number :integer :boolean :null)
-  "The value types supported by native task output contracts.")
-
 (defparameter *task-forbidden-child-tool-namespaces*
   '("self" "task" "job" "yield")
   "Tool namespaces structurally unavailable to ordinary child-role grants.")
@@ -241,485 +237,65 @@
         always (not (member (first tail) (rest tail) :test test))))
 
 
-;;;; -- Native Output Contracts --
+;;;; -- Structured Output Adapters --
 
 (-> task-output--json-number-p (t) boolean)
 (defun task-output--json-number-p (value)
-  "Return true when VALUE is a finite JSON-representable number."
-  (or (integerp value)
-      (and (floatp value)
-           #+sbcl
-           (not (or (sb-ext:float-nan-p value)
-                    (sb-ext:float-infinity-p value)))
-           #-sbcl
-           t)))
-
-(-> task-output--enum-value-p (t) boolean)
-(defun task-output--enum-value-p (value)
-  "Return true when VALUE is a scalar supported by native output enum syntax."
-  (or (stringp value)
-      (task-output--json-number-p value)
-      (eq value t)
-      (null value)
-      (eq value :null)))
-
-(-> task-output--value-has-type-p (t keyword) boolean)
-(defun task-output--value-has-type-p (value type)
-  "Return true when native enum VALUE has schema TYPE."
-  (case type
-    (:string (stringp value))
-    (:integer (integerp value))
-    (:number (task-output--json-number-p value))
-    (:boolean (or (eq value t) (null value)))
-    (:null (eq value :null))
-    (otherwise nil)))
-
-(-> task-output--native-value-equal-p (t t) boolean)
-(defun task-output--native-value-equal-p (left right)
-  "Return true when native scalar values are equal under JSON semantics."
-  (if (and (numberp left) (numberp right))
-      (= left right)
-      (equal left right)))
-
-(-> task-output--normalize-enum
-    (t &key (:pathname (option pathname))
-            (:source keyword)
-            (:definition-name (option string))
-            (:type (option keyword)))
-    list)
-(defun task-output--normalize-enum
-    (value &key pathname source definition-name type)
-  "Validate and copy one native output enum VALUE."
-  (unless (and (task--proper-list-p value) value)
-    (task-agent-definition--error
-     :pathname pathname :source source :field ':enum
-     :cause "An output enum must be a non-empty proper list."
-     :definition-name definition-name))
-  (unless (every #'task-output--enum-value-p value)
-    (task-agent-definition--error
-     :pathname pathname :source source :field ':enum
-     :cause "Output enum values must be strings, JSON numbers, T, NIL, or :NULL."
-     :definition-name definition-name))
-  (unless (task--unique-list-p
-           value :test #'task-output--native-value-equal-p)
-    (task-agent-definition--error
-     :pathname pathname :source source :field ':enum
-     :cause "Output enum values must be unique."
-     :definition-name definition-name))
-  (when (and type
-             (not (every (lambda (item)
-                           (task-output--value-has-type-p item type))
-                         value)))
-    (task-agent-definition--error
-     :pathname pathname :source source :field ':enum
-     :cause (format nil "An enum value does not have declared type ~S." type)
-     :definition-name definition-name))
-  (copy-list value))
-
-(-> task-output--normalize-properties
-    (t &key (:pathname (option pathname))
-            (:source keyword)
-            (:definition-name (option string)))
-    list)
-(defun task-output--normalize-properties
-    (value &key pathname source definition-name)
-  "Validate and normalize a native object property association list."
-  (unless (task--proper-list-p value)
-    (task-agent-definition--error
-     :pathname pathname :source source :field ':properties
-     :cause "Output properties must be a proper association list."
-     :definition-name definition-name))
-  (let ((names nil)
-        (properties nil))
-    (dolist (entry value)
-      (unless (and (task--proper-list-p entry) (= (length entry) 2)
-                   (non-empty-string-p (first entry)))
-        (task-agent-definition--error
-         :pathname pathname :source source :field ':properties
-         :cause "Each output property must be a two-element list of name and schema."
-         :definition-name definition-name))
-      (when (> (length (first entry)) *task-agent-string-maximum-characters*)
-        (task-agent-definition--error
-         :pathname pathname :source source :field ':properties
-         :cause "An output property name exceeds the string bound."
-         :definition-name definition-name))
-      (when (member (first entry) names :test #'string=)
-        (task-agent-definition--error
-         :pathname pathname :source source :field ':properties
-         :cause (format nil "Output property ~S occurs more than once."
-                        (first entry))
-         :definition-name definition-name))
-      (push (first entry) names)
-      (push (list (first entry)
-                  (task-output-schema-normalize
-                   (second entry)
-                   :pathname pathname
-                   :source source
-                   :definition-name definition-name))
-            properties))
-    (nreverse properties)))
+  "Check numeric values at native role and task-result boundaries."
+  (cl-llm-provider-api:output-json-number-p value))
 
 (-> task-output-schema-normalize
-    (t &key (:pathname (option pathname))
-            (:source keyword)
-            (:definition-name (option string)))
-    list)
-(defun task-output-schema-normalize
-    (schema &key pathname source definition-name)
-  "Validate and return a canonical copy of native output SCHEMA.
-
-The supported syntax is deliberately smaller than JSON Schema. A schema is a
-proper plist with :TYPE and optional :ENUM. Object schemas may add
-:PROPERTIES, :REQUIRED, and :ADDITIONAL-PROPERTIES. Array schemas require
-:ITEMS and may add :MIN-ITEMS and :MAX-ITEMS. An enum-only schema may omit
-:TYPE. Native NIL and :NULL denote JSON false and JSON null respectively only
-inside enum value positions."
-  (let* ((pairs
-           (task--plist-alist
-            schema
-            '(:type :enum :properties :required :additional-properties
-              :items :min-items :max-items)
-            :pathname pathname
-            :source source
-            :definition-name definition-name))
-         (type nil)
-         (type-present-p nil)
-         (enum nil)
-         (enum-present-p nil))
-    (multiple-value-setq (type type-present-p)
-      (task--alist-value :type pairs))
-    (multiple-value-setq (enum enum-present-p)
-      (task--alist-value :enum pairs))
-    (unless (or type-present-p enum-present-p)
+    (t &key (:pathname (option pathname)) (:source keyword)
+       (:definition-name (option string))) list)
+(defun task-output-schema-normalize (schema &key pathname source definition-name)
+  "Validate native output SCHEMA, adding child-role provenance to library diagnostics."
+  (handler-case
+      (cl-llm-provider-api:output-schema-normalize
+       schema :maximum-nodes *task-agent-form-maximum-nodes*
+              :maximum-depth *task-agent-form-maximum-depth*
+              :property-name-limit *task-agent-string-maximum-characters*)
+    (cl-llm-provider-api:output-contract-error (condition)
       (task-agent-definition--error
-       :pathname pathname :source source :field ':type
-       :cause "An output schema requires :TYPE or :ENUM."
-       :definition-name definition-name))
-    (when (and type-present-p
-               (not (member type *task-output-types* :test #'eq)))
-      (task-agent-definition--error
-       :pathname pathname :source source :field ':type
-       :cause (format nil "Unsupported output type ~S." type)
-       :definition-name definition-name))
-    (let* ((allowed
-             (case type
-               (:object
-                '(:type :enum :properties :required :additional-properties))
-               (:array '(:type :enum :items :min-items :max-items))
-               ((:string :number :integer :boolean :null) '(:type :enum))
-               (otherwise '(:enum))))
-           (unknown
-             (find-if-not (lambda (pair)
-                            (member (first pair) allowed :test #'eq))
-                          pairs)))
-      (when unknown
-        (task-agent-definition--error
-         :pathname pathname :source source :field (first unknown)
-         :cause (format nil "The property is not valid for output type ~S."
-                        type)
-         :definition-name definition-name)))
-    (when (and enum-present-p (member type '(:object :array) :test #'eq))
-      (task-agent-definition--error
-       :pathname pathname :source source :field ':enum
-       :cause "Object and array output schemas do not support scalar enums."
-       :definition-name definition-name))
-    (let ((normalized (list :type type)))
-      (unless type-present-p
-        (setf normalized nil))
-      (when enum-present-p
-        (setf normalized
-              (append normalized
-                      (list :enum
-                            (task-output--normalize-enum
-                             enum
-                             :pathname pathname
-                             :source source
-                             :definition-name definition-name
-                             :type type)))))
-      (case type
-        (:object
-         (multiple-value-bind (properties properties-present-p)
-             (task--alist-value :properties pairs)
-           (let ((normalized-properties
-                   (if properties-present-p
-                       (task-output--normalize-properties
-                        properties
-                        :pathname pathname
-                        :source source
-                        :definition-name definition-name)
-                       nil)))
-             (when properties-present-p
-               (setf normalized
-                     (append normalized
-                             (list :properties normalized-properties))))
-             (multiple-value-bind (required required-present-p)
-                 (task--alist-value :required pairs)
-               (when required-present-p
-                 (unless (and (task--proper-list-p required)
-                              (every #'non-empty-string-p required)
-                              (task--unique-list-p required :test #'string=))
-                   (task-agent-definition--error
-                    :pathname pathname :source source :field ':required
-                    :cause "Object :REQUIRED must be a proper list of unique non-empty strings."
-                    :definition-name definition-name))
-                 (unless (every
-                          (lambda (name)
-                            (assoc name normalized-properties :test #'string=))
-                          required)
-                   (task-agent-definition--error
-                    :pathname pathname :source source :field ':required
-                    :cause "Every required name must have a declared property schema."
-                    :definition-name definition-name))
-                 (setf normalized
-                       (append normalized (list :required (copy-list required))))))
-             (multiple-value-bind (additional additional-present-p)
-                 (task--alist-value :additional-properties pairs)
-               (when additional-present-p
-                 (unless (typep additional 'boolean)
-                   (task-agent-definition--error
-                    :pathname pathname :source source
-                    :field ':additional-properties
-                    :cause ":ADDITIONAL-PROPERTIES must be T or NIL."
-                    :definition-name definition-name))
-                 (setf normalized
-                       (append normalized
-                               (list :additional-properties additional))))))))
-        (:array
-         (multiple-value-bind (items items-present-p)
-             (task--alist-value :items pairs)
-           (unless items-present-p
-             (task-agent-definition--error
-              :pathname pathname :source source :field ':items
-              :cause "An array output schema requires :ITEMS."
-              :definition-name definition-name))
-           (setf normalized
-                 (append normalized
-                         (list :items
-                               (task-output-schema-normalize
-                                items
-                                :pathname pathname
-                                :source source
-                                :definition-name definition-name)))))
-         (multiple-value-bind (minimum minimum-present-p)
-             (task--alist-value :min-items pairs)
-           (multiple-value-bind (maximum maximum-present-p)
-               (task--alist-value :max-items pairs)
-             (when (and minimum-present-p
-                        (not (typep minimum '(integer 0))))
-               (task-agent-definition--error
-                :pathname pathname :source source :field ':min-items
-                :cause ":MIN-ITEMS must be a nonnegative integer."
-                :definition-name definition-name))
-             (when (and maximum-present-p
-                        (not (typep maximum '(integer 0))))
-               (task-agent-definition--error
-                :pathname pathname :source source :field ':max-items
-                :cause ":MAX-ITEMS must be a nonnegative integer."
-                :definition-name definition-name))
-             (when (and minimum-present-p maximum-present-p
-                        (> minimum maximum))
-               (task-agent-definition--error
-                :pathname pathname :source source :field ':max-items
-                :cause ":MAX-ITEMS must not be smaller than :MIN-ITEMS."
-                :definition-name definition-name))
-             (when minimum-present-p
-               (setf normalized
-                     (append normalized (list :min-items minimum))))
-             (when maximum-present-p
-               (setf normalized
-                     (append normalized (list :max-items maximum))))))))
-      normalized)))
-
-(-> task-output--native-json-value (t) t)
-(defun task-output--native-json-value (value)
-  "Convert one native enum value to its JSON representation."
-  (cond
-    ((null value) false)
-    ((eq value :null) :null)
-    (t value)))
+       :pathname pathname :source source :definition-name definition-name
+       :field (cl-llm-provider-api:output-contract-error-field condition)
+       :cause (cl-llm-provider-api:provider-api-error-message condition)))))
 
 (-> task-output-schema->json (list) json-object)
 (defun task-output-schema->json (schema)
-  "Convert validated native output SCHEMA to provider JSON Schema."
-  (let ((object (json-object)))
-    (loop for (key value) on schema by #'cddr
-          do
-             (setf
-              (gethash
-               (case key
-                 (:additional-properties "additionalProperties")
-                 (:min-items "minItems")
-                 (:max-items "maxItems")
-                 (otherwise (string-downcase (symbol-name key))))
-               object)
-              (case key
-                (:type (string-downcase (symbol-name value)))
-                (:enum
-                 (coerce (mapcar #'task-output--native-json-value value)
-                         'vector))
-                (:properties
-                 (let ((properties (json-object)))
-                   (dolist (entry value)
-                     (setf (gethash (first entry) properties)
-                           (task-output-schema->json (second entry))))
-                   properties))
-                (:required (coerce value 'vector))
-                (:additional-properties (if value t false))
-                (:items (task-output-schema->json value))
-                (otherwise value))))
-    object))
-
-(-> task-output--candidate-matches-type-p (t keyword) boolean)
-(defun task-output--candidate-matches-type-p (value type)
-  "Return true when provider JSON VALUE has native schema TYPE."
-  (case type
-    (:object (json-object-p value))
-    (:array (and (vectorp value) (not (stringp value))))
-    (:string (stringp value))
-    (:integer (integerp value))
-    (:number (task-output--json-number-p value))
-    (:boolean (or (eq value t) (eq value false)))
-    (:null (eq value :null))
-    (otherwise nil)))
-
-(-> task-output--candidate-enum-value (t) t)
-(defun task-output--candidate-enum-value (value)
-  "Convert provider JSON VALUE to the corresponding native enum value."
-  (cond
-    ((eq value false) nil)
-    ((eq value :null) :null)
-    (t value)))
+  "Project a validated task output contract into provider JSON Schema."
+  (cl-llm-provider-api:output-schema->json schema))
 
 (-> task-output-schema-valid-p (t list) boolean)
 (defun task-output-schema-valid-p (value schema)
-  "Return true when provider JSON VALUE satisfies validated native SCHEMA."
-  (let ((type (getf schema :type))
-        (enum (getf schema :enum)))
-    (and
-     (or (null type)
-         (task-output--candidate-matches-type-p value type))
-     (or (null enum)
-         (member (task-output--candidate-enum-value value)
-                 enum
-                 :test #'task-output--native-value-equal-p))
-     (case type
-       (:object
-        (let ((properties (getf schema :properties))
-              (required (getf schema :required))
-              (additional
-                (if (task--plist-key-present-p
-                     schema :additional-properties)
-                    (getf schema :additional-properties)
-                    t)))
-          (and
-           (every (lambda (name)
-                    (nth-value 1 (gethash name value)))
-                  required)
-           (loop for name being the hash-keys of value
-                   using (hash-value child)
-                 for property = (assoc name properties :test #'string=)
-                 always (if property
-                            (task-output-schema-valid-p child (second property))
-                            additional)))))
-       (:array
-        (let ((minimum (getf schema :min-items))
-              (maximum (getf schema :max-items))
-              (items (getf schema :items)))
-          (and (or (null minimum) (>= (length value) minimum))
-               (or (null maximum) (<= (length value) maximum))
-               (loop for child across value
-                     always (task-output-schema-valid-p child items)))))
-       (otherwise t)))))
-
-
-;;;; -- Exact JSON Preservation --
+  "Check a provider value against its validated task contract."
+  (cl-llm-provider-api:output-schema-valid-p value schema))
 
 (-> task-json-decode (string &key (:tool-name string)) json-value)
 (defun task-json-decode (source &key (tool-name "task"))
-  "Decode exactly one task JSON value while distinguishing false from null."
+  "Decode exact JSON arguments and attach canonical tool failure metadata."
   (handler-case
-      (with-input-from-string (stream source)
-        (let ((yason:*parse-json-arrays-as-vectors* t)
-              (yason:*parse-json-booleans-as-symbols* t)
-              (yason:*parse-json-null-as-keyword* t)
-              (yason:true t)
-              (end (gensym "END")))
-          (let ((value (yason:parse stream)))
-            (unless (eq (peek-char t stream nil end) end)
-              (error 'task-error
-                     :message "Task tool arguments contain trailing JSON data."
-                     :tool-name tool-name))
-            value)))
-    (task-error (condition)
-      (error condition))
-    (error (condition)
-      (error 'task-error
-             :message (format nil "Could not decode task tool arguments: ~A"
-                              condition)
-             :tool-name tool-name))))
+      (cl-llm-provider-api:output-json-decode source)
+    (cl-llm-provider-api:output-value-error (condition)
+      (error 'task-error :tool-name tool-name
+             :message (cl-llm-provider-api:provider-api-error-message condition)))))
 
 (-> task-json->sexp (t) t)
 (defun task-json->sexp (value)
-  "Convert validated provider JSON VALUE to a portable tagged native tree."
-  (cond
-    ((json-object-p value)
-     (cons :object
-           (sort
-            (loop for key being the hash-keys of value
-                    using (hash-value child)
-                  collect (list key (task-json->sexp child)))
-            #'string<
-            :key #'first)))
-    ((stringp value)
-     value)
-    ((vectorp value)
-     (cons :array
-           (loop for child across value
-                 collect (task-json->sexp child))))
-    ((eq value false) nil)
-    ((eq value :null) :null)
-    ((or (task-output--json-number-p value) (eq value t))
-     value)
-    (t
-     (error 'task-yield-error
-            :message (format nil "Yield data contains unsupported JSON value ~S."
-                             value)
-            :tool-name "yield.submit"))))
+  "Project provider output into a portable tagged task result."
+  (handler-case
+      (cl-llm-provider-api:output-json->sexp value)
+    (cl-llm-provider-api:output-value-error (condition)
+      (error 'task-yield-error :tool-name "yield.submit"
+             :message (cl-llm-provider-api:provider-api-error-message condition)))))
 
 (-> task-sexp->json (t) json-value)
 (defun task-sexp->json (value)
-  "Reconstruct provider JSON from a portable tagged task result tree."
-  (cond
-    ((and (task--proper-list-p value)
-          (consp value)
-          (eq (first value) :object))
-     (let ((object (json-object)))
-       (dolist (entry (rest value))
-         (unless (and (task--proper-list-p entry) (= (length entry) 2)
-                      (stringp (first entry)))
-           (error 'task-error
-                  :message "A durable task object entry is malformed."
-                  :tool-name "task.run"))
-         (when (nth-value 1 (gethash (first entry) object))
-           (error 'task-error
-                  :message "A durable task object contains a duplicate key."
-                  :tool-name "task.run"))
-         (setf (gethash (first entry) object)
-               (task-sexp->json (second entry))))
-       object))
-    ((and (task--proper-list-p value)
-          (consp value)
-          (eq (first value) :array))
-     (coerce (mapcar #'task-sexp->json (rest value)) 'vector))
-    ((null value) false)
-    ((eq value :null) :null)
-    ((or (stringp value) (task-output--json-number-p value) (eq value t))
-     value)
-    (t
-     (error 'task-error
-            :message "A durable task result contains an unsupported value."
-            :tool-name "task.run"))))
-
+  "Restore provider JSON from a durable tagged task result."
+  (handler-case
+      (cl-llm-provider-api:output-sexp->json value)
+    (cl-llm-provider-api:output-value-error (condition)
+      (error 'task-error :tool-name "task.run"
+             :message (cl-llm-provider-api:provider-api-error-message condition)))))
 (-> task--write-readable-sexp (t &key (:pretty-p boolean)) string)
 (defun task--write-readable-sexp (value &key pretty-p)
   "Return VALUE as one portable readable s-expression."
