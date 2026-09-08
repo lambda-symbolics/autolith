@@ -2,18 +2,24 @@
 
 ;;;; -- Nous Device Authentication Test Support --
 
-(-> nous-device-test--manager () nous-credential-manager)
-(defun nous-device-test--manager ()
-  "Return a Nous credential manager whose writable source records test data."
-  (make-instance
-   'nous-credential-manager
-   :primary-source
-   (make-instance 'recording-autolith-credential-source
-                  :pathname #P"/tmp/autolith-nous-device/nous-auth.sexp")
-   :refresh-request-function
-   (lambda (&key method url headers content)
-     (declare (ignore method url headers content))
-     (error "Unexpected Nous refresh request in a device-flow test."))))
+(-> nous-device-test--login (nous-device-authentication-client &rest t) t)
+(defun nous-device-test--login (client &rest arguments)
+  "Log in with a recording source and a temporary OAuth lock directory."
+  (test-call-with-temporary-root
+   (lambda (root)
+     (apply
+      #'device-authentication-login
+      client
+      (make-instance
+       'nous-credential-manager
+       :primary-source
+       (make-instance 'recording-autolith-credential-source
+                      :pathname (merge-pathnames "nous-auth.sexp" root))
+       :refresh-request-function
+       (lambda (&key method url headers content)
+         (declare (ignore method url headers content))
+         (error "Unexpected Nous refresh request in a device-flow test.")))
+      arguments))))
 
 (-> nous-device-test--token-response
     (&key (:subject string) (:scope t) (:refresh-token string))
@@ -114,9 +120,8 @@
                 :browser-function #'open-browser))
              (output (make-string-output-stream))
              (result
-               (device-authentication-login
+               (nous-device-test--login
                 client
-                (nous-device-test--manager)
                 :stream output)))
         (test-assert (eq result t)
                      "the Nous device login reports success")
@@ -194,9 +199,8 @@
                    (values body status nil))))
 
            (login (responder &key (poll-timeout 10))
-             (device-authentication-login
+             (nous-device-test--login
               (client-for responder :poll-timeout poll-timeout)
-              (nous-device-test--manager)
               :stream (make-string-output-stream)
               :open-browser-p nil)))
     (device-authentication-test--signals
@@ -264,7 +268,7 @@
   "Test that a malicious poll error cannot retain the secret device code."
   (let ((signaled-p nil))
     (handler-case
-        (device-authentication-login
+        (nous-device-test--login
          (nous-device-authentication-client-create
           :portal-url "https://portal.test"
           :request-function
@@ -288,7 +292,6 @@
                               (declare (ignore url))
                               t)
           :poll-timeout 10)
-         (nous-device-test--manager)
          :stream (make-string-output-stream)
          :open-browser-p nil)
       (device-authentication-error (condition)
