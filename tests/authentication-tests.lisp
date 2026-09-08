@@ -634,7 +634,7 @@
                     (make-instance 'oauth-credentials
                                    :access-token "old-access"
                                    :refresh-token "old-refresh"
-                                   :id-token nil
+                                   :id-token (test-account-jwt "account-a")
                                    :account-id "account-a"
                                    :expires-at nil
                                    :source-path
@@ -661,20 +661,24 @@
                   (token-refresh-failed ()
                     t))
                 "malformed refresh success bodies become typed failures"))
-             (test-assert
-              (handler-case
-                  (progn
-                    (oauth-refresh-response-credentials
-                     manager
-                     renewable
-                     (json-encode
-                      (json-object
-                       "access_token" (test-account-jwt "account-b")
-                       "refresh_token" "new-refresh")))
-                    nil)
-                (token-refresh-failed ()
-                  t))
-              "refresh rejects a token that switches ChatGPT accounts")
+             (dolist (accounts '(("account-b" nil)
+                                 ("account-b" "account-a")
+                                 ("account-a" "account-b")))
+               (let ((response (json-object
+                                "access_token" (test-account-jwt (first accounts))
+                                "refresh_token" "new-refresh")))
+                 (when (second accounts)
+                   (setf (gethash "id_token" response)
+                         (test-account-jwt (second accounts))))
+                 (test-assert
+                  (handler-case
+                      (progn
+                        (oauth-refresh-response-credentials
+                         manager renewable (json-encode response))
+                        nil)
+                    (token-refresh-failed ()
+                      t))
+                  "each returned account claim must match the credential account")))
              (credential-source-save primary-source renewable)
              (let ((condition
                      (handler-case

@@ -309,12 +309,14 @@ its protocol-level close operation."
             (error "The OAuth refresh response omitted required fields."))
           (let* ((previous-account
                    (oauth-credentials-account-id credentials))
-                 (token-account
-                   (or (and id-token (jwt-account-id id-token))
-                       (jwt-account-id access-token)))
-                 (account-id (or token-account previous-account)))
-            (when (and token-account
-                       (not (string= token-account previous-account)))
+                 (returned-accounts
+                   (remove nil
+                           (list (and response-id-token
+                                      (jwt-account-id response-id-token))
+                                 (jwt-account-id access-token)))))
+            (when (some (lambda (account)
+                          (not (string= account previous-account)))
+                        returned-accounts)
               (error 'token-refresh-failed
                      :message "The OAuth refresh response changed ChatGPT accounts."
                      :status nil
@@ -324,7 +326,7 @@ its protocol-level close operation."
              :access-token access-token
              :refresh-token rotated-refresh-token
              :id-token id-token
-             :account-id account-id
+             :account-id previous-account
              :expires-at (jwt-expiration access-token)
              :source-path
              (credential-source-pathname
