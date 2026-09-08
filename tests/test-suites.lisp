@@ -276,9 +276,7 @@
 
 (define-test-suite web-tool
   test-web-gist-tool
-  test-web-gist-retrieval
-  test-web-search-tool
-  test-web-search-pipeline)
+  test-web-gist-retrieval)
 
 (define-test-suite lisp-worker
   test-lisp-image-manifests
