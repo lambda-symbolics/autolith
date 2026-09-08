@@ -4,17 +4,86 @@
 
 * Decision
 
-Prefer larger ownership transfers into existing Lambda Symbolics libraries.
-Create two new libraries: revisioned document editing, and release distribution
-with checked deployment. The names below describe boundaries, not chosen brands.
+Complete the approved ownership transfers into existing Lambda Symbolics
+libraries. Defer the proposed revisioned-document and release-distribution
+libraries, conditional RLM extraction, releases, and CI/workflow changes.
 
 The objective is fewer Autolith implementation and test lines, with each generic
 behavior and its exhaustive tests owned once. Extracting a helper while keeping
 its state machine, wrappers and tests here would miss that objective.
 
-This is a review and proposed sequence, not an implementation commitment or a
-replacement product specification. The historical audit remains an input; its
-small extraction candidates are not the proposed library boundaries.
+The planning sections below preserve the original review and estimates.
+The implementation record describes the approved subset and measured results.
+
+* Completed approved transfers
+
+All approved existing-library transfers are integrated through =e5389ff=.
+Generic implementations and their test matrices moved downstream; Autolith keeps
+product policy, configuration, authorization and representative integration tests.
+
+** Ownership and pinned revisions
+
+| Library | Implemented capability | Pinned commit |
+|---------+------------------------+---------------|
+| cl-rfc8628 | Scoped credentials, refresh coordination and account continuity | =dea112d1bf2750a52c52f33344157af7b9f4f6f8= |
+| cl-llm-provider-api | Responses, Chat Completions, Anthropic, request execution, context and contracts | =259e13553f4365eaf6d40370654b7055560d6508= |
+| mcparen | Managed connections, discovery snapshots, budgets and teardown | =c990e32d92e59675dc6f2295c94207905dab8b3d= |
+| sexp-store | Validated transactions, segmented logs and synchronized sidecar reconstruction | =6d8ec5dfc85c187e1ee2f49f2ae44526e5ac0a5f= |
+| clinker-transcript | Ordered projection, reconciliation and repair intents | =08acbc1caaab2beaa0ea824507d722a117ec70b0= |
+| image-daemon | Persistent services, registry ownership, attachments and bounded teardown | =9941c1c3673cf6159d73127c67efb488b31f9856= |
+| clinedi | Modal sessions, stable selection, editor/history snapshots and terminal transports | =3b7365eeabecd2fc571bde07e26a123f570e69cb= |
+| cl-termdown | Column allocation and semantic span fitting/rendering | =f54cd93e3e39390d056752cfc17d7396073b38e7= |
+
+The preceding cl-exec-sandbox PR #1 integration pins
+=00a6e7979a516b84717b0f93b5a1d06770059aa0=. Existing Structlisp collections
+were sufficient; this transfer required no new collection API.
+
+** Measured reductions
+
+Counts are deleted minus added lines under =src/= and =tests/=, including
+replacement adapters, package imports and suite registrations. Configuration and
+documentation lines are excluded. The transfer baseline is =dfa8f95=.
+
+| Ownership transfer | Source reduction | Test reduction |
+|--------------------+------------------+----------------|
+| Credential lifecycle | 366 | 533 |
+| Provider requests, context and contracts | 3,561 | 1,813 |
+| Managed MCP | 668 | 577 |
+| Transactional state stores | 202 | 152 |
+| Conversation storage and projection | 330 | 115 |
+| Persistent sessions | 903 | 615 |
+| Terminal interaction and transport | 562 | 738 |
+| Terminal presentation | 113 | 51 |
+| Total transfers | 6,705 | 4,594 |
+
+Host review corrections added 33 source lines and 71 test lines: refreshed-token
+account validation, explicit papercut assessment results, and shared writer locks
+for picker reconstruction. The final =dfa8f95..e5389ff= reduction is therefore
+*6,672 source lines and 4,523 test lines*, or *11,195 lines combined*.
+Downstream additions are not counted as Autolith reductions.
+
+** Review fixes and verification
+
+- Isolate transaction working values from committed values, including destructive
+  finalizers. Set permissions before publishing readable state.
+- Hold the source writer lock across sidecar reconstruction and publication;
+  revision comparison alone cannot exclude a paused source mutation.
+- Bound graceful and forced thread shutdown, retain unreaped attachment ownership,
+  and finish remaining teardown after a failure.
+- Preserve MCP scope exits and complete owned teardown/joins across nonlocal exits.
+- Normalize only actual provider transport operations, preserve callback/cancellation
+  outcomes during cleanup, and register the previously uncalled request-test suite.
+- Correct repeated Clinedi identity selection.
+
+Downstream checks passed: cl-rfc8628 70 assertions; cl-llm-provider-api 177 wire
+and 191 protocol/context/contract checks; mcparen 102 tests; sexp-store 149 checks;
+clinker-transcript 74 assertions; image-daemon 113 assertions; cl-termdown 86 tests;
+and the complete Clinedi regression suite. The sandbox merge passed 83 checks.
+
+Each Autolith integration passed =./script/check --jobs 8=, including recovery
+probes, and native =nix flake check --option eval-cache false=. The combined tree
+passed *470 cases and 5,847 checks*, with zero failed cases. Nix verification was
+Linux x86-64 only; the incompatible aarch64 targets were not run.
 
 * Evidence and accounting
 

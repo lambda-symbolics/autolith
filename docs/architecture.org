@@ -74,12 +74,27 @@ terminal prompt          local Lisp result       finalized scrollback
 - Local operations that dont conflict with a turn can run immediately
 - Modal, terminal-owning, authorization-gated etc actions wait for a safe point
 
+* Library boundaries
+
+| Library | Generic implementation | Autolith integration |
+|---------+------------------------+----------------------|
+| cl-llm-provider-api | Wire clients, request execution, context resolution, structured contracts | Provider registration, subscription adapters, conversation projection, contributors |
+| cl-rfc8628 | Scoped credential use and coordinated refresh | Credential paths, bootstrap ownership, provider exchanges, checkpoint quiescence |
+| mcparen/managed | Connection lifecycle, discovery snapshots and budgets | Configuration, authorization, tool registry and provider schema projection |
+| sexp-store | Validated transactions, segmented logs and sidecars | Record schemas, scope, lifecycle and corruption policy |
+| clinker-transcript | Ordered projection and reconciliation | Conversation meaning and durable repair decisions |
+| image-daemon/runtime | Service registry, relays, attachment queues and shutdown | Conversation leases, steering, handoff and input-reader coordination |
+| clinedi | Modal sessions, editor/history state and terminal transports | Completion, submission, paste and interruption policy |
+| cl-termdown | Column layout and semantic span presentation | Transcript composition, modeline and activity content |
+
 * User state
 
 Autolith stores portable, readable S-expressions (for now, it is possible we migrate
 to sqlite or similar in the future).
 
-The library we use is =sexp-store=,
+Use =sexp-store= transactions for locked read/modify/publish operations. Caller
+state is published after durable records. Conversation sidecar reconstruction
+holds the same file lock as source invalidation and writes.
 
 | State         | Components                                               |
 |---------------+----------------------------------------------------------|
@@ -97,9 +112,9 @@ The library we use is =sexp-store=,
 
 * Provider and tools
 
-- =src/provider/client.lisp= describes replaceable provider protocol,
-  encoding, HTTP, and SSE. It emits semantic stream events,
-  which are processed by our rendering machinery et al.
+- =src/provider/client.lisp= integrates product providers with
+  =cl-llm-provider-api= wire clients and request execution. Render semantic stream
+  events in the terminal and record projected provider history in conversations.
 - Tools have metadata, namespaces, validation, and a result for every
   call, including failed ones
 - =src/tools/defaults.lisp= assembles the registry
