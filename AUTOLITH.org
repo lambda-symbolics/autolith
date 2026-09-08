@@ -18,6 +18,28 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Lower-cost delegated inference
+
+- Problem: General task children and unqualified RLM calls inherited the primary
+  model and reasoning effort, consuming the user's subscription allowance on
+  routine delegated work.
+- Behavior: Top-level RLM calls default to =gpt-5.6-luna= at =low= effort.
+  Explicit model/effort arguments override those defaults; supplied Lisp
+  configurations and nested runs retain their selected route. The user-level
+  =task= role selects =@smol= at =medium= effort.
+- Scope and location: RLM routing is private image commit
+  =fc16f9e6-e071-4dcc-9360-039c7b3b1e4d=, private Git commit
+  =0ed468c50d3e825a2c52c586ee27aca47128980b=. Task routing is declarative user
+  configuration in =~/.config/autolith/agents/task.sexp=; project role overrides
+  take precedence. The other bundled roles are unchanged.
+- Verification: 31 routing cases passed, covering defaults, explicit routes,
+  inherited configurations, rejected nested overrides and effective task
+  configuration. Live inference trace =y1bBiLs= records =gpt-5.6-luna= at =low=
+  effort and a successful response. The private commit passed its clean-process
+  replay probe.
+- Removal condition: equivalent RLM defaults become configurable in tracked
+  Autolith, or the user selects a different delegation policy.
+
 ** GitHub workflow waiter
 
 - Problem: Waiting for GitHub Actions repeatedly required model-driven API polls,
