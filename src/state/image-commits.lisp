@@ -1041,11 +1041,15 @@ the failure stays diagnosable after the tool call ends."
                         configuration identifier
                         :history-commit history-commit))
                (pathname (image-commit-script-pathname commit)))
+          (setf *image-replay-skipped-definitions* nil)
           (handler-case
               (let ((*package* (find-package '#:autolith)))
                 (load pathname))
             (error (condition)
-              (push (cons pathname (format nil "~A" condition)) failures)))))
+              (push (cons pathname (format nil "~A" condition)) failures)))
+          (dolist (skip (reverse (shiftf *image-replay-skipped-definitions*
+                                         nil)))
+            (push (cons pathname skip) failures))))
       (nreverse failures))))
 
 (-> image-state-reconnect () null)

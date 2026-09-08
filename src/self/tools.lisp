@@ -313,6 +313,32 @@ protocol."
        (member (first form) *definition-operators* :test #'eq)
        (definition-name-p (second form))))
 
+(defvar *image-replay-skipped-definitions* nil
+  "Messages for stale replayed definitions skipped during the current load.")
+
+(-> definition-name-symbol (t) symbol)
+(defun definition-name-symbol (name)
+  "Return the symbol identifying definition NAME, unwrapping SETF names."
+  (if (consp name)
+      (second name)
+      name))
+
+(-> definition-foreign-home-p (list package) boolean)
+(defun definition-foreign-home-p (definition package)
+  "Return true when DEFINITION would clobber a definition owned elsewhere.
+
+A mutation journals its name in the package it was made in. When that
+symbol is later merely imported, because the tracked system moved the
+definition into a library, replaying the whole definition would
+overwrite the library's current definition with a stale copy whose
+signature may no longer match its callers. Methods stay replayable: a
+defmethod extends a generic function instead of replacing its owner's
+definition."
+  (and (not (eq (first definition) 'defmethod))
+       (not (eq (symbol-package (definition-name-symbol
+                                 (second definition)))
+                package))))
+
 (-> method-specializers (list) list)
 (defun method-specializers (specialized-lambda-list)
   "Return required SPECIALIZED-LAMBDA-LIST specializers without parameter names."
@@ -606,7 +632,12 @@ protocol."
 
 (-> self-replay-definition (string string) t)
 (defun self-replay-definition (package-name source)
-  "Read and install persisted SOURCE in PACKAGE-NAME during image reconstruction."
+  "Read and install persisted SOURCE in PACKAGE-NAME during image reconstruction.
+
+A definition whose name symbol is no longer home in PACKAGE-NAME is
+skipped and reported instead of installed: ownership moved to another
+system since the mutation was journaled, and the stale copy would
+clobber the current definition."
   (let* ((package (self-resolve-package package-name))
          (definition
            (self-read-form source :read-eval nil :package package)))
@@ -615,7 +646,19 @@ protocol."
              :message "A private image commit contains an invalid definition."
              :tool-name "self.commit"
              :pathname nil))
-    (self--install-definition definition source :package package)))
+    (if (definition-foreign-home-p definition package)
+        (let ((home (symbol-package (definition-name-symbol
+                                     (second definition)))))
+          (push (format nil
+                        "The persisted ~(~A~) of ~(~A~) was skipped: the definition now belongs to ~A, so the stale mutation would clobber it. Discard it with self.discard."
+                        (first definition)
+                        (definition-name-symbol (second definition))
+                        (if home
+                            (package-name home)
+                            "an uninterned symbol"))
+                *image-replay-skipped-definitions*)
+          nil)
+        (self--install-definition definition source :package package))))
 
 (-> self-restore-definition
     (string serious-condition

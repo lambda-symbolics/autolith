@@ -1915,3 +1915,50 @@
       (clrhash *exploratory-undo-actions*)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+(-> test-self-replay-foreign-home () null)
+(defun test-self-replay-foreign-home ()
+  "Test replay skips stale definitions whose names moved to a library."
+  (let ((*image-replay-skipped-definitions* nil)
+        (original (symbol-function
+                   'provider--call-with-transport-normalization)))
+    (test-assert
+     (null (self-replay-definition
+            "AUTOLITH"
+            "(defun provider--call-with-transport-normalization (attempt-function) attempt-function)"))
+     "a library-owned definition is not installed")
+    (test-assert
+     (eq original (symbol-function
+                   'provider--call-with-transport-normalization))
+     "the library definition survives the stale replay")
+    (test-assert
+     (let ((message (first *image-replay-skipped-definitions*)))
+       (and message
+            (search "provider--call-with-transport-normalization" message)
+            (search "CL-LLM-PROVIDER-API" message)))
+     "the skip names the definition and its owning package"))
+  (let ((*image-replay-skipped-definitions* nil))
+    (unwind-protect
+         (progn
+           (self-replay-definition
+            "AUTOLITH"
+            "(defun self-replay-home-test-function () :installed)")
+           (test-assert
+            (eq (funcall (symbol-function
+                          (find-symbol "SELF-REPLAY-HOME-TEST-FUNCTION"
+                                       '#:autolith)))
+                ':installed)
+            "definitions home in the target package still replay")
+           (test-assert (null *image-replay-skipped-definitions*)
+                        "home definitions are not reported as skipped"))
+      (let ((symbol (find-symbol "SELF-REPLAY-HOME-TEST-FUNCTION"
+                                 '#:autolith)))
+        (when symbol
+          (fmakunbound symbol)
+          (unintern symbol '#:autolith)))))
+  (test-assert
+   (not (definition-foreign-home-p
+         (list 'defmethod 'print-object nil)
+         (find-package '#:autolith)))
+   "methods on foreign generics stay replayable")
+  nil)
