@@ -48,30 +48,30 @@
             :method ':post)))
     (unwind-protect
          (progn
-            (test-assert
-             (handler-case
-                 (progn
-                   (provider-signal-http-failure provider condition)
-                   nil)
-               (provider-retryable-error (error)
-                 (and (= (provider-error-status error) 429)
-                      (string= (provider-error-request-id error)
-                               "request-429"))))
-             "HTTP 429 is eligible for bounded retry")
-            (test-assert
-             (and (handler-case
-                      (progn
-                        (provider--signal-http-status-failure
-                         provider 408
-                         :headers '(("Retry-After" . "3")))
-                        nil)
-                    (provider-retryable-error (error)
-                      (= (provider-error-status error) 408)))
-                  (not (provider-retryable-status-p provider 408 nil)))
-             "Retry-After makes an otherwise terminal status retryable")
+           (test-assert
+            (handler-case
+                (progn
+                  (provider-signal-http-failure provider condition)
+                  nil)
+              (provider-retryable-error (error)
+                (and (= (provider-error-status error) 429)
+                     (string= (provider-error-request-id error)
+                              "request-429"))))
+            "HTTP 429 is eligible for bounded retry")
+           (test-assert
+            (and (handler-case
+                     (progn
+                       (provider--signal-http-status-failure
+                        provider 408
+                        :headers '(("Retry-After" . "3")))
+                       nil)
+                   (provider-retryable-error (error)
+                     (= (provider-error-status error) 408)))
+                 (not (provider-retryable-status-p provider 408 nil)))
+            "Retry-After makes an otherwise terminal status retryable")
            (test-assert
             (= (getf (getf (provider-rate-limits provider) :primary)
-                       :used-percent)
+                     :used-percent)
                100)
             "HTTP error headers refresh the visible rate limit snapshot")
            (let ((stream-condition
@@ -88,33 +88,33 @@
                   (progn
                     (provider-signal-http-failure provider stream-condition)
                     nil)
-                 (provider-error (error)
-                   (and (= (provider-error-status error) 400)
-                        (string= (provider-error-request-id error)
-                                 "request-400")
-                        (search "input item is not supported"
-                                (format nil "~A" error))
-                        (search "input item is not supported"
-                                (or (provider-error-response error) ""))
-                        t)))
+                (provider-error (error)
+                  (and (= (provider-error-status error) 400)
+                       (string= (provider-error-request-id error)
+                                "request-400")
+                       (search "input item is not supported"
+                               (format nil "~A" error))
+                       (search "input item is not supported"
+                               (or (provider-error-response error) ""))
+                       t)))
               "a streamed failure body reaches both the message and the response"))
-            (dolist (status '(500 503))
-              (let ((transient-condition
-                      (make-condition
-                       'http-request-failed
-                       :body "temporary provider failure"
-                       :status status
-                       :headers nil
-                       :uri nil
-                       :method ':post)))
-                (test-assert
-                 (handler-case
-                     (progn
-                       (provider-signal-http-failure provider transient-condition)
-                       nil)
-                   (provider-retryable-error (error)
-                     (= (provider-error-status error) status)))
-                 (format nil "HTTP ~D is eligible for bounded retry" status)))))
+           (dolist (status '(500 503))
+             (let ((transient-condition
+                     (make-condition
+                      'http-request-failed
+                      :body "temporary provider failure"
+                      :status status
+                      :headers nil
+                      :uri nil
+                      :method ':post)))
+               (test-assert
+                (handler-case
+                    (progn
+                      (provider-signal-http-failure provider transient-condition)
+                      nil)
+                  (provider-retryable-error (error)
+                    (= (provider-error-status error) status)))
+                (format nil "HTTP ~D is eligible for bounded retry" status)))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -190,7 +190,7 @@
                      (json-string=
                       (json-get (aref (json-get entry "tools") 0) "name")
                       "gist"))
-                "hosted search keeps the independent web.gist tool")))
+                "hosted search keeps the independent web_extra.gist tool")))
            (test-assert
             (and (provider-hosted-web-search-tools-p
                   (list (json-object "type" "web_search_preview")))
@@ -219,7 +219,7 @@
                     "gist")
                    (json-string= (json-get (aref tools 2) "type")
                                  "tool_search"))
-              "Responses keeps web.gist but omits web.run when search is disabled"))
+              "Responses keeps web_extra.gist but omits web.run when search is disabled"))
            (let* ((conversation
                     (conversation-create disabled-configuration
                                          :identifier "chat-search-filter"))
@@ -245,7 +245,7 @@
                              (json-get (aref tools 1) "function")
                              "description")
                             "Retrieve one page as Markdown."))
-              "Chat Completions keeps web.gist but omits web.run when search is disabled"))
+              "Chat Completions keeps web_extra.gist but omits web.run when search is disabled"))
            (let* ((configuration
                     (configuration--clone
                      (configuration-with-model
@@ -266,7 +266,7 @@
                             "Read a resource.")
                    (string= (json-get (aref tools 1) "description")
                             "Retrieve one page as Markdown."))
-              "Anthropic keeps web.gist but omits web.run when search is disabled"))
+              "Anthropic keeps web_extra.gist but omits web.run when search is disabled"))
            (dolist (configuration (list base-configuration disabled-configuration))
              (let* ((filtered
                       (provider-responses-request-namespaces
@@ -313,8 +313,8 @@
                "parameters"
                (json-object
                 "type" "object"
-                 "properties" (json-object
-                               "uri" (json-object "type" "string")))))))))
+                "properties" (json-object
+                              "uri" (json-object "type" "string")))))))))
     (unwind-protect
          (let* ((configuration
                   (configuration--clone base-configuration
@@ -345,13 +345,13 @@
            (test-assert
             (eq (provider-wire-input-item provider call) call)
             "native namespaced calls replay without flattening")
-            (let* ((future-configuration
-                     (configuration--clone configuration
-                                           :model "gpt-5.7-codex"))
-                   (future-provider (provider-create future-configuration)))
-              (test-assert
-               (provider-deferred-tool-loading-p future-provider)
-               "future GPT models retain documented deferred-tool support"))
+           (let* ((future-configuration
+                    (configuration--clone configuration
+                                          :model "gpt-5.7-codex"))
+                  (future-provider (provider-create future-configuration)))
+             (test-assert
+              (provider-deferred-tool-loading-p future-provider)
+              "future GPT models retain documented deferred-tool support"))
            (let* ((fallback-configuration
                     (configuration--clone configuration :model "gpt-5.3-codex"))
                   (fallback-provider (provider-create fallback-configuration))
@@ -453,17 +453,17 @@
                         "Codex enables inherited child reference history")
            (test-assert (null (json-get request "service_tier"))
                         "standard Codex requests omit the service tier")
-            (let* ((model (first *codex-fast-mode-models*))
-                   (fast-configuration
-                     (configuration-with-codex-fast-mode
-                      (configuration--clone configuration :model model) t))
-                   (fast-request
-                     (provider-request-object
-                      (provider-create fast-configuration) conversation schemas)))
-              (test-assert
-               (and (configuration-codex-fast-mode-active-p fast-configuration)
-                    (string= (json-get fast-request "service_tier") "priority"))
-               "a supported Codex model requests the Fast service tier"))
+           (let* ((model (first *codex-fast-mode-models*))
+                  (fast-configuration
+                    (configuration-with-codex-fast-mode
+                     (configuration--clone configuration :model model) t))
+                  (fast-request
+                    (provider-request-object
+                     (provider-create fast-configuration) conversation schemas)))
+             (test-assert
+              (and (configuration-codex-fast-mode-active-p fast-configuration)
+                   (string= (json-get fast-request "service_tier") "priority"))
+              "a supported Codex model requests the Fast service tier"))
            (let* ((unknown-configuration
                     (configuration-with-codex-fast-mode
                      (configuration--clone configuration
@@ -481,51 +481,51 @@
               "unknown Codex models use the standard service tier"))
            (test-assert (null (json-get request "max_output_tokens"))
                         "requests omit the output ceiling when none is bound")
-            (let ((input (json-get request "input")))
-              (test-assert
-               (and (= (length input) 2)
-                    (string= (json-get (aref input 0) "role") "user")
-                    (string= (json-get (aref input 1) "role") "developer")
-                    (search "Current workspace agenda"
-                            (context--message-text (aref input 1))))
-               "standard Responses input ends with mutable request context"))
-            (test-assert
-             (non-empty-string-p (json-get request "instructions"))
-             "standard Responses uses top-level stable instructions")
-            (let* ((goal-text "<goal_context>persist</goal_context>")
-                   (goal-request
-                     (provider-request-object
-                      provider conversation schemas :goal-context goal-text))
-                   (goal-input (json-get goal-request "input")))
-              (test-assert
-               (and (= (length goal-input) 3)
-                    (search goal-text
-                            (context--message-text (aref goal-input 1)))
-                    (search "Current workspace agenda"
-                            (context--message-text (aref goal-input 2))))
-               "goal and mutable context follow durable conversation input")
-              (test-assert
-               (not (search goal-text (json-get goal-request "instructions")))
-               "goal context stays outside the stable instructions"))
-            (with-recursive-lock-held (*agenda-lock*)
-              (let ((state (agenda-load configuration)))
-                (agenda-add :configuration configuration
-                            :state state
-                            :text "cache-prefix mutation"
-                            :status ':doing
-                            :memory-identifiers nil)))
-            (let* ((mutated-request
-                     (provider-request-object provider conversation schemas))
-                   (mutated-input (json-get mutated-request "input")))
-              (test-assert
-               (string= (json-get request "instructions")
-                        (json-get mutated-request "instructions"))
-               "an agenda mutation preserves byte-identical stable instructions")
-              (test-assert
-               (search "cache-prefix mutation"
-                       (context--message-text
-                        (aref mutated-input (1- (length mutated-input)))))
-               "an agenda mutation appears in trailing request context"))
+           (let ((input (json-get request "input")))
+             (test-assert
+              (and (= (length input) 2)
+                   (string= (json-get (aref input 0) "role") "user")
+                   (string= (json-get (aref input 1) "role") "developer")
+                   (search "Current workspace agenda"
+                           (context--message-text (aref input 1))))
+              "standard Responses input ends with mutable request context"))
+           (test-assert
+            (non-empty-string-p (json-get request "instructions"))
+            "standard Responses uses top-level stable instructions")
+           (let* ((goal-text "<goal_context>persist</goal_context>")
+                  (goal-request
+                    (provider-request-object
+                     provider conversation schemas :goal-context goal-text))
+                  (goal-input (json-get goal-request "input")))
+             (test-assert
+              (and (= (length goal-input) 3)
+                   (search goal-text
+                           (context--message-text (aref goal-input 1)))
+                   (search "Current workspace agenda"
+                           (context--message-text (aref goal-input 2))))
+              "goal and mutable context follow durable conversation input")
+             (test-assert
+              (not (search goal-text (json-get goal-request "instructions")))
+              "goal context stays outside the stable instructions"))
+           (with-recursive-lock-held (*agenda-lock*)
+             (let ((state (agenda-load configuration)))
+               (agenda-add :configuration configuration
+                           :state state
+                           :text "cache-prefix mutation"
+                           :status ':doing
+                           :memory-identifiers nil)))
+           (let* ((mutated-request
+                    (provider-request-object provider conversation schemas))
+                  (mutated-input (json-get mutated-request "input")))
+             (test-assert
+              (string= (json-get request "instructions")
+                       (json-get mutated-request "instructions"))
+              "an agenda mutation preserves byte-identical stable instructions")
+             (test-assert
+              (search "cache-prefix mutation"
+                      (context--message-text
+                       (aref mutated-input (1- (length mutated-input)))))
+              "an agenda mutation appears in trailing request context"))
            (test-assert
             (null (provider-web-search-tool configuration))
             "the nonfunctional native web search tool stays disabled")
@@ -560,34 +560,34 @@
                  (test-assert
                   (not present-p)
                   "side-channel compaction does not request unused summaries")))
-              (setf (provider-rate-limits trace-provider)
-                    '((:primary (:used-percent 42))))
-              (let* ((reconfiguration
-                       (configuration-with-reasoning-effort configuration "high"))
-                     (reconfigured
-                       (provider-with-configuration
-                        trace-provider reconfiguration)))
-                (test-assert
-                 (and (eq (class-of reconfigured) (class-of trace-provider))
-                      (eq (provider-configuration reconfigured) reconfiguration)
-                      (eq (model-provider-registration reconfigured)
-                          (model-provider-registration trace-provider))
-                      (eq (provider-credential-manager reconfigured)
-                          (provider-credential-manager trace-provider))
-                      (string= (provider-session-id reconfigured)
-                               (provider-session-id trace-provider))
-                      (provider-reasoning-summaries-p reconfigured)
-                      (equal (provider-rate-limits reconfigured)
-                             (provider-rate-limits trace-provider))
-                      (not (eq (provider-rate-limits reconfigured)
-                               (provider-rate-limits trace-provider))))
-                 "Codex reconfiguration preserves copied protocol and session state")))
-            (test-assert
-             (and (string= (json-get request "tool_choice") "auto")
-                  (eq (json-get request "parallel_tool_calls") t)
-                  (eq (json-get request "store") false)
-                  (eq (json-get request "stream") t))
-             "standard Responses requests carry their transport controls")
+             (setf (provider-rate-limits trace-provider)
+                   '((:primary (:used-percent 42))))
+             (let* ((reconfiguration
+                      (configuration-with-reasoning-effort configuration "high"))
+                    (reconfigured
+                      (provider-with-configuration
+                       trace-provider reconfiguration)))
+               (test-assert
+                (and (eq (class-of reconfigured) (class-of trace-provider))
+                     (eq (provider-configuration reconfigured) reconfiguration)
+                     (eq (model-provider-registration reconfigured)
+                         (model-provider-registration trace-provider))
+                     (eq (provider-credential-manager reconfigured)
+                         (provider-credential-manager trace-provider))
+                     (string= (provider-session-id reconfigured)
+                              (provider-session-id trace-provider))
+                     (provider-reasoning-summaries-p reconfigured)
+                     (equal (provider-rate-limits reconfigured)
+                            (provider-rate-limits trace-provider))
+                     (not (eq (provider-rate-limits reconfigured)
+                              (provider-rate-limits trace-provider))))
+                "Codex reconfiguration preserves copied protocol and session state")))
+           (test-assert
+            (and (string= (json-get request "tool_choice") "auto")
+                 (eq (json-get request "parallel_tool_calls") t)
+                 (eq (json-get request "store") false)
+                 (eq (json-get request "stream") t))
+            "standard Responses requests carry their transport controls")
            (test-assert
             (equalp (json-get request "include")
                     (json-array "reasoning.encrypted_content"))
@@ -628,17 +628,17 @@
            (test-assert
             (string= (json-get (json-get request "text") "verbosity") "low")
             "the provider request asks for restrained text verbosity")
-            (let* ((fallback-configuration
-                     (configuration--clone configuration :model "gpt-5.3-codex"))
-                   (fallback-provider (provider-create fallback-configuration))
-                   (tools (provider-wire-tools fallback-provider schemas))
-                   (wire-name
-                     (provider-wire-tool-name fallback-provider "test" "inspect")))
-              (test-assert
-               (and (= (length tools) 1)
-                    (string= (json-get (aref tools 0) "name") wire-name)
-                    (provider-wire-function-name--valid-p wire-name))
-               "eager Responses fallback uses the shared grammar-safe tool codec"))
+           (let* ((fallback-configuration
+                    (configuration--clone configuration :model "gpt-5.3-codex"))
+                  (fallback-provider (provider-create fallback-configuration))
+                  (tools (provider-wire-tools fallback-provider schemas))
+                  (wire-name
+                    (provider-wire-tool-name fallback-provider "test" "inspect")))
+             (test-assert
+              (and (= (length tools) 1)
+                   (string= (json-get (aref tools 0) "name") wire-name)
+                   (provider-wire-function-name--valid-p wire-name))
+              "eager Responses fallback uses the shared grammar-safe tool codec"))
            (let ((compaction-request
                    (provider-request-object
                     provider conversation schemas :compaction-p t)))
@@ -648,27 +648,27 @@
                    (search "context checkpoint compaction"
                            (json-get compaction-request "instructions")))
               "portable compaction fallback is tool-free and serial"))
-            (let* ((fallback-configuration
-                     (configuration--clone configuration :model "gpt-5.3-codex"))
-                   (fallback-provider (provider-create fallback-configuration))
-                   (local-call
-                     (json-object
-                      "type" "function_call"
-                      "namespace" "test"
-                      "name" "inspect"
-                      "call_id" "call-standard"))
-                   (wire-call
-                     (provider-wire-input-item fallback-provider local-call))
-                   (normalized
-                     (provider-normalize-output-item
-                      fallback-provider (json-object-copy wire-call))))
-              (test-assert
-               (and (null (json-get wire-call "namespace"))
-                    (provider-wire-function-name--valid-p
-                     (json-get wire-call "name"))
-                    (string= (json-get normalized "namespace") "test")
-                    (string= (json-get normalized "name") "inspect"))
-               "eager Codex wire hooks round-trip the local tool namespace")))
+           (let* ((fallback-configuration
+                    (configuration--clone configuration :model "gpt-5.3-codex"))
+                  (fallback-provider (provider-create fallback-configuration))
+                  (local-call
+                    (json-object
+                     "type" "function_call"
+                     "namespace" "test"
+                     "name" "inspect"
+                     "call_id" "call-standard"))
+                  (wire-call
+                    (provider-wire-input-item fallback-provider local-call))
+                  (normalized
+                    (provider-normalize-output-item
+                     fallback-provider (json-object-copy wire-call))))
+             (test-assert
+              (and (null (json-get wire-call "namespace"))
+                   (provider-wire-function-name--valid-p
+                    (json-get wire-call "name"))
+                   (string= (json-get normalized "namespace") "test")
+                   (string= (json-get normalized "name") "inspect"))
+              "eager Codex wire hooks round-trip the local tool namespace")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -695,62 +695,62 @@
             (json-object "type" "reasoning"
                          "encrypted_content" "retained-reasoning"
                          "summary" (json-array)))
-            (conversation-append-provider-item
-             conversation
-             (json-object "type" "function_call"
-                          "call_id" "ephemeral-call"
-                          "name" "test"
-                          "arguments" "{}")
-             :persistence ':next-response)
-            (let* ((request
-                     (provider-native-compaction-request-object
-                      provider conversation schemas))
-                   (input (json-get request "input")))
-              (test-assert
-               (and (= (length input) 2)
-                    (string= (json-get (aref input 0) "role") "user"))
-               "native compaction carries durable standard Responses input")
-              (test-assert
-               (and (reasoning-item-p (aref input 1))
-                    (string= (json-get (aref input 1) "encrypted_content")
-                             "retained-reasoning"))
-               "native compaction carries retained encrypted reasoning")
-              (test-assert
-               (non-empty-string-p (json-get request "instructions"))
-               "native compaction uses top-level instructions")
-              (test-assert
-               (string= (json-get request "prompt_cache_key")
-                        (conversation-prompt-cache-key conversation))
-               "native compaction shares the root conversation cache key")
-              (test-assert (null (json-get request "service_tier"))
-                           "standard native compaction omits a service tier")
-              (let* ((fast-configuration
-                       (configuration-with-codex-fast-mode configuration t))
-                     (fast-provider (provider-create fast-configuration))
-                     (fast-request
-                       (provider-native-compaction-request-object
-                        fast-provider conversation schemas)))
-                (test-assert
-                 (string= (json-get fast-request "service_tier") "priority")
-                 "Codex Fast mode applies to native compaction"))
-              (let* ((unknown-configuration
-                       (configuration-with-codex-fast-mode
-                        (configuration--clone configuration
-                                              :model "gpt-future-unknown")
-                        t))
-                     (unknown-provider (provider-create unknown-configuration))
-                     (unknown-request
-                       (provider-native-compaction-request-object
-                        unknown-provider conversation schemas)))
-                (test-assert
-                 (null (json-get unknown-request "service_tier"))
-                 "unknown Codex models omit Fast mode during compaction"))
-              (dolist (name '("stream" "store" "include" "tool_choice"
-                              "parallel_tool_calls" "reasoning" "text" "tools"))
-                (multiple-value-bind (value present-p) (gethash name request)
-                  (declare (ignore value))
-                  (test-assert (not present-p)
-                               (format nil "native compaction omits ~A" name)))))
+           (conversation-append-provider-item
+            conversation
+            (json-object "type" "function_call"
+                         "call_id" "ephemeral-call"
+                         "name" "test"
+                         "arguments" "{}")
+            :persistence ':next-response)
+           (let* ((request
+                    (provider-native-compaction-request-object
+                     provider conversation schemas))
+                  (input (json-get request "input")))
+             (test-assert
+              (and (= (length input) 2)
+                   (string= (json-get (aref input 0) "role") "user"))
+              "native compaction carries durable standard Responses input")
+             (test-assert
+              (and (reasoning-item-p (aref input 1))
+                   (string= (json-get (aref input 1) "encrypted_content")
+                            "retained-reasoning"))
+              "native compaction carries retained encrypted reasoning")
+             (test-assert
+              (non-empty-string-p (json-get request "instructions"))
+              "native compaction uses top-level instructions")
+             (test-assert
+              (string= (json-get request "prompt_cache_key")
+                       (conversation-prompt-cache-key conversation))
+              "native compaction shares the root conversation cache key")
+             (test-assert (null (json-get request "service_tier"))
+                          "standard native compaction omits a service tier")
+             (let* ((fast-configuration
+                      (configuration-with-codex-fast-mode configuration t))
+                    (fast-provider (provider-create fast-configuration))
+                    (fast-request
+                      (provider-native-compaction-request-object
+                       fast-provider conversation schemas)))
+               (test-assert
+                (string= (json-get fast-request "service_tier") "priority")
+                "Codex Fast mode applies to native compaction"))
+             (let* ((unknown-configuration
+                      (configuration-with-codex-fast-mode
+                       (configuration--clone configuration
+                                             :model "gpt-future-unknown")
+                       t))
+                    (unknown-provider (provider-create unknown-configuration))
+                    (unknown-request
+                      (provider-native-compaction-request-object
+                       unknown-provider conversation schemas)))
+               (test-assert
+                (null (json-get unknown-request "service_tier"))
+                "unknown Codex models omit Fast mode during compaction"))
+             (dolist (name '("stream" "store" "include" "tool_choice"
+                             "parallel_tool_calls" "reasoning" "text" "tools"))
+               (multiple-value-bind (value present-p) (gethash name request)
+                 (declare (ignore value))
+                 (test-assert (not present-p)
+                              (format nil "native compaction omits ~A" name)))))
            (let ((captured-url nil)
                  (captured-headers nil)
                  (captured-content nil))
@@ -806,7 +806,7 @@
                   (declare (ignore arguments))
                   (values
                    (json-encode
-                   (json-object
+                    (json-object
                      "output"
                      (json-array
                       (json-object
@@ -1024,8 +1024,8 @@
     (json-object
      "type" "response.completed"
      "response" (json-object
-                  "id" response-id
-                  "usage" (json-object "input_tokens" 1))))))
+                 "id" response-id
+                 "usage" (json-object "input_tokens" 1))))))
 
 (-> provider-tests--transport-provider
     (configuration list)
@@ -1078,7 +1078,7 @@
                            "transport-retry-success")
                   "an open-time TLS syscall failure reconnects successfully")
                  (test-assert
-                 (= (test-transport-provider-attempt-count provider) 2)
+                  (= (test-transport-provider-attempt-count provider) 2)
                   "a transient open failure consumes one bounded retry"))))
            (let* ((success-stream
                     (make-instance
@@ -1110,46 +1110,46 @@
                  (test-assert
                   (= (test-transport-provider-attempt-count provider) 2)
                   "an SBCL name-service error remains inside the retry boundary"))))
-            (let* ((*provider-active-credential-values* '("tls-secret"))
-                   (*provider-active-credential-redaction-marker* "[redacted]")
-                   (provider
-                     (provider-tests--transport-provider
-                      configuration
-                      (list '(:tls "certificate rejected tls-secret")))))
-              (test-assert
-               (handler-case
-                   (progn
-                     (provider--open-response-stream
-                      provider
-                      (json-object)
-                      :credentials credentials
-                      :conversation conversation)
-                     nil)
-                 (provider-error (condition)
-                   (and
-                    (not (typep condition 'provider-retryable-error))
-                    (string=
-                     (autolith-error-message condition)
-                     "The provider TLS connection could not be established: certificate rejected [redacted]"))))
-               "TLS failures append useful credential-redacted condition detail"))
-            (let ((provider
+           (let* ((*provider-active-credential-values* '("tls-secret"))
+                  (*provider-active-credential-redaction-marker* "[redacted]")
+                  (provider
                     (provider-tests--transport-provider
                      configuration
-                     (list '(:tls "compaction certificate expired")))))
-              (test-assert
-               (handler-case
-                   (progn
-                     (provider--open-native-compaction
-                      provider
-                      (json-object)
-                      :credentials credentials
-                      :conversation conversation)
-                     nil)
-                 (provider-error (condition)
+                     (list '(:tls "certificate rejected tls-secret")))))
+             (test-assert
+              (handler-case
+                  (progn
+                    (provider--open-response-stream
+                     provider
+                     (json-object)
+                     :credentials credentials
+                     :conversation conversation)
+                    nil)
+                (provider-error (condition)
+                  (and
+                   (not (typep condition 'provider-retryable-error))
                    (string=
                     (autolith-error-message condition)
-                    "The provider TLS connection could not be established: compaction certificate expired")))
-               "native compaction preserves TLS condition detail"))
+                    "The provider TLS connection could not be established: certificate rejected [redacted]"))))
+              "TLS failures append useful credential-redacted condition detail"))
+           (let ((provider
+                   (provider-tests--transport-provider
+                    configuration
+                    (list '(:tls "compaction certificate expired")))))
+             (test-assert
+              (handler-case
+                  (progn
+                    (provider--open-native-compaction
+                     provider
+                     (json-object)
+                     :credentials credentials
+                     :conversation conversation)
+                    nil)
+                (provider-error (condition)
+                  (string=
+                   (autolith-error-message condition)
+                   "The provider TLS connection could not be established: compaction certificate expired")))
+              "native compaction preserves TLS condition detail"))
            (let ((provider
                    (provider-tests--transport-provider
                     configuration
@@ -1166,25 +1166,25 @@
                 (provider-transport-error ()
                   t))
               "native compaction normalizes an SBCL name-service error"))
-            (let ((provider
-                    (provider-tests--transport-provider
-                     configuration
-                     (list ':simple-error))))
-              (test-assert
-               (handler-case
-                   (progn
-                     (provider--open-response-stream
-                      provider
-                      (json-object)
-                      :credentials credentials
-                      :conversation conversation)
-                     nil)
-                 (provider-error (condition)
-                   (and (not (typep condition 'provider-retryable-error))
-                         (string=
-                          (autolith-error-message condition)
-                          "The provider transport failed before a response was received: Synthetic provider transport failure."))))
-                 "a raw transport SIMPLE-ERROR becomes a terminal provider failure"))
+           (let ((provider
+                   (provider-tests--transport-provider
+                    configuration
+                    (list ':simple-error))))
+             (test-assert
+              (handler-case
+                  (progn
+                    (provider--open-response-stream
+                     provider
+                     (json-object)
+                     :credentials credentials
+                     :conversation conversation)
+                    nil)
+                (provider-error (condition)
+                  (and (not (typep condition 'provider-retryable-error))
+                       (string=
+                        (autolith-error-message condition)
+                        "The provider transport failed before a response was received: Synthetic provider transport failure."))))
+              "a raw transport SIMPLE-ERROR becomes a terminal provider failure"))
            (let* ((stream
                     (make-instance
                      'test-failing-close-stream
@@ -1348,7 +1348,7 @@
               'provider-open-response-stream
               (lambda (active-provider request
                        &key active-credentials active-conversation
-                         &allow-other-keys)
+                       &allow-other-keys)
                 (declare
                  (ignore active-provider request active-credentials
                          active-conversation))
@@ -1873,9 +1873,9 @@
         (sb-bsd-sockets:socket-connect client address port)
         (let ((accepted (sb-bsd-sockets:socket-accept listener)))
           (values (sb-bsd-sockets:socket-make-stream client
-                                                    :input t
-                                                    :output t
-                                                    :element-type 'character)
+                                                     :input t
+                                                     :output t
+                                                     :element-type 'character)
                   client
                   accepted
                   listener))))))
@@ -2287,10 +2287,10 @@
                      :event-callback #'identity)
                     result)
                 "provider overload retries may recover")
-                (test-assert
-                 (and (= (length delays) 2)
-                      (every (lambda (delay) (<= 1 delay 60)) delays))
-                 "provider overload retries use bounded jittered backoff")))
+               (test-assert
+                (and (= (length delays) 2)
+                     (every (lambda (delay) (<= 1 delay 60)) delays))
+                "provider overload retries use bounded jittered backoff")))
            (let ((provider
                    (test-codex-provider-create
                     configuration
@@ -2317,23 +2317,23 @@
                     (test-codex-provider-refresh-flags provider))
                    1)
                 "turn cancellation prevents another provider attempt")))
-            (let ((provider
-                    (test-codex-provider-create
-                     configuration
-                     (append (make-list 7 :initial-element :server-error)
-                             (list result)))))
-              (test-assert
-               (handler-case
-                   (progn
-                     (provider-stream-turn provider conversation
-                                           :tool-namespaces #()
-                                           :event-callback #'identity)
-                     nil)
-                 (provider-retryable-error ()
-                   t))
-               "transient provider recovery stops after six retries")
-              (test-assert
-               (= (length (test-codex-provider-refresh-flags provider)) 7)
-               "retry exhaustion permits exactly seven total attempts")))
+           (let ((provider
+                   (test-codex-provider-create
+                    configuration
+                    (append (make-list 7 :initial-element :server-error)
+                            (list result)))))
+             (test-assert
+              (handler-case
+                  (progn
+                    (provider-stream-turn provider conversation
+                                          :tool-namespaces #()
+                                          :event-callback #'identity)
+                    nil)
+                (provider-retryable-error ()
+                  t))
+              "transient provider recovery stops after six retries")
+             (test-assert
+              (= (length (test-codex-provider-refresh-flags provider)) 7)
+              "retry exhaustion permits exactly seven total attempts")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

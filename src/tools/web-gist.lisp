@@ -9,7 +9,7 @@
 
 (-> web-gist-parameters () json-object)
 (defun web-gist-parameters ()
-  "Return the web.gist parameter schema."
+  "Return the web_extra.gist parameter schema."
   (tool-object-schema
    (json-object
     "url" (tool-string-property
@@ -24,8 +24,8 @@
                          :test #'string=)
                  (non-empty-string-p (quri:uri-host uri)))
       (error 'tool-error
-             :message "web.gist requires an absolute HTTP or HTTPS URL with a host."
-             :tool-name "web.gist")))
+             :message "web_extra.gist requires an absolute HTTP or HTTPS URL with a host."
+             :tool-name "web_extra.gist")))
   (fetch-gist:markdown-from-url url))
 
 (defmethod tool-execute ((tool web-gist-tool)
@@ -36,12 +36,12 @@
   (let ((url (tool-argument arguments "url" :required t)))
     (unless (non-empty-string-p url)
       (error 'tool-error
-             :message "web.gist requires a non-empty string url."
-             :tool-name "web.gist"))
+             :message "web_extra.gist requires a non-empty string url."
+             :tool-name "web_extra.gist"))
     (handler-case
         (tool-success (web-gist--retrieve url))
       (error (condition)
         (error 'tool-error
-               :message (format nil "web.gist could not retrieve ~A: ~A"
+               :message (format nil "web_extra.gist could not retrieve ~A: ~A"
                                 url condition)
-               :tool-name "web.gist")))))
+               :tool-name "web_extra.gist")))))

@@ -93,7 +93,7 @@ backend search is enabled."
 
 The standalone search endpoint behind web.run no longer exists on the Grok
 proxy, so the local tool could only fail. Independent web namespace tools
-such as web.gist page retrieval stay advertised."
+such as web_extra.gist page retrieval stay advertised."
   (declare (ignore provider))
   (coerce
    (loop for entry across tool-namespaces
@@ -250,7 +250,7 @@ instead of an empty assistant turn."
 
 (-> grok--request-headers
     (grok-subscription-provider oauth-credentials conversation
-     &key (:accept string))
+                                &key (:accept string))
     list)
 (defun grok--request-headers (provider credentials conversation &key accept)
   "Return authenticated Grok headers for one request to CONVERSATION."

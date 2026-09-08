@@ -234,10 +234,10 @@
 
 (-> tool-tests--web-gist-call (tool-registry tool-context json-object) tool-result)
 (defun tool-tests--web-gist-call (registry context arguments)
-  "Dispatch one web.gist call with JSON ARGUMENTS."
+  "Dispatch one web_extra.gist call with JSON ARGUMENTS."
   (tool-registry-execute-call
    registry
-   (json-object "namespace" "web" "name" "gist"
+   (json-object "namespace" "web_extra" "name" "gist"
                 "arguments" (json-encode arguments))
    context))
 
@@ -246,7 +246,7 @@
   "Test web.gist registration and URL validation without network access."
   (with-test-configuration (configuration)
     (let* ((registry (make-default-tool-registry))
-           (tool (tool-registry-find registry "web" "gist"))
+           (tool (tool-registry-find registry "web_extra" "gist"))
            (context (make-instance
                      'tool-context :configuration configuration :worker nil
                      :conversation (conversation-create configuration)))
@@ -276,15 +276,15 @@
               "absolute HTTP URLs reach the retriever, regardless of scheme case")))
          (let ((fetch-count (length fetched)))
            (dolist (arguments
-                     (list (json-object)
-                           (json-object "url" "")
-                           (json-object "url" 42)
-                           (json-object "url" nil)
-                           (json-object "url" "file:///etc/passwd")
-                           (json-object "url" "/relative/path")
-                           (json-object "url" "https://")
-                           (json-object "url" "https:///missing-host")
-                           (json-object "url" "http://example.com:bad/")))
+                    (list (json-object)
+                          (json-object "url" "")
+                          (json-object "url" 42)
+                          (json-object "url" nil)
+                          (json-object "url" "file:///etc/passwd")
+                          (json-object "url" "/relative/path")
+                          (json-object "url" "https://")
+                          (json-object "url" "https:///missing-host")
+                          (json-object "url" "http://example.com:bad/")))
              (test-assert
               (not (tool-result-success-p
                     (tool-tests--web-gist-call registry context arguments)))
@@ -305,9 +305,9 @@
            (markdown (format nil "# Markdown~%~%Some content."))
            (large-markdown (make-string 12000 :initial-element #\a)))
       (dolist (case (list (list "text/markdown; charset=utf-8" markdown t)
-                         (list "text/html" "<h1>Title</h1><p>Some content.</p>" t)
-                         (list "application/pdf" "%PDF" nil)
-                         (list nil "untyped response" nil)))
+                          (list "text/html" "<h1>Title</h1><p>Some content.</p>" t)
+                          (list "application/pdf" "%PDF" nil)
+                          (list nil "untyped response" nil)))
         (destructuring-bind (content-type body success-p) case
           (test-call-with-function-replacements
            (list (list 'dex:get
@@ -382,43 +382,43 @@
                          registry unknown-call context)))
            (let ((immutable-registry
                    (make-default-tool-registry :immutable-p t)))
-              (dolist (name '("status" "diff" "generations"))
-                (test-assert (tool-registry-find immutable-registry "self" name)
-                             (format nil "immutable mode retains self.~A" name)))
-              (test-assert
-               (and (tool-registry-find immutable-registry "lisp" "describe")
-                    (tool-registry-find immutable-registry "lisp" "source"))
-               "immutable mode retains active-image inspection through Lisp targets")
+             (dolist (name '("status" "diff" "generations"))
+               (test-assert (tool-registry-find immutable-registry "self" name)
+                            (format nil "immutable mode retains self.~A" name)))
+             (test-assert
+              (and (tool-registry-find immutable-registry "lisp" "describe")
+                   (tool-registry-find immutable-registry "lisp" "source"))
+              "immutable mode retains active-image inspection through Lisp targets")
              (dolist (name '("eval" "redefine" "set" "persist-definition"
                              "discard" "exercise" "commit" "checkpoint"
                              "rollback"))
                (test-assert
                 (null (tool-registry-find immutable-registry "self" name))
                 (format nil "immutable mode omits self.~A" name))))
-            (let ((old-registry (make-instance 'tool-registry))
-                  (new-registry (make-instance 'tool-registry)))
-              (labels ((register-name (candidate canonical-name)
-                         (let ((separator (position #\. canonical-name)))
-                           (tool-registry-register
-                            candidate
-                            (make-instance
-                             'tool
-                             :namespace (subseq canonical-name 0 separator)
-                             :name (subseq canonical-name (1+ separator))
-                              :description "Tool capability diff test."
-                              :parameters (tool-object-schema (json-object) nil))))))
-                (dolist (name '("z.last" "a.keep" "m.remove"))
-                  (register-name old-registry name))
-                (dolist (name '("y.add" "a.keep" "b.add"))
-                  (register-name new-registry name)))
-              (multiple-value-bind (added removed)
-                  (tool-registry-capability-diff old-registry new-registry)
-                (test-assert
-                 (equal added '("b.add" "y.add"))
-                 "tool registry diffs additions in deterministic lexical order")
-                (test-assert
-                 (equal removed '("m.remove" "z.last"))
-                 "tool registry diffs removals in deterministic lexical order")))
+           (let ((old-registry (make-instance 'tool-registry))
+                 (new-registry (make-instance 'tool-registry)))
+             (labels ((register-name (candidate canonical-name)
+                        (let ((separator (position #\. canonical-name)))
+                          (tool-registry-register
+                           candidate
+                           (make-instance
+                            'tool
+                            :namespace (subseq canonical-name 0 separator)
+                            :name (subseq canonical-name (1+ separator))
+                            :description "Tool capability diff test."
+                            :parameters (tool-object-schema (json-object) nil))))))
+               (dolist (name '("z.last" "a.keep" "m.remove"))
+                 (register-name old-registry name))
+               (dolist (name '("y.add" "a.keep" "b.add"))
+                 (register-name new-registry name)))
+             (multiple-value-bind (added removed)
+                 (tool-registry-capability-diff old-registry new-registry)
+               (test-assert
+                (equal added '("b.add" "y.add"))
+                "tool registry diffs additions in deterministic lexical order")
+               (test-assert
+                (equal removed '("m.remove" "z.last"))
+                "tool registry diffs removals in deterministic lexical order")))
            (test-assert
             (and (tool-registry-find registry "resource" "read")
                  (tool-registry-find registry "resource" "edit")
@@ -796,7 +796,7 @@
                             "shell.run stops runaway commands")
                (test-assert (search "stopped after 1"
                                     (tool-result-content result))
-                             "shell.run explains its timeout"))))
+                            "shell.run explains its timeout"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (tool-test--grok-web-run)
   nil)

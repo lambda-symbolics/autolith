@@ -116,9 +116,9 @@ WEB SEARCH IS AVAILABLE. Use web.run when current, changing, or
 web-only information would materially improve the answer. Do not claim
 that you searched unless web.run returns a result.
 
-* web.gist page retrieval
+* web_extra.gist page retrieval
 
-Use web.gist to retrieve a known HTML or Markdown page: documentation
+Use web_extra.gist to retrieve a known HTML or Markdown page: documentation
 the user names, a link found through search, or a page referenced in
 the conversation. Supply an absolute HTTP or HTTPS URL.
 

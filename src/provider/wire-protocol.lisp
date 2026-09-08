@@ -23,7 +23,7 @@
   "Return a copy of namespace ENTRY without web.run, or NIL when empty.
 
 web.run is the only provider-backed web search tool. Independent web
-namespace tools such as web.gist page retrieval keep working without
+namespace tools such as web_extra.gist page retrieval keep working without
 provider search and stay advertised."
   (if (and (json-object-p entry)
            (json-string= (json-get entry "type") "namespace")
@@ -50,7 +50,7 @@ provider search and stay advertised."
     (configuration tool-namespaces &key hosted-web-search-p)
   "Omit local web.run when search is disabled or a hosted search tool is served.
 
-Independent web namespace tools, such as web.gist page retrieval,
+Independent web namespace tools, such as web_extra.gist page retrieval,
 stay available because they do not depend on provider web search."
   (if (or hosted-web-search-p
           (string= (configuration-web-search-mode configuration) "disabled"))
@@ -228,60 +228,60 @@ also keeps the already-consumed expansion from re-entering the prompt."
 
 
 (defmethod provider-request-object
-           ((provider responses-api-provider) (conversation conversation)
-            (tool-namespaces vector)
-            &key goal-context compaction-p)
+    ((provider responses-api-provider) (conversation conversation)
+     (tool-namespaces vector)
+     &key goal-context compaction-p)
   "Project product history, prompt policy, and context into a Responses request."
   (let* ((configuration (provider-configuration provider))
          (hosted-tools
-          (and (not compaction-p)
-               (provider-responses-hosted-tools provider configuration)))
+           (and (not compaction-p)
+                (provider-responses-hosted-tools provider configuration)))
          (hosted-web-search-p (provider-hosted-web-search-tools-p hosted-tools))
          (request-namespaces
-          (provider-request-tool-namespaces configuration tool-namespaces
-                                            :hosted-web-search-p hosted-web-search-p))
+           (provider-request-tool-namespaces configuration tool-namespaces
+                                             :hosted-web-search-p hosted-web-search-p))
          (effective-namespaces
-          (if compaction-p
-              #()
-              (concatenate 'vector
-                           (provider-responses-request-namespaces provider
-                                                                  request-namespaces)
-                           (coerce hosted-tools 'vector))))
+           (if compaction-p
+               #()
+               (concatenate 'vector
+                            (provider-responses-request-namespaces provider
+                                                                   request-namespaces)
+                            (coerce hosted-tools 'vector))))
          (delivery
-          (unless compaction-p
-            (context-resolve-request configuration conversation effective-namespaces
-                                     :goal-context goal-context)))
+           (unless compaction-p
+             (context-resolve-request configuration conversation effective-namespaces
+                                      :goal-context goal-context)))
          (projection
-          (make-instance 'cl-llm-provider-api::wire-request :model
-                         (configuration-model configuration) :items
-                         (conversation-input-items-for-family conversation
-                                                              (provider-family
-                                                               provider)
-                                                              :include-ephemeral-p
-                                                              (not compaction-p))
-                         :prefix
-                         (list
-                          (let ((*system-prompt-hosted-web-search-p*
-                                 hosted-web-search-p))
-                            (system-prompt configuration)))
-                         :suffix
-                         (list (and (not compaction-p) goal-context)
-                               (and delivery (context-delivery-rendered delivery))
-                               (and compaction-p *compaction-instructions*))
-                         :options
-                         (list :reasoning-effort
-                               (provider-responses-wire-effort provider configuration)
-                               :reasoning-summary
-                               (and (not compaction-p)
-                                    (provider-responses-reasoning-summary provider
-                                                                          configuration))
-                               :maximum-output-tokens
-                               (and (provider-output-ceiling-p provider)
-                                    *provider-maximum-output-tokens*)
-                               :fields
-                               (provider-responses-request-fields provider conversation
-                                                                  :compaction-p
-                                                                  compaction-p)))))
+           (make-instance 'cl-llm-provider-api::wire-request :model
+                          (configuration-model configuration) :items
+                          (conversation-input-items-for-family conversation
+                                                               (provider-family
+                                                                provider)
+                                                               :include-ephemeral-p
+                                                               (not compaction-p))
+                          :prefix
+                          (list
+                           (let ((*system-prompt-hosted-web-search-p*
+                                   hosted-web-search-p))
+                             (system-prompt configuration)))
+                          :suffix
+                          (list (and (not compaction-p) goal-context)
+                                (and delivery (context-delivery-rendered delivery))
+                                (and compaction-p *compaction-instructions*))
+                          :options
+                          (list :reasoning-effort
+                                (provider-responses-wire-effort provider configuration)
+                                :reasoning-summary
+                                (and (not compaction-p)
+                                     (provider-responses-reasoning-summary provider
+                                                                           configuration))
+                                :maximum-output-tokens
+                                (and (provider-output-ceiling-p provider)
+                                     *provider-maximum-output-tokens*)
+                                :fields
+                                (provider-responses-request-fields provider conversation
+                                                                   :compaction-p
+                                                                   compaction-p)))))
     (values
      (provider-request-object provider projection effective-namespaces :compaction-p
                               compaction-p)
