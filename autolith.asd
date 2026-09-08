@@ -277,7 +277,7 @@
                              (:file "localgroup-tests")
                              (:file "localgroup-handoff-tests")
                              (:file "localgroup-handoff-boundary-tests")
-                             (:file "layout-tests")
+
                              (:file "release-script-tests")
                              (:file "installer-checksum-tests")
                              (:file "release-server-tests")

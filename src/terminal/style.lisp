@@ -170,27 +170,13 @@
   (display "" :type string :read-only t))
 
 
-;;;; -- Single-Row Span Layout --
-
 (-> terminal--spans-width (list) (integer 0))
 (defun terminal--spans-width (spans)
-  "Return the total single-row cell width of sanitized SPANS."
-  (loop for span in spans
-        sum (text-cell-width
-             (sanitize-text (terminal-span-text span)
-                            :single-line-p t))))
+  "Return the single-row cell width of sanitized SPANS."
+  (text-cell-width (termdown:spans-text spans :single-line-p t)))
+
 
 (-> terminal--clip-spans (list integer) list)
 (defun terminal--clip-spans (spans maximum-width)
-  "Return single-row SPANS sanitized and clipped to at most MAXIMUM-WIDTH cells."
-  (let ((remaining (max 0 maximum-width))
-        (clipped nil))
-    (dolist (span spans (nreverse clipped))
-      (when (plusp remaining)
-        (let* ((text (sanitize-text (terminal-span-text span)
-                                    :single-line-p t))
-               (visible (text-cell-prefix text remaining)))
-          (when (plusp (length visible))
-            (decf remaining (text-cell-width visible))
-            (push (terminal-span (terminal-span-style span) visible)
-                  clipped)))))))
+  "Fit semantic SPANS to one terminal row."
+  (termdown:fit-spans spans maximum-width))

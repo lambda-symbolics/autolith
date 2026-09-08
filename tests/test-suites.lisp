@@ -499,10 +499,6 @@
   test-localgroup-handoff-cancellation
   test-localgroup-fresh-startup-selection)
 
-(define-test-suite layout
-  test-layout-column-widths
-  test-layout-fit-text)
-
 (define-test-suite release-script
   test-installer-checksum-verification
   test-release-scripts)

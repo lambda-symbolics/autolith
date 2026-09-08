@@ -382,27 +382,30 @@ emergency terminal input responsive while another thread owns presentation."
           finally (terminal--write terminal (subseq text line-start))))
   nil)
 
+
+
+
 (-> terminal--spans-text (list) string)
 (defun terminal--spans-text (spans)
-  "Return the sanitized visible text represented by SPANS."
-  (with-output-to-string (stream)
-    (dolist (span spans)
-      (write-string (sanitize-text (terminal-span-text span)) stream))))
+  "Return sanitized visible text for semantic SPANS."
+  (termdown:spans-text spans))
+
+
+
+
 
 (-> terminal--render-spans (terminal list) string)
 (defun terminal--render-spans (terminal spans)
-  "Return trusted terminal presentation for sanitized semantic SPANS."
-  (with-output-to-string (stream)
-    (dolist (span spans)
-      (let* ((text (sanitize-text (terminal-span-text span)))
-             (sequence
-               (and (terminal-styled-p terminal)
-                    (terminal-style-sequence (terminal-span-style span)))))
-        (when sequence
-          (write-string sequence stream))
-        (write-string text stream)
-        (when sequence
-          (write-string *terminal-style-reset* stream))))))
+  "Render semantic SPANS using the application's style table."
+  (termdown:render-spans
+   spans :style-function
+   (when (terminal-styled-p terminal)
+     (lambda (role text)
+       (let ((sequence (terminal-style-sequence role)))
+         (if sequence
+             (concatenate 'string sequence text *terminal-style-reset*)
+             text))))))
+
 
 (-> terminal-ui--lisp-draft-p (string) boolean)
 (defun terminal-ui--lisp-draft-p (text)

@@ -233,8 +233,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "cl-termdown";
-      rev = "340579ac634074791e9c2cc3c35323fec3b7cf66";
-      hash = "sha256-etsARI3MrICmoJNCriaaptUrPVd31eLefPE8Vtfjtz0=";
+      rev = "f54cd93e3e39390d056752cfc17d7396073b38e7";
+      hash = "sha256-Xv3SIJxzOJc68KpUI3sAFG0ZyNTe6Ee5KYkYSmJXZSQ=";
     };
     lispLibs = with pkgs.sbclPackages; [
       clinedi
