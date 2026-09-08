@@ -2,7 +2,7 @@
   :description "A live, self-modifying Common Lisp agent."
   :author "Lukáš Hozda"
   :license "ISC"
-  :version "0.48.0"
+  :version "0.49.0"
   :serial t
   :depends-on (#:cl-base64
                #:cl+ssl
