@@ -375,7 +375,8 @@
   test-task-tool-default-argument-types
   test-task-native-output-contracts
   test-task-yield-contract
-  test-task-child-steering-mailbox)
+  test-task-child-steering-mailbox
+  test-task-child-messaging)
 
 (define-test-suite task-execution
   test-task-abort-control-condition

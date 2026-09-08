@@ -1031,6 +1031,34 @@ Only the current primary conversation's artifact root is searched."
                (multiple-value-bind (form content)
                    (task--durable-job-native-form result path identifier)
                  (task-tool-result content form))))))
+      ((string= operation "send")
+       (task--validate-tool-arguments arguments '("id" "message") "job.send")
+       (let* ((identifier
+                (task--validate-job-identifier
+                 (tool-argument arguments "id" :required t)
+                 "job.send"))
+              (message (tool-argument arguments "message" :required t))
+              (job (task-orchestrator-find-visible-job
+                    orchestrator identifier viewer "job.send")))
+         (unless (and (stringp message) (non-empty-string-p message))
+           (error 'task-error
+                  :message "job.send requires non-empty message text."
+                  :tool-name "job.send"
+                  :task-id identifier))
+         (unless (typep job 'task-job)
+           (error 'task-error
+                  :message "Only child-agent jobs accept steering messages."
+                  :tool-name "job.send"
+                  :task-id identifier))
+         (multiple-value-bind (entry reason)
+             (task-job-enqueue-steering job message)
+           (if entry
+               (tool-success
+                (format nil
+                        "Steering accepted; the child reads it at its next safe boundary. Pending steering: ~D."
+                        (task-job-steering-pending-count job)))
+               (tool-failure
+                (format nil "Steering was not accepted: ~(~A~)." reason))))))
       ((member operation '("wait" "cancel") :test #'string=)
        (task--validate-tool-arguments
         arguments
@@ -1235,4 +1263,19 @@ Only the current primary conversation's artifact root is searched."
                                            "cancel" :description
                                            "Request interruption of one queued or running session job."
                                            :parameters identifier-schema))
+    (tool-registry-register registry
+                            (make-instance 'task-job-tool :orchestrator
+                                           orchestrator :namespace "job" :name
+                                           "send" :description
+                                           "Send one bounded steering message to a running child-agent job; the child reads it at its next safe boundary and continues its assignment."
+                                           :parameters
+                                           (tool-object-schema
+                                            (json-object
+                                             "id"
+                                             (tool-string-property
+                                              "The session job identifier.")
+                                             "message"
+                                             (tool-string-property
+                                              "The steering message text."))
+                                            '("id" "message"))))
     registry))

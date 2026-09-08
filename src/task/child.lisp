@@ -113,7 +113,20 @@
            "Failure or abort explanation when status is not success.")
           "label"
           (tool-string-property "Optional short result label."))
-         '("status")))))
+         '("status"))))
+      (tool-registry-register
+       registry
+       (make-instance
+        'task-note-tool
+        :namespace "yield"
+        :name "note"
+        :description
+        "Post one bounded interim progress note to the parent agent without ending this assignment; the parent reads it at its next turn boundary. Keep notes rare and load-bearing. yield.submit remains the required terminal result."
+        :parameters
+        (tool-object-schema
+         (json-object
+          "note" (tool-string-property "The interim note text."))
+         '("note")))))
     (let ((manager (mcp-tool-registry-manager parent-registry)))
       (when
           (and manager

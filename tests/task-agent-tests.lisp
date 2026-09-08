@@ -1822,3 +1822,111 @@
         (uiop:delete-directory-tree root :validate t
                                          :if-does-not-exist ':ignore)))
     nil)))
+
+(-> test-task-child-messaging () null)
+(defun test-task-child-messaging ()
+  "Test parent steering through job.send and child notes to the parent."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (definition (task-agent-definition-create
+                      :name "messaging-child"
+                      :description "Exercise child messaging."
+                      :instructions "Note progress, accept steering, yield."
+                      :source ':test))
+         (fixture (task-tests--yield-fixture configuration definition
+                                             "messaging-child-1"))
+         (job (getf fixture :job))
+         (parent (task-job-parent-agent job))
+         (orchestrator (task-job-orchestrator job))
+         (send-tool (make-instance 'task-job-tool
+                                   :orchestrator orchestrator
+                                   :namespace "job"
+                                   :name "send"
+                                   :description "Test job send."
+                                   :parameters (tool-object-schema
+                                                (json-object) '())))
+         (parent-context (make-instance 'tool-context
+                                        :configuration configuration
+                                        :worker nil
+                                        :conversation
+                                        (agent-conversation parent)
+                                        :registry
+                                        (make-instance 'tool-registry)
+                                        :agent parent)))
+    (unwind-protect
+         (progn
+           ;; The fixture job is unregistered; make it findable and counted
+           ;; the way task-tests--attach-job registers pool jobs.
+           (let ((pool (task-orchestrator-pool orchestrator)))
+             (with-lock-held ((cl-jobpond::job-pool--lock pool))
+               (setf (gethash (session-job-identifier job)
+                              (cl-jobpond::job-pool--jobs pool))
+                     job)
+               (incf (cl-jobpond::job-pool--live-count pool))))
+           (let ((result (tool-execute
+                          send-tool parent-context
+                          (json-object "id" (session-job-identifier job)
+                                       "message"
+                                       "steer toward the edge case"))))
+             (test-assert (tool-result-success-p result)
+                          "job.send accepts steering for a running child"))
+           (test-assert
+            (equal (mapcar (lambda (entry)
+                             (user-message-input-text
+                              (agent-steering-input-content entry)))
+                           (task-job-take-steering job))
+                   '("steer toward the edge case"))
+            "sent steering reaches the child's mailbox in order")
+           (test-assert
+            (handler-case
+                (progn
+                  (tool-execute send-tool parent-context
+                                (json-object "id" "job-does-not-exist"
+                                             "message" "hello"))
+                  nil)
+              (task-error ()
+                t))
+            "job.send refuses an unknown job identifier")
+           (let ((result (tool-registry-execute-call
+                          (getf fixture :registry)
+                          (json-object "namespace" "yield"
+                                       "name" "note"
+                                       "arguments"
+                                       (json-encode
+                                        (json-object "note" "halfway done")))
+                          (getf fixture :context))))
+             (test-assert (tool-result-success-p result)
+                          "yield.note queues an interim child note"))
+           (let* ((delivery (context-resolve-request
+                             configuration
+                             (agent-conversation parent)
+                             #()))
+                  (contribution
+                    (find "task-notes"
+                          (context-delivery-contributions delivery)
+                          :test #'string=
+                          :key #'context-contribution-identifier)))
+             (test-assert
+              (and contribution
+                   (search "halfway done"
+                           (context-contribution-evidence contribution))
+                   (search "messaging-child"
+                           (context-contribution-evidence contribution)))
+              "queued notes deliver behind the parent conversation"))
+           (test-assert
+            (null (find "task-notes"
+                        (context-delivery-contributions
+                         (context-resolve-request
+                          configuration
+                          (agent-conversation parent)
+                          #()))
+                        :test #'string=
+                        :key #'context-contribution-identifier))
+            "delivered notes drain and do not repeat")
+           (let ((*task-note-maximum-pending* 0))
+             (test-assert (eq (task-note-post "any-parent" "child" "text")
+                              ':full)
+                          "a full note queue refuses further notes")))
+      (uiop:delete-directory-tree root :validate t
+                                       :if-does-not-exist ':ignore)))
+  nil)

@@ -579,6 +579,10 @@ parent, and borrowed capabilities are released at terminal state."))
   (:documentation
    "Submit the required terminal result from a child agent."))
 
+(defclass task-note-tool (tool) nil
+  (:documentation
+   "Post one bounded interim child note to the parent agent."))
+
 
 (defmethod tool-storm-guard-exempt-p ((tool task-yield-tool))
   "Exempt the required terminal child yield from the mutating-call storm guard."

@@ -155,6 +155,7 @@
                              (:file "task/state")
                              (:file "task/runtime")
                              (:file "task/child")
+                             (:file "task/notes")
                              (:file "task/scheduler")
                              (:file "task/tools")
                              (:file "terminal/protocol")

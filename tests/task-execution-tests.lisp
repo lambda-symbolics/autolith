@@ -85,8 +85,8 @@
              (task-augment-tool-registry registry)
              (test-assert
               (= (length (tool-registry-tools registry))
-                 (+ initial-count 6))
-              "task augmentation adds two task and four job tools")
+                 (+ initial-count 7))
+              "task augmentation adds two task and five job tools")
              (dolist (name '("run" "agents"))
                (test-assert (tool-registry-find registry "task" name)
                             (format nil
