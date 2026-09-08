@@ -400,6 +400,7 @@
   test-rlm-policies
   test-rlm-distill-validation
   test-rlm-distill
+  test-rlm-distill-tool
   test-rlm-trace-resource
   test-rlm-endpoint
   test-rlm-environment-reuse

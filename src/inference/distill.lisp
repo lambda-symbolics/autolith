@@ -232,3 +232,88 @@ pipeline; nothing is evaluated or installed here."
                   (rlm-inference-error (condition)
                     (setf problem
                           (rlm-inference-error-message condition))))))))))))
+
+
+;;;; -- The Distillation Tool --
+
+(defclass rlm-distill-tool (rlm-frame-tool)
+  ()
+  (:documentation "Review inference traces and propose one distilled policy."))
+
+(-> rlm-distill-tool-create
+    (&key (:provider (option model-provider)) (:budget (option rlm-budget)))
+    rlm-distill-tool)
+(defun rlm-distill-tool-create (&key provider budget)
+  "Create the rlm.distill tool for the primary agent."
+  (make-instance
+   'rlm-distill-tool
+   :namespace "rlm"
+   :name "distill"
+   :provider provider
+   :budget budget
+   :description
+   "Review persisted inference traces by identifier and propose one distilled decomposition policy. A cheap gate frame decides whether the evidence justifies promotion and prefers declining; the planner then returns one structurally validated rlm-decompose-inference-task method proposal. Nothing is installed: apply an accepted proposal through the ordinary self.* mutation pipeline, which journals, checks, commits, and can discard it. Returns the proposal or the decline rationale plus the remaining budget."
+   :parameters
+   (tool-object-schema
+    (apply #'json-object
+           "traces"
+           (json-object
+            "type" "array"
+            "description"
+            (format nil
+                    "The inference trace identifiers to review, at most ~D."
+                    *rlm-distill-maximum-traces*)
+            "items" (json-object "type" "string"))
+           "instructions"
+           (tool-string-property
+            "Optional reviewer focus, for example the pattern suspected worth distilling.")
+           (append (rlm--routing-parameters)
+                   (rlm--allowance-parameters)
+                   (rlm--async-parameters)))
+    '("traces"))))
+
+(defmethod tool-execute
+    ((tool rlm-distill-tool) (context tool-context) (arguments hash-table))
+  "Run one distillation review directly or as an inspectable session job."
+  (rlm--guarded-tool-result
+   (lambda ()
+     (let* ((traces
+              (let ((value (gethash "traces" arguments)))
+                (unless (and (vectorp value)
+                             (plusp (length value))
+                             (every #'stringp value))
+                  (error 'rlm-inference-error
+                         :message "The traces argument must be a non-empty array of trace identifiers."))
+                (coerce value 'list)))
+            (instructions
+              (let ((value (gethash "instructions" arguments)))
+                (and (non-empty-string-p value) value)))
+            (budget (rlm--tool-budget tool arguments "rlm.distill"))
+            (routing (multiple-value-list
+                      (rlm--tool-routing tool context arguments)))
+            (provider (first routing))
+            (configuration (second routing))
+            (activity-callback (rlm--tool-activity-callback tool context)))
+       (rlm--tool-invoke
+        context arguments
+        :tool-name "rlm.distill"
+        :summary (format nil "~D trace~:P" (length traces))
+        :operation-function
+        (lambda ()
+          (rlm--guarded-tool-result
+           (lambda ()
+             (let ((proposal
+                     (rlm-distill :traces traces
+                                  :instructions instructions
+                                  :budget budget
+                                  :provider provider
+                                  :configuration configuration
+                                  :activity-callback activity-callback)))
+               (tool-success
+                (rlm--result-sexp
+                 (append proposal
+                         (list ':calls-remaining
+                               (rlm-budget-remaining-calls budget)
+                               ':tokens-remaining
+                               (rlm-budget-remaining-tokens
+                                budget))))))))))))))

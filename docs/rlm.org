@@ -184,6 +184,19 @@ subtasks out through =rlm-map=, and synthesize under the caller's
 contract, all inside one budget subtree. The default =:direct= policy
 never decomposes.
 
+=rlm-distill= automates the promotion path from traces to policies. A
+gate frame reads bounded head-and-tail trace views and prefers
+declining, so an empty review stays cheap; an approved review runs a
+planner frame whose proposal is structurally validated with evaluation
+disabled: exactly one =rlm-decompose-inference-task= defmethod,
+eql-specialized on a fresh policy keyword, never =:direct=, keeping
+the generic's parameter specializers. A rejected proposal is re-asked
+with its rejection reason within a bounded attempt count. Distillation
+installs nothing: the returned proposal goes through the ordinary
+durable mutation pipeline, which journals, checks, commits, and can
+discard it. The model reaches it through the =rlm.distill= tool,
+available only to the primary agent.
+
 * Traces
 
 Frames persist their private conversations under
@@ -285,6 +298,8 @@ providers depend on this, and real providers report usage.
   contract conversion from JSON Schema: =src/inference/tools.lisp=.
 - Parallel maps: =src/inference/map.lisp=.
 - Policies and =rlm-run=: =src/inference/policy.lisp=.
+- Trace-driven policy distillation and =rlm.distill=:
+  =src/inference/distill.lisp=.
 - The =inference:= trace resource: =src/inference/resource.lisp=,
   with the trace reference guidance in the compaction instructions.
 - Content-addressed context objects: =src/inference/object.lisp=.

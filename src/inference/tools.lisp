@@ -258,8 +258,9 @@
   "Register the rlm namespace in REGISTRY, nesting under BUDGET in frames.
 
 COMPLETE-P is refused inside frames: rlm.complete starts an
-environment evaluating arbitrary Lisp with user privileges, so only
-the primary agent may launch one."
+environment evaluating arbitrary Lisp with user privileges, and
+rlm.distill proposes durable policy methods, so both stay with the
+primary agent."
   (tool-registry-register registry
                           (rlm-infer-tool-create :provider provider
                                                  :budget budget))
@@ -269,7 +270,10 @@ the primary agent may launch one."
   (when complete-p
     (tool-registry-register registry
                             (rlm-complete-tool-create :provider provider
-                                                      :budget budget)))
+                                                      :budget budget))
+    (tool-registry-register registry
+                            (rlm-distill-tool-create :provider provider
+                                                     :budget budget)))
   registry)
 
 (-> rlm--frame-registry (tool-registry model-provider rlm-budget) tool-registry)

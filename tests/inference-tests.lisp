@@ -1631,6 +1631,56 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
        "an unknown trace identifier is refused before any frame runs")))
   nil)
 
+(-> test-rlm-distill-tool () null)
+(defun test-rlm-distill-tool ()
+  "Test rlm.distill reviews traces from tool arguments and reports refusals."
+  (let* ((configuration (test-configuration))
+         (source (make-instance 'tool-registry))
+         (conversation (conversation-create configuration
+                                            :identifier "rlm-distill-tool"))
+         (context (make-instance 'tool-context
+                                 :configuration configuration
+                                 :worker nil
+                                 :conversation conversation
+                                 :registry source)))
+    (multiple-value-bind (seed-value trace-identifier)
+        (infer "Say seed."
+               :provider (make-instance
+                          'rlm-inference-test-provider
+                          :results (list (rlm-inference-test-result
+                                          "seed" "seed answer" 10)))
+               :configuration configuration)
+      (declare (ignore seed-value))
+      (let* ((provider
+               (make-instance
+                'rlm-inference-test-provider
+                :results (list (rlm-inference-test-result
+                                "gate"
+                                "{\"worth\": false, \"rationale\": \"noise\"}"
+                                10))))
+             (tool (rlm-distill-tool-create :provider provider))
+             (result (tool-execute
+                      tool context
+                      (json-object "traces"
+                                   (json-array trace-identifier)))))
+        (test-assert (tool-result-success-p result)
+                     "rlm.distill returns the gate decision")
+        (let ((fields (let ((*read-eval* nil))
+                        (read-from-string (tool-result-content result)))))
+          (test-assert (and (null (getf fields ':worth))
+                            (search "noise" (getf fields ':rationale))
+                            (integerp (getf fields ':calls-remaining)))
+                       "a declined review reports its rationale and budget")))
+      (let ((tool (rlm-distill-tool-create
+                   :provider (make-instance 'rlm-inference-test-provider
+                                            :results nil))))
+        (test-assert (not (tool-result-success-p
+                           (tool-execute tool context
+                                         (json-object "traces"
+                                                      (json-array)))))
+                     "an empty traces array is refused"))))
+  nil)
+
 (-> rlm-environment-reuse--provider (string) rlm-litmus-provider)
 (defun rlm-environment-reuse--provider (form)
   "Return a litmus provider scripting one root env.eval of FORM."

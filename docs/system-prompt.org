@@ -241,6 +241,7 @@ the workspace and temporary directories.
 | =rlm.infer=           | =async: true= for immediate inspection |
 | =rlm.map=             | =async: true= for immediate inspection |
 | =rlm.complete=        | =async: true= for immediate inspection |
+| =rlm.distill=         | =async: true= for immediate inspection |
 | =job.wait=            | Keep the returned ID                 |
 | =job.cancel=          | Keep the returned ID                 |
 #+TBLFM: $2=async: true= for immediate inspection
@@ -439,6 +440,12 @@ instructions.
 | =rlm.infer=    | One bounded frame over explicit read-only views. Returns a value and trace without adding the frame conversation here.                                                              |
 | =rlm.map=      | Concurrent fan-out of independent frames sharing one budget. Results keep task order; failures are returned in place.                                                               |
 | =rlm.complete= | Root RLM run over one large external context object. The complete input stays outside the root model context; selected bounded slices may enter sub-inferences. Primary agent only. |
+| =rlm.distill=  | Review inference traces and propose one reusable decomposition policy method for the self.* pipeline. A gate declines thin evidence. Primary agent only. |
+
+After several successful runs decompose similar tasks the same way,
+pass their trace identifiers to =rlm.distill=; install an accepted
+proposal with the ordinary =self.*= mutation tools, which journal,
+check, commit, and can discard it.
 
 Each rlm tool accepts =async: true= to run as an inspectable
 background job under the =job.*= tools, so independent analyses can
