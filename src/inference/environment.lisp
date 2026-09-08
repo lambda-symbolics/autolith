@@ -182,6 +182,7 @@ Environment functions:
 - (infer task &key context contract) runs one bounded sub-inference over explicit context strings and returns its value; further values are its trace identifier and its settled token spend, so cost-aware decomposition can adapt slice sizes.
 - (rlm-map tasks &key contract concurrency) fans tasks out concurrently; each task is a string or a (:task ... :context ...) plist.
 - (finish value) records the final answer and ends the run. Call it exactly once.
+These helpers are the complete RLM interface: do not call RLM helpers that are not listed here. Everything else is ordinary Common Lisp; define further functions yourself when the decomposition needs them.
 Decompose the task programmatically: slice or partition the context, fan sub-inferences over the pieces, and combine the results in Lisp. The context metadata names a recommended maximum context size per subcall; use structure-aware or overlapping slices when relevant evidence may cross arbitrary boundaries. Keep large data in environment variables; observe only bounded summaries. The call and token budget is shared across the whole run, so prefer few well-aimed evaluations."
   "The system prompt replacing the Autolith persona for root completions.")
 
@@ -298,7 +299,7 @@ conversation identifier."
                                        (conversation-identifier
                                         conversation)))))
                    (setf request
-                         "No final value is recorded yet. Continue in the environment and call (finish value) once the answer is complete.")))))
+                         "No final value is recorded yet. Audit the task against what the environment has actually computed: do not treat intent, partial progress, or a plausible unverified answer as completion. Continue decomposing in the environment, and when the answer is complete, or the remaining budget cannot support further sub-inferences, compose the best supported value and call (finish value) exactly once.")))))
         (when worker
           (ignore-errors (lisp-worker-stop worker)))
         (rlm-endpoint-stop endpoint)))))
