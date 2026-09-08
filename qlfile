@@ -16,7 +16,7 @@ git fetch-gist https://github.com/lambda-symbolics/fetch-gist.git :ref f4d876b85
 git cl-colorist https://github.com/luciusmagn/cl-colorist.git :ref a4b65e63f40248c091d8ccf6023ad6fef5de7f0d
 git clinedi https://github.com/lambda-symbolics/clinedi.git :ref 3b7365eeabecd2fc571bde07e26a123f570e69cb
 git cl-jobpond https://github.com/luciusmagn/cl-jobpond.git :ref ee2e2eb0bd5080c52db55036f853c00671962178
-git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 73aebf6c498bc6c9b42d2a5fdbe961163feaa933
+git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 08acbc1caaab2beaa0ea824507d722a117ec70b0
 git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref dea112d1bf2750a52c52f33344157af7b9f4f6f8
 git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref a25e9b141628e682933fc9d45fc7cfb00a6dcdd2
 git cl-skills https://github.com/lambda-symbolics/cl-skills.git :ref ef20ce4bde2eb1d8f483a063788256aad06d0968
@@ -34,6 +34,6 @@ git idsmall https://github.com/luciusmagn/idsmall.git :ref 3f4b8e067a1e41b5388f7
 git mcparen https://github.com/luciusmagn/mcparen.git :ref 58ba29a8dd8d06417452b7978748c3d453bc3287
 git sbcl-generations https://github.com/luciusmagn/sbcl-generations.git :ref e65e27e9ac969c5a83c3f9c2318ae4237856d53f
 git sexp-config https://github.com/luciusmagn/sexp-config.git :ref 408fa906e2d16aa515b39c943d3affcab3811ffc
-git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref e26d616ab6161e787196202a2fac66bef82eff7b
+git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref 6d8ec5dfc85c187e1ee2f49f2ae44526e5ac0a5f
 git sbcl-workers https://github.com/lambda-symbolics/sbcl-workers.git :ref 85bbab4a4c97a7f345ddfa6f15fa187211c96ac7
 git structlisp https://github.com/lambda-symbolics/structlisp.git :ref 66bbfbe947b69f3105f71f5e4293637decc91746

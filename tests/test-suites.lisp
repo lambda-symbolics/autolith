@@ -122,6 +122,7 @@
   test-conversation-legacy-storage
   test-conversation-working-seconds
   test-conversation-picker-metadata-stability
+  test-conversation-picker-rebuild-exclusion
   test-conversation-picker-search
   test-conversation-turn-aborted-boundary
   test-conversation-tail-repair-interruptibility

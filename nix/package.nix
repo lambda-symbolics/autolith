@@ -68,11 +68,12 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "clinker-transcript";
-      rev = "73aebf6c498bc6c9b42d2a5fdbe961163feaa933";
-      hash = "sha256-qGMjMofpUw6jIWROTgMKEwfwIjR2joleCPxUMu9EW7I=";
+      rev = "08acbc1caaab2beaa0ea824507d722a117ec70b0";
+      hash = "sha256-PVzNSXSCTWMczcZT8HtwipWdoXVKlYhDBR7dCUBiG7o=";
     };
     lispLibs = with pkgs.sbclPackages; [
       yason
+      structlisp
     ];
   };
 
@@ -302,8 +303,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "sexp-store";
-      rev = "e26d616ab6161e787196202a2fac66bef82eff7b";
-      hash = "sha256-oTQyIg6FEQoo2GNTGWBr5VaA3/SxAGpg4LF5XYEyJxw=";
+      rev = "6d8ec5dfc85c187e1ee2f49f2ae44526e5ac0a5f";
+      hash = "sha256-wEuUE8xJqtfRwHewkMyH4htjGNzbeh79ghClHPwEkLw=";
     };
     lispLibs = [ lsCompat lsFlock ];
   };

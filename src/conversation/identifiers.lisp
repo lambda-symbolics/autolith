@@ -216,6 +216,12 @@ would let a second allocation in the same second choose the same identifier."
      (merge-pathnames "conversation-picker/" data-root))))
 
 
+(-> conversation-picker-source-lock-pathname (pathname) pathname)
+(defun conversation-picker-source-lock-pathname (conversation-pathname)
+  "Return the persistent lock shared by source appends and picker reconstruction."
+  (make-pathname :type "lock"
+                 :defaults (conversation-picker-metadata-pathname conversation-pathname)))
+
 (-> conversation-picker-revision-pathname (pathname) pathname)
 (defun conversation-picker-revision-pathname (conversation-pathname)
   "Return the durable picker-cache revision pathname for CONVERSATION-PATHNAME."

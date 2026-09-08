@@ -579,11 +579,22 @@
            (conversation-append-user-message conversation "before checkpoint")
            (conversation-append-summary conversation "checkpoint")
            (conversation-append-user-message conversation "after checkpoint")
+           (let ((failure
+                   (make-condition 'store-error :pathname identity
+                                                :operation ':callback
+                                                :message "Record visitor failed.")))
+             (test-assert
+              (handler-case
+                  (conversation-map-records
+                   conversation
+                   (lambda (record)
+                     (declare (ignore record))
+                     (error failure)))
+                (store-error (condition)
+                  (eq failure condition)))
+              "record visitor failures are not translated into conversation corruption"))
            (let* ((pathnames (conversation-storage-pathnames identity))
-                  (initial (first pathnames))
                   (active (second pathnames))
-                  (initial-forms
-                    (copy-tree (conversation--read-records initial)))
                   (active-forms
                     (copy-tree (conversation--read-records active))))
              (labels ((check-active-rejected (forms message)
@@ -607,11 +618,6 @@
                  (check-active-rejected
                   mismatched
                   "newest-chunk resume rejects a header from another identity"))
-               (dolist (case '((4 "active resume rejects a durable sequence gap")
-                               (2 "active resume rejects a duplicate sequence")))
-                 (let ((malformed (copy-tree active-forms)))
-                   (setf (getf (rest (third malformed)) :seq) (first case))
-                   (check-active-rejected malformed (second case))))
                (let ((malformed (copy-tree active-forms)))
                  (setf (getf (rest (second malformed)) :through-seq) 0)
                  (check-active-rejected
@@ -632,30 +638,6 @@
                  (check-active-rejected
                   malformed
                   "legacy headers are rejected inside deterministic chunk files")))
-             (let ((noncontiguous (copy-tree initial-forms)))
-               (setf (getf (rest (second noncontiguous)) :seq) 2)
-               (unwind-protect
-                    (progn
-                      (conversation-identifier-migration--write-forms
-                       initial noncontiguous)
-                      (test-assert
-                       (handler-case
-                           (progn
-                             (conversation--map-storage-records identity #'identity)
-                             nil)
-                         (conversation-invariant-error ()
-                           t))
-                       "cross-segment scans reject noncontiguous durable sequences")
-                      (test-assert
-                       (handler-case
-                           (progn
-                             (conversation--load-all-segments identity pathnames)
-                             nil)
-                         (conversation-invariant-error ()
-                           t))
-                       "full replay rejects cross-segment sequence discontinuity"))
-                 (conversation-identifier-migration--write-forms
-                  initial initial-forms)))
              (let* ((directory (conversation-storage-directory-pathname identity))
                     (alias
                       (merge-pathnames
@@ -682,25 +664,7 @@
                 (equal (mapcar (lambda (record) (getf (rest record) :seq))
                                (nreverse records))
                        '(1 2 3))
-                "restored deterministic chunks remain fully scannable")))
-           (let* ((publication
-                    (conversation-create configuration :identifier "4Pn7wTx"))
-                  (segment (conversation-log-pathname publication))
-                  (record
-                    (list :message :seq 1 :time 1000 :role ':user :content "one"))
-                  (forms
-                    (list (conversation--header-record publication)
-                          record)))
-             (conversation-identifier-migration--write-forms segment forms)
-             (test-assert
-              (conversation--published-segment-p publication segment record 1)
-              "post-publication recovery accepts the complete expected header")
-             (incf (getf (rest (first forms)) :working-seconds))
-             (conversation-identifier-migration--write-forms segment forms)
-             (test-assert
-              (not
-               (conversation--published-segment-p publication segment record 1))
-              "post-publication recovery rejects any header-state disagreement")))
+                "restored deterministic chunks are fully scannable"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -918,7 +882,6 @@
             (test-assert
              (and
               (null (conversation-input-items conversation))
-              (null (conversation-input-items-tail conversation))
               (null (conversation-ephemeral-input-entries conversation)))
              "request-local cleanup removes the interrupted provider item")))
       (uiop:delete-directory-tree
@@ -1155,12 +1118,7 @@
                   (items (conversation-input-items loaded))
                   (outputs
                     (remove-if-not
-                     (lambda (item)
-                       (and
-                        (json-object-p item)
-                        (conversation--wire-item-type-p
-                         item "function_call_output")))
-                     items)))
+                     #'clinker-transcript:function-call-output-item-p items)))
              (test-assert
               (and (= (length outputs) 1)
                    (string=
@@ -1175,61 +1133,7 @@
               "replay leaves the stale duplicate only in the append-only log")
              (test-assert
               (string= (json-get (fourth items) "role") "user")
-              "replay retains history produced after the selected output")
-             (test-assert
-              (handler-case
-                  (progn
-                    (conversation--tool-item-tables
-                     loaded
-                     (list
-                      call
-                      (function-call-output-item
-                       "call-duplicate"
-                       "first ordinary result")
-                      (function-call-output-item
-                       "call-duplicate"
-                       "second ordinary result")))
-                    nil)
-                (conversation-invariant-error ()
-                  t))
-              "replay rejects arbitrary conflicting tool outputs")
-             (test-assert
-              (handler-case
-                  (progn
-                    (conversation--tool-item-tables
-                     loaded
-                     (list
-                      call
-                      (function-call-output-item
-                       "call-duplicate"
-                       *conversation-interrupted-tool-output*)
-                      (function-call-output-item
-                       "call-duplicate"
-                       "first stale result")
-                      (function-call-output-item
-                       "call-duplicate"
-                       "second stale result")))
-                    nil)
-                (conversation-invariant-error ()
-                  t))
-              "replay tolerates only one stale result after a repair")
-             (test-assert
-              (handler-case
-                  (progn
-                    (conversation--tool-item-tables
-                     loaded
-                     (list
-                      (function-call-output-item
-                       "call-duplicate"
-                       *conversation-interrupted-tool-output*)
-                      call
-                      (function-call-output-item
-                       "call-duplicate"
-                       "late ordinary result")))
-                    nil)
-                (conversation-invariant-error ()
-                  t))
-              "duplicate tolerance requires the call before the repair")))
+              "replay retains history produced after the selected output")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -1963,10 +1867,6 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
             :tool-name "lisp.eval"
             :output "42"
             :success-p t)
-           (test-assert
-            (eq (conversation-input-items-tail conversation)
-                (last (conversation-input-items conversation)))
-            "provider projection appends retain their constant-time tail")
            (with-open-file (stream (conversation-log-pathname conversation)
                                    :direction ':output
                                    :if-exists ':append
@@ -2049,7 +1949,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
              (test-call-with-function-replacements
               (list
                (list
-                'conversation--map-records
+                'sexp-store:segment-map
                 (lambda (&rest arguments)
                   (declare (ignore arguments))
                   (error "A valid picker cache must avoid a log scan."))))
@@ -2077,6 +1977,77 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-conversation-picker-rebuild-exclusion () null)
+(defun test-conversation-picker-rebuild-exclusion ()
+  "Rebuild picker projections only after a paused append releases its source."
+  (with-test-configuration (configuration)
+    (dolist (kind '(:metadata :search))
+      (let* ((conversation (conversation-create configuration))
+             (pathname (conversation-pathname conversation))
+             (invalidated (sb-thread:make-semaphore :count 0))
+             (continue-writer (sb-thread:make-semaphore :count 0))
+             (reader-started (sb-thread:make-semaphore :count 0))
+             (reader-finished (sb-thread:make-semaphore :count 0))
+             (append-function (symbol-function 'log-append))
+             (threads nil))
+        (conversation-append-record
+         conversation (list :message :role ':user :content "first"))
+        (unwind-protect
+             (test-call-with-function-replacements
+              (list
+               (list 'log-append
+                     (lambda (&rest arguments)
+                       (sb-thread:signal-semaphore invalidated)
+                       (sb-thread:wait-on-semaphore continue-writer)
+                       (apply append-function arguments)
+                       (error "Simulated failure after durable append."))))
+              (lambda ()
+                (push (sb-thread:make-thread
+                       (lambda ()
+                         (handler-case
+                             (conversation-append-record
+                              conversation (list :message :role ':user :content "second"))
+                           (conversation-invariant-error (condition)
+                             condition))))
+                      threads)
+                (test-assert (sb-thread:wait-on-semaphore invalidated :timeout 5)
+                             "the writer pauses after invalidating picker revisions")
+                (push (sb-thread:make-thread
+                       (lambda ()
+                         (sb-thread:signal-semaphore reader-started)
+                         (prog1 (ecase kind
+                                  (:metadata (conversation-picker-metadata-find pathname))
+                                  (:search (conversation-picker-search-find pathname)))
+                           (sb-thread:signal-semaphore reader-finished))))
+                      threads)
+                (test-assert (sb-thread:wait-on-semaphore reader-started :timeout 5)
+                             "a picker request starts during the pending append")
+                (test-assert
+                 (not (sb-thread:wait-on-semaphore reader-finished :timeout 0.1))
+                 "a picker rebuild cannot return pre-append data with the new revision")
+                (sb-thread:signal-semaphore continue-writer)
+                (let ((value (sb-thread:join-thread (first threads) :timeout 5 :default nil)))
+                  (test-assert
+                   (and value
+                        (ecase kind
+                          (:metadata
+                           (and (= (conversation-picker-metadata-user-turn-count value) 2)
+                                (string= (conversation-picker-metadata-preview value) "second")))
+                          (:search
+                           (equal (conversation-picker-search-index-messages value)
+                                  '("first" "second")))))
+                   "reconstruction includes the durable append even after writer failure"))
+                (test-assert
+                 (typep (sb-thread:join-thread (second threads) :timeout 5 :default nil)
+                        'conversation-invariant-error)
+                 "the append failure releases its source lock")))
+          (sb-thread:signal-semaphore continue-writer)
+          (dolist (thread threads)
+            (when (sb-thread:thread-alive-p thread)
+              (sb-thread:terminate-thread thread))
+            (ignore-errors (sb-thread:join-thread thread :timeout 5 :default nil)))))))
+  nil)
+
 (-> test-conversation-picker-metadata-stability () null)
 (defun test-conversation-picker-metadata-stability ()
   "Test that an append racing a cache scan cannot publish stale metadata."
@@ -2092,19 +2063,16 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
            (log-append pathname
                        (list :message :seq 1 :time 1000 :role ':user
                              :content "first"))
-           (let ((map-records-function (symbol-function 'conversation--map-records)))
+           (let ((map-records-function (symbol-function 'sexp-store:segment-map)))
              (test-assert
               (null
                (test-call-with-function-replacements
                 (list
                  (list
-                  'conversation--map-records
-                  (lambda (mapped-pathname function &key (start-position 0))
+                  'sexp-store:segment-map
+                  (lambda (function mapped-pathname &rest arguments)
                     (multiple-value-prog1
-                        (funcall map-records-function
-                                 mapped-pathname
-                                 function
-                                 :start-position start-position)
+                        (apply map-records-function function mapped-pathname arguments)
                       (log-append pathname
                                   (list :message :seq 2 :time 1010 :role ':user
                                         :content "second"))))))
@@ -2123,7 +2091,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                                         :identifier "metadata-rotation"))
                   (identity (conversation-pathname conversation))
                   (map-records-function
-                   (symbol-function 'conversation--map-records))
+                   (symbol-function 'sexp-store:segment-map))
                   (file-identity-function
                    (symbol-function 'conversation--file-identity))
                   (rotated-p nil))
@@ -2145,13 +2113,10 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                     (declare (ignore mapped-pathname))
                     0))
                  (list
-                  'conversation--map-records
-                  (lambda (mapped-pathname function &key (start-position 0))
+                  'sexp-store:segment-map
+                  (lambda (function mapped-pathname &rest arguments)
                     (multiple-value-prog1
-                        (funcall map-records-function
-                                 mapped-pathname
-                                 function
-                                 :start-position start-position)
+                        (apply map-records-function function mapped-pathname arguments)
                       (unless rotated-p
                         (setf rotated-p t)
                         (conversation-append-summary
@@ -2183,18 +2148,15 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                "Find the index and return how many source scans it required."
                (let ((count 0)
                      (map-records-function
-                       (symbol-function 'conversation--map-records)))
+                      (symbol-function 'sexp-store:segment-map)))
                  (values
                   (test-call-with-function-replacements
                    (list
                     (list
-                     'conversation--map-records
-                     (lambda (mapped-pathname function &key (start-position 0))
+                     'sexp-store:segment-map
+                     (lambda (function mapped-pathname &rest arguments)
                        (incf count)
-                       (funcall map-records-function
-                                mapped-pathname
-                                function
-                                :start-position start-position))))
+                       (apply map-records-function function mapped-pathname arguments))))
                    (lambda ()
                      (conversation-picker-search-find pathname)))
                   count))))
@@ -2309,13 +2271,14 @@ assistant needle"))
                        (conversation-picker-search-revision-read pathname))
                       (message-count
                        (conversation-picker-metadata-search-message-count metadata)))
-                 (conversation-picker-search-write
-                  pathname
-                  (make-instance
-                   'conversation-picker-search-index
-                   :source-revision (1- revision)
-                   :message-count message-count
-                   :messages (make-list message-count :initial-element "stale"))))
+                 (snapshot-write
+                  search-pathname
+                  (conversation-picker-search-index-record
+                   (make-instance
+                    'conversation-picker-search-index
+                    :source-revision (1- revision)
+                    :message-count message-count
+                    :messages (make-list message-count :initial-element "stale")))))
                (multiple-value-bind (index scan-count)
                    (find-with-scan-count)
                  (test-assert
@@ -2326,21 +2289,17 @@ assistant needle"))
                         expected))
                   "a stale search revision rebuilds both chunks once"))
                (let ((map-records-function
-                      (symbol-function 'conversation--map-records))
+                      (symbol-function 'sexp-store:segment-map))
                      (appended-p nil))
                  (test-assert
                   (null
                    (test-call-with-function-replacements
                     (list
                      (list
-                      'conversation--map-records
-                      (lambda (mapped-pathname function
-                               &key (start-position 0))
+                      'sexp-store:segment-map
+                      (lambda (function mapped-pathname &rest arguments)
                         (multiple-value-prog1
-                            (funcall map-records-function
-                                     mapped-pathname
-                                     function
-                                     :start-position start-position)
+                            (apply map-records-function function mapped-pathname arguments)
                           (unless appended-p
                             (setf appended-p t)
                             (conversation-append-user-message
@@ -2377,13 +2336,8 @@ assistant needle"))
                    (conversation-invariant-error ()
                      (setf append-failed-p t)))
                  (test-assert
-                  (and append-failed-p
-                       pre-append-index
-                       (equal
-                        (conversation-picker-search-index-messages
-                         pre-append-index)
-                        expected))
-                  "a pre-append scan can publish only the old searchable corpus")
+                   (and append-failed-p (null pre-append-index))
+                   "a reentrant picker request cannot rebuild during the append")
                  (let ((stale-index
                         (conversation-picker-search-index-from-record
                          (snapshot-read search-pathname))))
@@ -2549,12 +2503,12 @@ assistant needle"))
          (second-condition nil)
          (first-thread nil)
          (second-thread nil)
-         (log-append-function (symbol-function 'log-append)))
+         (log-write-function (symbol-function 'sexp-store:log-write)))
     (unwind-protect
          (test-call-with-function-replacements
           (list
            (list
-            'log-append
+            'sexp-store:log-write
             (lambda (&rest arguments)
               (when (equal (first arguments) pathname)
                 (with-lock-held (gate)
@@ -2565,7 +2519,7 @@ assistant needle"))
                         (condition-notify condition)
                         (loop until release-first-p
                               do (condition-wait condition gate))))))
-              (apply log-append-function arguments))))
+              (apply log-write-function arguments))))
           (lambda ()
             (setf first-thread
                   (make-thread

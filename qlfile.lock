@@ -72,8 +72,8 @@
   :version "git-ee2e2eb0bd5080c52db55036f853c00671962178"))
 ("clinker-transcript" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/clinker-transcript.git" :ref "73aebf6c498bc6c9b42d2a5fdbe961163feaa933")
-  :version "git-73aebf6c498bc6c9b42d2a5fdbe961163feaa933"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/clinker-transcript.git" :ref "08acbc1caaab2beaa0ea824507d722a117ec70b0")
+  :version "git-08acbc1caaab2beaa0ea824507d722a117ec70b0"))
 ("cl-rfc8628" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-rfc8628.git" :ref "dea112d1bf2750a52c52f33344157af7b9f4f6f8")
@@ -144,8 +144,8 @@
   :version "git-408fa906e2d16aa515b39c943d3affcab3811ffc"))
 ("sexp-store" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-store.git" :ref "e26d616ab6161e787196202a2fac66bef82eff7b")
-  :version "git-e26d616ab6161e787196202a2fac66bef82eff7b"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-store.git" :ref "6d8ec5dfc85c187e1ee2f49f2ae44526e5ac0a5f")
+  :version "git-6d8ec5dfc85c187e1ee2f49f2ae44526e5ac0a5f"))
 ("sbcl-workers" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-workers.git" :ref "85bbab4a4c97a7f345ddfa6f15fa187211c96ac7")

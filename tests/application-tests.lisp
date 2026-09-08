@@ -2991,17 +2991,16 @@
                        :ui (terminal-ui-create :terminal terminal)))
                     (mapped-pathnames nil)
                     (map-records-function
-                      (symbol-function 'conversation--map-records)))
+                      (symbol-function 'sexp-store:log-map)))
                (let ((*application-history-page-size* 3))
                  (test-call-with-function-replacements
                   (list
                    (list
-                    'conversation--map-records
-                    (lambda (pathname function &key (start-position 0))
+                    'sexp-store:log-map
+                    (lambda (function pathname &key (start-position 0))
                       (push pathname mapped-pathnames)
                       (funcall map-records-function
-                               pathname
-                               function
+                               function pathname
                                :start-position start-position))))
                   (lambda ()
                     (application-render-records application))))
@@ -3057,17 +3056,16 @@
                        :ui (terminal-ui-create :terminal terminal)))
                     (mapped-pathnames nil)
                     (map-records-function
-                      (symbol-function 'conversation--map-records)))
+                      (symbol-function 'sexp-store:log-map)))
                (let ((*application-history-page-size* 3))
                  (test-call-with-function-replacements
                   (list
                    (list
-                    'conversation--map-records
-                    (lambda (pathname function &key (start-position 0))
+                    'sexp-store:log-map
+                    (lambda (function pathname &key (start-position 0))
                       (push pathname mapped-pathnames)
                       (funcall map-records-function
-                               pathname
-                               function
+                               function pathname
                                :start-position start-position))))
                   (lambda ()
                     (application-render-records application)))
@@ -3097,12 +3095,11 @@
                      (test-call-with-function-replacements
                       (list
                        (list
-                        'conversation--map-records
-                        (lambda (pathname function &key (start-position 0))
+                        'sexp-store:log-map
+                        (lambda (function pathname &key (start-position 0))
                           (push pathname recovery-pathnames)
                           (funcall map-records-function
-                                   pathname
-                                   function
+                                   function pathname
                                    :start-position start-position))))
                       (lambda ()
                         (application-render-records recovery-application))))

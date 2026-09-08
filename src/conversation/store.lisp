@@ -238,16 +238,11 @@
      :accessor conversation-last-aborted-turn-start-sequence
      :type (option integer)
      :documentation "The start sequence of the latest turn-aborted marker in memory.")
-   (input-items
-    :initarg :input-items
-    :accessor conversation-input-items
-    :type list
-    :documentation "Provider wire items in chronological order.")
-   (input-items-tail
-    :initform nil
-    :accessor conversation-input-items-tail
-    :type list
-    :documentation "The final cons of the provider projection for constant-time append.")
+   (projection
+    :initform (clinker-transcript:make-projection)
+    :reader conversation-projection
+    :type clinker-transcript:projection
+    :documentation "The ordered provider projection and its item metadata.")
    (ephemeral-input-entries
     :initform nil
     :accessor conversation-ephemeral-input-entries
@@ -273,18 +268,6 @@
     :type t
     :documentation
     "The lock serializing transient resource observations and gated edits.")
-   (input-item-families
-    :initform (make-hash-table :test #'eq)
-    :reader conversation-input-item-families
-    :type hash-table
-    :documentation
-    "The model family that produced each projected item, keyed by item.")
-   (portable-handoff-families
-    :initform (make-hash-table :test #'eq)
-    :reader conversation-portable-handoff-families
-    :type hash-table
-    :documentation
-    "The native family that does not need each portable compaction handoff.")
    (turn-state
     :initform nil
     :accessor conversation-turn-state
@@ -347,39 +330,37 @@
   (:documentation "An append-only conversation and its provider projection."))
 
 (defmethod initialize-instance
-    :after ((conversation conversation) &key &allow-other-keys)
-  "Initialize CONVERSATION's constant-time projection tails."
+    :after ((conversation conversation) &key input-items &allow-other-keys)
+  "Initialize CONVERSATION's provider projection and lineage key."
   (unless (conversation-prompt-cache-key conversation)
     (setf (conversation-prompt-cache-key conversation)
           (conversation-identifier conversation)))
-  (setf (conversation-input-items-tail conversation)
-        (last (conversation-input-items conversation))))
+  (clinker-transcript:projection-replace
+   (conversation-projection conversation) input-items))
 
-(defmethod (setf conversation-input-items)
-    :around ((items list) (conversation conversation))
-  "Serialize whole provider-projection replacements with incremental appends."
+(-> conversation-input-items (conversation) list)
+(defun conversation-input-items (conversation)
+  "Return a chronological snapshot of CONVERSATION's provider items."
   (with-recursive-lock-held ((conversation-append-lock conversation))
-    (call-next-method)))
+    (clinker-transcript:projection-items (conversation-projection conversation))))
 
-(defmethod (setf conversation-input-items)
-    :after ((items list) (conversation conversation))
-  "Keep CONVERSATION's projection tail and item metadata synchronized.
+(defun (setf conversation-input-items) (items conversation)
+  "Replace CONVERSATION's provider projection and prune discarded metadata."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (clinker-transcript:projection-replace (conversation-projection conversation) items))
+  items)
 
-Compaction replaces the whole projection, so metadata recorded for discarded
-items is pruned here rather than retained for the session."
-  (setf (conversation-input-items-tail conversation) (last items))
-  (dolist (table (list (conversation-input-item-families conversation)
-                       (conversation-portable-handoff-families conversation)))
-    (when (plusp (hash-table-count table))
-      (let ((retained (make-hash-table :test #'eq)))
-        (dolist (item items)
-          (multiple-value-bind (value present-p) (gethash item table)
-            (when present-p
-              (setf (gethash item retained) value))))
-        (clrhash table)
-        (maphash (lambda (item value)
-                   (setf (gethash item table) value))
-                 retained)))))
+(-> conversation-input-item-families (conversation) hash-table)
+(defun conversation-input-item-families (conversation)
+  "Return the item-identity table of producing model families."
+  (clinker-transcript:projection-metadata-table
+   (conversation-projection conversation) ':family))
+
+(-> conversation-portable-handoff-families (conversation) hash-table)
+(defun conversation-portable-handoff-families (conversation)
+  "Return the item-identity table of native handoff exclusions."
+  (clinker-transcript:projection-metadata-table
+   (conversation-projection conversation) ':handoff-family))
 
 
 (defclass conversation-picker-metadata ()
@@ -711,26 +692,6 @@ a crash may leave one that a later lease acquisition can reuse safely."
         :latest-goal-record
         (copy-tree (conversation-latest-goal-record conversation))))
 
-
-(-> conversation--published-segment-p
-    (conversation pathname list (integer 1))
-    boolean)
-(defun conversation--published-segment-p
-    (conversation pathname record start-sequence)
-  "Return true when PATHNAME durably contains exactly HEADER and RECORD."
-  (handler-case
-      (multiple-value-bind (forms incomplete-tail-p) (log-read pathname)
-        (and (not incomplete-tail-p)
-             (= (length forms) 2)
-             (equal (first forms)
-                    (conversation--header-record
-                     conversation
-                     :chunk-start-sequence start-sequence))
-             (equal (second forms) record)
-             t))
-    (error ()
-      nil)))
-
 (-> conversation--initial-publication-lock-pathname (conversation) pathname)
 (defun conversation--initial-publication-lock-pathname (conversation)
   "Return the shared lock serializing first publication in one storage root."
@@ -740,33 +701,17 @@ a crash may leave one that a later lease acquisition can reuse safely."
 
 (-> conversation--write-initial-record (conversation list) null)
 (defun conversation--write-initial-record (conversation record)
-  "Atomically publish CONVERSATION's first chunk header and durable RECORD."
-  (let ((identity (conversation-pathname conversation))
-        (pathname (conversation-log-pathname conversation))
-        (lock-pathname
-          (conversation--initial-publication-lock-pathname conversation)))
-    (ensure-directories-exist lock-pathname)
-    (call-with-file-lock
-     lock-pathname
-     (lambda ()
-       (when (conversation-storage-occupied-p identity)
-         (error 'conversation-invariant-error
-                :message "A new conversation storage pathname became occupied."
-                :pathname identity
-                :sequence (conversation-next-sequence conversation)))
-       (handler-case
-           (log-append pathname
-                       record
-                       :initial-forms
-                       (list (conversation--header-record
-                              conversation
-                              :chunk-start-sequence 1)))
-         (error (condition)
-           (unless (conversation--published-segment-p
-                    conversation pathname record 1)
-             (error condition))))))
-    (setf (conversation-persisted-p conversation) t
-          (conversation-incomplete-tail-p conversation) nil))
+  "Publish the first chunk before adopting its durable state."
+  (sexp-store:segment-publish
+   (conversation-log-pathname conversation)
+   (conversation--header-record conversation :chunk-start-sequence 1)
+   record
+   :lock-pathname (conversation--initial-publication-lock-pathname conversation)
+   :occupied-p (lambda ()
+                 (conversation-storage-occupied-p
+                  (conversation-pathname conversation))))
+  (setf (conversation-persisted-p conversation) t
+        (conversation-incomplete-tail-p conversation) nil)
   nil)
 
 (-> conversation--compaction-record-p (list) boolean)
@@ -776,66 +721,35 @@ a crash may leave one that a later lease acquisition can reuse safely."
 
 (-> conversation--write-rotated-record (conversation list) null)
 (defun conversation--write-rotated-record (conversation record)
-  "Atomically publish RECORD as the first record of a deterministic new chunk."
+  "Publish a compaction checkpoint before adopting its active chunk."
   (let* ((sequence (getf (rest record) :seq))
-         (identity (conversation-pathname conversation))
-         (pathname (conversation-chunk-pathname identity sequence)))
-    (when (probe-file pathname)
-      (error 'conversation-invariant-error
-             :message "A deterministic conversation chunk already exists."
-             :pathname pathname
-             :sequence sequence))
-    (handler-case
-        (log-append pathname
-                    record
-                    :initial-forms
-                    (list (conversation--header-record
-                           conversation
-                           :chunk-start-sequence sequence)))
-      (error (condition)
-        (unless (conversation--published-segment-p
-                 conversation pathname record sequence)
-          (error condition))))
+         (pathname (conversation-chunk-pathname
+                    (conversation-pathname conversation) sequence)))
+    (sexp-store:segment-publish
+     pathname
+     (conversation--header-record conversation :chunk-start-sequence sequence)
+     record)
     (setf (conversation-log-pathname conversation) pathname
           (conversation-incomplete-tail-p conversation) nil)
     (incf (conversation-log-generation conversation)))
   nil)
 
-;;;; -- Conversation Picker Metadata --
 
+;;;; -- Conversation Picker Metadata --
 
 (-> conversation-picker-revision-read (pathname) (integer 0))
 (defun conversation-picker-revision-read (conversation-pathname)
-  "Return CONVERSATION-PATHNAME's durable picker-cache revision, or zero."
-  (let ((revision-pathname
-          (conversation-picker-revision-pathname conversation-pathname)))
-    (if (probe-file revision-pathname)
-        (handler-case
-            (multiple-value-bind (record complete-p)
-                (snapshot-read revision-pathname)
-              (let ((revision (and complete-p
-                                   (listp record)
-                                   (eq (first record) :conversation-picker-revision)
-                                   (= (or (getf (rest record) :version) 0) 1)
-                                   (getf (rest record) :value))))
-                (if (typep revision '(integer 0))
-                    revision
-                    0)))
-          (error ()
-            0))
-        0)))
+  "Return the durable cache revision, treating malformed revisions as misses."
+  (sexp-store:revision-read
+   (conversation-picker-revision-pathname conversation-pathname)
+   :tag ':conversation-picker-revision))
 
 (-> conversation-picker-revision-write (pathname (integer 0)) (integer 0))
 (defun conversation-picker-revision-write (conversation-pathname revision)
-  "Atomically record REVISION before changing CONVERSATION-PATHNAME's log."
-  (let ((revision-pathname
-          (conversation-picker-revision-pathname conversation-pathname)))
-    (ensure-directories-exist revision-pathname)
-    (snapshot-write revision-pathname
-                    (list :conversation-picker-revision
-                          :version 1
-                          :value revision))
-    revision))
+  "Publish the cache revision before mutating conversation data."
+  (sexp-store:revision-write
+   (conversation-picker-revision-pathname conversation-pathname)
+   revision :tag ':conversation-picker-revision))
 
 (-> conversation-picker-metadata-invalidate (conversation) (integer 0))
 (defun conversation-picker-metadata-invalidate (conversation)
@@ -856,15 +770,9 @@ a crash may leave one that a later lease acquisition can reuse safely."
 (-> conversation--file-identity (pathname)
     (values non-empty-string (integer 0) (integer 0)))
 (defun conversation--file-identity (pathname)
-  "Return PATHNAME's active segment identity, byte size, and write date."
-  (let ((source (or (conversation-storage-active-pathname pathname)
-                    pathname)))
-    (with-open-file (stream source
-                            :direction ':input
-                            :element-type '(unsigned-byte 8))
-      (values (namestring source)
-              (file-length stream)
-              (or (file-write-date source) 0)))))
+  "Return the active segment's pathname, byte size and write date."
+  (sexp-store:file-revision
+   (or (conversation-storage-active-pathname pathname) pathname)))
 
 (-> conversation-picker-metadata-record (conversation-picker-metadata) list)
 (defun conversation-picker-metadata-record (metadata)
@@ -934,45 +842,38 @@ a crash may leave one that a later lease acquisition can reuse safely."
 (-> conversation-picker-metadata-read (pathname)
     (option conversation-picker-metadata))
 (defun conversation-picker-metadata-read (pathname)
-  "Return PATHNAME's valid picker cache, or NIL when it is absent or stale."
-  (let ((metadata-pathname (conversation-picker-metadata-pathname pathname)))
-    (when (probe-file metadata-pathname)
-      (handler-case
-          (multiple-value-bind (record complete-p)
-              (snapshot-read metadata-pathname)
-            (let ((metadata
-                    (and complete-p
-                         (conversation-picker-metadata-from-record record))))
-              (when metadata
-                (multiple-value-bind (segment size write-date)
-                    (conversation--file-identity pathname)
-                  (when (and (string=
-                              segment
-                              (conversation-picker-metadata-source-segment
-                               metadata))
-                             (= size
-                                (conversation-picker-metadata-source-size
-                                 metadata))
-                             (= write-date
-                                (conversation-picker-metadata-source-write-date
-                                 metadata))
-                             (= (conversation-picker-revision-read pathname)
-                                (conversation-picker-metadata-source-revision
-                                 metadata)))
-                    metadata)))))
-        (error ()
-          nil)))))
+  "Return the validated picker sidecar only when its source stamp is current."
+  (sexp-store:sidecar-read
+   (conversation-picker-metadata-pathname pathname)
+   :decode #'conversation-picker-metadata-from-record
+   :source-token (lambda () (conversation-picker-metadata-source-token pathname))
+   :value-token #'conversation-picker-metadata-token))
+
+(-> conversation-picker-metadata-source-token (pathname) list)
+(defun conversation-picker-metadata-source-token (pathname)
+  "Return the active segment identity together with its durable picker revision."
+  (multiple-value-bind (segment size write-date) (conversation--file-identity pathname)
+    (list segment size write-date (conversation-picker-revision-read pathname))))
+
+(-> conversation-picker-metadata-token (conversation-picker-metadata) list)
+(defun conversation-picker-metadata-token (metadata)
+  "Return the source stamp represented by conversation picker METADATA."
+  (list (conversation-picker-metadata-source-segment metadata)
+        (conversation-picker-metadata-source-size metadata)
+        (conversation-picker-metadata-source-write-date metadata)
+        (conversation-picker-metadata-source-revision metadata)))
 
 (-> conversation-picker-metadata-write
     (pathname conversation-picker-metadata)
     conversation-picker-metadata)
 (defun conversation-picker-metadata-write (pathname metadata)
-  "Atomically publish METADATA as the validated picker cache for PATHNAME."
-  (let ((metadata-pathname (conversation-picker-metadata-pathname pathname)))
-    (ensure-directories-exist metadata-pathname)
-    (snapshot-write metadata-pathname
-                    (conversation-picker-metadata-record metadata))
-    metadata))
+  "Publish picker METADATA only while its source stamp is current."
+  (sexp-store:sidecar-write
+   (conversation-picker-metadata-pathname pathname) metadata
+   :encode #'conversation-picker-metadata-record
+   :source-token (lambda () (conversation-picker-metadata-source-token pathname))
+   :value-token #'conversation-picker-metadata-token)
+  metadata)
 
 (-> conversation-picker-metadata-publish (conversation) null)
 (defun conversation-picker-metadata-publish (conversation)
@@ -1006,43 +907,19 @@ a crash may leave one that a later lease acquisition can reuse safely."
 
 (-> conversation-picker-search-revision-read (pathname) (integer 0))
 (defun conversation-picker-search-revision-read (conversation-pathname)
-  "Return CONVERSATION-PATHNAME's durable message-search revision, or zero."
-  (let ((revision-pathname
-          (conversation-picker-search-revision-pathname conversation-pathname)))
-    (if (probe-file revision-pathname)
-        (handler-case
-            (multiple-value-bind (record complete-p)
-                (snapshot-read revision-pathname)
-              (let ((revision
-                      (and complete-p
-                           (listp record)
-                           (eq (first record)
-                               :conversation-picker-search-revision)
-                           (= (or (getf (rest record) :version) 0) 1)
-                           (getf (rest record) :value))))
-                (if (typep revision '(integer 0))
-                    revision
-                    0)))
-          (error ()
-            0))
-        0)))
-
+  "Return the durable cache revision, treating malformed revisions as misses."
+  (sexp-store:revision-read
+   (conversation-picker-search-revision-pathname conversation-pathname)
+   :tag ':conversation-picker-search-revision))
 
 (-> conversation-picker-search-revision-write
     (pathname (integer 0))
     (integer 0))
-(defun conversation-picker-search-revision-write
-    (conversation-pathname revision)
-  "Atomically record REVISION before searchable message text changes."
-  (let ((revision-pathname
-          (conversation-picker-search-revision-pathname conversation-pathname)))
-    (ensure-directories-exist revision-pathname)
-    (snapshot-write revision-pathname
-                    (list :conversation-picker-search-revision
-                          :version 1
-                          :value revision))
-    revision))
-
+(defun conversation-picker-search-revision-write (conversation-pathname revision)
+  "Publish the cache revision before mutating conversation data."
+  (sexp-store:revision-write
+   (conversation-picker-search-revision-pathname conversation-pathname)
+   revision :tag ':conversation-picker-search-revision))
 
 (-> conversation-picker-search-invalidate (conversation) (integer 0))
 (defun conversation-picker-search-invalidate (conversation)
@@ -1118,40 +995,29 @@ a crash may leave one that a later lease acquisition can reuse safely."
     (pathname)
     (option conversation-picker-search-index))
 (defun conversation-picker-search-read (pathname)
-  "Return PATHNAME's valid current-log message-search sidecar, or NIL."
+  "Return current searchable text whose count agrees with the picker metadata."
   (let ((metadata (conversation-picker-metadata-read pathname)))
     (when metadata
-      (let ((search-pathname (conversation-picker-search-pathname pathname)))
-        (when (probe-file search-pathname)
-          (handler-case
-              (multiple-value-bind (record complete-p)
-                  (snapshot-read search-pathname)
-                (let ((index
-                        (and complete-p
-                             (conversation-picker-search-index-from-record record))))
-                  (when (and index
-                             (= (conversation-picker-search-revision-read pathname)
-                                (conversation-picker-search-index-source-revision
-                                 index))
-                             (= (conversation-picker-search-index-message-count index)
-                                (conversation-picker-metadata-search-message-count
-                                 metadata)))
-                    index)))
-            (error ()
-              nil)))))))
-
+      (sexp-store:sidecar-read
+       (conversation-picker-search-pathname pathname)
+       :decode #'conversation-picker-search-index-from-record
+       :source-token (lambda () (conversation-picker-search-revision-read pathname))
+       :value-token #'conversation-picker-search-index-source-revision
+       :validate (lambda (index)
+                   (= (conversation-picker-search-index-message-count index)
+                      (conversation-picker-metadata-search-message-count metadata)))))))
 
 (-> conversation-picker-search-write
     (pathname conversation-picker-search-index)
     conversation-picker-search-index)
 (defun conversation-picker-search-write (pathname index)
-  "Atomically publish INDEX as PATHNAME's validated message-search sidecar."
-  (let ((search-pathname (conversation-picker-search-pathname pathname)))
-    (ensure-directories-exist search-pathname)
-    (snapshot-write search-pathname
-                    (conversation-picker-search-index-record index))
-    index))
-
+  "Publish searchable text only while its source revision is current."
+  (sexp-store:sidecar-write
+   (conversation-picker-search-pathname pathname) index
+   :encode #'conversation-picker-search-index-record
+   :source-token (lambda () (conversation-picker-search-revision-read pathname))
+   :value-token #'conversation-picker-search-index-source-revision)
+  index)
 
 (-> conversation-create
     (configuration &key (:identifier (option string))
@@ -1198,26 +1064,30 @@ a crash may leave one that a later lease acquisition can reuse safely."
 
 (-> conversation--repair-incomplete-tail (conversation) null)
 (defun conversation--repair-incomplete-tail (conversation)
-  "Repair CONVERSATION's active torn tail while interrupts remain enabled."
-  (let ((pathname (conversation-log-pathname conversation)))
-    (handler-case
-        (multiple-value-bind (forms incomplete-tail-p) (log-read pathname)
-          (when incomplete-tail-p
-            (log-write pathname forms)
-            (incf (conversation-log-generation conversation)))
-          (setf (conversation-incomplete-tail-p conversation) nil))
-      (error (condition)
-        (error 'conversation-invariant-error
-               :message
-               (format nil "Could not repair incomplete conversation tail: ~A"
-                       condition)
-               :pathname pathname
-               :sequence (conversation-next-sequence conversation)))))
+  "Repair the active torn tail while interrupts remain enabled."
+  (handler-case
+      (progn
+        (when (sexp-store:log-repair-tail (conversation-log-pathname conversation))
+          (incf (conversation-log-generation conversation)))
+        (setf (conversation-incomplete-tail-p conversation) nil))
+    (error (condition)
+      (error 'conversation-invariant-error
+             :message (format nil "Could not repair incomplete conversation tail: ~A"
+                              condition)
+             :pathname (conversation-log-pathname conversation)
+             :sequence (conversation-next-sequence conversation))))
   nil)
 
 (-> conversation-append-record (conversation list) list)
 (defgeneric conversation-append-record (conversation record)
   (:documentation "Append portable RECORD to CONVERSATION and return the sequenced form."))
+
+(defmethod conversation-append-record :around ((conversation conversation) (record list))
+  "Exclude picker reconstruction across invalidation, log writes and publication."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (call-with-file-lock
+     (conversation-picker-source-lock-pathname (conversation-pathname conversation))
+     (lambda () (call-next-method)))))
 
 (defmethod conversation-append-record ((conversation conversation) (record list))
   "Assign metadata, initialize persistence if needed, and append RECORD."
@@ -1236,8 +1106,8 @@ a crash may leave one that a later lease acquisition can reuse safely."
                              :time (get-universal-time)
                              (rest record)))
            (picker-search-message (conversation--record-preview sequenced)))
-      ;; Advance durable sidecar revisions before the log changes so a concurrent
-      ;; scan cannot stamp pre-append state with a post-append revision.
+      ;; Invalidate under the shared source lock before changing durable bytes.
+      ;; Cache reconstruction holds this same lock through publication.
       (when picker-search-message
         (conversation-picker-search-invalidate conversation))
       (conversation-picker-metadata-invalidate conversation)
@@ -1450,7 +1320,10 @@ a crash may leave one that a later lease acquisition can reuse safely."
                             (conversation-incomplete-tail-p conversation) nil)
                       (conversation--note-activity conversation published-record)
                       (ignore-errors
-                        (conversation-picker-metadata-publish conversation)))
+                        (call-with-file-lock
+                         (conversation-picker-source-lock-pathname
+                          (conversation-pathname conversation))
+                         (lambda () (conversation-picker-metadata-publish conversation)))))
                     (progn
                       (setf (conversation-title conversation) current-title
                             (conversation-title-source conversation) current-source)
@@ -1459,24 +1332,13 @@ a crash may leave one that a later lease acquisition can reuse safely."
 
 (-> conversation--append-input-item (conversation json-object) json-object)
 (defun conversation--append-input-item (conversation item)
-  "Append provider ITEM to CONVERSATION's in-memory chronological projection.
-
-The model active when ITEM is projected identifies the family that
-produced it, which lets a later request omit provider-private content
-another family cannot read. Replay establishes the same association
-because durable configuration records are projected in order."
+  "Append ITEM and attribute it to CONVERSATION's current model family."
   (with-recursive-lock-held ((conversation-append-lock conversation))
-    (let ((cell (list item))
-          (tail (conversation-input-items-tail conversation))
-          (model (conversation-model conversation)))
+    (let ((model (conversation-model conversation)))
       (when (non-empty-string-p model)
         (setf (gethash item (conversation-input-item-families conversation))
               (model-family model)))
-      (if tail
-          (setf (rest tail) cell)
-          (setf (conversation-input-items conversation) cell))
-      (setf (conversation-input-items-tail conversation) cell)))
-  item)
+      (clinker-transcript:projection-append (conversation-projection conversation) item))))
 
 (-> conversation--append-ephemeral-input-item
     (conversation json-object &key (:attachments list))
@@ -1521,23 +1383,14 @@ because durable configuration records are projected in order."
     list)
 (defun conversation-input-items-for-family
     (conversation family &key (include-ephemeral-p t))
-  "Return CONVERSATION's provider projection usable by FAMILY.
-
-A private reasoning or native compaction item carries encrypted content that
-only the family which produced it can decrypt, so such items from another
-family, or from an unrecorded one, are omitted rather than replayed into a
-rejected request. A native checkpoint's portable handoff is omitted for its
-producing family and retained for every other family."
-  (remove-if
-   (lambda (item)
-     (or (and (family-private-item-p item)
-              (not (eq (conversation-input-item-family conversation item)
-                       family)))
-         (eq (gethash item (conversation-portable-handoff-families conversation))
-             family)))
-   (conversation-input-items-for-request
-    conversation
-    :include-ephemeral-p include-ephemeral-p)))
+  "Return CONVERSATION's provider projection usable by FAMILY."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (clinker-transcript:items-for-family
+     (conversation-input-items-for-request
+      conversation :include-ephemeral-p include-ephemeral-p)
+     family
+     :item-families (conversation-input-item-families conversation)
+     :handoff-families (conversation-portable-handoff-families conversation))))
 
 (-> conversation-native-compaction-summary-view
     (conversation json-object keyword)
@@ -1878,20 +1731,12 @@ copied."
 (defun conversation--validate-provider-item (conversation item)
   "Return ITEM after rejecting provider calls that would poison durable replay."
   (when (function-call-item-p item)
-    (let ((call-id (json-get item "call_id")))
-      (unless (non-empty-string-p call-id)
+    (handler-case
+        (clinker-transcript:validate-function-call
+         item :preceding-items (conversation-input-items conversation))
+      (clinker-transcript:reconciliation-error (condition)
         (error 'conversation-invariant-error
-               :message "A provider function call has no call identifier."
-               :pathname (conversation-pathname conversation)
-               :sequence (conversation-next-sequence conversation)))
-      (when (find-if
-             (lambda (previous)
-               (and (function-call-item-p previous)
-                    (string= call-id (or (json-get previous "call_id") ""))))
-             (conversation-input-items conversation))
-        (error 'conversation-invariant-error
-               :message (format nil "A provider response repeats tool call ~S."
-                                call-id)
+               :message (format nil "Invalid provider function call: ~A" condition)
                :pathname (conversation-pathname conversation)
                :sequence (conversation-next-sequence conversation))))
     (unless (json-object-source-p (json-get item "arguments"))
@@ -2055,22 +1900,6 @@ copied."
       (unless retained-p
         (conversation--delete-image-attachments attachments)))))
 
-(-> conversation--wire-item-type-p (json-object string) boolean)
-(defun conversation--wire-item-type-p (item type)
-  "Return true when provider ITEM has wire TYPE."
-  (string= (or (json-get item "type") "") type))
-
-(-> conversation--tool-call-id (conversation json-object) string)
-(defun conversation--tool-call-id (conversation item)
-  "Return ITEM's non-empty tool call identifier or signal corrupted history."
-  (let ((call-id (json-get item "call_id")))
-    (unless (non-empty-string-p call-id)
-      (error 'conversation-invariant-error
-             :message "A persisted tool item has no call identifier."
-             :pathname (conversation-pathname conversation)
-             :sequence nil))
-    call-id))
-
 (-> conversation--tool-call-name (json-object) string)
 (defun conversation--tool-call-name (item)
   "Return a readable canonical name for function call ITEM."
@@ -2086,118 +1915,38 @@ copied."
       (t
        "unknown"))))
 
-(-> conversation--tool-item-tables
-    (conversation list)
-    (values hash-table hash-table))
-(defun conversation--tool-item-tables (conversation items)
-  "Return unique function calls and the first correlated outputs in ITEMS.
-
-A late writer can append a real tool result after crash recovery has already
-recorded an unknown-outcome result and continued the conversation. Tolerate
-only that recognizable ordering and preserve the repair because subsequent
-history was produced from its projection.  The late result remains in the
-append-only log but must not enter provider replay."
-  (let ((calls (make-hash-table :test #'equal))
-        (outputs (make-hash-table :test #'equal))
-        (outputs-after-call-p (make-hash-table :test #'equal))
-        (stale-output-tolerated-p (make-hash-table :test #'equal)))
-    (dolist (item items)
-      (when (json-object-p item)
-        (cond
-          ((conversation--wire-item-type-p item "function_call")
-           (let ((call-id (conversation--tool-call-id conversation item)))
-             (when (gethash call-id calls)
-               (error 'conversation-invariant-error
-                      :message
-                      (format nil "Persisted history repeats tool call ~S."
-                              call-id)
-                      :pathname (conversation-pathname conversation)
-                      :sequence nil))
-             (setf (gethash call-id calls) item)))
-          ((conversation--wire-item-type-p item "function_call_output")
-           (let ((call-id (conversation--tool-call-id conversation item)))
-             (multiple-value-bind (existing present-p)
-                 (gethash call-id outputs)
-               (if (not present-p)
-                   (setf (gethash call-id outputs) item
-                         (gethash call-id outputs-after-call-p)
-                         (not (null (gethash call-id calls))))
-                   (let ((existing-output (json-get existing "output")))
-                     (if (and
-                          (gethash call-id outputs-after-call-p)
-                          (not
-                           (gethash call-id stale-output-tolerated-p))
-                          (stringp existing-output)
-                          (string=
-                           existing-output
-                           *conversation-interrupted-tool-output*))
-                         (setf
-                          (gethash call-id stale-output-tolerated-p)
-                          t)
-                         (error
-                          'conversation-invariant-error
-                          :message
-                          (format
-                           nil
-                           "Persisted history repeats output for tool call ~S."
-                           call-id)
-                          :pathname (conversation-pathname conversation)
-                          :sequence nil))))))))))
-    (values calls outputs)))
-
 (-> conversation--repair-incomplete-tool-calls (conversation) null)
 (defun conversation--repair-incomplete-tool-calls (conversation)
-  "Pair every persisted function call with an output after an interrupted exit.
-
-Existing outputs are moved beside their calls in the provider projection. A
-missing output is recorded append-only as an explicit unknown-outcome failure
-before the repaired projection can be sent to the provider."
-  (let ((items (copy-list (conversation-input-items conversation))))
-    (multiple-value-bind (calls outputs)
-        (conversation--tool-item-tables conversation items)
-      (let ((remaining items)
-            (repaired nil))
-        (loop while remaining
-              for item = (pop remaining)
-              do (cond
-                   ((and (json-object-p item)
-                         (conversation--wire-item-type-p
-                          item "function_call_output"))
-                    (let ((call-id
-                            (conversation--tool-call-id conversation item)))
-                      ;; Correlated outputs are emitted with their call group.
-                      ;; Orphaned legacy outputs retain their original position.
-                      (unless (gethash call-id calls)
-                        (push item repaired))))
-                   ((and (json-object-p item)
-                         (conversation--wire-item-type-p item "function_call"))
-                    (let ((group (list item)))
-                      (loop while (and remaining
-                                       (json-object-p (first remaining))
-                                       (conversation--wire-item-type-p
-                                        (first remaining) "function_call"))
-                            do (setf group
-                                     (nconc group (list (pop remaining)))))
-                      (dolist (call group)
-                        (push call repaired))
-                      (dolist (call group)
-                        (let* ((call-id
-                                 (conversation--tool-call-id conversation call))
-                               (output (gethash call-id outputs)))
-                          (unless output
-                            (setf output
-                                  (conversation-append-tool-result
-                                   conversation
-                                   call-id
-                                   :tool-name
-                                   (conversation--tool-call-name call)
-                                   :output *conversation-interrupted-tool-output*
-                                   :success-p nil)
-                                  (gethash call-id outputs) output))
-                          (push output repaired)))))
-                   (t
-                    (push item repaired))))
-        (setf (conversation-input-items conversation) (nreverse repaired)))))
+  "Publish missing-output repairs before installing the reconciled projection."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (handler-case
+        (let ((plan
+                (clinker-transcript:reconcile-items
+                 (conversation-input-items conversation)
+                 :repaired-output-p
+                 (lambda (output)
+                   (equal (json-get output "output")
+                          *conversation-interrupted-tool-output*)))))
+          (setf (conversation-input-items conversation)
+                (clinker-transcript:reconciliation-items
+                 plan :repair-output
+                 (lambda (intent)
+                   (conversation-append-tool-result
+                    conversation
+                    (clinker-transcript:missing-output-repair-call-id intent)
+                    :tool-name
+                    (conversation--tool-call-name
+                     (clinker-transcript:missing-output-repair-call intent))
+                    :output *conversation-interrupted-tool-output*
+                    :success-p nil)))))
+      (clinker-transcript:reconciliation-error (condition)
+        (error 'conversation-invariant-error
+               :message
+               (format nil "Persisted tool history is invalid (~A)~@[ for call ~S~]."
+                       (clinker-transcript:projection-error-reason condition)
+                       (clinker-transcript:reconciliation-error-call-id condition))
+               :pathname (conversation-pathname conversation)
+               :sequence nil))))
   nil)
 
 (-> conversation--usage-total (t) (option integer))
@@ -2352,34 +2101,60 @@ ordinary request."
 
 ;;;; -- Conversation Loading --
 
-(-> conversation--map-records
-    (pathname function &key (:start-position (integer 0)))
-    (values integer boolean integer))
-(defun conversation--map-records (pathname function &key (start-position 0))
-  "Call FUNCTION for complete records in PATHNAME from START-POSITION.
+(-> conversation--call-with-record-mapper (function function) (values &rest t))
+(defun conversation--call-with-record-mapper (function mapper)
+  "Call MAPPER with guarded FUNCTION and return all mapping values.
 
-Return the next readable file position, whether the final form is incomplete,
-and the number of records visited. Storage failures become conversation
-invariant errors while callback conditions propagate unchanged."
+Translate storage failures into conversation corruption conditions without
+translating a condition signaled by the record visitor."
   (let ((callback-store-error nil))
     (handler-case
-        (log-map
-         (lambda (record)
-           (handler-case
-               (funcall function record)
-             (store-error (condition)
-               (setf callback-store-error condition)
-               (error condition))))
-         pathname
-         :start-position start-position)
+        (funcall mapper
+                 (lambda (record)
+                   (handler-case
+                       (funcall function record)
+                     (store-error (condition)
+                       (setf callback-store-error condition)
+                       (error condition)))))
       (store-error (condition)
         (if (eq condition callback-store-error)
             (error condition)
             (error 'conversation-invariant-error
-                   :message (format nil "Malformed conversation record: ~A"
-                                    condition)
-                   :pathname pathname
-                   :sequence nil))))))
+                   :message (format nil "Malformed conversation storage: ~A" condition)
+                   :pathname (sexp-store:store-error-pathname condition)
+                   :sequence (when (typep condition 'sexp-store:segment-error)
+                               (sexp-store:segment-error-sequence condition))))))))
+
+(-> conversation--map-records
+    (pathname function &key (:start-position (integer 0)))
+    (values integer boolean integer))
+(defun conversation--map-records (pathname function &key (start-position 0))
+  "Visit complete records, returning byte position, incomplete-tail flag and count."
+  (conversation--call-with-record-mapper
+   function
+   (lambda (visit)
+     (log-map visit pathname :start-position start-position))))
+
+
+(-> conversation--segment-options
+    (pathname &key (:on-header (option function))) list)
+(defun conversation--segment-options (identity &key on-header)
+  "Supply the conversation header schema and checkpoint policy to segmented logs."
+  (list :header-function
+        (lambda (pathname header)
+          (let ((conversation (conversation--from-header identity pathname header)))
+            (when on-header
+              (funcall on-header conversation))
+            (values (conversation-next-sequence conversation)
+                    (= (getf (rest header) :version) 1))))
+        :record-sequence (lambda (record) (getf (rest record) :seq))
+        :validate-record
+        (lambda (pathname record)
+          (unless (conversation--record-form-p record)
+            (error 'conversation-invariant-error
+                   :message "A conversation segment record is malformed."
+                   :pathname pathname :sequence nil)))
+        :validate-first-record #'conversation--validate-segment-first-record))
 
 (-> conversation--map-segment-records
     (pathname pathname function
@@ -2387,101 +2162,28 @@ invariant errors while callback conditions propagate unchanged."
     (values integer boolean integer (integer 1) (integer 1)))
 (defun conversation--map-segment-records
     (identity segment function &key expected-start-sequence)
-  "Validate exact physical SEGMENT and call FUNCTION for each durable record.
-
-IDENTITY is the stable conversation pathname. EXPECTED-START-SEQUENCE, when
-provided, requires this segment to continue the preceding segment exactly.
-Return the next file position, incomplete-tail flag, durable record count,
-segment start sequence, and next expected sequence."
-  (let ((header nil)
-        (record-count 0)
-        (start-sequence nil)
-        (next-sequence nil))
-    (multiple-value-bind (position incomplete-tail-p mapped-count)
-        (conversation--map-records
-         segment
-         (lambda (record)
-           (if header
-               (progn
-                 (unless (conversation--record-form-p record)
-                   (error 'conversation-invariant-error
-                          :message "A conversation segment record is malformed."
-                          :pathname segment
-                          :sequence nil))
-                 (when (zerop record-count)
-                   (conversation--validate-segment-first-record
-                    segment header record))
-                 (let ((sequence (getf (rest record) :seq)))
-                   (unless (and (typep sequence '(integer 1))
-                                (= sequence next-sequence))
-                     (error 'conversation-invariant-error
-                            :message
-                            "Conversation segment sequences are not contiguous."
-                            :pathname segment
-                            :sequence sequence))
-                   (incf next-sequence)
-                   (incf record-count)
-                   (funcall function record)))
-               (let ((segment-conversation
-                       (conversation--from-header identity segment record)))
-                 (setf header record
-                       start-sequence
-                       (conversation-next-sequence segment-conversation)
-                       next-sequence start-sequence)
-                 (when (and expected-start-sequence
-                            (/= start-sequence expected-start-sequence))
-                   (error 'conversation-invariant-error
-                          :message
-                          "Conversation segment boundaries are not contiguous."
-                          :pathname segment
-                          :sequence start-sequence))))))
-      (declare (ignore mapped-count))
-      (unless header
-        (error 'conversation-invariant-error
-               :message "A conversation segment is empty."
-               :pathname segment
-               :sequence nil))
-      (when (and (= (getf (rest header) :version) 2)
-                 (zerop record-count))
-        (error 'conversation-invariant-error
-               :message "A conversation chunk has no durable record."
-               :pathname segment
-               :sequence start-sequence))
-      (values position
-              incomplete-tail-p
-              record-count
-              start-sequence
-              next-sequence))))
+  "Map one validated segment, retaining conversation corruption conditions."
+  (conversation--call-with-record-mapper
+   function
+   (lambda (visit)
+     (apply #'sexp-store:segment-map visit segment
+            :expected-start-sequence expected-start-sequence
+            (conversation--segment-options identity)))))
 
 (-> conversation--map-storage-records (pathname function)
     (values boolean integer))
 (defun conversation--map-storage-records (pathname function)
-  "Call FUNCTION for every validated durable record in ordered storage.
-
-Return whether the active segment has an incomplete tail and the total durable
-record count."
-  (let* ((identity (conversation-storage-identity-pathname pathname))
-         (pathnames (conversation-storage-pathnames identity))
-         (active-incomplete-tail-p nil)
-         (total-count 0)
-         (expected-sequence nil))
-    (loop for tail on pathnames
-          for segment = (first tail)
-          for active-p = (null (rest tail))
-          do (multiple-value-bind
-                 (position incomplete-tail-p record-count start-sequence
-                  next-sequence)
-                 (conversation--map-segment-records
-                  identity
-                  segment
-                  function
-                  :expected-start-sequence expected-sequence)
-               (declare (ignore position start-sequence))
-               (incf total-count record-count)
-               (setf expected-sequence next-sequence)
-               (when active-p
-                 (setf active-incomplete-tail-p incomplete-tail-p))))
-    (values active-incomplete-tail-p total-count)))
+  "Map all durable records after validating segment sequences and boundaries."
+  (let ((identity (conversation-storage-identity-pathname pathname)))
+    (conversation--call-with-record-mapper
+     function
+     (lambda (visit)
+       (multiple-value-bind (incomplete-p count next)
+           (apply #'sexp-store:segments-map visit
+                  (conversation-storage-pathnames identity)
+                  (conversation--segment-options identity))
+         (declare (ignore next))
+         (values incomplete-p count))))))
 
 (-> conversation-map-records (conversation function) (values boolean integer))
 (defun conversation-map-records (conversation function)
@@ -2573,12 +2275,18 @@ record count."
 (-> conversation-picker-metadata-find (pathname)
     (option conversation-picker-metadata))
 (defun conversation-picker-metadata-find (pathname)
-  "Return PATHNAME's validated picker cache, rebuilding a missing cache once."
+  "Return PATHNAME's picker cache, rebuilding under the source writer lock."
   (or (conversation-picker-metadata-read pathname)
-      (let ((metadata (conversation-picker-metadata-scan pathname)))
-        (when metadata
-          (ignore-errors
-            (conversation-picker-metadata-write pathname metadata)))
+      (let ((metadata nil))
+        (ignore-errors
+          (sexp-store:sidecar-rebuild
+           (conversation-picker-metadata-pathname pathname)
+           :lock-pathname (conversation-picker-source-lock-pathname pathname)
+           :build (lambda ()
+                    (setf metadata (conversation-picker-metadata-scan pathname)))
+           :encode #'conversation-picker-metadata-record
+           :source-token (lambda () (conversation-picker-metadata-source-token pathname))
+           :value-token #'conversation-picker-metadata-token))
         metadata)))
 
 
@@ -2627,15 +2335,20 @@ record count."
     (pathname)
     (option conversation-picker-search-index))
 (defun conversation-picker-search-find (pathname)
-  "Return PATHNAME's search index, rebuilding stale picker projections once."
+  "Return PATHNAME's search index, rebuilding under the source writer lock."
   (or (conversation-picker-search-read pathname)
       (when (conversation-picker-metadata-find pathname)
         (or (conversation-picker-search-read pathname)
-            (let ((index (conversation-picker-search-scan pathname)))
-              (when index
-                (ignore-errors
-                  (conversation-picker-search-write pathname index))
-                (conversation-picker-search-read pathname)))))))
+            (progn
+              (ignore-errors
+                (sexp-store:sidecar-rebuild
+                 (conversation-picker-search-pathname pathname)
+                 :lock-pathname (conversation-picker-source-lock-pathname pathname)
+                 :build (lambda () (conversation-picker-search-scan pathname))
+                 :encode #'conversation-picker-search-index-record
+                 :source-token (lambda () (conversation-picker-search-revision-read pathname))
+                 :value-token #'conversation-picker-search-index-source-revision))
+              (conversation-picker-search-read pathname))))))
 
 (-> conversation-picker-search-close (conversation) null)
 (defun conversation-picker-search-close (conversation)
@@ -2690,15 +2403,8 @@ later picker searches read it without scanning the log."
 
 (-> conversation--record-form-p (t) boolean)
 (defun conversation--record-form-p (value)
-  "Return true when VALUE is a finite keyword record with paired properties."
-  (handler-case
-      (let ((length (list-length value)))
-        (and (integerp length)
-             (plusp length)
-             (oddp length)
-             (keywordp (first value))))
-    (error ()
-      nil)))
+  "Validate finite keyword records using the conversation's first-key policy."
+  (sexp-store:record-shape-p value :duplicate-keys ':first))
 
 (-> conversation--tool-content-block-from-record (conversation list list) t)
 (defun conversation--tool-content-block-from-record
@@ -3272,40 +2978,25 @@ later picker searches read it without scanning the log."
 
 (-> conversation--load-all-segments (pathname list) conversation)
 (defun conversation--load-all-segments (identity pathnames)
-  "Replay every available segment after validating exact boundaries and sequences."
-  (let ((conversation nil)
-        (active-incomplete-tail-p nil)
-        (expected-sequence nil))
-    (loop for tail on pathnames
-          for pathname = (first tail)
-          for active-p = (null (rest tail))
-          do (let* ((header (conversation--peek-segment-header pathname))
-                    (segment-conversation
-                      (conversation--from-header identity pathname header)))
-               (unless conversation
-                 (setf conversation segment-conversation))
-               (multiple-value-bind
-                   (position incomplete-tail-p record-count start-sequence
-                    next-sequence)
-                   (conversation--map-segment-records
-                    identity
-                    pathname
-                    (lambda (record)
-                      (conversation--apply-record conversation record))
-                    :expected-start-sequence expected-sequence)
-                 (declare (ignore position record-count start-sequence))
-                 (setf expected-sequence next-sequence)
-                 (when active-p
-                   (setf active-incomplete-tail-p incomplete-tail-p)))))
-    (unless conversation
-      (error 'conversation-invariant-error
-             :message "The conversation header is missing or unsupported."
-             :pathname identity
-             :sequence nil))
-    (setf (conversation-log-pathname conversation) (first (last pathnames))
-          (conversation-incomplete-tail-p conversation)
-          active-incomplete-tail-p)
-    conversation))
+  "Replay ordered storage with the conversation schema and checkpoint policy."
+  (let ((conversation nil))
+    (conversation--call-with-record-mapper
+     (lambda (record) (conversation--apply-record conversation record))
+     (lambda (visit)
+       (multiple-value-bind (incomplete-p count next)
+           (apply #'sexp-store:segments-map visit pathnames
+                  (conversation--segment-options
+                   identity :on-header (lambda (candidate)
+                                         (unless conversation
+                                           (setf conversation candidate)))))
+         (declare (ignore count next))
+         (unless conversation
+           (error 'conversation-invariant-error
+                  :message "The conversation header is missing or unsupported."
+                  :pathname identity :sequence nil))
+         (setf (conversation-log-pathname conversation) (first (last pathnames))
+               (conversation-incomplete-tail-p conversation) incomplete-p)
+         conversation)))))
 
 (-> conversation-load (pathname) conversation)
 (defun conversation-load (pathname)
