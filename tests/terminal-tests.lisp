@@ -78,48 +78,6 @@
                :cause nil))
       (call-next-method)))
 
-(defclass protocol-recording-stream-terminal (stream-terminal)
-  ((chunks
-    :initform nil
-    :accessor protocol-recording-stream-terminal-chunks
-    :type list
-    :documentation "Protocol writes captured in reverse order.")
-   (write-count
-    :initform 0
-    :accessor protocol-recording-stream-terminal-write-count
-    :type (integer 0)
-    :documentation "The number of attempted protocol writes.")
-   (fail-write-index
-    :initarg :fail-write-index
-    :initform nil
-    :reader protocol-recording-stream-terminal-fail-write-index
-    :type (option integer)
-    :documentation "The optional one-based write attempt that signals failure.")
-   (flush-count
-    :initform 0
-    :accessor protocol-recording-stream-terminal-flush-count
-    :type (integer 0)
-    :documentation "The number of attempted protocol flushes."))
-  (:documentation "A stream terminal recording and optionally failing protocol writes."))
-
-(defmethod terminal--write
-    ((terminal protocol-recording-stream-terminal) (text string))
-  "Capture TEXT or signal the configured protocol-write failure."
-  (let ((index (incf (protocol-recording-stream-terminal-write-count terminal))))
-    (when (eql index
-               (protocol-recording-stream-terminal-fail-write-index terminal))
-      (error 'terminal-error
-             :message "Injected protocol write failure."
-             :operation ':write
-             :cause nil))
-    (push text (protocol-recording-stream-terminal-chunks terminal)))
-  nil)
-
-(defmethod terminal-flush ((terminal protocol-recording-stream-terminal))
-  "Record one protocol flush without external output."
-  (incf (protocol-recording-stream-terminal-flush-count terminal))
-  nil)
-
 (defmethod terminal-read-event ((terminal scripted-terminal))
   "Serve the next scripted event, or end of input when exhausted."
   (let ((callback (scripted-terminal-read-callback terminal)))
@@ -613,289 +571,21 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+
 (-> test-terminal-input-decoding () null)
 (defun test-terminal-input-decoding ()
-  "Test production key decoding and bracketed or raw paste collection."
-  (let* ((escape *terminal-escape-character*)
-         (paste-start (format nil "~C[200~~" escape))
-         (paste-end (format nil "~C[201~~" escape))
-         (input
-           (concatenate 'string
-                        (format nil "~C[A" escape)
-                        paste-start
-                        "paste"
-                        (format nil "~C[3J" escape)
-                        paste-end
-                        (string escape)
-                        (string #\Return)
-                        (format nil "~C[13;2u" escape)
-                        (string (code-char 4))
-                        (format nil "~C[100;5u" escape)))
-         (terminal
-           (make-instance 'stream-terminal
-                          :input-stream (make-string-input-stream input)
-                          :output-stream (make-string-output-stream)
-                          :input-file-descriptor 0
-                          :interactive-p t
-                          :columns 40)))
-    (test-assert (eq (terminal-read-event terminal) :up)
-                 "the production decoder recognizes an up arrow")
-    (let ((paste-event (terminal-read-event terminal)))
-      (test-assert (eq (first paste-event) :paste)
-                   "the production decoder recognizes bracketed paste")
-      (let ((editor (line-editor-create)))
-        (line-editor-handle-event editor paste-event)
-        (test-assert
-         (not (terminal-tests--contains-control-character-p
-               (line-editor-text editor)))
-         "bracketed paste terminal controls are neutralized before display")))
-    (test-assert (eq (terminal-read-event terminal) :insert-newline)
-                 "legacy Alt-Enter inserts a newline")
-    (test-assert (eq (terminal-read-event terminal) :insert-newline)
-                 "Clinedi enhanced Shift-Enter reaches the production decoder")
-    (test-assert (eq (terminal-read-event terminal) :end-of-input)
-                 "literal Ctrl-D requests end of input")
-    (test-assert (eq (terminal-read-event terminal) :end-of-input)
-                 "Clinedi enhanced Ctrl-D reaches the production decoder")
-    (test-assert (eq (terminal-read-event terminal) :stream-end)
-                 "physical interactive stream EOF remains distinct from Ctrl-D"))
-  (let ((terminal
-          (make-instance 'stream-terminal
-                         :input-stream (make-string-input-stream "")
-                         :output-stream (make-string-output-stream)
-                         :input-file-descriptor 0
-                         :interactive-p nil
-                         :columns 40)))
-    (test-assert (eq (terminal-read-event terminal) :stream-end)
-                 "physical fallback stream EOF remains distinct from Ctrl-D"))
-  (let* ((payload (format nil "first line~%second line"))
-         (terminal
-           (make-instance
-            'stream-terminal
-            :input-stream
-            (make-string-input-stream
-             (concatenate 'string (string (code-char 22)) payload))
-            :output-stream (make-string-output-stream)
-            :input-file-descriptor 0
-            :interactive-p t
-            :columns 40))
-         (event (terminal-read-event terminal)))
-    (test-assert
-     (and (eq (first event) :paste)
-          (string= (second event) payload))
-     "literal Ctrl-V paste bursts retain embedded newlines without submission"))
-  (let* ((payload (format nil "first line~%second line"))
-         (terminal
-           (make-instance
-            'stream-terminal
-            :input-stream (make-string-input-stream payload)
-            :output-stream (make-string-output-stream)
-            :input-file-descriptor 0
-            :interactive-p t
-            :columns 40))
-         (event (terminal-read-event terminal))
-         (editor (line-editor-create)))
-    (test-assert
-     (and (eq (first event) :paste)
-          (string= (second event) payload))
-     "an unbracketed multiline terminal burst becomes one paste event")
-    (multiple-value-bind (action submitted)
-        (line-editor-handle-event editor event)
-      (test-assert
-       (and (eq action :continue)
-            (null submitted)
-            (string= (line-editor-text editor) payload))
-       "an unbracketed multiline terminal paste never submits input")))
-  (let* ((payload
-           (format nil "first~%second~Cthird~C[A~C"
-                   #\Tab *terminal-escape-character* (code-char 3)))
-         (sanitized (sanitize-text payload))
-         (terminal
-           (make-instance
-            'stream-terminal
-            :input-stream (make-string-input-stream payload)
-            :output-stream (make-string-output-stream)
-            :input-file-descriptor 0
-            :interactive-p t
-            :columns 40))
-         (event (terminal-read-event terminal))
-         (editor (line-editor-create)))
-    (test-assert
-     (and (eq (first event) :paste)
-          (string= (second event) sanitized))
-     "multiline paste precedence neutralizes later editing controls")
-    (multiple-value-bind (action submitted)
-        (line-editor-handle-event editor event)
-      (test-assert
-       (and (eq action :continue)
-            (null submitted)
-            (string= (line-editor-text editor) sanitized))
-       "multiline controls cannot submit or invoke Clinedi editing commands"))
-    (test-assert (eq (terminal-read-event terminal) :stream-end)
-                 "a multiline control paste remains one event"))
-  (multiple-value-bind (read-descriptor write-descriptor)
-      (sb-posix:pipe)
-    (let ((input nil)
-          (output nil))
-      (unwind-protect
-           (let ((payload (format nil "pipe first~%pipe second")))
-             (setf input
-                   (sb-sys:make-fd-stream
-                    read-descriptor
-                    :input t
-                    :element-type 'character
-                    :external-format ':utf-8
-                    :buffering ':none
-                    :auto-close nil)
-                   output
-                   (sb-sys:make-fd-stream
-                    write-descriptor
-                    :output t
-                    :element-type 'character
-                    :external-format ':utf-8
-                    :buffering ':none
-                    :auto-close nil))
-             (write-string payload output)
-             (finish-output output)
-             (let* ((terminal
-                      (make-instance
-                       'stream-terminal
-                       :input-stream input
-                       :output-stream (make-string-output-stream)
-                       :input-file-descriptor read-descriptor
-                       :interactive-p t
-                       :columns 40))
-                    (event (terminal-read-event terminal)))
-               (test-assert
-                (and (eq (first event) :paste)
-                     (string= (second event) payload))
-                "one OS-level multiline input write never becomes submission")
-               (let ((single-line "pipe single-line paste"))
-                 (write-string single-line output)
-                 (finish-output output)
-                 (test-assert
-                  (equal (terminal-read-event terminal)
-                         (list ':insert single-line))
-                  "one OS-level single-line input write becomes one insert event"))))
-        (when input
-          (close input))
-        (when output
-          (close output))
-        (ignore-errors (sb-posix:close read-descriptor))
-        (ignore-errors (sb-posix:close write-descriptor)))))
-  (let* ((payload "single-line paste")
-         (terminal
-           (make-instance
-            'stream-terminal
-            :input-stream (make-string-input-stream payload)
-            :output-stream (make-string-output-stream)
-            :input-file-descriptor 0
-            :interactive-p t
-            :columns 40))
-         (event (terminal-read-event terminal))
-         (editor (line-editor-create)))
-    (test-assert
-     (equal event (list ':insert payload))
-     "a buffered plain-text burst becomes one insert event")
-    (multiple-value-bind (action submitted)
-        (line-editor-handle-event editor event)
-      (test-assert
-       (and (eq action :continue)
-            (null submitted)
-            (string= (line-editor-text editor) payload))
-       "a coalesced plain-text burst reaches Clinedi atomically"))
-    (test-assert (eq (terminal-read-event terminal) :stream-end)
-                 "a coalesced plain-text burst leaves no per-character events"))
-  (let ((terminal
-          (make-instance
-           'stream-terminal
-           :input-stream
-           (make-string-input-stream (format nil "a~C" #\Tab))
-           :output-stream (make-string-output-stream)
-           :input-file-descriptor 0
-           :interactive-p t
-           :columns 40)))
-    (test-assert
-     (equal (terminal-read-event terminal) '(:insert "a"))
-     "a mixed buffered burst retains text before a control event")
-    (test-assert (eq (terminal-read-event terminal) :complete)
-                 "a mixed buffered burst retains its control event"))
-  (dolist (case
-           (list
-            (list (string *terminal-escape-character*) ':escape)
-            (list (string (code-char 3)) ':interrupt)
-            (list (string #\Tab) ':complete)
-            (list (string (code-char 127)) ':backspace)
-            (list (format nil "~C[B" *terminal-escape-character*) ':down)
-            (list (format nil "~C[C" *terminal-escape-character*) ':right)
-            (list (format nil "~C[D" *terminal-escape-character*) ':left)))
-    (destructuring-bind (input expected) case
-      (let ((terminal
-              (make-instance 'stream-terminal
-                             :input-stream (make-string-input-stream input)
-                             :output-stream (make-string-output-stream)
-                             :input-file-descriptor 0
-                             :interactive-p t
-                             :columns 40)))
-        (test-assert (eq (terminal-read-event terminal) expected)
-                     "ordinary raw and CSI keys retain semantic input events"))))
-  (let* ((output (make-string-output-stream))
-         (terminal
-           (make-instance 'stream-terminal
-                          :input-stream (make-string-input-stream "")
-                          :output-stream output
-                          :input-file-descriptor 0))
-         (expected
-           (concatenate
-            'string
-            (terminal-keyboard-enhancement-enable-sequence)
-            (terminal-bracketed-paste-enable-sequence)
-            (terminal-bracketed-paste-disable-sequence)
-            (terminal-keyboard-enhancement-disable-sequence))))
-    (terminal--enable-input-protocols terminal)
-    (terminal--disable-input-protocols terminal)
-    (test-assert (string= (get-output-stream-string output) expected)
-                 "terminal input protocols enable and disable once in order"))
-  (let* ((terminal
-           (make-instance 'protocol-recording-stream-terminal
-                          :input-stream (make-string-input-stream "")
-                          :output-stream (make-string-output-stream)
-                          :input-file-descriptor 0
-                          :fail-write-index 2))
-         (failure nil))
-    (handler-case
-        (terminal--enable-input-protocols terminal)
-      (terminal-error (condition)
-        (setf failure condition)))
-    (let ((controls
-            (format nil "~{~A~}"
-                    (reverse
-                     (protocol-recording-stream-terminal-chunks terminal)))))
-      (test-assert failure
-                   "partial protocol activation preserves its original failure")
-      (test-assert
-       (and (search (terminal-bracketed-paste-disable-sequence) controls)
-            (search (terminal-keyboard-enhancement-disable-sequence) controls)
-            (= (protocol-recording-stream-terminal-flush-count terminal) 1))
-       "partial protocol activation attempts every cleanup control")))
-  (let* ((terminal
-           (make-instance 'protocol-recording-stream-terminal
-                          :input-stream (make-string-input-stream "")
-                          :output-stream (make-string-output-stream)
-                          :input-file-descriptor 0
-                          :fail-write-index 1))
-         (failure nil))
-    (handler-case
-        (terminal--disable-input-protocols terminal)
-      (terminal-error (condition)
-        (setf failure condition)))
-    (test-assert failure
-                 "protocol shutdown reports its first cleanup failure")
-    (test-assert
-     (and (equal (protocol-recording-stream-terminal-chunks terminal)
-                 (list (terminal-keyboard-enhancement-disable-sequence)))
-          (= (protocol-recording-stream-terminal-flush-count terminal) 1))
-     "protocol shutdown continues after one cleanup write fails"))
+  "Test the application's literal Ctrl-V policy over Clinedi buffered input."
+  (let* ((payload (format nil "first~%second"))
+         (terminal (stream-terminal-create
+                    :input-stream (make-string-input-stream
+                                   (concatenate 'string (string (code-char 22)) payload))
+                    :output-stream (make-string-output-stream)
+                    :input-file-descriptor -1)))
+    (setf (terminal-interactive-p terminal) t)
+    (test-assert (equal (terminal-read-event terminal) (list ':paste payload))
+                 "application Ctrl-V input becomes a single literal paste")
+    (test-assert (eq (terminal-read-event terminal) ':stream-end)
+                 "the paste consumes exactly its buffered input"))
   nil)
 
 (-> test-terminal-context-meter () null)
@@ -2094,381 +1784,51 @@
          "Lisp argument prefixes offer the same finite command options"))))
   nil)
 
+
+
+
 (-> test-terminal-modal-selection () null)
 (defun test-terminal-modal-selection ()
-  "Test modal picker navigation, acceptance, cancellation, and cleanup."
-  (let ((selector (make-selector :visible-count 4 :arrangement ':vertical)))
-    (selector-set-items
-     selector
-     '((:name "a" :argument nil :description "first")
-       (:name "considerably-longer" :argument nil :description "second")))
-    (let* ((rows (terminal-ui--choice-rows selector 50))
-           (texts (mapcar #'test-terminal-row-text rows)))
-      (test-assert (= (search "first" (first texts))
-                      (search "second" (second texts)))
-                   "picker descriptions share one content-aware value column")))
-  (let ((selector (make-selector :visible-count 4 :arrangement ':vertical)))
-    (selector-set-items
-     selector
-     (list
-      (list :name "alpha"
-            :argument nil
-            :tally "2 turns"
-            :description "2026-07-26 14:30 · first"
-            :description-spans
-            (list (terminal-span ':plain "2026-07-26 ")
-                  (terminal-span ':timestamp-time "14:30")
-                  (terminal-span ':plain " · first")))
-      (list :name "beta"
-            :argument nil
-            :tally "1:02"
-            :description "2026-07-25 09:15 · second"
-            :description-spans
-            (list (terminal-span ':plain "2026-07-25 ")
-                  (terminal-span ':timestamp-time "09:15")
-                  (terminal-span ':plain " · second")))))
-    (let* ((rows (terminal-ui--choice-rows selector 70))
-           (texts (mapcar #'test-terminal-row-text rows))
-           (first-time
-             (find "14:30" (first rows)
-                   :key #'terminal-span-text
-                   :test #'string=))
-           (second-date
-             (find "2026-07-25 " (second rows)
-                   :key #'terminal-span-text
-                   :test #'string=)))
-      (test-assert (= (search "2026-07-26" (first texts))
-                      (search "2026-07-25" (second texts)))
-                   "picker tallies preserve one aligned description column")
-      (test-assert (and first-time
-                        (eq (terminal-span-style first-time) ':timestamp-time))
-                   "picker descriptions preserve the timestamp time color")
-      (test-assert (and second-date
-                        (eq (terminal-span-style second-date) ':dim))
-                   "unselected picker dates retain the ordinary dim style")))
-  (test-assert
-   (not (terminal-completion-p
-         (list :name "broken"
-               :argument nil
-               :description "visible"
-               :description-spans (list (terminal-span ':plain "different")))))
-   "completion descriptions reject mismatched styled text")
-  (let* ((items '((:name "alpha" :argument nil :description "first entry"
-                   :group "current directory")
-                  (:name "beta" :argument nil :description "second entry"
-                   :group "current directory")
-                  (:name "gamma" :argument nil :description "third entry"
-                   :group "other sessions")))
-         (terminal (make-instance 'scripted-terminal
-                                  :columns 60
-                                  :events (list :history-next :submit)))
-         (ui (terminal-ui-create :terminal terminal)))
-    (with-terminal-ui (active-ui ui)
-      (recording-terminal-reset terminal)
-      (test-assert (string= (terminal-ui-select active-ui
-                                                :title "pick one"
-                                                :items items)
-                            "beta")
-                   "arrow keys move the modal selection before enter")
-      (let ((painted (recording-terminal-output terminal)))
-        (test-assert (search "pick one" painted)
-                     "the picker paints its title")
-        (test-assert (search "alpha" painted)
-                     "the picker paints its items")
-        (test-assert (and (search "current directory" painted)
-                          (search "other sessions" painted))
-                     "the picker paints nonselectable candidate groups")
-        (test-assert (not (terminal-tests--forbidden-control-p painted))
-                     "the picker never erases the display"))
-      (test-assert (null (terminal-ui-selector active-ui))
-                   "the selector state clears after selection")
-      (recording-terminal-reset terminal)
-      (setf (scripted-terminal-events terminal) (list :submit))
-      (test-assert
-       (string=
-        (terminal-ui-select
-         active-ui
-         :title "pick one"
-         :items '((:name "Display title"
-                   :value "stable-id"
-                   :argument nil
-                   :description "titled entry")))
-        "stable-id")
-       "picker values can differ from their displayed names")
-      (test-assert
-       (and (search "Display title" (recording-terminal-output terminal))
-            (not (search "stable-id" (recording-terminal-output terminal))))
-       "picker values remain hidden behind their display titles")
-      (setf (scripted-terminal-events terminal) (list :submit))
-      (test-assert
-       (string=
-        (terminal-ui-select
-         active-ui
-         :title "pick one"
-         :items '((:name "Duplicate title" :value "first-id"
-                   :argument nil :description "first")
-                  (:name "Duplicate title" :value "second-id"
-                   :argument nil :description "second"))
-         :initial-value "second-id")
-        "second-id")
-       "an initial stable value disambiguates duplicate display titles")
-      (setf (scripted-terminal-events terminal) (list :escape))
-      (test-assert (null (terminal-ui-select active-ui
-                                             :title "pick one"
-                                             :items items))
-                   "escape cancels the picker")
-      (setf (scripted-terminal-events terminal) (list :complete :submit))
-      (test-assert (string= (terminal-ui-select active-ui
-                                                :title "pick one"
-                                                :items items)
-                            "beta")
-                   "tab cycles modal picker options")
-      (setf (scripted-terminal-events terminal)
-            (list :history-next '(:insert "x")))
-      (test-assert (string= (terminal-ui-select active-ui
-                                                :title "pick one"
-                                                :items items)
-                            "beta")
-                   "ordinary picker input retains the selected option")
-      (recording-terminal-reset terminal)
-      (setf (scripted-terminal-events terminal) (list :submit))
-      (let ((visible-count nil)
-            (selected-name nil))
-        (test-assert
-         (string=
-          (terminal-ui-select
-           active-ui
-           :title "pick one"
-           :items items
-           :visible-count 15
-           :initial-name "gamma"
-           :on-event
-           (lambda (event selector)
-             (when (eq event ':submit)
-               (setf visible-count (selector-visible-count selector)
-                     selected-name
-                     (getf (nth (selector-selection selector)
-                                (selector-items selector))
-                           :name)))
-             nil))
-          "gamma")
-         "modal pickers accept their initial named selection")
-        (test-assert (= visible-count 15)
-                     "modal pickers honor a custom visible row capacity")
-        (test-assert (string= selected-name "gamma")
-                     "the initial named selection is installed before input"))
-      (recording-terminal-reset terminal)
-      (setf (scripted-terminal-events terminal)
-            (list '(:insert "SECOND") :submit))
-      (test-assert
-       (string= (terminal-ui-select active-ui
-                                    :title "pick one"
-                                    :items items
-                                    :search-p t)
-                "beta")
-       "searchable pickers match visible metadata case-insensitively")
-      (let ((painted (recording-terminal-output terminal)))
-        (test-assert (and (search "search: SECOND" painted)
-                          (search "1 match" painted))
-                     "searchable pickers show their query and match count"))
-      (setf (scripted-terminal-events terminal)
-            (list '(:insert "betx") :backspace :submit))
-      (test-assert
-       (string= (terminal-ui-select active-ui
-                                    :title "pick one"
-                                    :items items
-                                    :search-p t)
-                "beta")
-       "backspace restores matches after deleting one search grapheme")
-      (setf (scripted-terminal-events terminal)
-            (list '(:paste "no matches") :kill-line :history-next :submit))
-      (test-assert
-       (string= (terminal-ui-select active-ui
-                                    :title "pick one"
-                                    :items items
-                                    :search-p t)
-                "beta")
-       "Ctrl-U clears pasted picker search and restores navigation")
-      (setf (scripted-terminal-events terminal)
-            (list '(:insert "absent") :submit :kill-line :submit))
-      (test-assert
-       (string= (terminal-ui-select active-ui
-                                    :title "pick one"
-                                    :items items
-                                    :search-p t)
-                "alpha")
-       "submitting an empty search result keeps the picker open")
-      (recording-terminal-reset terminal)
-      (setf (scripted-terminal-events terminal)
-            (list '(:insert "d") :submit))
-      (let ((mode ':browse))
-        (test-assert
-         (string=
-          (terminal-ui-select
-           active-ui
-           :title "browse"
-           :items items
-           :hint "d deletes"
-           :search-p t
-           :on-event
-           (lambda (event selector)
-             (declare (ignore selector))
-             (ecase mode
-               (:browse
-                (when (equal event '(:insert "d"))
-                  (setf mode ':confirm)
-                  (list ':replace
-                        "confirm"
-                        '((:name "delete"
-                           :argument nil
-                           :description "confirm deletion"))
-                        "enter confirms")))
-               (:confirm
-                (when (eq event ':submit)
-                  (list ':accept "deleted"))))))
-          "deleted")
-         "picker event hooks can replace and accept modal choices")
-        (let ((painted (recording-terminal-output terminal)))
-          (test-assert (and (search "d deletes" painted)
-                            (search "enter confirms" painted))
-                       "picker replacements repaint their contextual hints"))
-        (test-assert (null (terminal-ui-selector-hint active-ui))
-                     "picker cleanup clears its contextual hint"))
-      (setf (scripted-terminal-events terminal)
-            (list '(:insert "c") :submit))
-      (let ((mode ':browse)
-            (replacement-hint :unobserved))
-        (test-assert
-         (string=
-          (terminal-ui-select
-           active-ui
-           :title "browse"
-           :items items
-           :hint "temporary hint"
-           :on-event
-           (lambda (event selector)
-             (declare (ignore selector))
-             (ecase mode
-               (:browse
-                (when (equal event '(:insert "c"))
-                  (setf mode ':replaced)
-                  (list ':replace "cleared" items nil)))
-               (:replaced
-                (when (eq event ':submit)
-                  (setf replacement-hint
-                        (terminal-ui-selector-hint active-ui))
-                  (list ':accept "cleared"))))))
-          "cleared")
-         "picker replacements accept an explicit NIL hint")
-        (test-assert (null replacement-hint)
-                     "an explicit NIL replacement clears the previous hint"))))
-  (let* ((terminal
-           (make-instance 'scripted-terminal
-                          :columns 60
-                          :events (list :submit)))
+  "Test application picker metadata, callbacks, draft preservation and resize."
+  (let* ((terminal (make-instance 'scripted-terminal
+                                  :events '((:insert "beta") :submit) :columns 40))
          (ui (terminal-ui-create :terminal terminal))
-         (poll-count 0))
+         (resized-p nil))
     (with-terminal-ui (active-ui ui)
-      (test-call-with-function-replacements
-       (list
-        (list 'terminal-input-ready-p
-              (lambda (ignored)
-                (declare (ignore ignored))
-                nil)))
-       (lambda ()
-         (test-assert
-          (string=
-           (terminal-ui-select
-            active-ui
-            :title "polling picker"
-            :items '((:name "alpha" :argument nil :description "first"))
-            :poll-interval 0
-            :on-event
-            (lambda (event selector)
-              (declare (ignore selector))
-              (when (eq event ':poll)
-                (incf poll-count)
-                (list ':accept "alpha"))))
-           "alpha")
-          "bounded picker polling can accept without terminal input")))
-      (test-assert (= poll-count 1)
-                   "picker polling dispatches one synthetic poll event")))
-  (let* ((terminal (make-instance 'scripted-terminal :columns 60))
-         (ui (terminal-ui-create :terminal terminal)))
-    (test-assert (null (terminal-ui-select
-                        ui
-                        :title "pick"
-                        :items '((:name "a" :argument nil :description "d"))))
-                 "non-interactive terminals never open the picker"))
+      (terminal-ui-set-input active-ui "draft")
+      (test-assert
+       (string= "value-b"
+                (terminal-ui-select active-ui :title "choose" :search-p t
+                                    :items '((:name "alpha" :description "" :value "value-a")
+                                             (:name "beta" :description "" :value "value-b"))
+                                    :resize-callback
+                                    (lambda () (unless resized-p
+                                                 (setf resized-p t) (cons 18 32)))))
+       "filtered picker returns an application's explicit candidate value")
+      (test-assert (and (= (terminal-columns terminal) 32)
+                        (string= (line-editor-text (terminal-ui-editor ui)) "draft")
+                        (null (terminal-ui-selector ui)))
+                   "modal cleanup preserves the draft and applies relayed dimensions")
+      (setf (scripted-terminal-events terminal) '(:down :submit))
+      (let ((replaced-p nil))
+        (test-assert
+         (string= "new-value"
+                  (terminal-ui-select
+                   active-ui :items '((:name "original" :description ""))
+                   :on-event
+                   (lambda (event selector)
+                     (declare (ignore event selector))
+                     (unless replaced-p
+                       (setf replaced-p t)
+                       '(:replace "new title" ((:name "same" :description "" :value "old-value")
+                                                (:name "same" :description "" :value "new-value"))
+                                  "new hint" "new-value")))))
+         "application callback replacement keeps title, hint and explicit identity semantics"))))
   nil)
 
-(-> test-terminal-modal-default-polling () null)
-(defun test-terminal-modal-default-polling ()
-  "Test default picker polling, resize refresh, and inert ordinary poll handling."
-  (let* ((readiness-check-count 0)
-         (poll-count 0)
-         (poll-selection nil)
-         (resize-returned-p nil)
-         (input-read-p nil)
-         (ready-after-resize-p nil)
-         (terminal-holder (list nil))
-         (terminal
-           (make-instance
-            'scripted-terminal
-            :columns 60
-            :rows 20
-            :events (list :submit)
-            :read-callback (lambda ()
-                             (setf input-read-p t))))
-         (ui (terminal-ui-create :terminal terminal))
-         (items '((:name "alpha" :argument nil :description "first")
-                  (:name "beta" :argument nil :description "second"))))
-    (setf (first terminal-holder) terminal)
-    (with-terminal-ui (active-ui ui)
-      (let ((*terminal-ui-picker-poll-interval* 0))
-        (test-call-with-function-replacements
-         (list
-          (list 'terminal-input-ready-p
-                (lambda (ignored)
-                  (declare (ignore ignored))
-                  (let ((ready-p (>= (incf readiness-check-count) 2))
-                        (active-terminal (first terminal-holder)))
-                    (when ready-p
-                      (setf ready-after-resize-p
-                            (and (= (terminal-columns active-terminal) 72)
-                                 (= (terminal-rows active-terminal) 30))))
-                    ready-p))))
-         (lambda ()
-           (test-assert
-            (string=
-             (terminal-ui-select
-              active-ui
-              :title "polling picker"
-              :items items
-              :initial-name "beta"
-              :resize-callback
-              (lambda ()
-                (when (and (= readiness-check-count 1)
-                           (not resize-returned-p))
-                  (setf resize-returned-p t)
-                  (cons 30 72)))
-              :on-event
-              (lambda (event selector)
-                (when (eq event ':poll)
-                  (incf poll-count)
-                  (setf poll-selection (selector-selection selector)))
-                nil))
-             "beta")
-            "default polling preserves the selected item until later submit")))))
-    (test-assert (= poll-count 1)
-                 "default picker polling delivers one poll event to the callback")
-    (test-assert (= poll-selection 1)
-                 "an ordinary poll does not alter the picker selection")
-    (test-assert input-read-p
-                 "an ordinary poll does not dismiss the picker before later input")
-    (test-assert ready-after-resize-p
-                 "default polling applies a resize before later input becomes ready")
-    nil))
+
+
+
 
 (-> terminal-tests--call-without-host-size (function) t)
 (defun terminal-tests--call-without-host-size (function)
@@ -2488,57 +1848,8 @@ sources keeps the tests deterministic under an interactive terminal."
                  nil)))
    function))
 
-(-> test-terminal-modal-resize () null)
-(defun test-terminal-modal-resize ()
-  "Test that a resize raised during modal input repaints before event dispatch."
-  (let* ((previous-columns (uiop:getenv "COLUMNS"))
-         (previous-lines (uiop:getenv "LINES"))
-         (*terminal-resize-pending-p* nil)
-         (terminal
-           (make-instance
-            'scripted-terminal
-            :columns 60
-            :events (list :submit)
-            :read-callback
-            (lambda ()
-              (sb-posix:setenv "COLUMNS" "18" 1)
-              (sb-posix:setenv "LINES" "8" 1)
-              (setf *terminal-resize-pending-p* t))))
-         (ui (terminal-ui-create :terminal terminal))
-         (items '((:name "alpha" :argument nil :description "first entry"))))
-    (unwind-protect
-         (terminal-tests--call-without-host-size
-          (lambda ()
-            (with-terminal-ui (active-ui ui)
-              (recording-terminal-reset terminal)
-              (test-assert
-               (string= (terminal-ui-select
-                         active-ui
-                         :title "pick"
-                         :items items
-                         :resize-callback
-                         #'application-pending-terminal-size)
-                        "alpha")
-               "submit still accepts the picker event received during resize")
-              (test-assert (= (terminal-columns terminal) 18)
-                           "a pending picker resize refreshes terminal columns")
-              (test-assert (= (terminal-rows terminal) 8)
-                           "a pending picker resize refreshes terminal rows")
-              (test-assert (null *terminal-resize-pending-p*)
-                           "the picker consumes the pending resize flag")
-              (test-assert
-               (= (terminal-tests--substring-count
-                   "pick"
-                   (recording-terminal-output terminal))
-                  2)
-               "the picker repaints at the new width before submit exits"))))
-      (if previous-columns
-          (sb-posix:setenv "COLUMNS" previous-columns 1)
-          (sb-posix:unsetenv "COLUMNS"))
-      (if previous-lines
-          (sb-posix:setenv "LINES" previous-lines 1)
-          (sb-posix:unsetenv "LINES"))))
-  nil)
+
+
 
 (-> test-terminal-application-read-resize () null)
 (defun test-terminal-application-read-resize ()
@@ -2584,95 +1895,27 @@ sources keeps the tests deterministic under an interactive terminal."
 
 (-> test-terminal-non-tty-fallback () null)
 (defun test-terminal-non-tty-fallback ()
-  "Test line-oriented fallback input and output on a non-TTY descriptor."
-  (test-assert (not (terminal--interactive-file-descriptor-p -1))
-               "a missing descriptor is not interactive")
-  (let ((terminal
-          (stream-terminal-create
-           :input-stream (make-string-input-stream "")
-           :output-stream (make-string-output-stream)
-           :input-file-descriptor -1)))
-    (terminal-start terminal)
-    (test-assert (terminal-started-p terminal)
-                 "a noninteractive stream starts without inspecting its descriptor")
-    (test-assert (not (terminal-interactive-p terminal))
-                 "a noninteractive stream selects fallback mode")
-    (terminal-stop terminal))
-  (let ((null-descriptor (sb-posix:open "/dev/null" sb-posix:o-rdonly)))
-    (unwind-protect
-         (test-assert
-          (not (terminal--interactive-file-descriptor-p null-descriptor))
-          "/dev/null is not an interactive terminal")
-      (sb-posix:close null-descriptor)))
-  (multiple-value-bind (read-descriptor write-descriptor)
-      (sb-posix:pipe)
-    (unwind-protect
-         (let* ((output (make-string-output-stream))
-                (terminal
-                  (stream-terminal-create
-                   :input-stream (make-string-input-stream
-                                  (format nil "fallback input~%"))
-                   :output-stream output
-                   :input-file-descriptor read-descriptor
-                   :columns 20))
-                (ui (terminal-ui-create :terminal terminal)))
-           (terminal-ui-start ui)
-           (test-assert (not (terminal-interactive-p terminal))
-                        "a pipe selects the non-TTY fallback")
-           (multiple-value-bind (action submitted)
-               (terminal-ui-process-event ui (terminal-ui-read-event ui))
-             (test-assert (eq action :submit)
-                          "fallback line input produces a submit action")
-             (test-assert (string= submitted "fallback input")
-                          "fallback line input preserves its text"))
-           (terminal-ui-set-status ui "not printed")
-           (terminal-ui-append-finalized ui 1 "fallback output")
-           (terminal-ui-stop ui)
-           (let ((captured (get-output-stream-string output)))
-             (test-assert (search "fallback output" captured)
-                          "fallback mode writes finalized transcript output")
-             (test-assert (not (find *terminal-escape-character* captured))
-                          "fallback mode emits no terminal controls")))
-      (sb-posix:close read-descriptor)
-      (sb-posix:close write-descriptor)))
+  "Test application submission and transcript output through non-TTY transport."
+  (let* ((output (make-string-output-stream))
+         (terminal (stream-terminal-create
+                    :input-stream (make-string-input-stream (format nil "fallback input~%"))
+                    :output-stream output :input-file-descriptor -1 :columns 20))
+         (ui (terminal-ui-create :terminal terminal)))
+    (with-terminal-ui (active-ui ui)
+      (multiple-value-bind (action submitted)
+          (terminal-ui-process-event active-ui (terminal-ui-read-event active-ui))
+        (test-assert (and (eq action ':submit) (string= submitted "fallback input"))
+                     "fallback lines reach application submission unchanged"))
+      (terminal-ui-set-status active-ui "not printed")
+      (terminal-ui-append-finalized active-ui 1 "fallback output"))
+    (let ((captured (get-output-stream-string output)))
+      (test-assert (and (search "fallback output" captured)
+                        (not (find *terminal-escape-character* captured)))
+                   "fallback transcript output contains no terminal controls")))
   nil)
 
-(-> test-terminal-descriptor-tty-detection () null)
-(defun test-terminal-descriptor-tty-detection ()
-  "Test TTY detection from the file descriptor rather than stream class."
-  (let ((process nil)
-        (terminal nil))
-    (unwind-protect
-         (progn
-           (setf process
-                 (sb-ext:run-program "/bin/sh"
-                                     '("-c" "sleep 10")
-                                     :pty t
-                                     :wait nil))
-           (let ((pty (sb-ext:process-pty process)))
-             (setf terminal
-                   (stream-terminal-create
-                    :input-stream (make-string-input-stream "")
-                    :output-stream pty
-                    :input-file-descriptor (sb-sys:fd-stream-fd pty)))
-             (test-assert
-              (not (interactive-stream-p
-                    (stream-terminal-input-stream terminal)))
-              "a wrapped input stream can be noninteractive while its descriptor is a TTY")
-             (terminal-start terminal)
-             (test-assert (terminal-interactive-p terminal)
-                          "a TTY descriptor selects interactive mode")
-             (terminal-stop terminal)
-             (terminal-start terminal)
-             (test-assert (terminal-interactive-p terminal)
-                          "restarting preserves descriptor-based interactive mode")
-             (terminal-stop terminal)))
-      (when (and terminal (terminal-started-p terminal))
-        (terminal-stop terminal))
-      (when process
-        (ignore-errors (sb-ext:process-kill process 15))
-        (ignore-errors (sb-ext:process-wait process)))))
-  nil)
+
+
 
 (-> test-terminal-prompt-markers () null)
 (defun test-terminal-prompt-markers ()
@@ -2689,7 +1932,7 @@ sources keeps the tests deterministic under an interactive terminal."
           (success (expected-marker "D;0"))
           (failure (expected-marker "D;7")))
       (let ((terminal
-              (make-instance 'protocol-recording-stream-terminal
+              (make-instance 'prompt-recording-terminal
                              :input-stream (make-string-input-stream "")
                              :output-stream (make-string-output-stream)
                              :input-file-descriptor 0
@@ -2697,16 +1940,16 @@ sources keeps the tests deterministic under an interactive terminal."
         (test-assert
          (and (terminal-write-prompt-marker terminal ':prompt-start)
               (equal (reverse
-                      (protocol-recording-stream-terminal-chunks terminal))
+                      (prompt-recording-terminal-chunks terminal))
                      (list prompt-start))
-              (= (protocol-recording-stream-terminal-write-count terminal) 1)
-              (= (protocol-recording-stream-terminal-flush-count terminal) 1))
+              (= (prompt-recording-terminal-write-count terminal) 1)
+              (= (prompt-recording-terminal-flush-count terminal) 1))
          "an interactive prompt marker writes exactly once and flushes once")
         (setf (terminal-interactive-p terminal) nil)
         (test-assert
          (and (not (terminal-write-prompt-marker terminal ':input-start))
-              (= (protocol-recording-stream-terminal-write-count terminal) 1)
-              (= (protocol-recording-stream-terminal-flush-count terminal) 1))
+              (= (prompt-recording-terminal-write-count terminal) 1)
+              (= (prompt-recording-terminal-flush-count terminal) 1))
          "a noninteractive terminal emits and flushes no prompt marker"))
       (let* ((terminal
                (make-instance 'recording-terminal
@@ -2945,3 +2188,25 @@ sources keeps the tests deterministic under an interactive terminal."
           (test-assert (not (search "worked" status-row))
                        "a narrow status row drops the worked segment first")))))
   nil)
+
+
+(defclass prompt-recording-terminal (stream-terminal)
+  ((chunks :initform nil :accessor prompt-recording-terminal-chunks
+           :documentation "Captured application prompt controls.")
+   (flush-count :initform 0 :accessor prompt-recording-terminal-flush-count
+                :documentation "Flushes requested by prompt marker publication."))
+  (:documentation "A recording transport for application prompt marker integration."))
+
+(defmethod terminal--write ((terminal prompt-recording-terminal) (text string))
+  "Capture a prompt control write."
+  (push text (prompt-recording-terminal-chunks terminal))
+  nil)
+
+(defmethod terminal-flush ((terminal prompt-recording-terminal))
+  "Count prompt publication flushes."
+  (incf (prompt-recording-terminal-flush-count terminal))
+  nil)
+
+(defun prompt-recording-terminal-write-count (terminal)
+  "Return the number of captured prompt marker writes."
+  (length (prompt-recording-terminal-chunks terminal)))

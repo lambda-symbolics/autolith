@@ -142,11 +142,12 @@ let
     pname = "clinedi";
     version = "0.1.0";
     src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
+      owner = "lambda-symbolics";
       repo = "clinedi";
-      rev = "de133d8467ed211369923285078cbfa456e1d92b";
-      hash = "sha256-2R6YLxOLx20VKstHdkPWKlLZPlqEjqipH1Nh6i3UfDU=";
+      rev = "3b7365eeabecd2fc571bde07e26a123f570e69cb";
+      hash = "sha256-/bQi82/OCZaN91NPYcWuNcTaNq2wN0YmIWcwgoGdCSM=";
     };
+    systems = [ "clinedi" "clinedi/posix" ];
     lispLibs = [ clColorist ];
   };
 

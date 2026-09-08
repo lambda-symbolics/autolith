@@ -1,45 +1,11 @@
 (in-package #:autolith)
 
 ;;;; -- Terminal Defaults --
-
-(defparameter *terminal-default-columns* 80
-  "The fallback terminal width when no positive width is supplied.")
-
-(defparameter *terminal-default-rows* 24
-  "The fallback terminal height when no positive height is supplied.")
-
 (defparameter *terminal-history-limit* 100
   "The maximum number of submitted inputs retained by a line editor.")
 
 (defparameter *terminal-ui-visible-completions* 6
   "The maximum number of candidate rows painted at once.")
-
-(defparameter *terminal-escape-character* (code-char 27)
-  "The ASCII escape character used by trusted terminal controls.")
-
-(-> terminal-bracketed-paste-enable-sequence () string)
-(defun terminal-bracketed-paste-enable-sequence ()
-  "Return Clinedi's trusted bracketed-paste enable control."
-  (with-output-to-string (stream)
-    (enable-bracketed-paste :stream stream)))
-
-(-> terminal-bracketed-paste-disable-sequence () string)
-(defun terminal-bracketed-paste-disable-sequence ()
-  "Return Clinedi's trusted bracketed-paste disable control."
-  (with-output-to-string (stream)
-    (disable-bracketed-paste :stream stream)))
-
-(-> terminal-keyboard-enhancement-enable-sequence () string)
-(defun terminal-keyboard-enhancement-enable-sequence ()
-  "Return Clinedi's trusted keyboard-enhancement enable controls."
-  (with-output-to-string (stream)
-    (enable-keyboard-enhancement :stream stream)))
-
-(-> terminal-keyboard-enhancement-disable-sequence () string)
-(defun terminal-keyboard-enhancement-disable-sequence ()
-  "Return Clinedi's trusted keyboard-enhancement disable controls."
-  (with-output-to-string (stream)
-    (disable-keyboard-enhancement :stream stream)))
 
 
 ;;;; -- Terminal Objects --
@@ -74,65 +40,15 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
     (prog1 *terminal-relayed-resize*
       (setf *terminal-relayed-resize* nil))))
 
-(defclass terminal ()
-  ((rows
-    :initarg :rows
-    :initform *terminal-default-rows*
-    :accessor terminal-rows
-    :type (integer 1)
-    :documentation "The current terminal height in character cells.")
-   (columns
-    :initarg :columns
-    :initform *terminal-default-columns*
-    :accessor terminal-columns
-    :type (integer 1)
-    :documentation "The current terminal width in character cells.")
-   (interactive-p
-    :initarg :interactive-p
-    :initform nil
-    :accessor terminal-interactive-p
-    :type boolean
-    :documentation "Whether this terminal currently accepts noncanonical input.")
-   (styled-p
-    :initarg :styled-p
-    :initform nil
-    :accessor terminal-styled-p
-    :type boolean
-    :documentation "Whether trusted output may include color and emphasis controls.")
-   (started-p
-    :initform nil
-    :accessor terminal-started-p
-    :type boolean
-    :documentation "Whether this terminal has entered its active lifecycle."))
-  (:documentation "A replaceable primary-screen terminal transport."))
+(defclass terminal (clinedi:terminal) ()
+  (:documentation "Autolith's terminal transport extension point."))
 
-(defclass stream-terminal (terminal)
-  ((input-stream
-    :initarg :input-stream
-    :reader stream-terminal-input-stream
-    :type stream
-    :documentation "The character stream carrying terminal input.")
-   (pending-input-stream
-    :initform nil
-    :accessor stream-terminal-pending-input-stream
-    :type (or null stream)
-    :documentation "Buffered terminal bytes awaiting semantic event decoding.")
-   (output-stream
-    :initarg :output-stream
-    :reader stream-terminal-output-stream
-    :type stream
-    :documentation "The character stream receiving terminal output.")
-   (input-file-descriptor
-    :initarg :input-file-descriptor
-    :reader stream-terminal-input-file-descriptor
-    :type integer
-    :documentation "The POSIX descriptor whose termios state is controlled.")
-   (saved-terminal-mode
-    :initform nil
-    :accessor stream-terminal-saved-terminal-mode
-    :type t
-    :documentation "The exact termios value restored when the terminal stops."))
-  (:documentation "An SBCL stream terminal backed by POSIX file descriptor zero."))
+(defclass stream-terminal (terminal clinedi:posix-terminal) ()
+  (:default-initargs :event-decoder #'terminal--decode-editing-event
+                    :event-prefix-p-function
+                    (lambda (character) (find character (list #\Escape (code-char 22))))
+                    :styling-p-function #'terminal-environment-styling-p)
+  (:documentation "Native stream transport with Autolith's input and styling policy."))
 
 (defclass terminal-ui ()
   ((lock
@@ -228,7 +144,7 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
    (completion-history-state
     :initform nil
     :accessor terminal-ui-completion-history-state
-    :type (option list)
+    :type (option clinedi:line-editor-state)
     :documentation
     "Clinedi history traversal state restored when completion is cancelled.")
    (completion-dismissed-p
@@ -409,6 +325,7 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
    "A scrollback-preserving UI with immutable transcript output and a bounded live region."))
 
 
+
 ;;;; -- Terminal Conditions --
 
 (define-condition terminal-error (autolith-error)
@@ -425,41 +342,25 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
   (:documentation "A terminal mode, input, or output operation failed."))
 
 
-;;;; -- Terminal Protocol --
 
-(-> terminal-set-dimensions
-    (terminal integer &key (:rows (option integer)))
-    terminal)
-(defun terminal-set-dimensions (terminal columns &key rows)
-  "Set TERMINAL's positive cell dimensions through the canonical writer."
-  (setf (terminal-columns terminal) (max 1 columns))
-  (when rows
-    (setf (terminal-rows terminal) (max 1 rows)))
-  terminal)
 
-(defgeneric terminal-start (terminal)
-  (:documentation "Start TERMINAL without entering an alternate screen."))
 
-(defgeneric terminal-stop (terminal)
-  (:documentation "Restore TERMINAL input state and finish its lifecycle."))
 
-(defgeneric terminal-read-event (terminal)
-  (:documentation "Read and return one semantic input event from TERMINAL."))
 
-(-> terminal-input-ready-p (terminal) boolean)
-(defgeneric terminal-input-ready-p (terminal)
-  (:documentation "Return true when TERMINAL can read an event without blocking."))
 
-(defmethod terminal-input-ready-p ((terminal terminal))
-  "Assume application-provided TERMINAL transports have an event ready."
-  (declare (ignore terminal))
-  t)
+
+
+
+
+
+
+
 
 (defgeneric terminal--write (terminal text)
   (:documentation "Write trusted renderer TEXT through the terminal transport."))
 
-(defgeneric terminal-flush (terminal)
-  (:documentation "Make all pending TERMINAL output visible."))
+
+
 
 
 (-> terminal--prompt-marker-sequence (keyword integer) string)

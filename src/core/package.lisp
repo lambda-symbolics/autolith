@@ -291,6 +291,34 @@
                 #:worker-process
                 #:worker-request)
   (:import-from #:clinedi
+                #:terminal-rows
+                #:terminal-columns
+                #:terminal-interactive-p
+                #:terminal-styled-p
+                #:terminal-started-p
+                #:terminal-set-dimensions
+                #:terminal-start
+                #:terminal-stop
+                #:terminal-read-event
+                #:terminal-input-ready-p
+                #:terminal-flush
+                #:stream-terminal-input-stream
+                #:stream-terminal-output-stream
+                #:stream-terminal-input-file-descriptor
+                #:stream-terminal-pending-input-stream
+                #:stream-terminal-saved-terminal-mode
+                #:terminal-read-editing-event
+                #:terminal-bracketed-paste-enable-sequence
+                #:terminal-bracketed-paste-disable-sequence
+                #:terminal-keyboard-enhancement-enable-sequence
+                #:terminal-keyboard-enhancement-disable-sequence
+                #:*terminal-default-rows*
+                #:*terminal-default-columns*
+                #:*terminal-escape-character*
+                #:*terminal-escape-delay-seconds*
+                #:*terminal-unbracketed-paste-coalesce-seconds*
+                #:*terminal-unbracketed-paste-maximum-characters*
+
                 #:line-editor
                 #:grapheme-previous-boundary
                 #:line-editor-text

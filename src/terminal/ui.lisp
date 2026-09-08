@@ -189,28 +189,10 @@
 
 (-> terminal-ui-load-history (terminal-ui list) terminal-ui)
 (defun terminal-ui-load-history (ui entries)
-  "Replace UI's editable history while preserving its current draft and cursor."
+  "Replace editor history with sanitized application input entries."
   (with-terminal-ui-locked (ui)
-    (let* ((editor (terminal-ui-editor ui))
-           (navigating-p
-             (not
-              (null (slot-value editor 'clinedi::history-index))))
-           (text
-             (copy-seq
-              (if navigating-p
-                  (slot-value editor 'clinedi::history-stash)
-                  (line-editor-text editor))))
-           (cursor
-             (if navigating-p
-                 (slot-value editor 'clinedi::history-stash-cursor)
-                 (line-editor-cursor editor)))
-           (history-editor
-             (line-editor-create
-              :history (mapcar #'sanitize-text entries)
-              :history-limit (line-editor-history-limit editor))))
-      (line-editor-set-text editor text :cursor cursor)
-      (setf (slot-value editor 'clinedi::history)
-            (slot-value history-editor 'clinedi::history))))
+    (clinedi:line-editor-replace-history (terminal-ui-editor ui)
+                                       (mapcar #'sanitize-text entries)))
   ui)
 
 (-> terminal-ui--call-with-lock-if-available
@@ -383,15 +365,10 @@ emergency terminal input responsive while another thread owns presentation."
   nil)
 
 
-
-
 (-> terminal--spans-text (list) string)
 (defun terminal--spans-text (spans)
   "Return sanitized visible text for semantic SPANS."
   (termdown:spans-text spans))
-
-
-
 
 
 (-> terminal--render-spans (terminal list) string)
@@ -405,7 +382,6 @@ emergency terminal input responsive while another thread owns presentation."
          (if sequence
              (concatenate 'string sequence text *terminal-style-reset*)
              text))))))
-
 
 (-> terminal-ui--lisp-draft-p (string) boolean)
 (defun terminal-ui--lisp-draft-p (text)
@@ -603,27 +579,11 @@ the draft is exact."
                 when (stringp value)
                   collect value)))
 
-(-> terminal-ui--picker-search-terms (string) list)
-(defun terminal-ui--picker-search-terms (query)
-  "Return QUERY's non-empty whitespace-separated search terms."
-  (remove-if (lambda (term) (zerop (length term)))
-             (uiop:split-string query
-                                :separator '(#\Space #\Tab #\Newline #\Return))))
 
-(-> terminal-ui--picker-search-match-p (list string function) boolean)
-(defun terminal-ui--picker-search-match-p (entry query search-key)
-  "Return true when every term in QUERY occurs in ENTRY's SEARCH-KEY text."
-  (let ((text (funcall search-key entry)))
-    (unless (stringp text)
-      (error 'terminal-error
-             :message "A picker search key must return a string."
-             :operation ':select
-             :cause nil))
-    (not
-     (null
-      (every (lambda (term)
-               (search term text :test #'char-equal))
-             (terminal-ui--picker-search-terms query))))))
+
+
+
+
 
 (-> terminal-ui--picker-search-title (string string integer) string)
 (defun terminal-ui--picker-search-title (title query match-count)
@@ -751,33 +711,24 @@ columns: name, tally, and description."
                      row-width)))
                 (setf previous-group group)))))))
 
+
 (-> terminal-ui--editor-history-navigating-p (line-editor) boolean)
 (defun terminal-ui--editor-history-navigating-p (editor)
-  "Return true when EDITOR is currently traversing history."
-  (and (slot-boundp editor 'clinedi::history-index)
-       (not (null (slot-value editor 'clinedi::history-index)))
-       t))
+  "Return true during editor history traversal."
+  (clinedi:line-editor-history-navigating-p editor))
 
 
-(-> terminal-ui--snapshot-history-state (line-editor) (option list))
+(-> terminal-ui--snapshot-history-state (line-editor) (option clinedi:line-editor-state))
 (defun terminal-ui--snapshot-history-state (editor)
-  "Return EDITOR's history traversal state, or NIL outside history recall."
-  (when (terminal-ui--editor-history-navigating-p editor)
-    (list (copy-seq (line-editor-text editor))
-          (line-editor-cursor editor)
-          (slot-value editor 'clinedi::history-index)
-          (copy-seq (slot-value editor 'clinedi::history-stash))
-          (slot-value editor 'clinedi::history-stash-cursor))))
+  "Snapshot a recalled input before application completion."
+  (when (clinedi:line-editor-history-navigating-p editor)
+    (clinedi:line-editor-snapshot editor)))
 
 
-(-> terminal-ui--restore-history-state (line-editor list) null)
+(-> terminal-ui--restore-history-state (line-editor clinedi:line-editor-state) null)
 (defun terminal-ui--restore-history-state (editor state)
-  "Restore EDITOR's history traversal STATE after completion is cancelled."
-  (destructuring-bind (text cursor index stash stash-cursor) state
-    (line-editor-set-text editor text :cursor cursor)
-    (setf (slot-value editor 'clinedi::history-index) index
-          (slot-value editor 'clinedi::history-stash) stash
-          (slot-value editor 'clinedi::history-stash-cursor) stash-cursor))
+  "Restore a recalled input after application completion is cancelled."
+  (clinedi:line-editor-restore editor state)
   nil)
 
 (-> terminal-ui--completion-offered-p (terminal-ui) boolean)
@@ -2290,17 +2241,15 @@ removes it."
               :operation ':resize
               :cause nil)))))
 
+
+
+
 (-> terminal-ui-select
-    (terminal-ui &key (:title string) (:items list)
-                 (:hint (option string))
-                 (:visible-count (integer 1))
-                 (:initial-name (option string))
-                 (:initial-value (option string))
-                 (:search-p boolean)
-                 (:search-key function)
-                 (:resize-callback (option function))
-                 (:on-event (option function))
-                 (:poll-interval (option real)))
+    (terminal-ui &key (:title string) (:items list) (:hint (option string))
+                 (:visible-count (integer 1)) (:initial-name (option string))
+                 (:initial-value (option string)) (:search-p boolean)
+                 (:search-key function) (:resize-callback (option function))
+                 (:on-event (option function)) (:poll-interval (option real)))
     (option string))
 (defun terminal-ui-select
     (ui &key (title "select") items hint
@@ -2309,232 +2258,88 @@ removes it."
              (search-key #'terminal-ui--picker-default-search-text)
              resize-callback on-event
              (poll-interval *terminal-ui-picker-poll-interval*))
-  "Run a modal picker over ITEMS and return the selected value, or NIL on cancel.
+  "Select an application entry through Clinedi's filtered modal session.
 
-Items follow the completion entry shape and may carry a :VALUE distinct from
-:NAME; entries without one return their display name. Up and Down move the
-selection. Tab and Shift-Tab cycle it forward and backward, and Enter accepts
-it. When SEARCH-P is true, inserted or pasted text filters candidates,
-Backspace edits the query, and Ctrl-U clears it. Otherwise ordinary input
-dismisses the picker with the selected item. Escape, Ctrl-C, or end of input
-cancels. Returns NIL immediately when ITEMS is empty or the terminal is not
-interactive.
+Entries carry :NAME and optionally a distinct :VALUE. ON-EVENT receives
+(EVENT SELECTOR) and may return NIL, :CONTINUE, (:ACCEPT VALUE), (:CANCEL),
+or (:REPLACE TITLE ITEMS [HINT [VALUE]]). Filtering, stable selection,
+readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
+  (unless (and items (every #'terminal-completion-p items)
+               (terminal-interactive-p (terminal-ui-terminal ui)))
+    (return-from terminal-ui-select nil))
+  (labels ((value (item) (or (getf item :value) (getf item :name))))
+    (let* ((session
+             (clinedi:make-selection-session
+              :items items :identity-key #'value :identity-test #'string=
+              :search-key (lambda (entry)
+                            (let ((text (funcall search-key entry)))
+                              (unless (stringp text)
+                                (error 'terminal-error
+                                       :message "A picker search key must return a string."
+                                       :operation ':select :cause nil))
+                              text))
+              :search-p search-p
+              :query-limit *terminal-ui-picker-search-character-limit*
+              :visible-count visible-count
+              :initial-id (or initial-value
+                              (value (find initial-name items
+                                           :key (lambda (item) (getf item :name))
+                                           :test #'equal)))))
+           (base-title title)
+           (current-hint (or hint (and search-p
+                                      "type searches, backspace edits, enter selects, esc cancels"))))
+      (labels ((publish ()
+                 (setf (terminal-ui-selector ui)
+                       (clinedi:selection-session-selector session)
+                       (terminal-ui-selector-title ui)
+                       (terminal-ui--picker-search-title
+                        base-title (clinedi:selection-session-query session)
+                        (length (selector-items
+                                 (clinedi:selection-session-selector session))))
+                       (terminal-ui-selector-hint ui) current-hint))
 
-VISIBLE-COUNT bounds candidate rows. INITIAL-NAME selects a matching display name,
-and INITIAL-VALUE selects an explicit value before the first paint. HINT overrides
-the default picker suffix. SEARCH-KEY returns the text searched for each item.
-
-ON-EVENT, when provided, receives (EVENT SELECTOR) before search and default
-handling and may return:
-  NIL - fall through to search or ordinary selector handling
-  :CONTINUE - custom handling already applied; continue the modal loop
-  (:ACCEPT NAME) - accept NAME and close the picker
-  (:CANCEL) - cancel and close the picker
-  (:REPLACE TITLE ITEMS) - install a new title and item list, then continue
-  (:REPLACE TITLE ITEMS HINT) - same, and replace the hint, including with NIL
-  (:REPLACE TITLE ITEMS HINT VALUE) - same, selecting VALUE when it exists
-
-RESIZE-CALLBACK is queried before each terminal-readiness check and immediately
-before handling its resulting event. It returns positive pending rows and columns
-as a cons, or NIL when no resize needs to be applied. POLL-INTERVAL defaults to
-*TERMINAL-UI-PICKER-POLL-INTERVAL*; when non-NIL, it replaces the blocking read
-with bounded readiness checks and delivers :POLL to ON-EVENT while no terminal
-input is ready. Explicit NIL preserves blocking reads."
-  (block nil
-    (let ((source-items items)
-          (base-title title)
-          (search-query ""))
-      (labels ((selected-value (item)
-                 "Return ITEM's explicit value or its display name."
-                 (or (getf item :value) (getf item :name)))
-
-               (selected-designator ()
-                 "Return the currently selected item's stable designator, or NIL."
-                 (let* ((selector (terminal-ui-selector ui))
-                        (selection (and selector
-                                        (selector-selection selector)))
-                        (selected (and selector
-                                       (nth selection
-                                            (selector-items selector)))))
-                   (and selected (selected-value selected))))
-
-               (select-designator (selector designator)
-                 "Move SELECTOR to DESIGNATOR when that candidate exists."
-                 (let ((position
-                         (and designator
-                              (position designator
-                                        (selector-items selector)
-                                        :key #'selected-value
-                                        :test #'string=))))
-                   (when position
-                     (selector-move selector position))))
-
-               (select-name (selector name)
-                 "Move SELECTOR to the first displayed NAME when it exists."
-                 (let ((position
-                         (and name
-                              (position name
-                                        (selector-items selector)
-                                        :key (lambda (entry)
-                                               (getf entry :name))
-                                        :test #'string=))))
-                   (when position
-                     (selector-move selector position))))
-
-               (install-selector (next-items selected-designator)
-                 "Install NEXT-ITEMS, retaining SELECTED-DESIGNATOR when possible."
-                 (let ((selector
-                         (make-selector
-                          :items next-items
-                          :visible-count visible-count
-                          :arrangement ':vertical)))
-                   (select-designator selector selected-designator)
-                   (setf (terminal-ui-selector ui) selector
-                         (terminal-ui-selector-title ui)
-                          (terminal-ui--picker-search-title
-                           base-title search-query (length next-items)))))
-
-               (install
-                   (next-title next-items
-                    &optional (next-hint nil next-hint-supplied-p)
-                              (next-value nil next-value-supplied-p))
-                 "Install NEXT-TITLE, NEXT-ITEMS, optional hint, and selection on UI."
-                 (unless (every #'terminal-completion-p next-items)
-                   (return nil))
-                 (setf source-items next-items
-                       base-title next-title
-                       search-query "")
-                 (install-selector source-items
-                                   (and next-value-supplied-p next-value))
-                 (when next-hint-supplied-p
-                   (setf (terminal-ui-selector-hint ui) next-hint))
-                 t)
-
-               (refresh-search ()
-                 "Filter SOURCE-ITEMS through SEARCH-QUERY and preserve selection."
-                 (let* ((selected-designator (selected-designator))
-                        (matches
-                          (if (plusp (length search-query))
-                              (remove-if-not
-                               (lambda (entry)
-                                 (terminal-ui--picker-search-match-p
-                                  entry search-query search-key))
-                               source-items)
-                              source-items)))
-                   (install-selector matches selected-designator)))
-
-               (append-search (text)
-                 "Append display-safe TEXT to SEARCH-QUERY within its bound."
-                 (let* ((safe-text (sanitize-text text :single-line-p t))
-                        (remaining
-                          (max 0
-                               (- *terminal-ui-picker-search-character-limit*
-                                  (length search-query))))
-                        (addition
-                          (subseq safe-text 0 (min remaining
-                                                   (length safe-text)))))
-                   (setf search-query
-                         (concatenate 'string search-query addition))
-                   (refresh-search)))
-
-               (delete-search ()
-                 "Delete the newest search grapheme and refresh candidates."
-                 (when (plusp (length search-query))
-                   (setf search-query
-                         (subseq search-query
-                                 0
-                                 (grapheme-previous-boundary
-                                  search-query (length search-query)))))
-                 (refresh-search))
-
-               (handle-search-event (event)
-                 "Apply EVENT to picker search and return true when consumed."
-                 (when search-p
+               (handle-custom (event selector)
+                 (let ((action (and on-event (funcall on-event event selector))))
                    (cond
-                     ((and (consp event)
-                           (member (first event) '(:insert :paste) :test #'eq)
-                           (stringp (second event)))
-                      (append-search (second event))
-                      t)
-                     ((eq event ':backspace)
-                      (delete-search)
-                      t)
-                     ((eq event ':kill-line)
-                      (setf search-query "")
-                      (refresh-search)
-                      t)
+                     ((and (consp action) (eq (first action) ':replace))
+                      (destructuring-bind
+                          (next-title next-items &optional (next-hint nil hint-p)
+                                                          (next-value nil value-p))
+                          (rest action)
+                        (unless (every #'terminal-completion-p next-items)
+                          (return-from terminal-ui-select nil))
+                        (setf base-title next-title)
+                        (when hint-p (setf current-hint next-hint))
+                        (clinedi:selection-session-replace-items
+                         session next-items :selected-id (and value-p next-value))
+                        (publish))
+                      ':continue)
+                     ((or (null action) (eq action ':continue)
+                          (and (consp action)
+                               (member (first action) '(:accept :cancel))))
+                      action)
                      (t
-                      nil)))))
-        (unless (and items
-                     (every #'terminal-completion-p items)
-                     (terminal-interactive-p (terminal-ui-terminal ui)))
-          (return nil))
-        (with-terminal-ui-locked (ui)
-          (setf (terminal-ui-selector-hint ui)
-                (or hint
-                    (and search-p
-                         "type searches, backspace edits, enter selects, esc cancels")))
-           (install title items)
-           (if initial-value
-               (select-designator (terminal-ui-selector ui) initial-value)
-               (select-name (terminal-ui-selector ui) initial-name)))
-        (unwind-protect
-             (loop
-               (with-terminal-ui-locked (ui)
-                 (unless (terminal-ui-refresh-size ui resize-callback)
-                   (terminal-ui--repaint-live ui)))
-                (let ((event
-                        (if (and poll-interval
-                                 (not (terminal-input-ready-p
-                                       (terminal-ui-terminal ui))))
-                            (progn
-                              (sleep poll-interval)
-                              ':poll)
-                            (terminal-read-event
-                             (terminal-ui-terminal ui)))))
-                 (when (eq event ':stream-end)
-                   (return nil))
-                 (with-terminal-ui-locked (ui)
-                   (terminal-ui-refresh-size ui resize-callback)
-                   (let ((custom
-                           (and on-event
-                                (funcall on-event event
-                                         (terminal-ui-selector ui)))))
-                     (cond
-                       ((null custom)
-                        (unless (or (eq event ':poll)
-                                    (handle-search-event event))
-                          (multiple-value-bind (action item)
-                              (selector-handle-event
-                               (terminal-ui-selector ui) event)
-                            (case action
-                              (:accept
-                               (return (selected-value item)))
-                              (:cancel
-                               (return nil))
-                              (:dismiss
-                               (return (selected-value item)))
-                              (t
-                               nil)))))
-                       ((eq custom ':continue)
-                        nil)
-                       ((and (consp custom) (eq (first custom) ':accept))
-                        (return (second custom)))
-                       ((and (consp custom) (eq (first custom) ':cancel))
-                        (return nil))
-                       ((and (consp custom) (eq (first custom) ':replace))
-                        (apply #'install (rest custom)))
-                       (t
-                        (error 'terminal-error
-                               :message
-                               "ON-EVENT returned an unsupported picker action."
-                               :operation ':select
-                               :cause nil)))))))
-          (with-terminal-ui-locked (ui)
-            (setf (terminal-ui-selector ui) nil
-                  (terminal-ui-selector-title ui) nil
-                  (terminal-ui-selector-hint ui) nil)
-             (terminal-ui--repaint-live ui)))))))
+                      (error 'terminal-error
+                             :message "ON-EVENT returned an unsupported picker action."
+                             :operation ':select :cause nil))))))
+        (let ((selected
+                (clinedi:run-selection-session
+                 session
+                 :read-event (lambda () (terminal-read-event (terminal-ui-terminal ui)))
+                 :input-ready-p (lambda () (terminal-input-ready-p (terminal-ui-terminal ui)))
+                 :poll-interval poll-interval
+                 :call-with-lock (lambda (function)
+                                   (with-terminal-ui-locked (ui) (funcall function)))
+                 :refresh (lambda () (publish) (terminal-ui-refresh-size ui resize-callback))
+                 :paint (lambda () (publish) (terminal-ui--repaint-live ui))
+                 :on-open #'publish :on-event #'handle-custom
+                 :on-close (lambda ()
+                             (setf (terminal-ui-selector ui) nil
+                                   (terminal-ui-selector-title ui) nil
+                                   (terminal-ui-selector-hint ui) nil)
+                             (terminal-ui--repaint-live ui)))))
+          (if (stringp selected) selected (value selected)))))))
+
 
 
 ;;; Semantic prompt blocks

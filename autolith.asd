@@ -15,7 +15,7 @@
                #:cl-skills
                #:cl-termdown
                #:clifff
-               #:clinedi
+               #:clinedi/posix
                #:clingon
                #:colorlisp
                #:colordiff

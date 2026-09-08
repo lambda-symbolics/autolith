@@ -687,9 +687,9 @@
         (*standard-output* (make-string-output-stream)))
     (test-call-with-function-replacements
      (list
-      (list 'terminal--interactive-file-descriptor-p
-            (lambda (file-descriptor)
-              (declare (ignore file-descriptor))
+      (list 'clinedi:terminal-capture-input-mode
+            (lambda (terminal)
+              (declare (ignore terminal))
               nil))
       (list 'daemon-connect
             (lambda (port)

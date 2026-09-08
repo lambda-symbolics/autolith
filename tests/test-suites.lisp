@@ -468,11 +468,8 @@
   test-terminal-command-completion
   test-terminal-lisp-operation-completion
   test-terminal-modal-selection
-  test-terminal-modal-default-polling
-  test-terminal-modal-resize
   test-terminal-application-read-resize
-  test-terminal-non-tty-fallback
-  test-terminal-descriptor-tty-detection)
+  test-terminal-non-tty-fallback)
 
 (define-test-suite localgroup
   test-localgroup-conversation-identity
