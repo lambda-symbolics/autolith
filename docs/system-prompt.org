@@ -118,10 +118,9 @@ that you searched unless web.run returns a result.
 
 * web.gist page retrieval
 
-Fetch one known URL as Markdown with web.gist when you need a
-page's content: documentation the user names, a link found through
-search, or a page referenced in the conversation. web.gist retrieves
-single pages; it cannot search the web.
+Use web.gist to retrieve a known HTML or Markdown page: documentation
+the user names, a link found through search, or a page referenced in
+the conversation. Supply an absolute HTTP or HTTPS URL.
 
 * Runtime metadata
 

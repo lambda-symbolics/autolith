@@ -356,7 +356,7 @@
    (list
     'web-gist-tool
     "web" "gist"
-    "Fetch one web page over HTTP or HTTPS and return its content as Markdown, following redirects. Use it to retrieve a known page, for example a URL the user names or one found through search; it cannot search the web."
+    "Retrieve one HTML or Markdown page over HTTP or HTTPS as Markdown, following redirects. Supply a known URL from the user or search results."
     (web-gist-parameters)))
   registry)
 

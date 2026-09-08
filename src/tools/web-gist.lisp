@@ -19,9 +19,13 @@
 (-> web-gist--retrieve (string) string)
 (defun web-gist--retrieve (url)
   "Fetch URL and return its Markdown representation."
-  (unless (or (uiop:string-prefix-p "http://" url)
-              (uiop:string-prefix-p "https://" url))
-    (error "web.gist only retrieves HTTP and HTTPS URLs."))
+  (let ((uri (quri:uri url)))
+    (unless (and (member (quri:uri-scheme uri) '("http" "https")
+                         :test #'string=)
+                 (non-empty-string-p (quri:uri-host uri)))
+      (error 'tool-error
+             :message "web.gist requires an absolute HTTP or HTTPS URL with a host."
+             :tool-name "web.gist")))
   (fetch-gist:markdown-from-url url))
 
 (defmethod tool-execute ((tool web-gist-tool)

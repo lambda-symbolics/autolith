@@ -232,75 +232,133 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> tool-tests--web-gist-call (tool-registry tool-context json-object) tool-result)
+(defun tool-tests--web-gist-call (registry context arguments)
+  "Dispatch one web.gist call with JSON ARGUMENTS."
+  (tool-registry-execute-call
+   registry
+   (json-object "namespace" "web" "name" "gist"
+                "arguments" (json-encode arguments))
+   context))
+
 (-> test-web-gist-tool () null)
 (defun test-web-gist-tool ()
-  "Test standalone web.gist page retrieval without network access."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration)))
-    (unwind-protect
-         (let* ((conversation
-                  (conversation-create configuration :identifier "web-gist"))
-                (context
-                  (make-instance 'tool-context
-                                 :configuration configuration
-                                 :worker nil
-                                 :conversation conversation))
-                (tool (tool-registry-find (make-default-tool-registry)
-                                          "web" "gist")))
-           (test-assert tool "the default registry contains web.gist")
+  "Test web.gist registration and URL validation without network access."
+  (with-test-configuration (configuration)
+    (let* ((registry (make-default-tool-registry))
+           (tool (tool-registry-find registry "web" "gist"))
+           (context (make-instance
+                     'tool-context :configuration configuration :worker nil
+                     :conversation (conversation-create configuration)))
+           (fetched nil))
+      (test-assert tool "the default registry contains web.gist")
+      (test-assert
+       (gethash "url" (json-get (tool-parameters tool) "properties"))
+       "web.gist declares its url argument")
+      (test-assert (null (tool-child-safe-p tool))
+                   "ordinary child agents cannot use web.gist")
+      (test-call-with-function-replacements
+       (list (list 'fetch-gist:markdown-from-url
+                   (lambda (url)
+                     (push url fetched)
+                     (format nil "# Example Page~%~%Content."))))
+       (lambda ()
+         (dolist (url '("https://example.com/docs"
+                        "HTTP://example.com/docs"
+                        "hTtPs://example.com/docs"
+                        "http://[::1]:8080/docs"))
+           (let ((result (tool-tests--web-gist-call
+                          registry context (json-object "url" url))))
+             (test-assert
+              (and (tool-result-success-p result)
+                   (string= (first fetched) url)
+                   (search "Content." (tool-result-content result)))
+              "absolute HTTP URLs reach the retriever, regardless of scheme case")))
+         (let ((fetch-count (length fetched)))
+           (dolist (arguments
+                     (list (json-object)
+                           (json-object "url" "")
+                           (json-object "url" 42)
+                           (json-object "url" nil)
+                           (json-object "url" "file:///etc/passwd")
+                           (json-object "url" "/relative/path")
+                           (json-object "url" "https://")
+                           (json-object "url" "https:///missing-host")
+                           (json-object "url" "http://example.com:bad/")))
+             (test-assert
+              (not (tool-result-success-p
+                    (tool-tests--web-gist-call registry context arguments)))
+              "invalid or missing URLs produce a failed tool call"))
+           (test-assert (= fetch-count (length fetched))
+                        "invalid URLs are rejected before network access"))))))
+  nil)
+
+(-> test-web-gist-retrieval () null)
+(defun test-web-gist-retrieval ()
+  "Exercise the pinned fetch-gist API, native HTTP failures, and result bounds."
+  (with-test-configuration (configuration)
+    (let* ((registry (make-default-tool-registry))
+           (context (make-instance
+                     'tool-context :configuration configuration :worker nil
+                     :conversation (conversation-create configuration)))
+           (url "https://example.com/page")
+           (markdown (format nil "# Markdown~%~%Some content."))
+           (large-markdown (make-string 12000 :initial-element #\a)))
+      (dolist (case (list (list "text/markdown; charset=utf-8" markdown t)
+                         (list "text/html" "<h1>Title</h1><p>Some content.</p>" t)
+                         (list "application/pdf" "%PDF" nil)
+                         (list nil "untyped response" nil)))
+        (destructuring-bind (content-type body success-p) case
+          (test-call-with-function-replacements
+           (list (list 'dex:get
+                       (lambda (requested &key headers read-timeout force-string)
+                         (test-assert
+                          (and (string= requested url) headers
+                               (plusp read-timeout) force-string)
+                          "page retrieval requests decoded text with a read timeout")
+                         (values body 200
+                                 (json-object "content-type" content-type)
+                                 (quri:uri requested)))))
+           (lambda ()
+             (let ((result (tool-tests--web-gist-call
+                            registry context (json-object "url" url))))
+               (test-assert (eq (tool-result-success-p result) success-p)
+                            "only HTML and Markdown responses are accepted")
+               (when success-p
+                 (test-assert
+                  (search "Some content." (tool-result-content result))
+                  "converted HTML and explicit Markdown contain the page text")))))))
+      (test-call-with-function-replacements
+       (list (list 'dex:get
+                   (lambda (requested &rest options)
+                     (declare (ignore options))
+                     (error 'dexador.error:http-request-not-found
+                            :body "missing page" :status 404 :headers (json-object)
+                            :uri (quri:uri requested) :method ':get))))
+       (lambda ()
+         (let ((result (tool-tests--web-gist-call
+                        registry context (json-object "url" url))))
            (test-assert
-            (gethash "url" (json-get (tool-parameters tool) "properties"))
-            "web.gist declares its url argument")
+            (and (not (tool-result-success-p result))
+                 (search "web.gist" (tool-result-content result))
+                 (search "404" (tool-result-content result)))
+            "native Dexador HTTP failures become named tool failures"))))
+      (test-call-with-function-replacements
+       (list (list 'dex:get
+                   (lambda (requested &rest options)
+                     (declare (ignore options))
+                     (values large-markdown 200
+                             (json-object "content-type" "text/markdown")
+                             (quri:uri requested)))))
+       (lambda ()
+         (let* ((result (tool-tests--web-gist-call
+                         registry context (json-object "url" url)))
+                (content (tool-result-content result)))
            (test-assert
-            (null (tool-child-safe-p tool))
-            "web.gist stays unavailable to child agents like web.run")
-           (test-call-with-function-replacements
-            (list
-             (list
-              'fetch-gist:markdown-from-url
-              (lambda (url)
-                (test-assert
-                 (string= url "https://example.com/docs")
-                 "web.gist passes the requested URL to fetch-gist")
-                "# Example Page\n\nContent.")))
-            (lambda ()
-              (let ((result (tool-execute
-                             tool context
-                             (json-object "url" "https://example.com/docs"))))
-                (test-assert
-                 (and (tool-result-success-p result)
-                      (string= (tool-result-content result)
-                               "# Example Page\n\nContent."))
-                 "web.gist returns fetched Markdown as a successful result"))))
-           (test-call-with-function-replacements
-            (list
-             (list
-              'fetch-gist:markdown-from-url
-              (lambda (url)
-                (declare (ignore url))
-                (error "Fetching ~A returned HTTP status 404"
-                       "https://example.com/missing"))))
-            (lambda ()
-              (handler-case
-                  (progn (tool-execute
-                          tool context
-                          (json-object "url" "https://example.com/missing"))
-                         (test-assert nil "web.gist signals on a failed fetch"))
-                (tool-error (condition)
-                  (test-assert
-                   (and (string= (tool-error-tool-name condition) "web.gist")
-                        (search "HTTP status 404"
-                                (princ-to-string condition)))
-                   "web.gist reports fetch failures as web.gist tool errors")))))
-           (handler-case
-               (progn (tool-execute
-                       tool context (json-object "url" "file:///etc/passwd"))
-                      (test-assert nil "web.gist rejects non-HTTP URLs"))
-             (tool-error (condition)
-               (test-assert
-                (search "HTTP and HTTPS" (princ-to-string condition))
-                "web.gist rejects non-HTTP URLs with a clear message"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+            (and (tool-result-success-p result)
+                 (< (length content) (length large-markdown))
+                 (search "context:" content))
+            "large page results include a bounded excerpt and context URI"))))))
   nil)
 
 (-> test-tool-registry () null)

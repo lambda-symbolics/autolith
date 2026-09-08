@@ -266,7 +266,31 @@
                             "Read a resource.")
                    (string= (json-get (aref tools 1) "description")
                             "Retrieve one page as Markdown."))
-              "Anthropic keeps web.gist but omits web.run when search is disabled")))
+              "Anthropic keeps web.gist but omits web.run when search is disabled"))
+           (dolist (configuration (list base-configuration disabled-configuration))
+             (let* ((filtered
+                      (provider-responses-request-namespaces
+                       (grok-provider-create configuration) schemas))
+                    (web (find "web" filtered
+                               :key (lambda (entry) (json-get entry "name"))
+                               :test #'equal)))
+               (test-assert
+                (and web
+                     (= (length (json-get web "tools")) 1)
+                     (json-string=
+                      (json-get (aref (json-get web "tools") 0) "name") "gist"))
+                "Grok advertises page retrieval with backend search enabled or disabled")))
+           (let ((search-only
+                   (json-array
+                    (json-object "type" "namespace" "name" "web"
+                                 "tools" (json-array (json-object "name" "run"))))))
+             (test-assert
+              (and (zerop (length (provider-request-tool-namespaces
+                                   disabled-configuration search-only)))
+                   (zerop (length (provider-responses-request-namespaces
+                                   (grok-provider-create base-configuration)
+                                   search-only))))
+              "filtering the sole search tool omits the empty namespace")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
