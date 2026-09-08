@@ -15,7 +15,7 @@
   "The accumulated working seconds required between review reminders.")
 
 (defparameter *self-review-instruction*
-    "Session review checkpoint. Scan the recent conversation for Autolith-side friction: a repeated workaround, a recurring failure, missing observability into your own state, or a stable user preference needing executable behavior. If a small self-modification within your existing authority would materially help, make or propose it, using the least durable mechanism that fits. If nothing qualifies, continue silently; this reminder is never a mutation quota."
+    "Session review checkpoint. Scan the recent conversation for Autolith-side friction: a repeated workaround, a recurring failure, missing observability into your own state, or a stable user preference needing executable behavior. If a small self-modification within your existing authority would materially help, make or propose it, using the least durable mechanism that fits. When recent inference traces show one decomposition pattern succeeding repeatedly, consider rlm.distill to propose a reusable policy. If nothing qualifies, continue silently; this reminder is never a mutation quota."
   "The periodic advice asking the model to consider self-modification.")
 
 (defvar *self-review-receipts* (make-hash-table :test #'equal)
