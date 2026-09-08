@@ -5,6 +5,77 @@
 (defparameter *rlm-subcall-context-characters* 40000
   "The recommended maximum context characters per environment sub-inference.")
 
+(defparameter *rlm-environment-pool-size* 2
+  "The most idle environment workers the reuse pool retains.")
+
+(defvar *rlm-environment-pool* nil
+  "Idle root-run environment workers retained for reuse, newest first.
+
+Each entry is a plist (:digest ... :configuration ... :worker ...).
+Reuse requires the same context digest and the same configuration
+identity, so tests and forked setups never share a worker.")
+
+(defvar *rlm-environment-pool-lock*
+  (make-lock "Autolith inference environment pool")
+  "The lock guarding the environment reuse pool.")
+
+(-> rlm--environment-pool-claim
+    (rlm-context-object configuration)
+    (values t boolean))
+(defun rlm--environment-pool-claim (object configuration)
+  "Claim a pooled live worker for OBJECT under CONFIGURATION.
+
+Returns the claimed worker or NIL, plus true when a pooled environment
+existed but its process had died, so the caller can tell the root model
+its earlier state is gone. A claimed entry leaves the pool, so
+concurrent runs over one context each drive their own environment."
+  (let ((entry
+          (with-lock-held (*rlm-environment-pool-lock*)
+            (let ((match
+                    (find-if
+                     (lambda (entry)
+                       (and (string= (getf entry ':digest)
+                                     (rlm-context-object-digest object))
+                            (eq (getf entry ':configuration) configuration)))
+                     *rlm-environment-pool*)))
+              (when match
+                (setf *rlm-environment-pool*
+                      (remove match *rlm-environment-pool*))
+                match)))))
+    (cond
+      ((null entry)
+       (values nil nil))
+      ((lisp-worker-running-p (getf entry ':worker))
+       (values (getf entry ':worker) nil))
+      (t
+       (ignore-errors (lisp-worker-stop (getf entry ':worker)))
+       (values nil t)))))
+
+(-> rlm--environment-pool-park (rlm-context-object configuration t) null)
+(defun rlm--environment-pool-park (object configuration worker)
+  "Retain WORKER for reuse over OBJECT, evicting the oldest past the bound."
+  (let ((evicted nil))
+    (with-lock-held (*rlm-environment-pool-lock*)
+      (push (list ':digest (rlm-context-object-digest object)
+                  ':configuration configuration
+                  ':worker worker)
+            *rlm-environment-pool*)
+      (when (> (length *rlm-environment-pool*) *rlm-environment-pool-size*)
+        (setf evicted (first (last *rlm-environment-pool*))
+              *rlm-environment-pool* (butlast *rlm-environment-pool*))))
+    (when evicted
+      (ignore-errors (lisp-worker-stop (getf evicted ':worker)))))
+  nil)
+
+(-> rlm-environment-pool-flush () null)
+(defun rlm-environment-pool-flush ()
+  "Stop and forget every idle pooled environment worker."
+  (let ((entries (with-lock-held (*rlm-environment-pool-lock*)
+                   (shiftf *rlm-environment-pool* nil))))
+    (dolist (entry entries)
+      (ignore-errors (lisp-worker-stop (getf entry ':worker)))))
+  nil)
+
 (defparameter *rlm-environment-prelude-body*
   "(progn
      (defvar *context-text* nil)
@@ -83,8 +154,55 @@
                         :concurrency concurrency)))
      (defun finish (value)
        (rlm--call :finish (list :value value)))
+     (defvar *rlm-known-symbols* nil)
+     (defun rlm--user-symbols ()
+       (let ((symbols nil))
+         (do-symbols (symbol *package*)
+           (when (and (eq (symbol-package symbol) *package*)
+                      (or (boundp symbol) (fboundp symbol)))
+             (pushnew symbol symbols)))
+         symbols))
+     (defun environment-names ()
+       (sort (remove-duplicates
+              (mapcar (function symbol-name)
+                      (set-difference (rlm--user-symbols)
+                                      *rlm-known-symbols*))
+              :test (function string=))
+             (function string<)))
+     (setf *rlm-known-symbols* (rlm--user-symbols))
      :ready)"
   "The substitution-free tail of the environment prelude.")
+
+(-> rlm--environment-reprime (rlm-endpoint) string)
+(defun rlm--environment-reprime (endpoint)
+  "Compose the form rebinding a reused environment to ENDPOINT.
+
+A reused worker keeps its prelude and user state; only the loopback
+port and capability token change between runs over one context."
+  (format nil "(progn (setf *rlm-port* ~D *rlm-token* ~S) :ready)"
+          (rlm-endpoint-port endpoint)
+          (rlm-endpoint-token endpoint)))
+
+(-> rlm--environment-persisted-names (t) list)
+(defun rlm--environment-persisted-names (worker)
+  "Return the reused WORKER's persisting user-defined names, best effort.
+
+The listing is advisory prompt content, so failures return NIL instead
+of failing the run."
+  (handler-case
+      (let* ((response (lisp-worker-request worker ':eval
+                                            (list :form "(environment-names)")))
+             (fields (rest response))
+             (printed (first (getf fields ':values))))
+        (when (and (eq (getf fields ':status) ':ok)
+                   (stringp printed))
+          (let ((names (with-standard-io-syntax
+                         (let ((*read-eval* nil))
+                           (read-from-string printed)))))
+            (when (and (listp names) (every #'stringp names))
+              names))))
+    (error ()
+      nil)))
 
 (-> rlm--environment-prelude (rlm-endpoint rlm-context-object) string)
 (defun rlm--environment-prelude (endpoint object)
@@ -181,21 +299,42 @@ Environment functions:
 - (context-length), (context-slice start end), and (context-search pattern &key start) inspect the external context.
 - (infer task &key context contract) runs one bounded sub-inference over explicit context strings and returns its value; further values are its trace identifier and its settled token spend, so cost-aware decomposition can adapt slice sizes.
 - (rlm-map tasks &key contract concurrency) fans tasks out concurrently; each task is a string or a (:task ... :context ...) plist.
+- (environment-names) lists user-defined names persisting from earlier runs over this context.
 - (finish value) records the final answer and ends the run. Call it exactly once.
 These helpers are the complete RLM interface: do not call RLM helpers that are not listed here. Everything else is ordinary Common Lisp; define further functions yourself when the decomposition needs them.
 Decompose the task programmatically: slice or partition the context, fan sub-inferences over the pieces, and combine the results in Lisp. The context metadata names a recommended maximum context size per subcall; use structure-aware or overlapping slices when relevant evidence may cross arbitrary boundaries. Keep large data in environment variables; observe only bounded summaries. The call and token budget is shared across the whole run, so prefer few well-aimed evaluations."
   "The system prompt replacing the Autolith persona for root completions.")
 
-(-> rlm--root-request (string rlm-context-object) string)
-(defun rlm--root-request (task object)
-  "Compose the root user message from TASK and OBJECT's metadata."
+(-> rlm--root-request
+    (string rlm-context-object
+     &key (:reused-p boolean)
+          (:persisted-names list)
+          (:previous-lost-p boolean))
+    string)
+(defun rlm--root-request
+    (task object &key reused-p persisted-names previous-lost-p)
+  "Compose the root user message from TASK and OBJECT's metadata.
+
+REUSED-P notes a persisting environment and its PERSISTED-NAMES;
+PREVIOUS-LOST-P notes that an earlier environment's state is gone."
   (format nil
-          "Task: ~A~%~%External context object bound as *context*:~%  label ~S~%  characters ~D~%  sha256 ~A~%  recommended maximum context per subcall: ~D characters"
+          "Task: ~A~%~%External context object bound as *context*:~%  label ~S~%  characters ~D~%  sha256 ~A~%  recommended maximum context per subcall: ~D characters~@[~%~%~A~]"
           task
           (rlm-context-object-label object)
           (rlm-context-object-characters object)
           (subseq (rlm-context-object-digest object) 0 12)
-          *rlm-subcall-context-characters*))
+          *rlm-subcall-context-characters*
+          (cond
+            (reused-p
+             (format nil
+                     "The environment persists from an earlier run over this same context object: variables and functions defined then are still bound, and (environment-names) lists them live. Reuse them instead of recomputing.~@[ Names defined by earlier runs: ~{~A~^, ~}.~]"
+                     (and persisted-names
+                          (subseq persisted-names
+                                  0 (min 40 (length persisted-names))))))
+            (previous-lost-p
+             "An earlier environment over this context ended unexpectedly; its variables are gone and anything needed must be recreated.")
+            (t
+             nil))))
 
 (-> rlm-complete
     (string &key (:context t)
@@ -244,24 +383,53 @@ conversation identifier."
                          conversation
                          (list :rlm-call record)))
                       :activity-callback activity-callback))
-           (worker nil))
+           (worker nil)
+           (reused-p nil)
+           (previous-lost-p nil)
+           (parked-p nil))
       (unwind-protect
            (progn
              (rlm--note-activity activity-callback "starting environment")
-             (setf worker (lisp-worker-create configuration
-                                              :name "rlm-environment"))
-             (lisp-worker-start worker)
-             (dolist (form (list "(require :sb-bsd-sockets)"
-                                 (rlm--environment-prelude endpoint object)))
-               (let ((response
-                       (lisp-worker-request worker ':eval
-                                            (list :form form))))
-                 (unless (eq (getf (rest response) ':status) ':ok)
-                   (error 'rlm-inference-error
-                          :task task
-                          :message
-                          (format nil "The environment prelude failed: ~A"
-                                  (getf (rest response) ':message))))))
+             (multiple-value-bind (pooled lost-p)
+                 (rlm--environment-pool-claim object configuration)
+               (setf previous-lost-p lost-p)
+               (when pooled
+                 (setf worker pooled
+                       reused-p t)))
+             (labels ((prime (forms)
+                        "Evaluate prelude FORMS, signaling on any failure."
+                        (dolist (form forms)
+                          (let ((response
+                                  (lisp-worker-request worker ':eval
+                                                       (list :form form))))
+                            (unless (eq (getf (rest response) ':status) ':ok)
+                              (error 'rlm-inference-error
+                                     :task task
+                                     :message
+                                     (format nil "The environment prelude failed: ~A"
+                                             (getf (rest response) ':message)))))))
+
+                      (start-fresh ()
+                        "Boot and prime one fresh environment worker."
+                        (setf worker (lisp-worker-create
+                                      configuration
+                                      :name "rlm-environment"))
+                        (lisp-worker-start worker)
+                        (prime (list "(require :sb-bsd-sockets)"
+                                     (rlm--environment-prelude endpoint
+                                                               object)))))
+               (if reused-p
+                   (handler-case
+                       (prime (list (rlm--environment-reprime endpoint)))
+                     (error ()
+                       ;; A wedged reused environment falls back to a fresh
+                       ;; worker instead of failing the whole run.
+                       (ignore-errors (lisp-worker-stop worker))
+                       (setf worker nil
+                             reused-p nil
+                             previous-lost-p t)
+                       (start-fresh)))
+                   (start-fresh)))
              (multiple-value-bind (status-callback flush-tranche)
                  (rlm--frame-budget-callback
                   budget task :activity-callback activity-callback)
@@ -277,7 +445,14 @@ conversation identifier."
                       (observer
                         (make-instance 'callback-agent-observer
                                        :status-callback status-callback))
-                      (request (rlm--root-request task object))
+                      (request (rlm--root-request
+                                task object
+                                :reused-p reused-p
+                                :persisted-names
+                                (and reused-p
+                                     (rlm--environment-persisted-names
+                                      worker))
+                                :previous-lost-p previous-lost-p))
                       (*system-prompt-override* *rlm-root-system-prompt*))
                  (tool-registry-register registry
                                          (rlm-environment-tool-create worker))
@@ -295,11 +470,17 @@ conversation identifier."
                    (multiple-value-bind (value final-p)
                        (rlm-endpoint-final endpoint)
                      (when final-p
+                       ;; A finished environment parks for reuse over the
+                       ;; same context; a failed run's worker stops instead.
+                       (rlm--environment-pool-park object configuration
+                                                   worker)
+                       (setf parked-p t)
                        (return (values value
                                        (conversation-identifier
                                         conversation)))))
                    (setf request
                          "No final value is recorded yet. Audit the task against what the environment has actually computed: do not treat intent, partial progress, or a plausible unverified answer as completion. Continue decomposing in the environment, and when the answer is complete, or the remaining budget cannot support further sub-inferences, compose the best supported value and call (finish value) exactly once.")))))
-        (when worker
-          (ignore-errors (lisp-worker-stop worker)))
+        (unless parked-p
+          (when worker
+            (ignore-errors (lisp-worker-stop worker))))
         (rlm-endpoint-stop endpoint)))))

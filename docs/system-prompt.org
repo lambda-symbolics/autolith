@@ -506,6 +506,11 @@ that tool exists only inside the root run.
 
 Default root allowances are 24 calls, 240000 tokens, and depth 2.
 
+Repeated =rlm.complete= calls over one context object reuse a
+persistent environment: earlier runs' variables and functions stay
+bound, the request lists them, and =(environment-names)= reports them
+live, so follow-up runs build on prior work instead of recomputing.
+
 | Environment form                          | Use                                                                                 |
 |-------------------------------------------+-------------------------------------------------------------------------------------|
 | =(context-length)=                          | Character count of the external object.                                             |

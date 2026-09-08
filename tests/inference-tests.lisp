@@ -1476,6 +1476,82 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                      "the root trace carries the run's invocation ledger"))))
   nil)
 
+(-> rlm-environment-reuse--provider (string) rlm-litmus-provider)
+(defun rlm-environment-reuse--provider (form)
+  "Return a litmus provider scripting one root env.eval of FORM."
+  (make-instance
+   'rlm-litmus-provider
+   :window-limit 60000
+   :root-results
+   (list (agent-test-result
+          "reuse-root"
+          (list (agent-test-call
+                 :call-id "reuse-eval"
+                 :namespace "env"
+                 :name "eval"
+                 :arguments (json-encode (json-object "form" form))))))))
+
+(-> test-rlm-environment-reuse () null)
+(defun test-rlm-environment-reuse ()
+  "Test root environments persist across runs over one context object."
+  (rlm-environment-pool-flush)
+  (let ((configuration (test-configuration))
+        (context (list ':label "shared corpus"
+                       ':content "reusable context body")))
+    (unwind-protect
+         (progn
+           (multiple-value-bind (value trace-identifier)
+               (rlm-complete
+                "Remember the base value."
+                :context context
+                :budget (rlm-budget-create :calls 2 :tokens 50000 :depth 1)
+                :provider (rlm-environment-reuse--provider
+                           "(progn (defvar *reuse-state* 41) (finish 41))")
+                :configuration configuration)
+             (declare (ignore trace-identifier))
+             (test-assert (eql value 41)
+                          "the first run records its final value"))
+           (test-assert (= (length *rlm-environment-pool*) 1)
+                        "a finished run parks its environment for reuse")
+           (multiple-value-bind (value trace-identifier)
+               (rlm-complete
+                "Recall the base value."
+                :context context
+                :budget (rlm-budget-create :calls 2 :tokens 50000 :depth 1)
+                :provider (rlm-environment-reuse--provider
+                           "(finish (list (1+ *reuse-state*) (environment-names)))")
+                :configuration configuration)
+             (test-assert (eql (first value) 42)
+                          "the reused environment keeps prior definitions")
+             (test-assert (and (listp (second value))
+                               (member "*REUSE-STATE*" (second value)
+                                       :test #'string=))
+                          "environment-names lists names from earlier runs")
+             (let ((trace (rlm--trace-content configuration trace-identifier)))
+               (test-assert (search "persists from an earlier run" trace)
+                            "the reused run's request notes the persistence")
+               (test-assert (search "*REUSE-STATE*" trace)
+                            "the reused run's request lists persisted names")))
+           (let ((entry (first *rlm-environment-pool*)))
+             (test-assert (not (null entry))
+                          "the second run re-parked its environment")
+             (lisp-worker-stop (getf entry ':worker)))
+           (multiple-value-bind (value trace-identifier)
+               (rlm-complete
+                "Start over."
+                :context context
+                :budget (rlm-budget-create :calls 2 :tokens 50000 :depth 1)
+                :provider (rlm-environment-reuse--provider
+                           "(finish (boundp (quote *reuse-state*)))")
+                :configuration configuration)
+             (test-assert (null value)
+                          "a dead pooled environment starts fresh")
+             (let ((trace (rlm--trace-content configuration trace-identifier)))
+               (test-assert (search "ended unexpectedly" trace)
+                            "the fresh run notes the lost environment state"))))
+      (rlm-environment-pool-flush)))
+  nil)
+
 (-> test-rlm-boundary-litmus () null)
 (defun test-rlm-boundary-litmus ()
   "Test overlapping slices count evidence crossing naive slice boundaries."

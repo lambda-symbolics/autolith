@@ -340,6 +340,7 @@
                       (when worker
                         (lisp-worker-manager-stop worker))
                    (setf worker-stopped-p t)))
+               (ignore-errors (rlm-environment-pool-flush))
                (conversation-picker-search-close
                 (application-conversation application))
                (application-release-conversation-lease application)

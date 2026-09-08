@@ -400,6 +400,7 @@
   test-rlm-policies
   test-rlm-trace-resource
   test-rlm-endpoint
+  test-rlm-environment-reuse
   test-rlm-litmus-completion
   test-rlm-boundary-litmus
   test-rlm-complete-tool

@@ -148,6 +148,16 @@ decomposition authored by the root model as Lisp, no provider request
 exceeding the window, intermediate values staying in the environment,
 and the exact answer returned.
 
+Environments persist across runs. A run that records its final value
+parks its worker keyed by the context digest, and the next completion
+over the same object under the same configuration reuses it: the root
+model is told its earlier definitions survive, the request lists them,
+and =(environment-names)= reports them live. The pool retains at most
+two idle workers, eviction and application shutdown stop them, and a
+pooled worker whose process died yields a fresh environment plus an
+explicit loss notice instead of silently vanished state. A failed run
+stops its worker rather than parking it.
+
 * Parallel maps
 
 =rlm-map= fans a list of tasks out as frames sharing one budget
