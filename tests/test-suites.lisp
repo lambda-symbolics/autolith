@@ -385,6 +385,7 @@
 (define-test-suite inference
   test-rlm-frame-budget-activity
   test-rlm-context-designators
+  test-rlm-budget-cache-discount
   test-rlm-response-usage-normalization
   test-rlm-context-object-adapter
   test-rlm-infer

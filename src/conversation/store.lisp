@@ -1949,18 +1949,23 @@ copied."
                :sequence nil))))
   nil)
 
+(-> conversation--usage-field (t string) (option integer))
+(defun conversation--usage-field (usage name)
+  "Return the integer counter NAME carried by portable or wire USAGE data."
+  (cond
+    ((json-object-p usage)
+     (let ((value (json-get usage name)))
+       (and (integerp value) value)))
+    ((listp usage)
+     (let ((value (second (assoc name usage :test #'equal))))
+       (and (integerp value) value)))
+    (t
+     nil)))
+
 (-> conversation--usage-total (t) (option integer))
 (defun conversation--usage-total (usage)
   "Return the total token count carried by portable or wire USAGE data."
-  (cond
-    ((json-object-p usage)
-     (let ((total (json-get usage "total_tokens")))
-       (and (integerp total) total)))
-    ((listp usage)
-     (let ((total (second (assoc "total_tokens" usage :test #'equal))))
-       (and (integerp total) total)))
-    (t
-     nil)))
+  (conversation--usage-field usage "total_tokens"))
 
 (-> conversation-append-provider-metadata (conversation list) list)
 (defun conversation-append-provider-metadata (conversation metadata)

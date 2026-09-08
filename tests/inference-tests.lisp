@@ -130,16 +130,56 @@
       (error "The inference test provider has no remaining result."))
     result))
 
-(-> rlm-inference-test-result (string string (integer 0)) provider-result)
-(defun rlm-inference-test-result (response-id text total-tokens)
-  "Return a scripted assistant TEXT result reporting TOTAL-TOKENS usage."
+(-> rlm-inference-test-result
+    (string string (integer 0) &key (:cached-tokens (option (integer 0))))
+    provider-result)
+(defun rlm-inference-test-result (response-id text total-tokens
+                                  &key cached-tokens)
+  "Return a scripted assistant TEXT result reporting TOTAL-TOKENS usage.
+
+CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
   (make-instance 'provider-result
                  :response-id response-id
                  :output-items (list (agent-test-message text))
                  :tool-calls nil
-                 :usage (json-object "total_tokens" total-tokens)
+                 :usage (if cached-tokens
+                            (json-object "total_tokens" total-tokens
+                                         "cached_input_tokens" cached-tokens)
+                            (json-object "total_tokens" total-tokens))
                  :turn-state nil
                  :turn-completion ':unspecified))
+
+(-> test-rlm-budget-cache-discount () null)
+(defun test-rlm-budget-cache-discount ()
+  "Test budget settlement discounts prompt-cache reads from reported usage."
+  (test-assert (null (rlm--usage-billable-tokens nil))
+               "usage-less responses settle as a full refund")
+  (test-assert (= (rlm--usage-billable-tokens
+                   (json-object "total_tokens" 150
+                                "cached_input_tokens" 80))
+                  70)
+               "cached input tokens do not drain the token pool")
+  (test-assert (= (rlm--usage-billable-tokens '(("total_tokens" 150))) 150)
+               "usage without cache counters settles at the reported total")
+  (test-assert (zerop (rlm--usage-billable-tokens
+                       (json-object "total_tokens" 100
+                                    "cached_input_tokens" 120)))
+               "over-reported cache reads clamp settlement at zero")
+  (let ((provider
+          (make-instance
+           'rlm-inference-test-provider
+           :results (list (rlm-inference-test-result "resp-1" "plain" 150
+                                                     :cached-tokens 80))))
+        (budget (rlm-budget-create :calls 2 :tokens 1000 :depth 1)))
+    (test-assert (string= (infer "Say plain."
+                                 :budget budget
+                                 :provider provider
+                                 :configuration (test-configuration))
+                          "plain")
+                 "an inference with cached usage returns its answer")
+    (test-assert (= (rlm-budget-remaining-tokens budget) 930)
+                 "settlement drains only the uncached token share"))
+  nil)
 
 (-> test-rlm-infer () null)
 (defun test-rlm-infer ()

@@ -219,6 +219,21 @@ pass (context-slice ...) directly instead of wrapping it in a list."
         nil)))
   nil)
 
+(-> rlm--usage-billable-tokens (t) (option integer))
+(defun rlm--usage-billable-tokens (usage)
+  "Return USAGE's token total with prompt-cache reads discounted.
+
+Cache-read tokens are repeated context served from the provider prompt
+cache. Charging them at full weight would exhaust a shared-prefix run's
+token budget long before its genuinely new work, so settlement charges
+the reported total minus the cached input tokens."
+  (let ((total (conversation--usage-total usage)))
+    (and total
+         (max 0
+              (- total
+                 (or (conversation--usage-field usage "cached_input_tokens")
+                     0))))))
+
 (-> rlm--run-direct-inference
     (string string t rlm-budget model-provider conversation
      &key (:activity-callback (option function)))
@@ -249,8 +264,9 @@ pass (context-slice ...) directly instead of wrapping it in a list."
                         (rlm--record-response conversation result)
                         (rlm-budget-settle-output
                          budget tranche
-                         (conversation--usage-total
-                          (provider-result-usage result)))
+                         (rlm--usage-billable-tokens
+                          (provider-usage-normalize
+                           (provider-result-usage result))))
                         (setf settled-p t)
                         (multiple-value-bind (value valid-p problem)
                             (rlm--contract-value
@@ -307,7 +323,7 @@ value flushes an unsettled tranche after an aborted turn."
          (:provider-request-completed
           (when tranche
             (rlm-budget-settle-output budget (shiftf tranche nil)
-                                      (conversation--usage-total
+                                      (rlm--usage-billable-tokens
                                        (getf details ':usage)))))
          (:tool-call-progress
           (let ((activity (getf details ':activity)))

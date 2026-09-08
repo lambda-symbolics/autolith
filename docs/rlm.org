@@ -88,7 +88,10 @@ output ceiling where the wire protocol accepts one (elsewhere it stays
 an accounting reservation) and is settled against the reported usage
 afterwards,
 with failed or usage-less requests refunding the output tranche in
-full while the admitted call stays consumed. A tranche takes
+full while the admitted call stays consumed. Settlement discounts
+prompt-cache reads: cached input tokens are repeated context served
+from the provider cache, so a long run over a shared prefix drains the
+pool only for its genuinely new work. A tranche takes
 at most a share of the remaining pool (a quarter by default, capped
 at 16000 tokens) and never more than the pool holds, so concurrent
 siblings keep headroom and combined reservations cannot oversubscribe

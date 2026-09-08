@@ -470,7 +470,7 @@ validated value comes back as portable data.
 | Allowance | Meaning                                                                     |
 |-----------+-----------------------------------------------------------------------------|
 | =calls=     | Provider call allowance for the subtree. At most 32 from the primary agent. |
-| =tokens=    | Total allowance for the subtree: every frame's full input, views included, plus its output. At most 400000. |
+| =tokens=    | Total allowance for the subtree: every frame's full input, views included, plus its output. Prompt-cache reads are not charged. At most 400000. |
 | =depth=     | Recursion depth below the frame. At most 4.                                 |
 
 =rlm.map= accepts at most 16 tasks. Default concurrency is 4, at most
