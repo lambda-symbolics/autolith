@@ -50,10 +50,11 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "cl-rfc8628";
-      rev = "37aaeef092c1212d0886bdd68af6eebecd77a98f";
-      hash = "sha256-VBYhkBkCUXHduMTQQpy15GBAKjRalHp5zT1AV7BAMG8=";
+      rev = "dea112d1bf2750a52c52f33344157af7b9f4f6f8";
+      hash = "sha256-oJ+kcCMkdhI5Yf6je/F8IueGA2MR3P+Lq0N965JWFnM=";
     };
     lispLibs = with pkgs.sbclPackages; [
+      bordeaux-threads
       cl-base64
       dexador
       quri

@@ -17,7 +17,7 @@ git cl-colorist https://github.com/luciusmagn/cl-colorist.git :ref a4b65e63f4024
 git clinedi https://github.com/luciusmagn/clinedi.git :ref de133d8467ed211369923285078cbfa456e1d92b
 git cl-jobpond https://github.com/luciusmagn/cl-jobpond.git :ref ee2e2eb0bd5080c52db55036f853c00671962178
 git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 73aebf6c498bc6c9b42d2a5fdbe961163feaa933
-git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref 37aaeef092c1212d0886bdd68af6eebecd77a98f
+git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref dea112d1bf2750a52c52f33344157af7b9f4f6f8
 git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref a25e9b141628e682933fc9d45fc7cfb00a6dcdd2
 git cl-skills https://github.com/lambda-symbolics/cl-skills.git :ref ef20ce4bde2eb1d8f483a063788256aad06d0968
 git cl-termdown https://github.com/lambda-symbolics/cl-termdown.git :ref 340579ac634074791e9c2cc3c35323fec3b7cf66

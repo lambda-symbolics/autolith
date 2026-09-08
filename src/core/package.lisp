@@ -112,6 +112,17 @@
                 #:*rfc8628-device-slow-down-increment*
                 #:credential-manager-accept-account
                 #:credential-manager-primary-source
+                #:credential-manager-account-id
+                #:credential-manager-bootstrap-source
+                #:credential-manager-provider-label
+                #:credential-manager-login-hint
+                #:credential-manager-credential-description
+                #:credential-manager-refreshable-p
+                #:credential-manager-refresh-exchange
+                #:credential-manager-import-bootstrap
+                #:credential-manager-load
+                #:credential-manager-refresh
+                #:credential-manager-credentials
                 #:credential-source-label
                 #:credential-source-load
                 #:credential-source-pathname
