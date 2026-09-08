@@ -776,7 +776,12 @@ initialization registers the selected model."
                       (configuration--reasoning-efforts-for selected-model)
                       :test #'string=)
         (error 'configuration-error
-               :message (format nil "Unsupported reasoning effort ~S." selected-effort))))
+               :message
+               (format nil "Unsupported reasoning effort ~S for model ~A. The choices are ~{~A~^, ~}."
+                       selected-effort
+                       selected-model
+                       (configuration--reasoning-efforts-for
+                        selected-model)))))
     (unless (member selected-web-search *supported-web-search-modes*
                     :test #'string=)
       (error 'configuration-error
@@ -941,8 +946,9 @@ reasoning effort only when that effort is supported by the selected model."
            (or working-directory (configuration-working-directory configuration))))
     (unless (member selected-effort supported-efforts :test #'string=)
       (error 'configuration-error
-             :message (format nil "Unsupported reasoning effort ~S for model ~A."
-                              selected-effort selected-model)))
+             :message
+             (format nil "Unsupported reasoning effort ~S for model ~A. The choices are ~{~A~^, ~}."
+                     selected-effort selected-model supported-efforts)))
     (apply #'make-instance
            'configuration
            :source-root (configuration-source-root configuration)
@@ -1047,9 +1053,11 @@ reasoning effort only when that effort is supported by the selected model."
                   :test #'string=)
     (error 'configuration-error
            :message
-           (format nil "Unsupported reasoning effort ~S for model ~A."
+           (format nil "Unsupported reasoning effort ~S for model ~A. The choices are ~{~A~^, ~}."
                    reasoning-effort
-                   (configuration-model configuration))))
+                   (configuration-model configuration)
+                   (configuration--reasoning-efforts-for
+                    (configuration-model configuration)))))
   (configuration--clone configuration :reasoning-effort reasoning-effort))
 
 (-> configuration-with-codex-fast-mode (configuration boolean) configuration)
