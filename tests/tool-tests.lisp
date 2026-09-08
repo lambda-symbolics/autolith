@@ -361,6 +361,323 @@
             "large page results include a bounded excerpt and context URI"))))))
   nil)
 
+(-> tool-tests--web-search-call (tool-registry tool-context json-object) tool-result)
+(defun tool-tests--web-search-call (registry context arguments)
+  "Dispatch one web.search call with JSON ARGUMENTS."
+  (tool-registry-execute-call
+   registry
+   (json-object "namespace" "web" "name" "search"
+                "arguments" (json-encode arguments))
+   context))
+
+(-> tool-tests--web-search-response () string)
+(defun tool-tests--web-search-response ()
+  "Return one fixture Parallel search response body."
+  (json-encode
+   (json-object
+    "search_id" "search_fixture"
+    "warnings" (json-array "mode adjusted")
+    "results"
+    (json-array
+     (json-object "url" "https://one.example/page"
+                  "title" "One"
+                  "publish_date" "2026-01-02"
+                  "excerpts" (json-array "one excerpt"))
+     (json-object "url" "https://one.example/page"
+                  "title" "Duplicate"
+                  "publish_date" nil
+                  "excerpts" (json-array "duplicate excerpt"))
+     (json-object "url" "https://two.example/page"
+                  "title" "Two"
+                  "publish_date" nil
+                  "excerpts" (json-array "two excerpt"))))))
+
+(-> test-web-search-tool () null)
+(defun test-web-search-tool ()
+  "Test web.search registration, schema, and argument validation."
+  (with-test-configuration (configuration)
+    (let* ((registry (make-default-tool-registry))
+           (tool (tool-registry-find registry "web" "search"))
+           (context (make-instance
+                     'tool-context :configuration configuration :worker nil
+                     :conversation (conversation-create configuration))))
+      (test-assert tool "the default registry contains web.search")
+      (test-assert
+       (gethash "query" (json-get (tool-parameters tool) "properties"))
+       "web.search declares its query argument")
+      (test-assert (null (tool-child-safe-p tool))
+                   "ordinary child agents cannot use web.search")
+      (dolist (arguments
+                (list (json-object)
+                      (json-object "query" "")
+                      (json-object "query" 42)
+                      (json-object "query" "release notes" "mode" "instant")
+                      (json-object "query" "release notes" "max_results" 0)
+                      (json-object "query" "release notes" "max_results" "many")
+                      (json-object "query" "release notes" "search_queries" "one")
+                      (json-object "query" "release notes" "search_queries"
+                                   (json-array ""))))
+        (test-assert
+         (not (tool-result-success-p
+               (tool-tests--web-search-call registry context arguments)))
+         "invalid web.search arguments fail before network access"))
+      (with-test-environment (("PARALLEL_API_KEY" nil))
+        (let ((result (tool-tests--web-search-call
+                       registry context (json-object "query" "release notes"))))
+          (test-assert
+           (and (not (tool-result-success-p result))
+                (search "PARALLEL_API_KEY" (tool-result-content result)))
+           "a missing Parallel API key fails the call by name")))))
+  nil)
+
+(-> test-web-search-pipeline () null)
+(defun test-web-search-pipeline ()
+  "Exercise the web.search fetch, extraction, and synthesis stages."
+  (with-test-configuration (configuration)
+    (let* ((registry (make-default-tool-registry))
+           (context (make-instance
+                     'tool-context :configuration configuration :worker nil
+                     :conversation (conversation-create configuration)))
+           (objective "release notes"))
+      (with-test-environment (("PARALLEL_API_KEY" "test-key"))
+        (let ((fetched-urls nil)
+              (fetch-lock (make-lock "web-search test fetch log"))
+              (captured-tasks nil)
+              (captured-budget nil))
+          (test-call-with-function-replacements
+           (list
+            (list 'dexador:post
+                  (lambda (url &key headers content &allow-other-keys)
+                    (declare (ignore headers content))
+                    (test-assert (string= url *web-search-endpoint*)
+                                 "web.search posts to the Parallel endpoint")
+                    (values (tool-tests--web-search-response) 200)))
+            (list 'web-gist--retrieve
+                  (lambda (url)
+                    (with-lock-held (fetch-lock)
+                      (push url fetched-urls))
+                    (if (string= url "https://one.example/page")
+                        (concatenate 'string
+                                     (make-string 20000 :initial-element #\a)
+                                     "TAIL-MARKER")
+                        (error "boom on ~A" url))))
+            (list 'rlm-map
+                  (lambda (tasks &key budget &allow-other-keys)
+                    (setf captured-tasks (copy-list tasks)
+                          captured-budget budget)
+                    (loop for task in tasks
+                          collect
+                          (list ':task (getf task ':task)
+                                ':value "one fact"
+                                ':trace "trace-frame-1"))))
+            (list 'rlm-synthesize-inference-results
+                  (lambda (policy task results &key &allow-other-keys)
+                    (declare (ignore policy))
+                    (test-assert
+                     (and (search "1. One - https://one.example/page" task)
+                          (search "Objective: release notes" task))
+                     "the synthesis task embeds the numbered source list")
+                    (test-assert
+                     (= 1 (length results))
+                     "only fetched pages reach extraction")
+                    (values "The answer." "trace-42"))))
+           (lambda ()
+             (let* ((result (tool-tests--web-search-call
+                             registry context (json-object "query" objective)))
+                    (content (tool-result-content result)))
+               (test-assert (tool-result-success-p result)
+                            "the happy path succeeds")
+               (test-assert
+                (and (search "The answer." content)
+                     (search "1. One - https://one.example/page - published 2026-01-02"
+                             content)
+                     (search "Skipped pages:" content)
+                     (search "- https://two.example/page: boom on https://two.example/page"
+                             content)
+                     (search "- mode adjusted" content)
+                     (search "Parallel search: search_fixture" content)
+                     (search "Trace: trace-42" content)
+                     (not (search "TAIL-MARKER" content)))
+                "the result keeps the answer, sources, skips, warnings, and trace")
+               (test-assert
+                (and (= 2 (length fetched-urls))
+                     (member "https://one.example/page"
+                             fetched-urls :test #'string=)
+                     (member "https://two.example/page"
+                             fetched-urls :test #'string=))
+                "deduplicated results fetch one body per URL")
+               (test-assert
+                (= 2 (rlm-budget-remaining-calls captured-budget))
+                "the shared budget reserves one frame per page plus synthesis")
+               (test-assert
+                (and (= 1 (length captured-tasks))
+                     (search "https://one.example/page"
+                             (getf (first captured-tasks) ':task))
+                     (let ((view (first (getf (first captured-tasks) ':context))))
+                       (and (not (search "TAIL-MARKER" (getf view ':content)))
+                            (< (length (getf view ':content))
+                               (+ *web-search-page-character-limit* 100)))))
+                "extraction tasks carry one truncated view per page")))))
+        (let ((captured-tasks nil)
+              (captured-results nil))
+          (test-call-with-function-replacements
+           (list
+            (list 'dexador:post
+                  (lambda (url &key &allow-other-keys)
+                    (declare (ignore url))
+                    (values (tool-tests--web-search-response) 200)))
+            (list 'web-gist--retrieve
+                  (lambda (url)
+                    (declare (ignore url))
+                    "Page body."))
+            (list 'rlm-map
+                  (lambda (tasks &key &allow-other-keys)
+                    (setf captured-tasks (copy-list tasks))
+                    (loop for task in tasks
+                          for number from 1
+                          collect
+                          (if (= number 1)
+                              (list ':task (getf task ':task)
+                                    ':value "fact one"
+                                    ':trace "trace-a")
+                              (list ':task (getf task ':task)
+                                    ':error "frame boom")))))
+            (list 'rlm-synthesize-inference-results
+                  (lambda (policy task results &key &allow-other-keys)
+                    (declare (ignore policy task))
+                    (setf captured-results (copy-list results))
+                    (values "Partial answer." "trace-7"))))
+           (lambda ()
+             (let ((content (tool-result-content
+                             (tool-tests--web-search-call
+                              registry context (json-object "query" objective)))))
+               (test-assert
+                (and (search "https://one.example/page"
+                             (getf (first captured-tasks) ':task))
+                     (search "https://two.example/page"
+                             (getf (second captured-tasks) ':task)))
+                "extraction tasks keep the Parallel result order")
+               (test-assert
+                (and (getf (first captured-results) ':value)
+                     (getf (second captured-results) ':error))
+                "failed frames keep their result slot")
+               (test-assert
+                (and (search "Partial answer." content)
+                     (search "Failed extractions:" content)
+                     (search "source 2 (https://two.example/page): frame boom"
+                             content)
+                     (search "2. Two - https://two.example/page" content)
+                     (not (search "Skipped pages:" content)))
+                "partial extraction failures are reported by source number")))))
+        (let ((captured-tasks nil))
+          (test-call-with-function-replacements
+           (list
+            (list 'dexador:post
+                  (lambda (url &key &allow-other-keys)
+                    (declare (ignore url))
+                    (values (tool-tests--web-search-response) 200)))
+            (list 'web-gist--retrieve
+                  (lambda (url)
+                    (declare (ignore url))
+                    (error "blocked")))
+            (list 'rlm-map
+                  (lambda (tasks &key &allow-other-keys)
+                    (setf captured-tasks (copy-list tasks))
+                    (loop for task in tasks
+                          collect
+                          (list ':task (getf task ':task)
+                                ':value "excerpt fact"))))
+            (list 'rlm-synthesize-inference-results
+                  (lambda (&rest arguments)
+                    (declare (ignore arguments))
+                    (values "Excerpt answer." "trace-8"))))
+           (lambda ()
+             (let ((content (tool-result-content
+                             (tool-tests--web-search-call
+                              registry context (json-object "query" objective)))))
+               (test-assert
+                (and (= 2 (length captured-tasks))
+                     (search "one excerpt"
+                             (getf (first (getf (first captured-tasks) ':context))
+                                   ':content))
+                     (search "two excerpt"
+                             (getf (first (getf (second captured-tasks) ':context))
+                                   ':content)))
+                "excerpt bodies supply the views when every fetch fails")
+               (test-assert
+                (and (search "Excerpt answer." content)
+                     (search "Skipped pages:" content)
+                     (search "- https://one.example/page: blocked" content))
+                "the excerpt fallback still reports the skipped fetches")))))
+        (test-call-with-function-replacements
+         (list
+          (list 'dexador:post
+                (lambda (url &key &allow-other-keys)
+                  (declare (ignore url))
+                  (values (tool-tests--web-search-response) 200)))
+          (list 'web-gist--retrieve
+                (lambda (url)
+                  (declare (ignore url))
+                  "Page body."))
+          (list 'rlm-map
+                (lambda (tasks &key &allow-other-keys)
+                  (loop for task in tasks
+                        collect
+                        (list ':task (getf task ':task)
+                              ':error "frame boom"))))
+          (list 'rlm-synthesize-inference-results
+                (lambda (&rest arguments)
+                  (declare (ignore arguments))
+                  (values "unused" "trace-x"))))
+         (lambda ()
+           (let ((result (tool-tests--web-search-call
+                          registry context (json-object "query" objective))))
+             (test-assert
+              (and (not (tool-result-success-p result))
+                   (search "extraction failed for every source"
+                           (tool-result-content result)))
+              "every failed extraction fails the call"))))
+        (test-call-with-function-replacements
+         (list (list 'dexador:post
+                     (lambda (url &key &allow-other-keys)
+                       (declare (ignore url))
+                       (values "{}" 500))))
+         (lambda ()
+           (let ((result (tool-tests--web-search-call
+                          registry context (json-object "query" objective))))
+             (test-assert
+              (and (not (tool-result-success-p result))
+                   (search "HTTP 500" (tool-result-content result)))
+              "non-200 search responses fail by status"))))
+        (test-call-with-function-replacements
+         (list (list 'dexador:post
+                     (lambda (url &key &allow-other-keys)
+                       (declare (ignore url))
+                       (error "connection refused"))))
+         (lambda ()
+           (let ((result (tool-tests--web-search-call
+                          registry context (json-object "query" objective))))
+             (test-assert
+              (and (not (tool-result-success-p result))
+                   (search "Parallel search failed: connection refused"
+                           (tool-result-content result)))
+              "transport failures keep the condition text"))))
+        (test-call-with-function-replacements
+         (list (list 'dexador:post
+                     (lambda (url &key &allow-other-keys)
+                       (declare (ignore url))
+                       (values (json-encode
+                                (json-object "results" (json-array)))
+                               200))))
+         (lambda ()
+           (let ((result (tool-tests--web-search-call
+                          registry context (json-object "query" objective))))
+             (test-assert
+              (and (tool-result-success-p result)
+                   (search "no results" (tool-result-content result)))
+              "an empty result list is a successful no-results answer")))))))
+  nil)
+
 (-> test-tool-registry () null)
 (defun test-tool-registry ()
   "Test tool schemas, dispatch failure handling, and runtime lifecycle cleanup."

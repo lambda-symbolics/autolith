@@ -343,7 +343,7 @@
 
 (-> default-tools--register-web (tool-registry) tool-registry)
 (defun default-tools--register-web (registry)
-  "Register the web search and web page retrieval tools in REGISTRY."
+  "Register the web search, page retrieval, and extraction tools in REGISTRY."
   (default-tools--register
    registry
    (list
@@ -358,6 +358,13 @@
     "web" "gist"
     "Retrieve one HTML or Markdown page over HTTP or HTTPS as Markdown, following redirects. Supply a known URL from the user or search results."
     (web-gist-parameters)))
+  (default-tools--register
+   registry
+   (list
+    'web-search-tool
+    "web" "search"
+    "Search the web with Parallel and return one extracted answer with cited sources. Supply the wanted information in query; the tool fetches the top pages and reads them with bounded RLM frames."
+    (web-search-parameters)))
   registry)
 
 (-> default-tools--register-search (tool-registry worker) tool-registry)
