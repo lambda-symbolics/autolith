@@ -443,76 +443,122 @@
 
 (-> test-rlm-tool-routing () null)
 (defun test-rlm-tool-routing ()
-  "Test explicit root routes, validation and nested route inheritance."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (model (configuration-model configuration))
-         (effort (first (provider-model-reasoning-efforts-for model)))
-         (registry (make-instance 'tool-registry))
-         (context (make-instance 'tool-context :configuration configuration
-                                :worker nil :registry registry
-                                :conversation (conversation-create configuration)))
-         (provider (make-instance 'rlm-routing-test-provider :results nil)))
-    (unwind-protect
-         (progn
-           (dolist (constructor (list #'rlm-infer-tool-create
-                                      #'rlm-map-tool-create
-                                      #'rlm-complete-tool-create))
-             (let* ((tool (funcall constructor :provider provider))
-                    (arguments (json-object "model" model)))
-               (when effort
-                 (setf (gethash "effort" arguments) effort))
-               (multiple-value-bind (selected routed)
-                   (rlm--tool-routing tool context arguments)
-                 (test-assert (eq selected provider) "the scripted provider is retained")
-                 (test-assert (equal model (configuration-model routed))
-                              "the explicit model reaches the route")
-                 (when effort
-                   (test-assert (equal effort (configuration-reasoning-effort routed))
-                                "the explicit effort reaches the route")))
-               (test-assert
-                (handler-case
-                    (progn
-                      (rlm--tool-routing tool context (json-object "model" 42))
-                      nil)
-                  (rlm-inference-error ()
-                    t))
-                "non-string routing fails before provider work")))
-           (dolist (constructor (list #'rlm-infer-tool-create #'rlm-map-tool-create))
-             (let* ((budget (rlm-budget-create :calls 4 :tokens 10000 :depth 2))
-                    (tool (funcall constructor :provider provider :budget budget)))
-               (test-assert
-                (handler-case
-                    (progn
-                      (rlm--tool-routing tool context (json-object "model" model))
-                      nil)
-                  (rlm-inference-error ()
-                    t))
-                "nested callers cannot select a different route")
-               (multiple-value-bind (selected inherited)
-                   (rlm--tool-routing tool context (json-object))
-                 (test-assert (and (eq selected provider) (eq inherited configuration))
-                              "nested calls inherit the exact enclosing route"))))
-           (setf (rlm-inference-test-provider-results provider)
-                 (list (rlm-inference-test-result "route-infer" "routed" 10)))
-           (test-assert
-            (tool-result-success-p
-             (tool-execute (rlm-infer-tool-create :provider provider) context
-                           (json-object "task" "Return routed." "model" model)))
-            "the inference tool executes with explicit routing")
-           (setf (rlm-inference-test-provider-results provider)
-                 (list (rlm-inference-test-result "route-map-1" "one" 10)
-                       (rlm-inference-test-result "route-map-2" "two" 10)))
-           (let* ((budget (rlm-budget-create :calls 4 :tokens 20000 :depth 1))
-                  (results (rlm-map '("one" "two") :model model
-                                    :provider provider :configuration configuration
-                                    :budget budget :concurrency 1)))
-             (test-assert (equal '("one" "two")
-                                 (mapcar (lambda (result) (getf result :value)) results))
-                          "every mapped frame executes on the selected route")
-             (test-assert (rlm-routing-test-configurations provider)
-                          "explicit routing reconfigures the provider")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  "Test distinct root routes, invalid selections and nested route inheritance."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let* ((model (find-if
+                   (lambda (candidate)
+                     (and (not (equal candidate (configuration-model configuration)))
+                          (provider-model-reasoning-efforts-for candidate)))
+                   (provider-model-identifiers)))
+           (effort (first (provider-model-reasoning-efforts-for model)))
+           (registry (make-instance 'tool-registry))
+           (context (make-instance 'tool-context :configuration configuration
+                                  :worker nil :registry registry
+                                  :conversation (conversation-create configuration)))
+           (provider (make-instance 'rlm-routing-test-provider :results nil)))
+      (test-assert model "routing tests select a different registered model")
+      (labels ((check-route ()
+                 (let ((routes (rlm-routing-test-configurations provider)))
+                   (test-assert
+                    (and routes
+                         (every (lambda (route)
+                                  (and (equal model (configuration-model route))
+                                       (equal effort (configuration-reasoning-effort route))))
+                                routes))
+                    "the operation uses the requested model and effort"))))
+        (dolist (constructor (list #'rlm-infer-tool-create
+                                  #'rlm-map-tool-create
+                                  #'rlm-complete-tool-create))
+          (let ((tool (funcall constructor :provider provider)))
+            (multiple-value-bind (selected routed)
+                (rlm--tool-routing tool context (json-object "model" model "effort" effort))
+              (test-assert (eq selected provider) "the scripted provider handles the selected route")
+              (test-assert (and (equal model (configuration-model routed))
+                                (equal effort (configuration-reasoning-effort routed)))
+                           "explicit routing changes the configuration")
+              (let ((nested-context
+                      (make-instance 'tool-context :configuration routed
+                                     :worker nil :registry registry
+                                     :conversation (tool-context-conversation context))))
+                (dolist (nested-constructor (list #'rlm-infer-tool-create #'rlm-map-tool-create))
+                  (let* ((budget (rlm-budget-create :calls 4 :tokens 10000 :depth 2))
+                         (nested (funcall nested-constructor :provider selected :budget budget)))
+                    (multiple-value-bind (nested-provider inherited)
+                        (rlm--tool-routing nested nested-context (json-object))
+                      (test-assert (and (eq nested-provider selected) (eq inherited routed))
+                                   "nested calls inherit the explicitly selected root route"))
+                    (dolist (override (list (json-object "model" model)
+                                            (json-object "effort" effort)))
+                      (test-assert
+                       (handler-case
+                           (progn (rlm--tool-routing nested nested-context override) nil)
+                         (rlm-inference-error () t))
+                       "nested calls cannot override either routing argument"))))))
+            (dolist (arguments (list (json-object "model" 42)
+                                     (json-object "model" "")
+                                     (json-object "model" "unknown-rlm-test-model")
+                                     (json-object "model" model "effort" "unsupported-effort")))
+              (setf (rlm-routing-test-configurations provider) nil)
+              (test-assert
+               (handler-case
+                   (progn (rlm--tool-routing tool context arguments) nil)
+                 ((or rlm-inference-error configuration-error) () t))
+               "invalid routing is rejected")
+              (test-assert (null (rlm-routing-test-configurations provider))
+                           "invalid routing never reconfigures the provider"))))
+        (setf (rlm-routing-test-configurations provider) nil
+              (rlm-inference-test-provider-results provider)
+              (list (rlm-inference-test-result "route-infer" "routed" 10)))
+        (test-assert
+         (tool-result-success-p
+          (tool-execute (rlm-infer-tool-create :provider provider) context
+                        (json-object "task" "Return routed." "model" model "effort" effort)))
+         "the inference tool executes with explicit routing")
+        (check-route)
+        (setf (rlm-routing-test-configurations provider) nil
+              (rlm-inference-test-provider-results provider)
+              (list (rlm-inference-test-result "route-map-1" "one" 10)
+                    (rlm-inference-test-result "route-map-2" "two" 10)))
+        (test-assert
+         (tool-result-success-p
+          (tool-execute (rlm-map-tool-create :provider provider) context
+                        (json-object "tasks" (json-array (json-object "task" "one")
+                                                         (json-object "task" "two"))
+                                     "model" model "effort" effort "concurrency" 1)))
+         "the map tool executes its frames with explicit routing")
+        (check-route)
+        (setf (rlm-routing-test-configurations provider) nil
+              (rlm-inference-test-provider-results provider)
+              (list (rlm-inference-test-result "route-programmatic-map" "mapped" 10)))
+        (test-assert
+         (equal "mapped"
+                (getf (first (rlm-map '("one") :model model :effort effort
+                                     :provider provider :configuration configuration))
+                      :value))
+         "programmatic maps accept routing arguments")
+        (check-route)
+        (setf (rlm-routing-test-configurations provider) nil
+              (rlm-inference-test-provider-results provider)
+              (list (agent-test-result
+                     "route-root"
+                     (list (agent-test-call
+                            :call-id "route-eval" :namespace "env" :name "eval"
+                            :arguments (json-encode
+                                        (json-object "form"
+                                                     "(finish (infer \"Return nested.\" :context \"x\"))")))))
+                    (rlm-inference-test-result "route-child" "nested" 10)))
+        (let ((result
+                (tool-execute (rlm-complete-tool-create :provider provider) context
+                              (json-object "task" "Delegate and finish."
+                                           "context" (json-object "text" "x")
+                                           "model" model "effort" effort
+                                           "calls" 6 "tokens" 100000))))
+          (test-assert (tool-result-success-p result)
+                       "a routed completion can execute a nested inference")
+          (test-assert (null (rlm-inference-test-provider-results provider))
+                       "the root and child each perform their provider request"))
+        (check-route))))
   nil)
 
 (-> test-rlm-infer-tool () null)

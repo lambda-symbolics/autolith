@@ -282,8 +282,8 @@ providers depend on this, and real providers report usage.
 
 * Per-call model routing
 
-=rlm.infer=, =rlm.map=, and =rlm.complete= accept optional =model= and
-=effort= arguments. Autolith validates the selected model and its supported
-reasoning effort before starting the subtree. A map uses one route for every
-frame. A root completion uses its selected route for its environment and child
-inferences. Nested calls inherit the enclosing route and cannot override it.
+Pass optional =model= and =effort= arguments to =rlm.infer=, =rlm.map=, or
+=rlm.complete= to select a model and supported reasoning effort for the entire
+subtree. For a map, this selection applies to every frame; for a root completion,
+it applies to the environment and child inferences. Make this selection in the
+outermost call. Nested calls use the enclosing selection without overrides.
