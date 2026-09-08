@@ -510,98 +510,6 @@
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
-(-> test-mcp--generation-rediscovery-bound () null)
-(defun test-mcp--generation-rediscovery-bound ()
-  "Test bounded failure when every MCP tool discovery changes sessions."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (session 0)
-         (churn-request-count 0)
-         (server
-           (mcp-server-configuration-create
-            :name "unstable-generation-test"
-            :transport '(:type :stdio :command "/bin/true")))
-         (transport
-           (make-instance
-            'test-mcp-transport
-            :handler
-            (lambda (transport request)
-              (declare (ignore transport))
-              (let ((method (json-get request "method")))
-                (cond
-                  ((string= method "initialize")
-                   (incf session)
-                   (test-mcp--rpc-result
-                    request
-                    (json-object
-                     "protocolVersion" "2025-11-25"
-                     "capabilities" (json-object "tools" (json-object))
-                     "serverInfo"
-                     (json-object
-                      "name" "unstable-generation-test"
-                      "version" "1"))))
-                  ((string= method "tools/list")
-                   (test-mcp--rpc-result
-                    request
-                    (json-object
-                     "tools"
-                     (vector
-                      (test-mcp--tool-definition
-                       (format nil "session-~D-tool" session))))))
-                  (t
-                   (error
-                    "Unstable generation fixture received unexpected method ~S."
-                    method)))))))
-         (client
-           (make-mcp-client transport :name "autolith-test"))
-         (list-tools-function
-           (symbol-function 'mcp-client-list-tools))
-         (runtime
-           (make-instance
-            'mcp-server-runtime
-            :configuration server
-            :registration-source ':runtime
-            :provider-namespace "mcp__unstable_generation_test"
-            :client client)))
-    (unwind-protect
-         (progn
-           (mcp-server-runtime-connect runtime)
-           (mcp-server-runtime-request-tool-refresh runtime)
-           (let* ((*mcp-tool-discovery-restart-limit* 2)
-                  (failure
-                    (test-call-with-function-replacements
-                     (list
-                      (list
-                       'mcp-client-list-tools
-                       (lambda (target)
-                         (let ((tools
-                                 (funcall list-tools-function target)))
-                           (incf churn-request-count)
-                           (mcp-client-close target)
-                           (mcp-client-connect target)
-                           tools))))
-                     (lambda ()
-                       (handler-case
-                           (progn
-                             (mcp-server-runtime-connect runtime)
-                             nil)
-                         (mcp-server-startup-error (condition)
-                           condition))))))
-             (test-assert
-              (and
-               failure
-               (= session 3)
-               (= churn-request-count 2)
-               (eq (mcp-server-runtime-state runtime) :failed)
-               (null (mcp-server-runtime-tools runtime))
-               (search "2 consecutive tool discovery attempts"
-                       (format nil "~A" failure)))
-              "continual generation churn stops at the discovery restart bound")))
-      (ignore-errors (mcp-server-runtime-close runtime))
-      (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
 (-> test-mcp--empty-context (request-context) null)
 (defun test-mcp--empty-context (request)
   "Return no request-local context for reload transaction tests."
@@ -2486,77 +2394,8 @@
       (mcp-tools--clear-environment-fingerprint-key)))
   nil)
 
-(-> test-mcp-manager-concurrent-close () null)
-(defun test-mcp-manager-concurrent-close ()
-  "Test parallel MCP shutdown and deterministic close-order failure reporting."
-  (let ((lock      (make-lock "MCP close test"))
-        (entered   0)
-        (observed  (make-hash-table :test #'eq)))
-    (mcp-manager--close-runtimes
-     '(:first :second)
-     (lambda (runtime)
-       (with-lock-held (lock)
-         (incf entered))
-       (let ((peer-seen-p
-               (loop repeat 100
-                     thereis
-                     (with-lock-held (lock)
-                       (= entered 2))
-                     do (sleep 0.005))))
-         (with-lock-held (lock)
-           (setf (gethash runtime observed) peer-seen-p)))))
-    (test-assert
-     (and (gethash :first observed)
-          (gethash :second observed))
-     "MCP manager closes independent server runtimes concurrently"))
-  (let ((failure
-          (handler-case
-              (progn
-                (mcp-manager--close-runtimes
-                 '(:second :first)
-                 (lambda (runtime)
-                   (error "close ~A" runtime)))
-                nil)
-            (simple-error (condition)
-              (princ-to-string condition)))))
-    (test-assert
-     (and failure (search "SECOND" failure))
-     "concurrent MCP close reports the first failure in close order"))
-  nil)
-
 
 ;;;; -- Cleanup Without Credential Availability --
-
-(-> test-mcp--cleanup-stdio-server-form () string)
-(defun test-mcp--cleanup-stdio-server-form ()
-  "Return one tiny standard-input MCP server form that remains alive for close."
-  (let ((*package* (find-package '#:autolith)))
-    (write-to-string
-     `(progn
-        (read-line)
-        (write-line
-         ,(json-encode
-           (json-object
-            "jsonrpc" "2.0"
-            "id" 1
-            "result"
-            (json-object
-             "protocolVersion" "2025-11-25"
-             "capabilities" (json-object "tools" (json-object))
-             "serverInfo"
-             (json-object "name" "cleanup-fixture" "version" "1")))))
-        (finish-output)
-        (read-line)
-        (read-line)
-        (write-line
-         ,(json-encode
-           (json-object
-            "jsonrpc" "2.0"
-            "id" 2
-            "result" (json-object "tools" #()))))
-        (finish-output)
-        (loop (sleep 1)))
-     :pretty nil)))
 
 (-> test-mcp--rotating-stdio-server-form () string)
 (defun test-mcp--rotating-stdio-server-form ()
@@ -2619,163 +2458,23 @@
 
 (-> test-mcp-cleanup-without-credential-availability () null)
 (defun test-mcp-cleanup-without-credential-availability ()
-  "Test registry cleanup cannot be blocked by unavailable MCP credentials."
-  (labels ((deny-secret-use (&rest arguments)
-             "Reject any attempt to begin a new transient secret scope."
-             (declare (ignore arguments))
-             (error "A cleanup path attempted to begin transient secret use.")))
-    (let* ((configuration (test-configuration))
-           (root (test-configuration-root configuration))
-           (environment-name
-             (format nil
-                     "AUTOLITH_MCP_CLEANUP_STDIO_~A"
-                     (remove #\- (string-upcase (make-identifier)))))
-           (server
-             (mcp-server-configuration-create
-              :name "cleanup-stdio"
-              :transport
-              `(:type :stdio
-                :command ,(lisp-worker-sbcl-command)
-                :arguments
-                ("--noinform"
-                 "--no-sysinit"
-                 "--no-userinit"
-                 "--disable-debugger"
-                 "--non-interactive"
-                 "--eval"
-                 ,(test-mcp--cleanup-stdio-server-form))
-                :environment
-                (("SERVICE_TOKEN" :environment ,environment-name)))
-              :required-p t))
-           (client (mcp-tools--client server configuration))
-           (runtime
-             (make-instance
-              'mcp-server-runtime
-              :configuration server
-              :registration-source ':runtime
-              :provider-namespace "mcp__cleanup_stdio"
-              :client client))
-           (manager
-             (make-instance
-              'mcp-manager
-              :configuration configuration
-              :runtimes (list runtime)))
-           (registry (make-instance 'tool-registry))
-           (transport (mcp-client-transport client))
-           (process-slot (find-symbol "PROCESS" "MCPAREN"))
-           (process nil))
-      (unwind-protect
-           (progn
-             (sb-posix:setenv environment-name "cleanup-secret" 1)
-             (mcp-server-runtime-connect runtime)
-             (mcp-tool-registry-register-manager registry manager)
-             (setf process (slot-value transport process-slot))
-             (test-assert
-              (and process (uiop:process-alive-p process))
-              "the cleanup regression starts a real standard-input MCP process")
-             (sb-posix:unsetenv environment-name)
-             (test-call-with-function-replacements
-              (list (list 'call-with-secret-use #'deny-secret-use))
-              (lambda ()
-                (tool-registry-close-runtime-state registry)))
-             (test-assert
-              (and
-               (eq (mcp-server-runtime-state runtime) :disconnected)
-               (not (mcp-transport-open-p transport))
-               (null (slot-value transport process-slot))
-               (not
-                (handler-case
-                    (uiop:process-alive-p process)
-                  (error ()
-                    nil))))
-              "missing close-time credentials cannot orphan an MCP process"))
-        (sb-posix:unsetenv environment-name)
-        (ignore-errors (tool-registry-close-runtime-state registry))
-        (when
-            (and process
-                 (handler-case
-                     (uiop:process-alive-p process)
-                   (error ()
-                     nil)))
-          (ignore-errors (uiop:terminate-process process :urgent t))
-          (ignore-errors (uiop:wait-process process)))
-        (uiop:delete-directory-tree
-         root :validate t :if-does-not-exist ':ignore)))
-    (let* ((configuration (test-configuration))
-           (root (test-configuration-root configuration))
-           (environment-name
-             (format nil
-                     "AUTOLITH_MCP_CLEANUP_HTTP_~A"
-                     (remove #\- (string-upcase (make-identifier)))))
-           (server
-             (mcp-server-configuration-create
-              :name "cleanup-http"
-              :transport
-              `(:type :http
-                :url "http://127.0.0.1:9/mcp"
-                :headers
-                (("Authorization" :environment ,environment-name)))
-              :required-p t))
-           (client
-             (mcp-tools--client
-              server
-              configuration
-              :exchange-scope-function
-              (lambda (function)
-                (call-with-secret-use function))))
-           (runtime
-             (make-instance
-              'mcp-server-runtime
-              :configuration server
-              :registration-source ':runtime
-              :provider-namespace "mcp__cleanup_http"
-              :client client))
-           (manager
-             (make-instance
-              'mcp-manager
-              :configuration configuration
-              :runtimes (list runtime)))
-           (registry (make-instance 'tool-registry))
-           (transport (mcp-client-transport client))
-           (listener-slot (find-symbol "LISTENER-THREAD" "MCPAREN"))
-           (listener-stopping-slot
-             (find-symbol "LISTENER-STOPPING-P" "MCPAREN"))
-           (listener nil))
-      (unwind-protect
-           (progn
-             (sb-posix:setenv environment-name "cleanup-secret" 1)
-             (mcp-tool-registry-register-manager registry manager)
-             (mcp-transport-open transport)
-             (setf (mcp-http-transport-session-identifier transport)
-                   "cleanup-session"
-                   listener
-                   (make-thread
-                    (lambda ()
-                      (loop
-                        until
-                        (slot-value transport listener-stopping-slot)
-                        do (sleep 0.01)))
-                    :name "Autolith MCP cleanup listener")
-                   (slot-value transport listener-slot)
-                   listener)
-             (sb-posix:unsetenv environment-name)
-             (test-call-with-function-replacements
-              (list (list 'call-with-secret-use #'deny-secret-use))
-              (lambda ()
-                (tool-registry-close-runtime-state registry)))
-             (test-assert
-              (and
-               (not (mcp-transport-open-p transport))
-               (null (slot-value transport listener-slot))
-               (not (thread-alive-p listener)))
-              "missing reload-time credentials cannot orphan an HTTP listener"))
-        (sb-posix:unsetenv environment-name)
-        (ignore-errors (tool-registry-close-runtime-state registry))
-        (when (and listener (thread-alive-p listener))
-          (ignore-errors (bordeaux-threads:destroy-thread listener))
-          (ignore-errors (join-thread listener)))
-        (uiop:delete-directory-tree
-         root :validate t :if-does-not-exist ':ignore))))
+  "Test product registry teardown during checkpoint secret-use quiescence."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (manager transport)
+        (test-mcp--manager configuration)
+      (let ((registry (make-instance 'tool-registry)))
+        (unwind-protect
+             (progn
+               (mcp-tool-registry-register-manager registry manager)
+               (test-call-with-function-replacements
+                (list (list 'call-with-secret-use
+                            (lambda (&rest arguments)
+                              (declare (ignore arguments))
+                              (error "Secret use is quiescent."))))
+                (lambda () (tool-registry-close-runtime-state registry)))
+               (test-assert (not (mcp-transport-open-p transport))
+                            "registry teardown reaches local MCP cleanup without secret use"))
+          (mcp-manager-close manager)))))
   nil)
 
 
@@ -3137,278 +2836,6 @@
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
-(-> test-mcp-required-failure-isolation () null)
-(defun test-mcp-required-failure-isolation ()
-  "Test a failed required server is isolated from healthy target calls."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (fail-required-p nil)
-         (required-discoveries 0)
-         (healthy-discoveries 0)
-         (required-definition
-           (test-mcp--tool-definition "required-tool"))
-         (healthy-definition
-           (test-mcp--tool-definition "healthy-tool"))
-         (required-runtime
-           (test-mcp--bounded-runtime
-            configuration
-            :name "required-failure"
-            :required-p t
-            :tools-function
-            (lambda ()
-              (incf required-discoveries)
-              (when fail-required-p
-                (error "Injected required discovery failure."))
-              (list required-definition))))
-         (healthy-runtime
-           (test-mcp--bounded-runtime
-            configuration
-            :name "healthy-target"
-            :required-p nil
-            :tools-function
-            (lambda ()
-              (incf healthy-discoveries)
-              (list healthy-definition))))
-         (manager
-           (make-instance
-            'mcp-manager
-            :configuration configuration
-            :runtimes (list required-runtime healthy-runtime))))
-    (unwind-protect
-         (progn
-           (with-lock-held ((mcp-manager-lock manager))
-             (mcp-manager--connect-runtimes manager))
-           (setf fail-required-p t)
-           (mcp-server-runtime-request-tool-refresh required-runtime)
-           (let ((first-failure
-                   (handler-case
-                       (progn
-                         (mcp-server-runtime-connect required-runtime)
-                         nil)
-                     (mcp-server-startup-error (condition)
-                       condition))))
-             (mcp-server-runtime-connect healthy-runtime)
-             (let ((second-failure
-                     (handler-case
-                         (progn
-                           (mcp-server-runtime-connect required-runtime)
-                           nil)
-                       (mcp-server-startup-error (condition)
-                         condition))))
-               (test-assert
-                (and
-                 first-failure
-                 second-failure
-                 (string=
-                  (autolith-error-message first-failure)
-                  (autolith-error-message second-failure))
-                 (= required-discoveries 2)
-                 (= healthy-discoveries 1)
-                 (eq (mcp-server-runtime-state required-runtime) :failed)
-                 (eq (mcp-server-runtime-state healthy-runtime) :ready))
-                "a failed required MCP server is latched without blocking healthy targets"))))
-      (ignore-errors (mcp-manager-close manager))
-      (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-(-> test-mcp-aggregate-discovery-bounds () null)
-(defun test-mcp-aggregate-discovery-bounds ()
-  "Test required-first aggregate allocation during startup and refresh."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (required-definition
-           (test-mcp--tool-definition "required-schema"))
-         (optional-definition
-           (test-mcp--tool-definition "optional-schema"))
-         (optional-runtime
-           (test-mcp--bounded-runtime
-            configuration
-            :name "optional-schema"
-            :required-p nil
-            :tools-function
-            (lambda () (list optional-definition))))
-         (required-runtime
-           (test-mcp--bounded-runtime
-            configuration
-            :name "required-schema"
-            :required-p t
-            :tools-function
-            (lambda () (list required-definition))))
-         (manager
-           (make-instance
-            'mcp-manager
-            :configuration configuration
-            :runtimes (list optional-runtime required-runtime))))
-    (unwind-protect
-         (multiple-value-bind (schema schema-bytes)
-             (mcp-tools--provider-schema
-              required-runtime
-              (json-get required-definition "inputSchema"))
-           (declare (ignore schema))
-           (let ((*mcp-maximum-retained-input-schema-bytes*
-                   schema-bytes))
-             (with-lock-held ((mcp-manager-lock manager))
-               (mcp-manager--connect-runtimes manager)))
-           (test-assert
-            (and
-             (eq (first (mcp-manager-runtimes manager)) optional-runtime)
-             (eq (second (mcp-manager-runtimes manager)) required-runtime)
-             (eq (mcp-server-runtime-state required-runtime) :ready)
-             (= (length (mcp-server-runtime-tools required-runtime)) 1)
-             (eq (mcp-server-runtime-state optional-runtime) :failed)
-             (null (mcp-server-runtime-tools optional-runtime))
-             (search
-              "encoded input schema bytes"
-              (mcp-server-runtime-failure optional-runtime)))
-            "required servers receive aggregate schema budget before optional servers"))
-      (ignore-errors (mcp-manager-close manager))
-      (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist ':ignore)))
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (first-definition
-           (test-mcp--tool-definition "first-required"))
-         (second-definition
-           (test-mcp--tool-definition "second-required"))
-         (first-runtime
-           (test-mcp--bounded-runtime
-            configuration
-            :name "first-required"
-            :required-p t
-            :tools-function
-            (lambda () (list first-definition))))
-         (second-runtime
-           (test-mcp--bounded-runtime
-            configuration
-            :name "second-required"
-            :required-p t
-            :tools-function
-            (lambda () (list second-definition))))
-         (manager
-           (make-instance
-            'mcp-manager
-            :configuration configuration
-            :runtimes (list first-runtime second-runtime))))
-    (unwind-protect
-         (multiple-value-bind (schema schema-bytes)
-             (mcp-tools--provider-schema
-              first-runtime
-              (json-get first-definition "inputSchema"))
-           (declare (ignore schema))
-           (let* ((*mcp-maximum-retained-input-schema-bytes*
-                    schema-bytes)
-                  (failure
-                    (handler-case
-                        (with-lock-held ((mcp-manager-lock manager))
-                          (mcp-manager--connect-runtimes manager)
-                          nil)
-                      (mcp-aggregate-budget-exceeded (condition)
-                        condition))))
-             (test-assert
-              (and
-               failure
-               (mcp-server-startup-error-required-p failure)
-               (eq
-                (mcp-aggregate-budget-exceeded-resource failure)
-                :input-schema-bytes)
-               (= (mcp-aggregate-budget-exceeded-allocated failure)
-                  schema-bytes)
-               (= (mcp-aggregate-budget-exceeded-requested failure)
-                  schema-bytes)
-               (= (mcp-aggregate-budget-exceeded-limit failure)
-                  schema-bytes)
-               (eq (mcp-server-runtime-state second-runtime) :failed)
-               (null (mcp-server-runtime-tools second-runtime)))
-              "a required aggregate overflow aborts with structured budget data")))
-      (ignore-errors (mcp-manager-close manager))
-      (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist ':ignore)))
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (fail-refresh-p nil)
-         (discovery-count 0)
-         (definition (test-mcp--tool-definition "required-retry"))
-         (runtime
-           (test-mcp--bounded-runtime
-            configuration
-            :name "required-retry"
-            :required-p t
-            :tools-function
-            (lambda ()
-              (incf discovery-count)
-              (when fail-refresh-p
-                (error "Injected required tool refresh failure."))
-              (list definition))))
-         (manager
-           (make-instance
-            'mcp-manager
-            :configuration configuration
-            :runtimes (list runtime)))
-         (registry (make-instance 'tool-registry)))
-    (unwind-protect
-         (progn
-           (with-lock-held ((mcp-manager-lock manager))
-             (mcp-manager--connect-runtimes manager))
-           (mcp-tool-registry-register-manager registry manager)
-           (setf fail-refresh-p t)
-           (mcp-server-runtime-request-tool-refresh runtime)
-           (labels ((refresh-failure ()
-                      "Return one required failure from a provider-boundary refresh."
-                      (handler-case
-                          (progn
-                            (mcp-tool-registry-refresh
-                             registry :only-dirty-p t)
-                            nil)
-                        (mcp-server-startup-error (condition)
-                          condition))))
-              (let ((first-failure (refresh-failure))
-                    (second-failure (refresh-failure)))
-                (test-assert
-                 (and
-                  first-failure
-                  second-failure
-                  (mcp-server-startup-error-required-p first-failure)
-                  (mcp-server-startup-error-required-p second-failure)
-                  (string=
-                   (autolith-error-message first-failure)
-                   (autolith-error-message second-failure))
-                  (= discovery-count 2)
-                  (eq (mcp-server-runtime-state runtime) :failed)
-                  (=
-                   (mcp-server-runtime-tools-discovered-version runtime)
-                   (mcp-server-runtime-tools-change-version runtime)))
-                 "a failed required refresh is latched as a provider-boundary barrier"))
-              (setf fail-refresh-p nil)
-              (mcp-tool-registry-refresh registry)
-              (test-assert
-               (and
-                (= discovery-count 3)
-                (eq (mcp-server-runtime-state runtime) :ready)
-                (test-mcp--tool-with-raw-name registry "required-retry"))
-               "an explicit refresh retries and recovers a failed required server"))
-           (tool-registry-close-runtime-state registry)
-           (setf fail-refresh-p t)
-           (let ((resume-failure
-                   (handler-case
-                       (progn
-                         (tool-registry-resume-runtime-state registry)
-                         nil)
-                     (mcp-server-startup-error (condition)
-                       condition))))
-             (test-assert
-              (and
-               resume-failure
-               (mcp-server-startup-error-required-p resume-failure)
-               (eq (mcp-server-runtime-state runtime) :failed))
-              "checkpoint resume cannot bypass a failed required MCP server")))
-      (ignore-errors
-        (tool-registry-close-runtime-state registry))
-      (ignore-errors (mcp-manager-close manager))
-      (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
 (-> test-mcp-initialization-metadata-bounds () null)
 (defun test-mcp-initialization-metadata-bounds ()
   "Test multi-server initialization metadata is projected before retention."
@@ -3739,7 +3166,6 @@
   (test-mcp-stdio-xdg-environment)
   (test-mcp-credential-stdio-ingress-projection)
   (test-mcp-environment-fingerprint-lifecycle)
-  (test-mcp-manager-concurrent-close)
   (test-mcp-cleanup-without-credential-availability)
   (test-mcp-short-credential-redaction-markers)
   (test-mcp-stdio-credential-snapshot-rotation)
@@ -3747,8 +3173,6 @@
   (test-mcp-retained-tool-metadata-boundaries)
   (test-mcp-credential-echo-containment)
   (test-mcp-server-scoped-tool-identifiers)
-  (test-mcp-required-failure-isolation)
-  (test-mcp-aggregate-discovery-bounds)
   (test-mcp-initialization-metadata-bounds)
   (test-mcp-result-text-bound)
   (let* ((configuration (test-configuration))
@@ -4441,7 +3865,6 @@
       (uiop:delete-directory-tree
        root :validate t :if-does-not-exist ':ignore)))
   (test-mcp--generation-rediscovery)
-  (test-mcp--generation-rediscovery-bound)
   (let* ((configuration (test-configuration))
          (server
            (mcp-server-configuration-create

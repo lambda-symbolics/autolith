@@ -28,7 +28,7 @@
                #:ironclad/mac/siphash
                #:ls-flock
                #:bordeaux-threads
-               #:mcparen
+               #:mcparen/managed
                #:opticl
                #:org-templater
                #:parenchek

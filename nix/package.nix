@@ -162,17 +162,19 @@ let
     pname = "mcparen";
     version = "0.1.0";
     src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
+      owner = "lambda-symbolics";
       repo = "mcparen";
-      rev = "58ba29a8dd8d06417452b7978748c3d453bc3287";
-      hash = "sha256-VMZH7DahgtSv4cRdhrGbaCqAkzOKcmnXSVwjmsbL2Hg=";
+      rev = "c990e32d92e59675dc6f2295c94207905dab8b3d";
+      hash = "sha256-dWfgVv0oCJG22g5ixTpbcoObxoy0GgKkrD+4MXJhIFc=";
     };
-    lispLibs = with pkgs.sbclPackages; [
+    systems = [ "mcparen" "mcparen/managed" ];
+    lispLibs = [ lsCompat ] ++ (with pkgs.sbclPackages; [
+      babel
       bordeaux-threads
       dexador
       serapeum
       yason
-    ];
+    ]);
   };
 
   colorlispSource = pkgs.fetchFromGitHub {

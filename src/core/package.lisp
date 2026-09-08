@@ -527,7 +527,35 @@
                 #:mcp-transport-open
                 #:mcp-transport-open-p
                 #:mcp-transport-request
-                #:mcp-transport-set-protocol-version)
+                #:mcp-transport-set-protocol-version
+                #:mcp-server-runtime-tools-stale-p
+                #:mcp-server-runtime-request-tool-refresh
+                #:mcp-server-runtime-close
+                #:mcp-server-runtime-detach
+                #:mcp-manager-close
+                #:mcp-manager-detach
+                #:mcp-manager-runtime
+                #:mcp-manager--connect-runtimes
+                #:mcp-server-runtime-connect
+                #:mcp-manager-tool-revisions
+                #:mcp-server-runtime-name
+                #:*mcp-maximum-retained-input-schema-bytes*
+                #:*mcp-tool-discovery-restart-limit*
+                #:mcp-server-runtime-client
+                #:mcp-server-runtime-lock
+                #:mcp-server-runtime-state
+                #:mcp-server-runtime-failure
+                #:mcp-server-runtime-tools
+                #:mcp-server-runtime-tool-schema-bytes
+                #:mcp-server-runtime-manager
+                #:mcp-server-runtime-launch-environment-fingerprint
+                #:mcp-server-runtime-observed-connection-generation
+                #:mcp-server-runtime-tools-change-version
+                #:mcp-server-runtime-tools-change-lock
+                #:mcp-server-runtime-tools-discovered-version
+                #:mcp-server-runtime-tools-revision
+                #:mcp-manager-runtimes
+                #:mcp-manager-lock)
   (:import-from #:bordeaux-threads
                 #:condition-notify
                 #:condition-wait

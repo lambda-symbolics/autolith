@@ -1,23 +1,15 @@
 (in-package #:autolith)
 
-;;;; -- MCP Runtime Conditions --
 
-(define-condition mcp-server-startup-error (autolith-error)
-  ((server-name
-    :initarg :server-name
-    :reader mcp-server-startup-error-server-name
-    :type string
-    :documentation "The configured MCP server that failed.")
-   (required-p
-    :initarg :required-p
-    :reader mcp-server-startup-error-required-p
-    :type boolean
-    :documentation "Whether the server is required for application startup.")
-   (cause
-    :initarg :cause
-    :reader mcp-server-startup-error-cause
-    :type t
-    :documentation "The underlying transport or protocol failure."))
+(define-condition mcp-server-startup-error
+    (mcparen:mcp-managed-server-error autolith-error)
+    ((server-name :initarg :server-name :reader mcp-server-startup-error-server-name
+      :type string :documentation "The configured MCP server that failed.")
+     (required-p :initarg :required-p :reader mcp-server-startup-error-required-p
+      :type boolean :documentation
+      "Whether the server is required for application startup.")
+     (cause :initarg :cause :reader mcp-server-startup-error-cause :type t
+      :documentation "The underlying transport or protocol failure."))
   (:documentation "An MCP server could not initialize or advertise its tools."))
 
 (define-condition mcp-environment-unavailable (mcp-server-startup-error)
@@ -568,9 +560,6 @@
 (defparameter *mcp-provider-identifier-hash-characters* 10
   "The hexadecimal hash characters retained in one readable MCP identifier.")
 
-(defparameter *mcp-maximum-retained-input-schema-bytes* (* 8 1024 1024)
-  "The maximum encoded input schema bytes retained across one MCP manager.")
-
 (defparameter *mcp-maximum-tool-name-characters* 256
   "The maximum character length of one server-provided MCP tool name.")
 
@@ -591,9 +580,6 @@
 
 (defparameter *mcp-maximum-tool-schema-nodes* 4096
   "The maximum objects, arrays, and scalar nodes in one MCP input schema.")
-
-(defparameter *mcp-tool-discovery-restart-limit* 8
-  "The maximum tool rediscovery attempts across changing MCP sessions.")
 
 (defparameter *mcp-task-required-tool-unavailable-reason*
   "MCP task execution is not supported by Autolith."
@@ -695,125 +681,25 @@
     result))
 
 
-;;;; -- Shared Server Runtimes --
+(defclass mcp-server-runtime (mcparen:mcp-managed-server)
+          ((configuration :initarg :configuration :reader
+            mcp-server-runtime-configuration :type mcp-server-configuration
+            :documentation "The native immutable server configuration.")
+           (registration-source :initarg :registration-source :reader
+            mcp-server-runtime-registration-source :type keyword :documentation
+            "The source layer providing this effective server.")
+           (provider-namespace :initarg :provider-namespace :reader
+            mcp-server-runtime-provider-namespace :type non-empty-string
+            :documentation "The deterministic provider namespace for this server."))
+          (:documentation
+           "Autolith configuration and provider namespace for a managed MCP server."))
 
-(defclass mcp-server-runtime ()
-  ((configuration
-    :initarg :configuration
-    :reader mcp-server-runtime-configuration
-    :type mcp-server-configuration
-    :documentation "The native immutable server configuration.")
-   (registration-source
-    :initarg :registration-source
-    :reader mcp-server-runtime-registration-source
-    :type keyword
-    :documentation "The source layer providing this effective server.")
-   (provider-namespace
-    :initarg :provider-namespace
-    :reader mcp-server-runtime-provider-namespace
-    :type non-empty-string
-    :documentation "The deterministic provider namespace for this server.")
-   (client
-    :initarg :client
-    :reader mcp-server-runtime-client
-    :type mcp-client
-    :documentation "The shared thread-safe Mcparen client.")
-   (lock
-    :initform (make-lock "Autolith MCP server runtime")
-    :reader mcp-server-runtime-lock
-    :type t
-    :documentation "The lock protecting discovery and status.")
-   (state
-    :initform ':disconnected
-    :accessor mcp-server-runtime-state
-    :type keyword
-    :documentation "The disconnected, connecting, ready, failed, or detached state.")
-   (failure
-    :initform nil
-    :accessor mcp-server-runtime-failure
-    :type (option string)
-    :documentation "The most recent bounded server failure, when any.")
-   (tools
-    :initform nil
-    :accessor mcp-server-runtime-tools
-    :type list
-    :documentation "The MCP tools advertised by the initialized server.")
-   (tool-schema-bytes
-    :initform 0
-    :accessor mcp-server-runtime-tool-schema-bytes
-    :type (integer 0)
-    :documentation "The encoded provider input schema bytes retained by this server.")
-   (manager
-    :initform nil
-    :accessor mcp-server-runtime-manager
-    :type t
-    :documentation "The manager owning this runtime, or NIL before attachment.")
-   (launch-environment-fingerprint
-    :initform nil
-    :accessor mcp-server-runtime-launch-environment-fingerprint
-    :type (option string)
-    :documentation
-    "The non-secret fingerprint of a persistent process's mapped environment.")
-   (observed-connection-generation
-    :initform nil
-    :accessor mcp-server-runtime-observed-connection-generation
-    :type (option (integer 0))
-    :documentation
-    "The client connection generation covered by the published tool snapshot.")
-   (tools-change-version
-    :initform 0
-    :accessor mcp-server-runtime-tools-change-version
-    :type (integer 0)
-    :documentation
-    "The latest version requested by tools/list_changed notifications.")
-   (tools-change-lock
-    :initform (make-lock "Autolith MCP tool-list changes")
-    :reader mcp-server-runtime-tools-change-lock
-    :type t
-    :documentation
-    "The independent lock permitting reentrant transport notifications.")
-   (tools-discovered-version
-    :initform 0
-    :accessor mcp-server-runtime-tools-discovered-version
-    :type (integer 0)
-    :documentation "The change version covered by the last discovery attempt.")
-   (tools-revision
-    :initform 0
-    :accessor mcp-server-runtime-tools-revision
-    :type (integer 0)
-    :documentation
-    "The monotonic revision of the runtime's last published tool snapshot."))
-  (:documentation "One restartable shared MCP client and its discovery state."))
 
-(defclass mcp-manager ()
-  ((configuration
-    :initarg :configuration
-    :reader mcp-manager-configuration
-    :type configuration
-    :documentation "The active Autolith configuration.")
-   (runtimes
-    :initarg :runtimes
-    :initform nil
-    :reader mcp-manager-runtimes
-    :type list
-    :documentation "Configured server runtimes in presentation order.")
-   (lock
-    :initform (make-lock "Autolith MCP manager")
-    :reader mcp-manager-lock
-    :documentation "The lock serializing discovery and registry reconciliation."))
-  (:documentation "The lifecycle owner for every MCP server in one tool registry."))
-
-(defmethod initialize-instance :after ((manager mcp-manager) &key)
-  "Attach every configured runtime to MANAGER."
-  (dolist (runtime (mcp-manager-runtimes manager))
-    (let ((owner (mcp-server-runtime-manager runtime)))
-      (when (and owner (not (eq owner manager)))
-        (error 'configuration-error
-               :message
-               (format nil
-                       "MCP runtime ~A already belongs to another manager."
-                       (mcp-server-runtime-name runtime))))
-      (setf (mcp-server-runtime-manager runtime) manager))))
+(defclass mcp-manager (mcparen:mcp-connection-manager)
+          ((configuration :initarg :configuration :reader mcp-manager-configuration
+            :type configuration :documentation "The active Autolith configuration."))
+          (:documentation
+           "Autolith configuration associated with shared MCP connections."))
 
 (defclass mcp-registry-binding ()
   ((manager
@@ -836,11 +722,10 @@
   (:documentation
    "Per-registry MCP reconciliation state for one shared runtime manager."))
 
-(-> mcp-server-runtime-name (mcp-server-runtime) string)
-(defun mcp-server-runtime-name (runtime)
+
+(defmethod mcparen:mcp-server-runtime-name ((runtime mcp-server-runtime))
   "Return RUNTIME's raw configured server name."
-  (mcp-server-configuration-name
-   (mcp-server-runtime-configuration runtime)))
+  (mcp-server-configuration-name (mcp-server-runtime-configuration runtime)))
 
 (-> mcp-tools--policy-annotations (mcp-tool) (option hash-table))
 (defun mcp-tools--policy-annotations (tool)
@@ -1035,94 +920,20 @@ retained value is credential-redacted or projected."
     (mcp-server-runtime function)
     t)
 (defun mcp-tools--call-with-runtime-cleanup (runtime function)
-  "Guard cleanup secret resolution while guaranteeing local resource teardown."
-  (let ((configuration (mcp-server-runtime-configuration runtime))
-        (cleanup-started-p nil))
-    (labels ((cleanup (&key snapshot missing-condition)
-               "Run local cleanup under one already guarded SNAPSHOT."
-               (mcp-tools--call-cleanup-with-snapshot
-                runtime
-                (lambda ()
-                  (setf cleanup-started-p t)
-                  (funcall function))
-                :snapshot snapshot
-                :missing-condition missing-condition)))
-      (if (eq configuration *mcp-active-environment-configuration*)
-          (cleanup
-           :snapshot *mcp-active-environment-snapshot*
-           :missing-condition *mcp-active-environment-missing-condition*)
-          (handler-case
-              (call-with-secret-use
-               (lambda ()
-                 (multiple-value-bind (snapshot missing-condition)
-                     (mcp-tools--resolve-environment-snapshot configuration)
-                   (cleanup
-                    :snapshot snapshot
-                    :missing-condition missing-condition))))
-            (error (cause)
-              (if cleanup-started-p
-                  (error cause)
-                  (cleanup :snapshot nil :missing-condition cause)))
-            (serious-condition (cause)
-              (unwind-protect
-                   (unless cleanup-started-p
-                     (handler-case
-                         (cleanup :snapshot nil :missing-condition cause)
-                       (error ()
-                         nil)))
-                (error cause))))))))
-
-(-> mcp-server-runtime--discard-connection
-    (mcp-server-runtime keyword)
-    null)
-(defun mcp-server-runtime--discard-connection (runtime state)
-  "Close RUNTIME's client and clear retained connection state to STATE.
-
-The caller must hold RUNTIME's lock."
-  (unwind-protect
-       (mcp-tools--call-with-runtime-cleanup
-        runtime
-        (lambda ()
-          (mcp-client-close (mcp-server-runtime-client runtime))))
-    (mcp-tools--clear-client-server-state runtime)
-    (setf (mcp-server-runtime-tools runtime) nil
-          (mcp-server-runtime-tool-schema-bytes runtime) 0
-          (mcp-server-runtime-observed-connection-generation runtime) nil
-          (mcp-server-runtime-launch-environment-fingerprint runtime) nil
-          (mcp-server-runtime-failure runtime) nil
-          (mcp-server-runtime-state runtime) state))
-  nil)
-
-(-> mcp-server-runtime--ensure-launch-environment-current
-    (mcp-server-runtime)
-    null)
-(defun mcp-server-runtime--ensure-launch-environment-current (runtime)
-  "Discard a persistent process launched with another environment snapshot.
-
-The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
-  (when (mcp-server-runtime--persistent-launch-environment-p runtime)
-    (let* ((client (mcp-server-runtime-client runtime))
-           (transport (mcp-client-transport client))
-           (live-p
-             (and
-              (mcp-client-connected-p client)
-              (mcp-transport-open-p transport)))
-           (current-fingerprint
-             (mcp-tools--environment-snapshot-fingerprint
-              *mcp-active-environment-snapshot*))
-           (launch-fingerprint
-             (mcp-server-runtime-launch-environment-fingerprint runtime)))
-      (when *mcp-active-environment-missing-condition*
-        (mcp-server-runtime--discard-connection runtime :disconnected)
-        (error *mcp-active-environment-missing-condition*))
-      (when
-          (and
-           live-p
-           (or
-            (null launch-fingerprint)
-            (not (equal launch-fingerprint current-fingerprint))))
-        (mcp-server-runtime--discard-connection runtime :disconnected))))
-  nil)
+  "Resolve and scope cleanup credentials; Mcparen owns the local fallback."
+  (let ((configuration (mcp-server-runtime-configuration runtime)))
+    (if (eq configuration *mcp-active-environment-configuration*)
+        (mcp-tools--call-cleanup-with-snapshot
+         runtime function
+         :snapshot *mcp-active-environment-snapshot*
+         :missing-condition *mcp-active-environment-missing-condition*)
+        (call-with-secret-use
+         (lambda ()
+           (multiple-value-bind (snapshot missing-condition)
+               (mcp-tools--resolve-environment-snapshot configuration)
+             (mcp-tools--call-cleanup-with-snapshot
+              runtime function :snapshot snapshot
+              :missing-condition missing-condition)))))))
 
 (-> mcp-tools--aggregate-budget-error
     (mcp-server-runtime
@@ -1325,361 +1136,52 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
                    (mcp-server-runtime-name runtime))))
         (values copy provider-bytes)))))
 
-(-> mcp-server-runtime--validate-tools
-    (mcp-server-runtime list
-     &key (:allocated-schema-bytes (integer 0)))
-    (values list (integer 0)))
-(defun mcp-server-runtime--validate-tools
-    (runtime tools &key (allocated-schema-bytes 0))
-  "Validate, bound, sanitize, and return MCP TOOLS advertised by RUNTIME."
-  (let ((seen (make-hash-table :test #'equal))
-        (schema-bytes 0)
-        (prepared-tools nil))
+(-> mcp-tools--prepare-provider-tools (mcp-server-runtime list) list)
+(defun mcp-tools--prepare-provider-tools (runtime tools)
+  "Apply provider metadata bounds, schema projection and product redaction."
+  (let ((prepared-tools nil))
     (dolist (tool tools)
       (unless (typep tool 'mcp-tool)
         (mcp-tools--server-error
-         (mcp-server-runtime-configuration runtime)
-         tool
+         (mcp-server-runtime-configuration runtime) tool
          (format nil "MCP server ~A advertised invalid tool metadata."
                  (mcp-server-runtime-name runtime))))
       (let ((name (mcp-tool-name tool))
             (title (mcp-tool-title tool))
             (description (mcp-tool-description tool)))
-        (unless
-            (and
-             (stringp name)
-             (plusp (length name))
-             (<=
-              (length name)
-              *mcp-maximum-tool-name-characters*))
+        (unless (and (stringp name) (plusp (length name))
+                     (<= (length name) *mcp-maximum-tool-name-characters*))
           (mcp-tools--server-error
-           (mcp-server-runtime-configuration runtime)
-           name
+           (mcp-server-runtime-configuration runtime) name
            (format nil "MCP server ~A advertised an invalid tool name."
                    (mcp-server-runtime-name runtime))))
-        (unless
-            (or
-             (null title)
-             (and
-              (stringp title)
-              (<=
-               (length title)
-               *mcp-maximum-tool-title-characters*)))
+        (unless (or (null title)
+                    (and (stringp title)
+                         (<= (length title) *mcp-maximum-tool-title-characters*)))
           (mcp-tools--server-error
-           (mcp-server-runtime-configuration runtime)
-           name
+           (mcp-server-runtime-configuration runtime) name
            (format nil "MCP server ~A advertised an invalid title for ~S."
-                   (mcp-server-runtime-name runtime)
-                   name)))
-        (unless
-            (and
-             (stringp description)
-             (<=
-              (length description)
-              *mcp-maximum-tool-description-characters*))
+                   (mcp-server-runtime-name runtime) name)))
+        (unless (and (stringp description)
+                     (<= (length description) *mcp-maximum-tool-description-characters*))
           (mcp-tools--server-error
-           (mcp-server-runtime-configuration runtime)
-           name
+           (mcp-server-runtime-configuration runtime) name
            (format nil "MCP server ~A advertised an oversized description for ~S."
-                   (mcp-server-runtime-name runtime)
-                   name)))
-        (when (gethash name seen)
+                   (mcp-server-runtime-name runtime) name))))
+      (let* ((provider-schema
+               (mcp-tools--provider-schema runtime (mcp-tool-input-schema tool)))
+             (prepared-tool (mcp-tools--sanitize-tool tool :input-schema provider-schema))
+             (retained-bytes
+               (length (sb-ext:string-to-octets
+                        (json-encode (mcp-tool-input-schema prepared-tool))
+                        :external-format ':utf-8))))
+        (when (> retained-bytes *mcp-maximum-tool-schema-bytes*)
           (mcp-tools--server-error
-           (mcp-server-runtime-configuration runtime)
-           name
-           (format nil "MCP server ~A advertised duplicate tool ~S."
-                   (mcp-server-runtime-name runtime)
-                   name)))
-        (setf (gethash name seen) t))
-      (multiple-value-bind (provider-schema provider-bytes)
-          (mcp-tools--provider-schema
-           runtime
-           (mcp-tool-input-schema tool))
-        (declare (ignore provider-bytes))
-        (let* ((prepared-tool
-                 (mcp-tools--sanitize-tool
-                  tool
-                  :input-schema provider-schema))
-               (retained-bytes
-                 (length
-                  (sb-ext:string-to-octets
-                   (json-encode
-                    (mcp-tool-input-schema prepared-tool))
-                   :external-format ':utf-8))))
-          (when (> retained-bytes *mcp-maximum-tool-schema-bytes*)
-            (mcp-tools--server-error
-             (mcp-server-runtime-configuration runtime)
-             nil
-             (format nil
-                     "MCP server ~A advertised an oversized input schema."
-                     (mcp-server-runtime-name runtime))))
-          (incf schema-bytes retained-bytes)
-          (when
-              (> (+ allocated-schema-bytes schema-bytes)
-                 *mcp-maximum-retained-input-schema-bytes*)
-            (mcp-tools--aggregate-budget-error
-             runtime
-             :resource ':input-schema-bytes
-             :allocated allocated-schema-bytes
-             :requested schema-bytes
-             :limit *mcp-maximum-retained-input-schema-bytes*))
-          (push prepared-tool prepared-tools))))
-    (values (nreverse prepared-tools) schema-bytes)))
-
-(-> mcp-server-runtime--capability-p
-    (mcp-server-runtime string)
-    boolean)
-(defun mcp-server-runtime--capability-p (runtime name)
-  "Return true when RUNTIME's connected server advertises capability NAME."
-  (let ((capabilities
-          (mcp-client-server-capabilities
-           (mcp-server-runtime-client runtime))))
-    (multiple-value-bind (capability present-p)
-        (gethash name capabilities)
-      (cond
-        ((not present-p)
-         nil)
-        ((hash-table-p capability)
-         t)
-        (t
-         (mcp-tools--server-error
-          (mcp-server-runtime-configuration runtime)
-          capability
-          (format nil
-                  "MCP server ~A advertised malformed ~A capability metadata."
-                  (mcp-server-runtime-name runtime)
-                  name)))))))
-
-(-> mcp-server-runtime--connection-current-p
-    (mcp-server-runtime)
-    boolean)
-(defun mcp-server-runtime--connection-current-p (runtime)
-  "Return true when RUNTIME's tool snapshot covers its live connection."
-  (let* ((client (mcp-server-runtime-client runtime))
-         (observed
-           (mcp-server-runtime-observed-connection-generation runtime)))
-    (and observed
-         (mcp-client-connected-p client)
-         (mcp-transport-open-p (mcp-client-transport client))
-         (= observed (mcp-client-connection-generation client))
-         t)))
-
-(-> mcp-server-runtime-tools-stale-p (mcp-server-runtime) boolean)
-(defun mcp-server-runtime-tools-stale-p (runtime)
-  "Return true when RUNTIME needs tool rediscovery or reconciliation."
-  (with-lock-held ((mcp-server-runtime-lock runtime))
-    (or
-     (< (mcp-server-runtime-tools-discovered-version runtime)
-        (with-lock-held ((mcp-server-runtime-tools-change-lock runtime))
-          (mcp-server-runtime-tools-change-version runtime)))
-     (and
-      (eq (mcp-server-runtime-state runtime) :ready)
-      (not (mcp-server-runtime--connection-current-p runtime))))))
-
-(-> mcp-server-runtime-request-tool-refresh
-    (mcp-server-runtime)
-    (integer 1))
-(defun mcp-server-runtime-request-tool-refresh (runtime)
-  "Advance RUNTIME's requested tool discovery version."
-  (with-lock-held ((mcp-server-runtime-tools-change-lock runtime))
-    (incf (mcp-server-runtime-tools-change-version runtime))))
-
-(-> mcp-server-runtime--discover-tools-stably
-    (mcp-server-runtime
-     &key (:allocated-schema-bytes (integer 0)))
-    (values list (integer 0) (integer 0)))
-(defun mcp-server-runtime--discover-tools-stably
-    (runtime &key (allocated-schema-bytes 0))
-  "Discover RUNTIME's tools within one stable client connection generation."
-  (let ((client (mcp-server-runtime-client runtime)))
-    (loop repeat *mcp-tool-discovery-restart-limit*
-          do
-             (mcp-client-connect client)
-             (mcp-tools--sanitize-client-state runtime)
-             (let ((initial-generation
-                     (mcp-client-connection-generation client)))
-               (multiple-value-bind (tools schema-bytes)
-                   (if
-                       (mcp-server-runtime--capability-p runtime "tools")
-                       (mcp-server-runtime--validate-tools
-                        runtime
-                        (mcp-client-list-tools client)
-                        :allocated-schema-bytes allocated-schema-bytes)
-                       (values nil 0))
-                 (let ((final-generation
-                         (mcp-client-connection-generation client)))
-                   (when (= initial-generation final-generation)
-                     (return
-                       (values tools final-generation schema-bytes))))))
-          finally
-             (mcp-tools--server-error
-              (mcp-server-runtime-configuration runtime)
-              nil
-              (format nil
-                      "MCP server ~A changed connections during ~D consecutive tool discovery attempts."
-                      (mcp-server-runtime-name runtime)
-                      *mcp-tool-discovery-restart-limit*)))))
-
-(-> mcp-server-runtime--connect
-    (mcp-server-runtime
-     &key (:allocated-schema-bytes (integer 0)))
-    (values mcp-server-runtime boolean))
-(defun mcp-server-runtime--connect
-    (runtime &key (allocated-schema-bytes 0))
-  "Initialize RUNTIME within aggregate budgets and report snapshot publication."
-  (let ((discovery-p nil))
-    (with-lock-held ((mcp-server-runtime-lock runtime))
-      (let ((target-version
-              (with-lock-held
-                  ((mcp-server-runtime-tools-change-lock runtime))
-                (mcp-server-runtime-tools-change-version runtime))))
-        (handler-case
-            (mcp-tools--call-with-runtime-secret-use
-             runtime
-             (lambda ()
-               (mcp-server-runtime--ensure-launch-environment-current runtime)
-               (unless
-                   (and
-                    (eq (mcp-server-runtime-state runtime) :ready)
-                    (mcp-server-runtime--connection-current-p runtime)
-                    (>=
-                     (mcp-server-runtime-tools-discovered-version runtime)
-                     target-version))
-                 (setf (mcp-server-runtime-state runtime) :connecting
-                       (mcp-server-runtime-failure runtime) nil)
-                 (multiple-value-bind (tools generation schema-bytes)
-                     (mcp-server-runtime--discover-tools-stably
-                      runtime
-                      :allocated-schema-bytes allocated-schema-bytes)
-                   (setf
-                    (mcp-server-runtime-tools runtime) tools
-                    (mcp-server-runtime-tool-schema-bytes runtime) schema-bytes
-                    (mcp-server-runtime-observed-connection-generation runtime)
-                    generation
-                    (mcp-server-runtime-tools-discovered-version runtime)
-                    target-version
-                    (mcp-server-runtime-state runtime) :ready
-                   discovery-p t)
-                   (incf
-                    (mcp-server-runtime-tools-revision runtime))))))
-          (mcp-server-startup-error (cause)
-            (handler-case
-                (mcp-server-runtime--discard-connection runtime :failed)
-              (error ()
-                nil))
-            (setf (mcp-server-runtime-tools-discovered-version runtime)
-                  target-version
-                  (mcp-server-runtime-state runtime) :failed
-                  (mcp-server-runtime-failure runtime)
-                  (bounded-string
-                   (autolith-error-message cause)
-                   :limit 1000)
-                  discovery-p t)
-            (mcp-tools--clear-client-server-state runtime)
-            (setf
-             (mcp-server-runtime-launch-environment-fingerprint runtime) nil)
-            (incf (mcp-server-runtime-tools-revision runtime))
-            (error cause)))))
-    (values runtime discovery-p)))
-
-(-> mcp-server-runtime-close (mcp-server-runtime) null)
-(defun mcp-server-runtime-close (runtime)
-  "Close RUNTIME's client and leave it restartable."
-  (with-lock-held ((mcp-server-runtime-lock runtime))
-    (unwind-protect
-         (mcp-tools--call-with-runtime-cleanup
-          runtime
-          (lambda ()
-            (mcp-client-close (mcp-server-runtime-client runtime))))
-      (setf (mcp-server-runtime-tools runtime) nil
-            (mcp-server-runtime-tool-schema-bytes runtime) 0
-            (mcp-server-runtime-observed-connection-generation runtime) nil
-            (mcp-server-runtime-launch-environment-fingerprint runtime) nil
-            (mcp-server-runtime-failure runtime) nil
-            (mcp-server-runtime-state runtime) :disconnected)
-      (mcp-tools--clear-client-server-state runtime)))
-  nil)
-
-(-> mcp-server-runtime-detach (mcp-server-runtime) null)
-(defun mcp-server-runtime-detach (runtime)
-  "Detach RUNTIME's inherited resources without signaling their owner."
-  (with-lock-held ((mcp-server-runtime-lock runtime))
-    (unwind-protect
-         (mcp-tools--call-with-runtime-cleanup
-          runtime
-          (lambda ()
-            (mcp-client-detach (mcp-server-runtime-client runtime))))
-      (setf (mcp-server-runtime-tools runtime) nil
-            (mcp-server-runtime-tool-schema-bytes runtime) 0
-            (mcp-server-runtime-observed-connection-generation runtime) nil
-            (mcp-server-runtime-launch-environment-fingerprint runtime) nil
-            (mcp-server-runtime-failure runtime) nil
-            (mcp-server-runtime-state runtime) :detached)
-      (mcp-tools--clear-client-server-state runtime)))
-  nil)
-
-(-> mcp-manager--close-runtimes (list function) null)
-(defun mcp-manager--close-runtimes (runtimes close-function)
-  "Close RUNTIMES concurrently with CLOSE-FUNCTION and signal the first failure."
-  (let* ((runtime-vector (coerce runtimes 'simple-vector))
-         (failures      (make-array (length runtime-vector) :initial-element nil))
-         (threads       nil))
-    (labels ((close-at (index)
-               (handler-case
-                   (funcall close-function (aref runtime-vector index))
-                 (serious-condition (condition)
-                   (setf (aref failures index) condition)))))
-      (loop for index below (length runtime-vector)
-            do (let ((position index))
-                 (handler-case
-                     (push
-                      (make-thread
-                       (lambda ()
-                         (close-at position))
-                       :name "Autolith MCP server close")
-                      threads)
-                   (serious-condition ()
-                     (loop for remaining from position below (length runtime-vector)
-                           do (close-at remaining))
-                     (return)))))
-      (dolist (thread threads)
-        (join-thread thread))
-      (loop for failure across failures
-            when failure
-              do (error failure))))
-  nil)
-
-(-> mcp-manager-close (mcp-manager) null)
-(defun mcp-manager-close (manager)
-  "Close every server in MANAGER concurrently, preserving close-order failures."
-  (mcp-manager--close-runtimes
-   (reverse (copy-list (mcp-manager-runtimes manager)))
-   #'mcp-server-runtime-close)
-  nil)
-
-(-> mcp-manager-detach (mcp-manager) null)
-(defun mcp-manager-detach (manager)
-  "Detach every inherited server resource in MANAGER."
-  (let ((first-failure nil))
-    (dolist (runtime (mcp-manager-runtimes manager))
-      (handler-case
-          (mcp-server-runtime-detach runtime)
-        (serious-condition (condition)
-          (unless first-failure
-            (setf first-failure condition)))))
-    (when first-failure
-      (error first-failure)))
-  nil)
-
-(-> mcp-manager-runtime
-    (mcp-manager string)
-    (option mcp-server-runtime))
-(defun mcp-manager-runtime (manager name)
-  "Return MANAGER's case-sensitive raw server NAME, or NIL."
-  (find name
-        (mcp-manager-runtimes manager)
-        :test #'string=
-        :key #'mcp-server-runtime-name))
+           (mcp-server-runtime-configuration runtime) nil
+           (format nil "MCP server ~A advertised an oversized input schema."
+                   (mcp-server-runtime-name runtime))))
+        (push prepared-tool prepared-tools)))
+    (nreverse prepared-tools)))
 
 (-> mcp-manager--runtime-required
     (mcp-manager string)
@@ -1691,274 +1193,42 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
              :message (format nil "MCP server ~S is not configured." name)
              :tool-name "mcp")))
 
-(-> mcp-manager--ordered-runtimes (mcp-manager) list)
-(defun mcp-manager--ordered-runtimes (manager)
-  "Return MANAGER runtimes required-first with stable configuration order."
-  (let ((runtimes (mcp-manager-runtimes manager)))
-    (nconc
-     (remove-if-not
-      (lambda (runtime)
-        (mcp-server-configuration-required-p
-         (mcp-server-runtime-configuration runtime)))
-      runtimes)
-     (remove-if
-      (lambda (runtime)
-        (mcp-server-configuration-required-p
-         (mcp-server-runtime-configuration runtime)))
-      runtimes))))
-
-(-> mcp-server-runtime--mark-failed
-    (mcp-server-runtime mcp-server-startup-error)
-    boolean)
-(defun mcp-server-runtime--mark-failed (runtime condition)
-  "Clear RUNTIME tools and publish CONDITION as its visible failure."
-  (with-lock-held ((mcp-server-runtime-lock runtime))
-    (let* ((previous-state
-             (mcp-server-runtime-state runtime))
-           (previous-tools-p
-             (not (null (mcp-server-runtime-tools runtime))))
-           (previous-schema-bytes
-             (mcp-server-runtime-tool-schema-bytes runtime))
-           (previous-failure
-             (mcp-server-runtime-failure runtime))
-           (failure
-             (bounded-string
-              (autolith-error-message condition)
-              :limit 1000))
-           (changed-p
-             (or
-              (not (eq previous-state :failed))
-              previous-tools-p
-              (plusp previous-schema-bytes)
-              (not (equal previous-failure failure)))))
-      (handler-case
-          (mcp-server-runtime--discard-connection runtime :failed)
-        (error ()
-          (mcp-tools--clear-client-server-state runtime)
-          (setf
-           (mcp-server-runtime-launch-environment-fingerprint runtime) nil)))
-      (setf (mcp-server-runtime-tools runtime) nil
-            (mcp-server-runtime-tool-schema-bytes runtime) 0
-            (mcp-server-runtime-state runtime) :failed
-            (mcp-server-runtime-failure runtime) failure)
-      (when changed-p
-        (incf (mcp-server-runtime-tools-revision runtime)))
-      (and changed-p t))))
-
-(-> mcp-server-runtime--budget-usage
-    (mcp-server-runtime)
-    (integer 0))
-(defun mcp-server-runtime--budget-usage (runtime)
-  "Return retained encoded input schema bytes for ready RUNTIME."
-  (with-lock-held ((mcp-server-runtime-lock runtime))
-    (if (eq (mcp-server-runtime-state runtime) :ready)
-        (mcp-server-runtime-tool-schema-bytes runtime)
-        0)))
-
-(-> mcp-server-runtime--cached-failure
-    (mcp-server-runtime)
-    (option mcp-server-startup-error))
-(defun mcp-server-runtime--cached-failure (runtime)
-  "Return RUNTIME's published startup failure without retrying it."
-  (with-lock-held ((mcp-server-runtime-lock runtime))
-    (when (eq (mcp-server-runtime-state runtime) :failed)
-      (let ((configuration (mcp-server-runtime-configuration runtime)))
-        (make-condition
-         'mcp-server-startup-error
-         :message
-         (or (mcp-server-runtime-failure runtime)
-             (format nil "MCP server ~A is unavailable."
-                     (mcp-server-runtime-name runtime)))
-         :server-name (mcp-server-runtime-name runtime)
-         :required-p (mcp-server-configuration-required-p configuration)
-         :cause nil)))))
-
-(-> mcp-manager--runtime-failure-barrier-p
-    (mcp-server-runtime (option mcp-server-runtime) boolean)
-    boolean)
-(defun mcp-manager--runtime-failure-barrier-p
-    (runtime target-runtime signal-target-failure-p)
-  "Return true when RUNTIME's failure must cross the current manager boundary."
-  (or
-   (and
-    (null target-runtime)
-    (mcp-server-configuration-required-p
-     (mcp-server-runtime-configuration runtime)))
-   (and signal-target-failure-p
-        (eq runtime target-runtime))))
-
-(-> mcp-server-runtime--manager-connect-p
-    (mcp-server-runtime (option mcp-server-runtime))
-    boolean)
-(defun mcp-server-runtime--manager-connect-p (runtime target-runtime)
-  "Return true when RUNTIME needs discovery during manager reconciliation."
-  (or
-   (mcp-server-runtime-tools-stale-p runtime)
-   (with-lock-held ((mcp-server-runtime-lock runtime))
-     (let ((state (mcp-server-runtime-state runtime)))
-       (and
-        (not (eq state :failed))
-        (or
-         (eq runtime target-runtime)
-         (and
-          (eq state :ready)
-          (mcp-server-runtime--persistent-launch-environment-p runtime))
-         (and
-          (member state '(:disconnected :connecting :detached) :test #'eq)
-          t)))))))
-
-(-> mcp-manager--connect-runtimes
-    (mcp-manager
-     &key (:target-runtime (option mcp-server-runtime))
-          (:signal-target-failure-p boolean))
-    boolean)
-(defun mcp-manager--connect-runtimes
-    (manager &key target-runtime signal-target-failure-p)
-  "Reconcile MANAGER under its held lock and return true after any revision."
-  (let ((allocated-schema-bytes 0)
-        (changed-p nil))
-    (dolist (runtime (mcp-manager--ordered-runtimes manager))
-      (let* ((before
-               (with-lock-held ((mcp-server-runtime-lock runtime))
-                 (mcp-server-runtime-tools-revision runtime)))
-             (connect-p
-               (mcp-server-runtime--manager-connect-p
-                runtime target-runtime))
-             (cached-failure
-               (and
-                (not connect-p)
-                (mcp-server-runtime--cached-failure runtime))))
-        (when
-            (and
-             cached-failure
-             (mcp-manager--runtime-failure-barrier-p
-              runtime target-runtime signal-target-failure-p))
-          (error cached-failure))
-        (handler-case
-            (progn
-              (when connect-p
-                (mcp-server-runtime--connect
-                 runtime
-                 :allocated-schema-bytes allocated-schema-bytes))
-              (let ((schema-bytes
-                      (mcp-server-runtime--budget-usage runtime)))
-                (when
-                    (> (+ allocated-schema-bytes schema-bytes)
-                       *mcp-maximum-retained-input-schema-bytes*)
-                  (mcp-tools--aggregate-budget-error
-                   runtime
-                   :resource ':input-schema-bytes
-                   :allocated allocated-schema-bytes
-                   :requested schema-bytes
-                   :limit *mcp-maximum-retained-input-schema-bytes*))
-                (incf allocated-schema-bytes schema-bytes)))
-          (mcp-server-startup-error (condition)
-            (when (mcp-server-runtime--mark-failed runtime condition)
-              (setf changed-p t))
-            (when
-                (mcp-manager--runtime-failure-barrier-p
-                 runtime target-runtime signal-target-failure-p)
-              (error condition))))
-        (unless
-            (= before
-               (with-lock-held ((mcp-server-runtime-lock runtime))
-                 (mcp-server-runtime-tools-revision runtime)))
-          (setf changed-p t))))
-    (and changed-p t)))
-
-(-> mcp-server-runtime-connect
-    (mcp-server-runtime)
-    (values mcp-server-runtime boolean))
-(defun mcp-server-runtime-connect (runtime)
-  "Initialize RUNTIME under its manager-wide aggregate discovery budgets."
-  (let ((manager (mcp-server-runtime-manager runtime)))
-    (if manager
-        (with-lock-held ((mcp-manager-lock manager))
-          (values
-           runtime
-           (mcp-manager--connect-runtimes
-            manager
-            :target-runtime runtime
-            :signal-target-failure-p t)))
-        (let ((cached-failure
-                (mcp-server-runtime--cached-failure runtime)))
-          (if (and cached-failure
-                   (not (mcp-server-runtime-tools-stale-p runtime)))
-              (error cached-failure)
-              (mcp-server-runtime--connect runtime))))))
-
 (-> mcp-manager-create (configuration) mcp-manager)
+
+
 (defun mcp-manager-create (configuration)
-  "Create and eagerly discover the effective registered MCP servers."
+  "Materialize registered server policy and eagerly discover shared connections."
   (let* ((registrations (mcp-server-registrations))
          (namespace-map
-           (mcp-tools--identifier-map
-            (mapcar
-             (lambda (registration)
-               (mcp-server-configuration-name
-                (mcp-server-registration-configuration registration)))
-             registrations)
-            :prefix "mcp__"))
-         (runtimes
+          (mcp-tools--identifier-map
            (mapcar
             (lambda (registration)
-              (let* ((server-configuration
-                       (mcp-server-registration-configuration registration))
-                     (name
-                       (mcp-server-configuration-name server-configuration))
-                     (runtime nil)
-                     (client
-                       (mcp-tools--client
-                        server-configuration configuration
-                        :exchange-scope-function
-                        (lambda (function)
-                          (let ((active-runtime runtime))
-                            (if active-runtime
-                                (mcp-tools--call-with-runtime-secret-use
-                                 active-runtime function)
-                                (mcp-tools--call-with-server-secret-use
-                                 server-configuration function))))
-                        :notification-handler
-                        (lambda (method params)
-                          (declare (ignore params))
-                          (when
-                              (string=
-                               method
-                               "notifications/tools/list_changed")
-                            (let ((active-runtime runtime))
-                              (when active-runtime
-                                (with-lock-held
-                                    ((mcp-server-runtime-tools-change-lock
-                                      active-runtime))
-                                  (incf
-                                   (mcp-server-runtime-tools-change-version
-                                    active-runtime))))))))))
-                (setf runtime
-                      (make-instance
-                       'mcp-server-runtime
-                       :configuration server-configuration
-                       :registration-source
-                       (mcp-server-registration-source registration)
-                       :provider-namespace (gethash name namespace-map)
-                       :client client))
-                runtime))
-            registrations))
-         (manager
-           (make-instance
-            'mcp-manager
-            :configuration configuration
-            :runtimes runtimes)))
-    (handler-case
-        (progn
-          (with-lock-held ((mcp-manager-lock manager))
-            (mcp-manager--connect-runtimes manager))
-          manager)
-      (serious-condition (cause)
-        (handler-case
-            (mcp-manager-close manager)
-          (serious-condition ()
-            nil))
-        (error cause)))))
+              (mcp-server-configuration-name
+               (mcp-server-registration-configuration registration)))
+            registrations)
+           :prefix "mcp__")))
+    (mcparen:mcp-manager-build
+     (mapcar
+      (lambda (registration)
+        (lambda ()
+          (let* ((server (mcp-server-registration-configuration registration))
+                 (name (mcp-server-configuration-name server)))
+            (make-instance 'mcp-server-runtime :configuration server
+                           :registration-source
+                           (mcp-server-registration-source registration)
+                           :provider-namespace (gethash name namespace-map)
+                           :client-factory
+                           (lambda (runtime notification-handler)
+                             (mcp-tools--client server configuration
+                                                :notification-handler
+                                                notification-handler
+                                                :exchange-scope-function
+                                                (lambda (function)
+                                                  (mcp-tools--call-with-runtime-secret-use
+                                                   runtime function))))))))
+      registrations)
+     :manager-class 'mcp-manager :manager-initargs
+     (list :configuration configuration))))
 
 
 ;;;; -- Tool Metadata and Authorization --
@@ -2476,17 +1746,13 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
            "This MCP call requires approval, but approval was not granted."
            "This MCP call is denied by its server policy."))
       (handler-case
-          (mcp-tools--call-with-runtime-secret-use
+          (mcparen:mcp-server-runtime-call
            (mcp-provider-tool-runtime tool)
-           (lambda ()
-             (mcp-server-runtime-connect (mcp-provider-tool-runtime tool))
+           (lambda (client)
              (mcp-tools--call-result
-              tool
-              context
+              tool context
               (mcp-client-call-tool
-               (mcp-server-runtime-client (mcp-provider-tool-runtime tool))
-               (mcp-provider-tool-raw-tool tool)
-               arguments
+               client (mcp-provider-tool-raw-tool tool) arguments
                :timeout
                (mcp-server-configuration-tool-timeout-seconds
                 (mcp-server-runtime-configuration
@@ -2500,52 +1766,35 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
           (:list-function function)
           (:item-label string))
     tool-result)
+
+
 (defun mcp-tools--server-list-result
-    (manager &key server-name list-function item-label)
-  "Call LIST-FUNCTION for selected servers and render ITEM-LABEL entries."
-  (let ((runtimes
-          (if server-name
-              (list (mcp-manager--runtime-required manager server-name))
-              (mcp-manager-runtimes manager)))
-        (sections nil)
-        (failures nil))
-    (dolist (runtime runtimes)
-      (handler-case
-          (mcp-tools--call-with-runtime-secret-use
-           runtime
-           (lambda ()
-             (mcp-server-runtime-connect runtime)
-             (let ((items
-                     (mcp-tools--sanitize-value
-                      (funcall
-                       list-function
-                       (mcp-server-runtime-client runtime)))))
-               (push
-                (if items
-                    (format nil "~A~%~{  ~A~^~%~}"
-                            (mcp-server-runtime-name runtime)
-                            (mapcar #'json-encode items))
-                    (format nil "~A~%  No ~A."
-                            (mcp-server-runtime-name runtime)
-                            item-label))
-                sections))))
-        (mcp-server-startup-error (condition)
-          (push
-           (format nil "~A: ~A"
-                   (mcp-server-runtime-name runtime)
-                   (autolith-error-message condition))
-           failures))))
-    (let* ((rendered-sections
-             (format nil "~{~A~^~2%~}" (nreverse sections)))
-           (rendered-failures
-             (when failures
-               (format nil "Failures:~%~{  ~A~^~%~}"
-                       (nreverse failures))))
-           (content
-             (format nil "~A~:[~;~2%~:*~A~]"
-                     rendered-sections
-                     rendered-failures)))
-      (if (and failures (null sections))
+       (manager &key server-name list-function item-label)
+  "Render library discovery observations according to Autolith result policy."
+  (when server-name (mcp-manager--runtime-required manager server-name))
+  (multiple-value-bind (results failures)
+      (mcparen:mcp-manager-collect manager :server-name server-name :list-function
+       list-function)
+    (let* ((sections
+            (mapcar
+             (lambda (entry)
+               (let ((name (mcp-server-runtime-name (first entry)))
+                     (items (rest entry)))
+                 (if items
+                     (format nil "~A~%~{  ~A~^~%~}" name
+                             (mapcar #'json-encode items))
+                     (format nil "~A~%  No ~A." name item-label))))
+             results))
+           (diagnostics
+            (when failures
+              (format nil "Failures:~%~{  ~A~^~%~}"
+                      (mapcar
+                       (lambda (entry)
+                         (format nil "~A: ~A" (mcp-server-runtime-name (first entry))
+                                 (rest entry)))
+                       failures))))
+           (content (format nil "~{~A~^~2%~}~:[~;~2%~:*~A~]" sections diagnostics)))
+      (if (and failures (null results))
           (tool-failure content)
           (tool-success content)))))
 
@@ -2590,15 +1839,12 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
              :message "MCP resource URI must be a non-empty string."
              :tool-name "mcp.read-resource"))
     (handler-case
-        (mcp-tools--call-with-runtime-secret-use
+        (mcparen:mcp-server-runtime-call
          runtime
-         (lambda ()
-           (mcp-server-runtime-connect runtime)
+         (lambda (client)
            (let* ((result
                     (mcp-tools--sanitize-value
-                     (mcp-client-read-resource
-                      (mcp-server-runtime-client runtime)
-                      uri)))
+                     (mcp-client-read-resource client uri)))
                   (contents
                     (mcp-tools--json-sequence
                      (json-get result "contents"))))
@@ -2744,17 +1990,13 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
                "MCP prompt arguments must be an object of string values."
                :tool-name "mcp.get-prompt")))
     (handler-case
-        (mcp-tools--call-with-runtime-secret-use
+        (mcparen:mcp-server-runtime-call
          runtime
-         (lambda ()
-           (mcp-server-runtime-connect runtime)
+         (lambda (client)
            (mcp-tools--prompt-result
             context
             (mcp-tools--sanitize-value
-             (mcp-client-get-prompt
-              (mcp-server-runtime-client runtime)
-              name
-              prompt-arguments))
+             (mcp-client-get-prompt client name prompt-arguments))
             (format nil "mcp://~A/prompt/~A"
                     server-name name))))
       (mcp-server-startup-error (condition)
@@ -2793,31 +2035,26 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
   (count-if #'mcp-tool-task-required-p tools))
 
 (-> mcp-manager-status-records (mcp-manager) list)
+
+
 (defun mcp-manager-status-records (manager)
-  "Return portable non-credential status records for MANAGER."
+  "Project detached discovery snapshots with Autolith configuration metadata."
   (mapcar
-   (lambda (runtime)
-     (with-lock-held ((mcp-server-runtime-lock runtime))
-       (let* ((configuration
-                (mcp-server-runtime-configuration runtime))
-              (tools (mcp-server-runtime-tools runtime))
-              (task-required-count
-                (mcp-tools--task-required-tool-count tools)))
-         (list
-          :name (mcp-server-runtime-name runtime)
-          :source (mcp-server-runtime-registration-source runtime)
-          :transport (mcp-tools--transport-kind configuration)
-          :required-p (mcp-server-configuration-required-p configuration)
-          :state (mcp-server-runtime-state runtime)
-          :tool-count (- (length tools) task-required-count)
-          :task-required-tool-count task-required-count
-          :task-required-tool-reason
-          (and
-           (plusp task-required-count)
-           *mcp-task-required-tool-unavailable-reason*)
-          :failure
-          (mcp-server-runtime-failure runtime)))))
-   (mcp-manager-runtimes manager)))
+   (lambda (runtime snapshot)
+     (let* ((configuration (mcp-server-runtime-configuration runtime))
+            (tools (mcparen:mcp-discovery-snapshot-tools snapshot))
+            (task-required-count (mcp-tools--task-required-tool-count tools)))
+       (list :name (mcparen:mcp-discovery-snapshot-name snapshot) :source
+             (mcp-server-runtime-registration-source runtime) :transport
+             (mcp-tools--transport-kind configuration) :required-p
+             (mcp-server-configuration-required-p configuration) :state
+             (mcparen:mcp-discovery-snapshot-state snapshot) :tool-count
+             (- (length tools) task-required-count) :task-required-tool-count
+             task-required-count :task-required-tool-reason
+             (and (plusp task-required-count)
+                  *mcp-task-required-tool-unavailable-reason*)
+             :failure (mcparen:mcp-discovery-snapshot-diagnostic snapshot))))
+   (mcp-manager-runtimes manager) (mcparen:mcp-manager-snapshot manager)))
 
 (-> mcp-tools--render-status-record (list) string)
 (defun mcp-tools--render-status-record (record)
@@ -2924,15 +2161,6 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
             (mcp-managed-tool-manager tool))))
       (error (condition)
         (tool-failure (format nil "MCP refresh failed: ~A" condition))))))
-
-(-> mcp-manager-tool-revisions (mcp-manager) list)
-(defun mcp-manager-tool-revisions (manager)
-  "Return MANAGER's synchronized runtime tool revision vector."
-  (mapcar
-   (lambda (runtime)
-     (with-lock-held ((mcp-server-runtime-lock runtime))
-       (mcp-server-runtime-tools-revision runtime)))
-   (mcp-manager-runtimes manager)))
 
 (-> mcp-tool-registry-bind-manager
     (tool-registry mcp-manager function)
@@ -3253,3 +2481,79 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
               (serious-condition ()
                 nil))
             (error cause))))))
+
+
+;;;; -- Managed Connection Policy Boundaries --
+
+(defmethod mcparen:mcp-managed-required-p ((runtime mcp-server-runtime))
+  "Read required-server policy from Autolith configuration."
+  (mcp-server-configuration-required-p (mcp-server-runtime-configuration runtime)))
+
+(defmethod mcparen:mcp-managed-call-with-scope ((runtime mcp-server-runtime) function)
+  "Contain credentials and server-controlled data within Autolith secret use."
+  (mcp-tools--call-with-runtime-secret-use runtime function))
+
+(defmethod mcparen:mcp-managed-call-with-cleanup ((runtime mcp-server-runtime) function)
+  "Resolve cleanup credentials without preventing local teardown."
+  (mcp-tools--call-with-runtime-cleanup runtime function))
+
+(defmethod mcparen:mcp-managed-call-with-local-cleanup
+    ((runtime mcp-server-runtime) function cause)
+  "Apply product redaction without a new credential or secret-use dependency."
+  (mcp-tools--call-cleanup-with-snapshot runtime function
+                                       :snapshot nil :missing-condition cause))
+
+(defmethod mcparen:mcp-managed-prepare-client ((runtime mcp-server-runtime))
+  "Apply Autolith metadata redaction and instruction trust policy."
+  (mcp-tools--sanitize-client-state runtime))
+
+(defmethod mcparen:mcp-managed-reset-client ((runtime mcp-server-runtime))
+  "Clear Autolith's retained server-controlled transport metadata."
+  (mcp-tools--clear-client-server-state runtime))
+
+
+(defmethod mcparen:mcp-managed-credential-key ((runtime mcp-server-runtime))
+  "Expose only the non-secret identity of the exact active environment snapshot."
+  (values
+   (mcp-tools--environment-snapshot-fingerprint *mcp-active-environment-snapshot*)
+   *mcp-active-environment-missing-condition*))
+
+(defmethod mcparen:mcp-managed-credential-check-p ((runtime mcp-server-runtime))
+  "Recognize configured persistent environment mappings."
+  (mcp-server-runtime--persistent-launch-environment-p runtime))
+
+
+(defmethod mcparen:mcp-managed-prepare-tools
+    ((runtime mcp-server-runtime) tools &key (allocated-schema-bytes 0))
+  "Project provider metadata before generic identity and aggregate validation."
+  (call-next-method runtime (mcp-tools--prepare-provider-tools runtime tools)
+                    :allocated-schema-bytes allocated-schema-bytes))
+
+(defmethod mcparen:mcp-managed-error ((runtime mcp-server-runtime) cause &optional message)
+  "Signal a credential-safe Autolith startup condition."
+  (mcp-tools--server-error (mcp-server-runtime-configuration runtime) cause message))
+
+(defmethod mcparen:mcp-managed-failure ((runtime mcp-server-runtime) cause)
+  "Retain only Autolith's bounded, redacted diagnostic."
+  (if (typep cause 'autolith-error)
+      (autolith-error-message cause)
+      (mcp-tools--sanitized-diagnostic cause)))
+
+(defmethod mcparen:mcp-managed-cached-error ((runtime mcp-server-runtime))
+  "Reconstruct the product condition without retaining transient credentials."
+  (make-condition 'mcp-server-startup-error
+                  :server-name (mcp-server-runtime-name runtime)
+                  :required-p (mcparen:mcp-managed-required-p runtime)
+                  :cause nil
+                  :message (or (mcp-server-runtime-failure runtime)
+                               "MCP server unavailable.")))
+
+(defmethod mcparen:mcp-managed-budget-error
+    ((runtime mcp-server-runtime) &key resource allocated requested limit)
+  "Preserve structured product budget diagnostics at the library boundary."
+  (mcp-tools--aggregate-budget-error runtime :resource resource :allocated allocated
+                                           :requested requested :limit limit))
+
+(defmethod mcparen:mcp-managed-project-result ((runtime mcp-server-runtime) items)
+  "Redact configured credentials before retaining resource or prompt discovery."
+  (mcp-tools--sanitize-value items))
