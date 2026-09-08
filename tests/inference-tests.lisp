@@ -1006,7 +1006,17 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                                                        "line-count" 1))))
           (test-assert (uiop:string-prefix-p "lines 2-2 of "
                                              (tool-result-content window))
-                       "trace reads honor start-line and line-count"))))
+                       "trace reads honor start-line and line-count")))
+      (let* ((index (resource-resolver-resolve resolver
+                                               *rlm-index-identifier*
+                                               context))
+             (rendered (tool-result-content
+                        (resource-tool-read index read-tool context
+                                            (json-object)))))
+        (test-assert (search trace-identifier rendered)
+                     "the trace index lists the persisted trace")
+        (test-assert (search "trace me please" rendered)
+                     "the trace index carries the task excerpt")))
     (let ((missing (resource-resolver-resolve resolver "zzzz-none" context)))
       (test-assert (not (tool-result-success-p
                          (resource-tool-read missing read-tool context

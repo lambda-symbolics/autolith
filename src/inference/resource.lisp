@@ -11,6 +11,15 @@
 (defparameter *rlm-resource-maximum-line-count* 1000
   "The largest line count for one inference or context resource window.")
 
+(defparameter *rlm-index-identifier* "index"
+  "The reserved identifier reading a bounded RLM artifact index.")
+
+(defparameter *rlm-index-maximum-entries* 40
+  "The most entries one RLM artifact index renders, newest first.")
+
+(defparameter *rlm-index-excerpt-characters* 100
+  "The most characters one RLM artifact index excerpt carries.")
+
 (defclass inference-trace-resource (resource)
   ((identifier
     :initarg :identifier
@@ -18,6 +27,10 @@
     :type non-empty-string
     :documentation "The trace conversation identifier selected by this URI."))
   (:documentation "One read-only persisted inference frame trace."))
+
+(defclass inference-trace-index-resource (resource)
+  ()
+  (:documentation "The bounded newest-first index of persisted traces."))
 
 (defclass inference-trace-resolver (resource-resolver)
   ()
@@ -34,8 +47,13 @@
 
 (defmethod resource-resolver-resolve
     ((resolver inference-trace-resolver) identifier (context tool-context))
-  "Resolve one exact inference trace identifier."
+  "Resolve one exact inference trace identifier or the reserved index."
   (declare (ignore context))
+  (when (equal identifier *rlm-index-identifier*)
+    (return-from resource-resolver-resolve
+      (make-instance 'inference-trace-index-resource
+                     :uri (format nil "inference:~A"
+                                  *rlm-index-identifier*))))
   (unless (rlm--trace-identifier-p identifier)
     (error 'resource-operation-unsupported
            :uri (format nil "~A:~A"
@@ -48,6 +66,12 @@
 (defmethod resource-capabilities
     ((resource inference-trace-resource) (context tool-context))
   "Expose traces as read-only observations."
+  (declare (ignore resource context))
+  '(:read))
+
+(defmethod resource-capabilities
+    ((resource inference-trace-index-resource) (context tool-context))
+  "Expose the trace index as a read-only observation."
   (declare (ignore resource context))
   '(:read))
 
@@ -201,6 +225,108 @@ requested window rather than the complete trace."
                (t
                 lines))
          start end total)))))
+
+(-> rlm--index-timestamp ((integer 0)) string)
+(defun rlm--index-timestamp (universal)
+  "Return UNIVERSAL as a compact UTC timestamp, or unknown when zero."
+  (if (plusp universal)
+      (multiple-value-bind (second minute hour day month year)
+          (decode-universal-time universal 0)
+        (format nil "~4,'0D-~2,'0D-~2,'0DT~2,'0D:~2,'0D:~2,'0DZ"
+                year month day hour minute second))
+      "unknown"))
+
+(-> rlm--trace-index-entries (configuration) list)
+(defun rlm--trace-index-entries (configuration)
+  "Return (identifier . newest-write-date) pairs for traces, newest first."
+  (let ((root (configuration-inference-root configuration))
+        (entries (make-hash-table :test #'equal)))
+    (flet ((note (identifier pathname)
+             (when (rlm--trace-identifier-p identifier)
+               (setf (gethash identifier entries)
+                     (max (or (gethash identifier entries) 0)
+                          (or (ignore-errors (file-write-date pathname))
+                              0))))))
+      (when (uiop:directory-exists-p root)
+        (dolist (file (uiop:directory-files root "*.sexp"))
+          (note (pathname-name file) file))
+        (dolist (directory (uiop:subdirectories root))
+          (let ((identifier (first (last (pathname-directory directory)))))
+            (when (stringp identifier)
+              (dolist (chunk (uiop:directory-files directory "*.sexp"))
+                (note identifier chunk)))))))
+    (sort (loop for identifier being the hash-keys of entries
+                  using (hash-value written)
+                collect (cons identifier written))
+          #'>
+          :key #'rest)))
+
+(-> rlm--trace-task-excerpt (configuration string) string)
+(defun rlm--trace-task-excerpt (configuration identifier)
+  "Return the bounded task line of trace IDENTIFIER, best effort."
+  (let ((segment (first (rlm--trace-segments configuration identifier))))
+    (or (and segment
+             (handler-case
+                 (with-open-file (stream segment :external-format ':utf-8)
+                   (let* ((buffer (make-string 4000))
+                          (count (read-sequence buffer stream))
+                          (prefix (subseq buffer 0 count))
+                          (start (search "Task: " prefix)))
+                     (when start
+                       (let* ((begin (+ start (length "Task: ")))
+                              (end (or (position #\Newline prefix
+                                                 :start begin)
+                                       (length prefix))))
+                         (string-right-trim
+                          '(#\Return #\\ #\")
+                          (subseq prefix begin
+                                  (min end
+                                       (+ begin
+                                          *rlm-index-excerpt-characters*))))))))
+               (error ()
+                 nil)))
+        "(no task line)")))
+
+(-> rlm--trace-index-render (configuration) string)
+(defun rlm--trace-index-render (configuration)
+  "Return the bounded newest-first index of persisted inference traces."
+  (let ((entries (rlm--trace-index-entries configuration)))
+    (if (null entries)
+        "No inference traces are persisted."
+        (with-output-to-string (stream)
+          (format stream
+                  "~D inference trace~:P, newest first, at most ~D listed. Read inference:<identifier> for content.~%"
+                  (length entries)
+                  *rlm-index-maximum-entries*)
+          (loop for (identifier . written)
+                  in (subseq entries
+                             0 (min (length entries)
+                                    *rlm-index-maximum-entries*))
+                do (format stream "~A  ~A  ~A~%"
+                           identifier
+                           (rlm--index-timestamp written)
+                           (rlm--trace-task-excerpt configuration
+                                                    identifier)))))))
+
+(defmethod resource-observe
+    ((resource inference-trace-index-resource) (context tool-context))
+  "Observe the bounded index of persisted inference traces."
+  (let ((content (rlm--trace-index-render
+                  (tool-context-configuration context))))
+    (make-instance 'resource-observation
+                   :uri (resource-uri resource)
+                   :revision (format nil "~D" (length content))
+                   :content content)))
+
+(defmethod resource-tool-read
+    ((resource inference-trace-index-resource) (tool resource-read-tool)
+     (context tool-context) (arguments hash-table))
+  "Return one bounded numbered window over the trace index."
+  (declare (ignore tool))
+  (tool-success
+   (rlm--resource-window
+    (rlm--trace-index-render (tool-context-configuration context))
+    arguments)))
 
 (defmethod resource-observe
     ((resource inference-trace-resource) (context tool-context))

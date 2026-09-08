@@ -469,6 +469,10 @@ Pass the smallest complete evidence set that lets the frame answer the
 task. When several independent views need the same treatment, prefer
 =rlm.map= to a single oversized frame.
 
+Read =inference:index= to list recent persisted traces with their task
+lines, newest first; useful for rediscovering trace identifiers after
+compaction and for selecting =rlm.distill= evidence.
+
 ** Contracts and budgets
 
 Omit =contract= for a plain text answer. Supply a JSON Schema object
