@@ -121,11 +121,12 @@ The root model drives the environment through the =env.eval= tool,
 one form per call, observing only bounded printed values and output.
 Inside the environment, =(context-length)=, =(context-slice start
 end)=, and =(context-search pattern)= inspect the external object;
-=(infer ...)= and =(rlm-map ...)= proxy sub-inferences back to the
-host over an authenticated loopback endpoint, where budgets,
-contracts, and traces are enforced host-side because environment code
-is model-authored and untrusted; =(finish value)= records the final
-answer. Every proxied call descends the run's shared budget subtree,
+=(infer ...)=, =(rlm-map ...)=, and =(rlm-run ...)= proxy
+sub-inferences back to the host over an authenticated loopback
+endpoint, where budgets, contracts, and traces are enforced host-side
+because environment code is model-authored and untrusted; the run
+proxy also makes installed distilled decomposition policies reachable
+from root runs; =(finish value)= records the final answer. Every proxied call descends the run's shared budget subtree,
 so model-authored loops can never outspend the root allocation.
 Finish is terminal: the first finish wins, later operations are
 refused, and the value must be portable readable data because it

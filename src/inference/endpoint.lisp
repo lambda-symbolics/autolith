@@ -181,9 +181,49 @@ leaves a machine-readable invocation tree instead of orphaned frames."
           (rlm-endpoint--operation-activity-callback endpoint operation)))
     (rlm-endpoint--call-admitted
      endpoint
-     (member operation '(:infer :map))
+     (member operation '(:infer :map :run))
      (lambda ()
        (ecase operation
+         (:run
+          (let ((task (getf arguments ':task))
+                (policy (or (getf arguments ':policy) ':direct)))
+            (unless (and (stringp task) (non-empty-string-p task))
+              (error 'rlm-inference-error
+                     :message "An environment run call requires task text."))
+            (unless (keywordp policy)
+              (error 'rlm-inference-error
+                     :message "An environment run policy must be a keyword."))
+            (let ((run-budget (rlm-budget-descend budget :task task)))
+              (unless (compute-applicable-methods
+                       #'rlm-decompose-inference-task
+                       (list policy task nil run-budget))
+                (error 'rlm-inference-error
+                       :message
+                       (format nil "No decomposition policy is named ~S."
+                               policy)))
+              (multiple-value-bind (value trace-identifier tokens-spent)
+                  (rlm-run task
+                           :policy policy
+                           :context (rlm--context-designators
+                                     (getf arguments ':context))
+                           :contract (or (getf arguments ':contract) ':text)
+                           :budget run-budget
+                           :provider provider
+                           :configuration configuration
+                           :concurrency
+                           (let ((requested (getf arguments ':concurrency)))
+                             (if (and (integerp requested) (plusp requested))
+                                 requested
+                                 *rlm-map-default-concurrency*)))
+                (rlm-endpoint--record endpoint
+                                      (list :operation :run
+                                            :task task
+                                            :policy policy
+                                            :child-trace trace-identifier
+                                            :tokens tokens-spent))
+                (list :rlm-response :status :ok
+                      :value value :trace trace-identifier
+                      :tokens tokens-spent)))))
          (:infer
           (let ((task (getf arguments ':task)))
             (unless (and (stringp task) (non-empty-string-p task))

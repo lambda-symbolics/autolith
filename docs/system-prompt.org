@@ -525,6 +525,8 @@ live, so follow-up runs build on prior work instead of recomputing.
 | =(context-search pattern &key start)=       | First match index, or NIL.                                                          |
 | =(infer task &key context contract)=        | One bounded sub-inference over explicit context strings.                            |
 | =(rlm-map tasks &key contract concurrency)= | Fan-out over the shared budget.                                                     |
+| =(rlm-run task &key policy context contract concurrency)= | One task under a named decomposition policy keyword; =:direct= runs it as one frame. |
+| =(environment-names)=                       | User-defined names persisting from earlier runs over this context.                  |
 | =(finish value)=                            | Commit the final portable readable value. First finish wins and terminates the run. |
 
 Keep large context and intermediate values in environment variables;

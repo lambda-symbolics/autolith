@@ -1242,6 +1242,40 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
              (test-assert (and (eq (getf (rest response) ':status) ':ok)
                                (= (length (getf (rest response) ':value)) 2))
                           "proxied maps fan out and return ordered results"))
+           (let ((response
+                   (rlm-endpoint-test-call
+                    endpoint
+                    (list :rlm-request
+                          :token (rlm-endpoint-token endpoint)
+                          :operation ':run
+                          :arguments (list :task "run this directly"
+                                           :context "run view")))))
+             (test-assert (and (eq (getf (rest response) ':status) ':ok)
+                               (search "run this directly"
+                                       (getf (rest response) ':value))
+                               (non-empty-string-p
+                                (getf (rest response) ':trace))
+                               (eql (getf (rest response) ':tokens) 10))
+                          "proxied runs default to the direct policy")
+             (let ((record (find ':run records
+                                 :key (lambda (record)
+                                        (getf record ':operation)))))
+               (test-assert (and record
+                                 (eq (getf record ':policy) ':direct)
+                                 (eql (getf record ':tokens) 10))
+                            "the run ledger record carries policy and spend")))
+           (let ((response
+                   (rlm-endpoint-test-call
+                    endpoint
+                    (list :rlm-request
+                          :token (rlm-endpoint-token endpoint)
+                          :operation ':run
+                          :arguments (list :task "run under a missing policy"
+                                           :policy ':nonexistent-policy)))))
+             (test-assert (and (eq (getf (rest response) ':status) ':error)
+                               (search "No decomposition policy"
+                                       (getf (rest response) ':message)))
+                          "an unknown run policy is refused before inference"))
            (multiple-value-bind (value final-p) (rlm-endpoint-final endpoint)
              (declare (ignore value))
              (test-assert (not final-p)
@@ -1278,7 +1312,7 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
            (let ((operations (mapcar (lambda (record)
                                        (getf record ':operation))
                                      (reverse records))))
-             (test-assert (equal operations '(:infer :map :finish))
+             (test-assert (equal operations '(:infer :map :run :finish))
                           "the ledger records every served operation in order"))
            (let ((infer-record (find ':infer records
                                      :key (lambda (record)

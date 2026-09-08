@@ -152,6 +152,13 @@ concurrent runs over one context each drive their own environment."
                   (list :tasks tasks
                         :contract contract
                         :concurrency concurrency)))
+     (defun rlm-run (task &key policy context contract concurrency)
+       (rlm--call :run
+                  (list :task task
+                        :policy policy
+                        :context context
+                        :contract contract
+                        :concurrency concurrency)))
      (defun finish (value)
        (rlm--call :finish (list :value value)))
      (defvar *rlm-known-symbols* nil)
@@ -299,6 +306,7 @@ Environment functions:
 - (context-length), (context-slice start end), and (context-search pattern &key start) inspect the external context.
 - (infer task &key context contract) runs one bounded sub-inference over explicit context strings and returns its value; further values are its trace identifier and its settled token spend, so cost-aware decomposition can adapt slice sizes.
 - (rlm-map tasks &key contract concurrency) fans tasks out concurrently; each task is a string or a (:task ... :context ...) plist.
+- (rlm-run task &key policy context contract concurrency) runs one task under a named decomposition policy keyword; installed distilled policies decompose it before inference, and the default :direct policy runs it as one frame.
 - (environment-names) lists user-defined names persisting from earlier runs over this context.
 - (finish value) records the final answer and ends the run. Call it exactly once.
 These helpers are the complete RLM interface: do not call RLM helpers that are not listed here. Everything else is ordinary Common Lisp; define further functions yourself when the decomposition needs them.
