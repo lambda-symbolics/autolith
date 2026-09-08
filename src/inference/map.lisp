@@ -35,7 +35,7 @@
                    (format nil "frame ~D/~D · ~A"
                            (1+ index) total activity))))))
     (handler-case
-        (multiple-value-bind (value trace-identifier)
+        (multiple-value-bind (value trace-identifier tokens-spent)
             (infer task
                    :context (append (rlm--context-designators context)
                                     (rlm--context-designators
@@ -47,7 +47,8 @@
                    :configuration configuration
                    :source-registry source-registry
                    :activity-callback item-activity-callback)
-          (list ':task task ':value value ':trace trace-identifier))
+          (list ':task task ':value value ':trace trace-identifier
+                ':tokens tokens-spent))
       (error (condition)
         (list ':task task ':error (format nil "~A" condition))))))
 
@@ -73,9 +74,10 @@
 TASKS elements are task strings or (:task ... :context ...) plists whose views
 are appended to the shared CONTEXT. ACTIVITY-CALLBACK receives compact live
 frame and request descriptions. Results keep TASKS' order; each is
-(:task ... :value ... :trace ...) for a completed frame or
-(:task ... :error ...) for one that failed, so exhausting the shared BUDGET
-fails the remaining frames without discarding the finished ones."
+(:task ... :value ... :trace ... :tokens ...) for a completed frame, with
+:tokens carrying the frame's settled billable spend, or (:task ... :error ...)
+for one that failed, so exhausting the shared BUDGET fails the remaining
+frames without discarding the finished ones."
   (let ((items (map 'vector #'rlm-map--normalize-task tasks)))
     (when (zerop (length items))
       (return-from rlm-map nil))

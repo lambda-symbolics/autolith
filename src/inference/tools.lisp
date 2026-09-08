@@ -144,7 +144,7 @@
    :provider provider
    :budget budget
    :description
-   "Run one bounded inference frame: a separate model call over only the supplied read-only views, isolated from this conversation. Use it to analyze inputs without loading them here. The frame sees nothing but its views, so pass everything it needs. Returns the frame's value, its trace identifier, and the remaining budget."
+   "Run one bounded inference frame: a separate model call over only the supplied read-only views, isolated from this conversation. Use it to analyze inputs without loading them here. The frame sees nothing but its views, so pass everything it needs. Returns the frame's value, its trace identifier, its settled token spend, and the remaining budget."
    :parameters
    (tool-object-schema
     (apply #'json-object
@@ -169,7 +169,7 @@
    :provider provider
    :budget budget
    :description
-   "Fan tasks out as concurrent bounded inference frames sharing one budget, isolated from this conversation. Use it to apply one question to many snippets or files at once. Results keep task order; a failed frame reports its error without discarding the others. Returns each frame's value and trace plus the remaining budget."
+   "Fan tasks out as concurrent bounded inference frames sharing one budget, isolated from this conversation. Use it to apply one question to many snippets or files at once. Results keep task order; a failed frame reports its error without discarding the others. Returns each frame's value, trace, and settled token spend plus the remaining budget."
    :parameters
    (tool-object-schema
     (apply #'json-object
@@ -543,7 +543,7 @@ filesystem paths are only a programmatic Lisp designator."
              (configuration (second routing))
              (activity-callback
                (rlm--tool-activity-callback tool context)))
-        (multiple-value-bind (value trace-identifier)
+        (multiple-value-bind (value trace-identifier tokens-spent)
             (infer task
                    :context views
                    :contract contract
@@ -557,6 +557,7 @@ filesystem paths are only a programmatic Lisp designator."
            (rlm--result-sexp
             (list ':value value
                   ':trace trace-identifier
+                  ':tokens tokens-spent
                   ':calls-remaining (rlm-budget-remaining-calls budget)
                   ':tokens-remaining (rlm-budget-remaining-tokens budget))))))
     ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error

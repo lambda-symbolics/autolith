@@ -78,7 +78,7 @@ override decomposition alone and inherit the synthesis frame."
                  (:configuration (option configuration))
                  (:source-registry (option tool-registry))
                  (:concurrency (integer 1)))
-    (values t string))
+    (values t string (integer 0)))
 (defun rlm-run
     (task &key (policy ':direct) context contract budget capabilities model
                effort provider configuration source-registry
@@ -88,7 +88,8 @@ override decomposition alone and inherit the synthesis frame."
 When POLICY declines to decompose, TASK runs as one inference frame.
 Otherwise the subtasks run as text frames through RLM-MAP and the
 policy's synthesis composes the final answer under CONTRACT, all
-sharing one BUDGET subtree."
+sharing one BUDGET subtree. The third value is the settled billable
+token spend across the subtasks and the synthesis."
   (multiple-value-bind (provider configuration)
       (rlm--resolve-environment :model model :effort effort
                                 :provider provider
@@ -106,18 +107,26 @@ sharing one BUDGET subtree."
                  :provider provider
                  :configuration configuration
                  :source-registry source-registry)
-          (rlm-synthesize-inference-results
-           policy task
-           (rlm-map subtasks
-                    :budget budget
-                    :capabilities capabilities
-                    :provider provider
-                    :configuration configuration
-                    :source-registry source-registry
-                    :concurrency concurrency)
-           :contract contract
-           :budget budget
-           :capabilities capabilities
-           :provider provider
-           :configuration configuration
-           :source-registry source-registry)))))
+          (let* ((results
+                   (rlm-map subtasks
+                            :budget budget
+                            :capabilities capabilities
+                            :provider provider
+                            :configuration configuration
+                            :source-registry source-registry
+                            :concurrency concurrency))
+                 (subtask-tokens
+                   (loop for result in results
+                         sum (or (getf result ':tokens) 0))))
+            (multiple-value-bind (value trace-identifier synthesis-tokens)
+                (rlm-synthesize-inference-results
+                 policy task results
+                 :contract contract
+                 :budget budget
+                 :capabilities capabilities
+                 :provider provider
+                 :configuration configuration
+                 :source-registry source-registry)
+              (values value
+                      trace-identifier
+                      (+ subtask-tokens (or synthesis-tokens 0)))))))))

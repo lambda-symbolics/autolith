@@ -237,12 +237,13 @@ the reported total minus the cached input tokens."
 (-> rlm--run-direct-inference
     (string string t rlm-budget model-provider conversation
      &key (:activity-callback (option function)))
-    (values t string))
+    (values t string (integer 0)))
 (defun rlm--run-direct-inference
     (task request contract budget provider conversation &key activity-callback)
   "Run a tool-free frame as bare provider calls over CONVERSATION."
   (conversation-append-user-message conversation request)
   (loop with request-count = 0
+        with tokens-spent = 0
         do
            (let ((tranche (rlm-budget-acquire-request budget :task task))
                  (settled-p nil))
@@ -262,11 +263,11 @@ the reported total minus the cached input tokens."
                                                         (declare (ignore event))
                                                         nil)))))
                         (rlm--record-response conversation result)
-                        (rlm-budget-settle-output
-                         budget tranche
-                         (rlm--usage-billable-tokens
-                          (provider-usage-normalize
-                           (provider-result-usage result))))
+                        (let ((billable (rlm--usage-billable-tokens
+                                         (provider-usage-normalize
+                                          (provider-result-usage result)))))
+                          (incf tokens-spent (or billable 0))
+                          (rlm-budget-settle-output budget tranche billable))
                         (setf settled-p t)
                         (multiple-value-bind (value valid-p problem)
                             (rlm--contract-value
@@ -283,7 +284,8 @@ the reported total minus the cached input tokens."
                      (rlm-budget-settle-output budget tranche nil)))
                (when done-p
                  (return (values value
-                                 (conversation-identifier conversation))))))))
+                                 (conversation-identifier conversation)
+                                 tokens-spent)))))))
 
 (defclass rlm-frame-agent (agent)
   ()
@@ -298,7 +300,7 @@ request accounting, so disabling it keeps the budget invariant exact."
 
 (-> rlm--frame-budget-callback
     (rlm-budget string &key (:activity-callback (option function)))
-    (values function function))
+    (values function function function))
 (defun rlm--frame-budget-callback (budget task &key activity-callback)
   "Return an observer callback charging BUDGET and reporting provider requests.
 
@@ -306,9 +308,11 @@ Each request atomically reserves one call and an output tranche before it
 starts, so an exhausted subtree stops the frame's agent loop mid-turn and
 concurrent frames can never overspend the pool. The callback returns the
 reserved tranche to the agent as the next request's output ceiling. The second
-value flushes an unsettled tranche after an aborted turn."
+value flushes an unsettled tranche after an aborted turn, and the third
+returns the billable tokens settled so far."
   (let ((tranche nil)
-        (request-count 0))
+        (request-count 0)
+        (tokens-spent 0))
     (values
      (lambda (status details)
        (case status
@@ -322,9 +326,11 @@ value flushes an unsettled tranche after an aborted turn."
           tranche)
          (:provider-request-completed
           (when tranche
-            (rlm-budget-settle-output budget (shiftf tranche nil)
-                                      (rlm--usage-billable-tokens
-                                       (getf details ':usage)))))
+            (let ((billable (rlm--usage-billable-tokens
+                             (getf details ':usage))))
+              (incf tokens-spent (or billable 0))
+              (rlm-budget-settle-output budget (shiftf tranche nil)
+                                        billable))))
          (:tool-call-progress
           (let ((activity (getf details ':activity)))
             (when (non-empty-string-p activity)
@@ -332,17 +338,19 @@ value flushes an unsettled tranche after an aborted turn."
      (lambda ()
        (when tranche
          (rlm-budget-settle-output budget (shiftf tranche nil) nil))
-       nil))))
+       nil)
+     (lambda ()
+       tokens-spent))))
 
 (-> rlm--run-framed-inference
     (string string t rlm-budget model-provider configuration conversation
      tool-registry &key (:activity-callback (option function)))
-    (values t string))
+    (values t string (integer 0)))
 (defun rlm--run-framed-inference
     (task request contract budget provider configuration conversation
      source-registry &key activity-callback)
   "Run a read-capability frame as restricted agent turns over CONVERSATION."
-  (multiple-value-bind (status-callback flush-tranche)
+  (multiple-value-bind (status-callback flush-tranche tokens-spent)
       (rlm--frame-budget-callback budget task
                                   :activity-callback activity-callback)
     (let ((agent
@@ -374,7 +382,9 @@ value flushes an unsettled tranche after an aborted turn."
              (rlm--contract-value contract
                                   (provider-result-assistant-text result))
            (when valid-p
-             (return (values value (conversation-identifier conversation))))
+             (return (values value
+                             (conversation-identifier conversation)
+                             (funcall tokens-spent))))
            (setf request (rlm--repair-request problem))))))))
 
 (-> infer
@@ -388,7 +398,7 @@ value flushes an unsettled tranche after an aborted turn."
                  (:configuration (option configuration))
                  (:source-registry (option tool-registry))
                  (:activity-callback (option function)))
-    (values t string))
+    (values t string (integer 0)))
 (defun infer
     (task &key context (contract ':text) budget capabilities model effort
                provider configuration source-registry activity-callback)
@@ -402,8 +412,9 @@ content search, and nested rlm.infer from SOURCE-REGISTRY's tools.
 ACTIVITY-CALLBACK receives compact live request descriptions. The frame
 runs on a private conversation persisted under the inference trace root
 and never touches the caller's conversation; the second value is the
-trace conversation identifier. Contract violations are repaired by
-re-asking until BUDGET signals RLM-BUDGET-EXHAUSTED."
+trace conversation identifier and the third is the frame's settled
+billable token spend. Contract violations are repaired by re-asking
+until BUDGET signals RLM-BUDGET-EXHAUSTED."
   (unless (non-empty-string-p task)
     (error 'rlm-inference-error
            :message "An inference frame requires a non-empty task."))

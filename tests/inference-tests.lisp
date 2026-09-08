@@ -198,7 +198,7 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                     "resp-2" "{\"answer\": \"42\"}" 150))))
           (budget (rlm-budget-create :calls 4 :tokens 1000 :depth 1))
           (activities nil))
-      (multiple-value-bind (value trace-identifier)
+      (multiple-value-bind (value trace-identifier tokens-spent)
           (infer "Answer the question."
                  :context (list "the question is six times seven")
                  :contract '(:type :object
@@ -216,6 +216,8 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                      "the repair round charges a second call")
         (test-assert (= (rlm-budget-remaining-tokens budget) 750)
                      "reported usage drains the token pool")
+        (test-assert (= tokens-spent 250)
+                     "the frame reports its settled token spend")
         (test-assert
          (equal (reverse activities)
                 '("request 1 · 3 calls left"
@@ -761,6 +763,10 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                  "a failing frame is captured without discarding the rest")
     (test-assert (non-empty-string-p (getf (first results) ':trace))
                  "completed map frames report their trace identifiers")
+    (test-assert (loop for result in results
+                       always (or (getf result ':error)
+                                  (eql (getf result ':tokens) 10)))
+                 "completed map frames report their settled token spend")
     (test-assert (= (rlm-budget-remaining-calls budget) 6)
                  "every attempted request holds its reservation, failures included")
     (test-assert (= (rlm-budget-remaining-tokens budget) 970)
@@ -1164,9 +1170,16 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                           "proxied inference returns the frame value")
              (test-assert (non-empty-string-p
                            (getf (rest response) ':trace))
-                          "proxied inference reports its trace"))
+                          "proxied inference reports its trace")
+             (test-assert (eql (getf (rest response) ':tokens) 10)
+                          "proxied inference reports its settled token spend"))
            (test-assert (= (rlm-budget-remaining-calls budget) 5)
                         "proxied calls drain the shared root budget")
+           (let ((record (find ':infer records
+                               :key (lambda (record)
+                                      (getf record ':operation)))))
+             (test-assert (eql (getf record ':tokens) 10)
+                          "the infer ledger record carries the token spend"))
            (let ((response
                    (rlm-endpoint-test-call
                     endpoint

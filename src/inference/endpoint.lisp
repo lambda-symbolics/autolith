@@ -189,7 +189,7 @@ leaves a machine-readable invocation tree instead of orphaned frames."
             (unless (and (stringp task) (non-empty-string-p task))
               (error 'rlm-inference-error
                      :message "An environment infer call requires task text."))
-            (multiple-value-bind (value trace-identifier)
+            (multiple-value-bind (value trace-identifier tokens-spent)
                 (infer task
                        :context (getf arguments ':context)
                        :contract (or (getf arguments ':contract) ':text)
@@ -200,9 +200,11 @@ leaves a machine-readable invocation tree instead of orphaned frames."
               (rlm-endpoint--record endpoint
                                     (list :operation :infer
                                           :task task
-                                          :child-trace trace-identifier))
+                                          :child-trace trace-identifier
+                                          :tokens tokens-spent))
               (list :rlm-response :status :ok
-                    :value value :trace trace-identifier))))
+                    :value value :trace trace-identifier
+                    :tokens tokens-spent))))
          (:map
           (let ((tasks (getf arguments ':tasks)))
             (unless (and (listp tasks)
@@ -234,7 +236,9 @@ leaves a machine-readable invocation tree instead of orphaned frames."
                                     (if (getf result ':error)
                                         (list :error (getf result ':error))
                                         (list :child-trace
-                                              (getf result ':trace)))))))
+                                              (getf result ':trace)
+                                              :tokens
+                                              (getf result ':tokens)))))))
               (list :rlm-response :status :ok :value results))))
          (:finish
           (with-lock-held ((rlm-endpoint--lock endpoint))
