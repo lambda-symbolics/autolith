@@ -732,6 +732,53 @@
           *image-commit-replay-probe-version*
           identifier))
 
+(defparameter *image-commit-surface-functions*
+  '(main
+    agent-run-user-turn
+    conversation-create
+    conversation-append-record
+    conversation-append-user-message
+    provider-stream-turn
+    tool-execute
+    tool-registry-register
+    lisp-worker-create
+    infer
+    rlm-map
+    rlm-run
+    rlm-complete
+    image-commit-replay-probe-main)
+  "The load-bearing functions a replayed image must keep defined.")
+
+(defparameter *image-commit-surface-classes*
+  '(agent conversation configuration tool tool-registry)
+  "The load-bearing classes a replayed image must keep defined.")
+
+(-> image-commit-surface-verify () null)
+(defun image-commit-surface-verify ()
+  "Signal when the live image is missing part of its core surface.
+
+A replayed mutation may remove or rename definitions the launcher and
+host protocols depend on. The battery asserts the load-bearing
+functions and classes survived, so a clean replay probe fails before a
+broken commit becomes selectable."
+  (let ((missing
+          (append
+           (loop for name in *image-commit-surface-functions*
+                 unless (fboundp name)
+                   collect name)
+           (loop for name in *image-commit-surface-classes*
+                 unless (find-class name nil)
+                   collect name))))
+    (when missing
+      (error 'image-commit-error
+             :message
+             (format nil "The replayed image is missing core definitions: ~{~(~A~)~^, ~}."
+                     missing)
+             :tool-name "self.commit"
+             :pathname nil
+             :stage ':surface-battery)))
+  nil)
+
 (-> image-commit-replay-probe-main (string string) null)
 (defun image-commit-replay-probe-main (script-name identifier)
   "Load SCRIPT-NAME in a clean source process and print its probe identity."
@@ -750,6 +797,7 @@
              :stage ':replay-probe))
     (let ((*package* (find-package '#:autolith)))
       (load script)))
+  (image-commit-surface-verify)
   (write-string (image-commit-replay-probe-output identifier)
                 *standard-output*)
   (terpri *standard-output*)

@@ -190,7 +190,9 @@ compile and install --> checks --> replay script and manifest
 - Exploratory changes stop after install and journal publication
 - =self.diff= shows effective state. =self.exercise= records focused
   evidence. =self.discard= reverses one effective change
-- =self.commit= creates a private snapshot, replay-probes it, commits it
+- =self.commit= creates a private snapshot, replay-probes it in a clean
+  process (the probe loads the script, then asserts the core surface of
+  load-bearing functions and classes survived), commits it
   to the separate mutation-history repository, and atomically selects it
 - Checkpoints use =sbcl-generations=. Before the fork, Autolith quiesces
   work, clears credentials, detaches workers, and checks provenance

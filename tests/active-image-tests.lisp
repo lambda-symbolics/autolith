@@ -45,6 +45,35 @@
        "active-image compatibility rejects another OS version")))
   nil)
 
+(-> test-image-commit-surface-battery () null)
+(defun test-image-commit-surface-battery ()
+  "Test the replay surface battery passes live and names missing pieces."
+  (test-assert (null (image-commit-surface-verify))
+               "the live image passes its own surface battery")
+  (let ((*image-commit-surface-functions*
+          (list (gensym "MISSING-SURFACE-FUNCTION-"))))
+    (test-assert
+     (handler-case
+         (progn
+           (image-commit-surface-verify)
+           nil)
+       (image-commit-error (condition)
+         (and (eq (image-commit-error-stage condition) ':surface-battery)
+              (search "missing-surface-function"
+                      (autolith-error-message condition)))))
+     "a missing core definition fails the battery and is named"))
+  (let ((*image-commit-surface-classes* (list ':not-a-class-name)))
+    (test-assert
+     (handler-case
+         (progn
+           (image-commit-surface-verify)
+           nil)
+       (image-commit-error (condition)
+         (not (null (search "not-a-class-name"
+                            (autolith-error-message condition))))))
+     "a missing core class fails the battery and is named"))
+  nil)
+
 (-> test-image-commit-replay-probe () null)
 (defun test-image-commit-replay-probe ()
   "Test clean-process loading and rejection of private replay scripts."

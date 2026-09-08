@@ -310,6 +310,7 @@
 
 (define-test-suite active-image
   test-active-image-build-record
+  test-image-commit-surface-battery
   test-image-commit-replay-probe)
 
 (define-test-suite recovery
