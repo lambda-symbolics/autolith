@@ -149,6 +149,25 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                  :turn-state nil
                  :turn-completion ':unspecified))
 
+(-> test-rlm-value-preview () null)
+(defun test-rlm-value-preview ()
+  "Test large value previews keep both ends around a dropped-middle marker."
+  (test-assert (string= (rlm--value-preview "short") "short")
+               "short values pass through unchanged")
+  (let* ((printed (with-output-to-string (stream)
+                    (loop for index from 0 below 2000
+                          do (format stream "item-~4,'0D " index))))
+         (preview (rlm--value-preview printed)))
+    (test-assert (<= (length preview)
+                     (+ *rlm-tool-value-preview-characters* 64))
+                 "previews stay near the configured bound")
+    (test-assert (and (uiop:string-prefix-p (subseq printed 0 40) preview)
+                      (search (subseq printed (- (length printed) 40))
+                              preview)
+                      (search "characters dropped" preview))
+                 "previews keep the head and tail around the marker"))
+  nil)
+
 (-> test-rlm-budget-cache-discount () null)
 (defun test-rlm-budget-cache-discount ()
   "Test budget settlement discounts prompt-cache reads from reported usage."
