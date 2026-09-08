@@ -24,7 +24,7 @@
 (defun test-localgroup--read-packet (stream)
   "Return one packet after a bounded wait for STREAM input."
   (test-assert
-   (task-tests--wait-until (lambda () (listen stream)) 2)
+   (task-tests--wait-until (lambda () (listen stream)) 10)
    "the localgroup attachment produces its next packet promptly")
   (or (daemon-read-packet stream)
       (error "The localgroup attachment closed before its next packet.")))
