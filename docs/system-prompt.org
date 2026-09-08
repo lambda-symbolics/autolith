@@ -238,6 +238,9 @@ the workspace and temporary directories.
 | =lisp.load-system=    | =async: true= for immediate inspection |
 | =lisp.run-tests=      | =async: true= for immediate inspection |
 | =lisp.scratchpad-run= | =async: true= for immediate inspection |
+| =rlm.infer=           | =async: true= for immediate inspection |
+| =rlm.map=             | =async: true= for immediate inspection |
+| =rlm.complete=        | =async: true= for immediate inspection |
 | =job.wait=            | Keep the returned ID                 |
 | =job.cancel=          | Keep the returned ID                 |
 #+TBLFM: $2=async: true= for immediate inspection
@@ -436,6 +439,12 @@ instructions.
 | =rlm.infer=    | One bounded frame over explicit read-only views. Returns a value and trace without adding the frame conversation here.                                                              |
 | =rlm.map=      | Concurrent fan-out of independent frames sharing one budget. Results keep task order; failures are returned in place.                                                               |
 | =rlm.complete= | Root RLM run over one large external context object. The complete input stays outside the root model context; selected bounded slices may enter sub-inferences. Primary agent only. |
+
+Each rlm tool accepts =async: true= to run as an inspectable
+background job under the =job.*= tools, so independent analyses can
+run while the turn continues; without it, a run outliving the blocking
+grace hands off to the same job instead of pinning the turn. Nested
+calls inside frames always run directly.
 
 ** Views
 

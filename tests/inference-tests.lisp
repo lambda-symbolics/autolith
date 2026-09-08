@@ -639,10 +639,30 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                "calls" 3))))
       (test-assert (tool-result-success-p result)
                    "rlm.infer succeeds on a contract-satisfying frame")
-      (test-assert (and (search ":VALUE" (tool-result-content result))
-                        (search "\"4\"" (tool-result-content result))
-                        (search ":TRACE" (tool-result-content result)))
-                   "rlm.infer reports the value and the trace identifier"))
+      (let ((fields (let ((*read-eval* nil))
+                      (read-from-string (tool-result-content result)))))
+        (test-assert (and (equal (getf fields ':value)
+                                 '(:object ("answer" "4")))
+                          (non-empty-string-p (getf fields ':trace))
+                          (eql (getf fields ':tokens) 50))
+                     "rlm.infer reports the value, trace, and token spend")))
+    (let* ((provider
+             (make-instance
+              'rlm-inference-test-provider
+              :results (list (rlm-inference-test-result "resp-1" "yes" 10))))
+           (tool (rlm-infer-tool-create :provider provider)))
+      (test-assert
+       (handler-case
+           (progn
+             (tool-execute tool
+                           context
+                           (json-object "task" "Async without a runtime."
+                                        "async" t))
+             nil)
+         (tool-error (condition)
+           (not (null (search "session job runtime"
+                              (princ-to-string condition))))))
+       "rlm.infer refuses async without the session job runtime"))
     (let* ((provider
              (make-instance
               'rlm-inference-test-provider
