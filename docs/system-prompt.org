@@ -471,7 +471,10 @@ task. When several independent views need the same treatment, prefer
 
 Read =inference:index= to list recent persisted traces with their task
 lines, newest first; useful for rediscovering trace identifiers after
-compaction and for selecting =rlm.distill= evidence.
+compaction and for selecting =rlm.distill= evidence. Read
+=context:index= to list stored context objects with sizes and content
+excerpts, so an earlier run's interned context is rediscoverable by
+digest.
 
 ** Contracts and budgets
 

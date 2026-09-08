@@ -1175,7 +1175,34 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                        nil)
                    (rlm-view-error () t)
                    (error () nil))
-                 "the adapter preserves provider API designator validation"))
+                 "the adapter preserves provider API designator validation")
+    (let* ((conversation (conversation-create configuration
+                                              :identifier "context-index"))
+           (context (make-instance 'tool-context
+                                   :configuration configuration
+                                   :worker nil
+                                   :conversation conversation
+                                   :registry (make-instance 'tool-registry)))
+           (resolver (make-instance 'context-object-resolver
+                                    :scheme "context"))
+           (read-tool (make-instance 'resource-read-tool
+                                     :namespace "resource"
+                                     :name "read"
+                                     :description "Test resource read."
+                                     :parameters (tool-object-schema
+                                                  (json-object) '())
+                                     :resource-registry
+                                     (make-resource-registry)))
+           (index (resource-resolver-resolve resolver
+                                             *rlm-index-identifier*
+                                             context))
+           (rendered (tool-result-content
+                      (resource-tool-read index read-tool context
+                                          (json-object)))))
+      (test-assert (search (rlm-context-object-digest object) rendered)
+                   "the context index lists the interned object digest")
+      (test-assert (search "shared corpus" rendered)
+                   "the context index carries a content excerpt")))
   nil)
 
 (-> rlm-endpoint-test-call (rlm-endpoint list) list)

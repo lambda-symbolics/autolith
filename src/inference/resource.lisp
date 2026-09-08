@@ -372,10 +372,18 @@ requested window rather than the complete trace."
   ()
   (:documentation "Resolve stored context objects by content digest."))
 
+(defclass context-object-index-resource (resource)
+  ()
+  (:documentation "The bounded newest-first index of stored context objects."))
+
 (defmethod resource-resolver-resolve
     ((resolver context-object-resolver) identifier (context tool-context))
-  "Resolve one exact context object digest."
+  "Resolve one exact context object digest or the reserved index."
   (declare (ignore context))
+  (when (equal identifier *rlm-index-identifier*)
+    (return-from resource-resolver-resolve
+      (make-instance 'context-object-index-resource
+                     :uri (format nil "context:~A" *rlm-index-identifier*))))
   (unless (and (stringp identifier)
                (non-empty-string-p identifier)
                (every (lambda (character) (digit-char-p character 16))
@@ -393,6 +401,98 @@ requested window rather than the complete trace."
   "Expose context objects as read-only observations."
   (declare (ignore resource context))
   '(:read))
+
+(defmethod resource-capabilities
+    ((resource context-object-index-resource) (context tool-context))
+  "Expose the context object index as a read-only observation."
+  (declare (ignore resource context))
+  '(:read))
+
+(-> rlm--context-index-entries (configuration) list)
+(defun rlm--context-index-entries (configuration)
+  "Return (digest octets write-date) rows for stored objects, newest first."
+  (let ((root (rlm-object-root configuration)))
+    (if (uiop:directory-exists-p root)
+        (sort
+         (loop for file in (uiop:directory-files root "*.txt")
+               for name = (pathname-name file)
+               when (and (stringp name)
+                         (= (length name) 64)
+                         (every (lambda (character)
+                                  (digit-char-p character 16))
+                                name))
+                 collect (list name
+                               (or (ignore-errors
+                                     (with-open-file
+                                         (stream file
+                                          :element-type '(unsigned-byte 8))
+                                       (file-length stream)))
+                                   0)
+                               (or (ignore-errors (file-write-date file))
+                                   0)))
+         #'>
+         :key #'third)
+        nil)))
+
+(-> rlm--context-object-excerpt (pathname) string)
+(defun rlm--context-object-excerpt (pathname)
+  "Return the bounded first line of PATHNAME's content, best effort."
+  (handler-case
+      (with-open-file (stream pathname :external-format ':utf-8)
+        (let* ((buffer (make-string 200))
+               (count (read-sequence buffer stream))
+               (prefix (subseq buffer 0 count))
+               (end (or (position #\Newline prefix) (length prefix))))
+          (substitute #\Space #\Return
+                      (subseq prefix
+                              0 (min end *rlm-index-excerpt-characters*)))))
+    (error ()
+      "(unreadable)")))
+
+(-> rlm--context-index-render (configuration) string)
+(defun rlm--context-index-render (configuration)
+  "Return the bounded newest-first index of stored context objects."
+  (let ((entries (rlm--context-index-entries configuration))
+        (root (rlm-object-root configuration)))
+    (if (null entries)
+        "No context objects are stored."
+        (with-output-to-string (stream)
+          (format stream
+                  "~D stored context object~:P, newest first, at most ~D listed. Read context:<digest> for content.~%"
+                  (length entries)
+                  *rlm-index-maximum-entries*)
+          (loop for (digest octets written)
+                  in (subseq entries
+                             0 (min (length entries)
+                                    *rlm-index-maximum-entries*))
+                do (format stream "~A  ~D octets  ~A  ~A~%"
+                           digest
+                           octets
+                           (rlm--index-timestamp written)
+                           (rlm--context-object-excerpt
+                            (merge-pathnames
+                             (make-pathname :name digest :type "txt")
+                             root))))))))
+
+(defmethod resource-observe
+    ((resource context-object-index-resource) (context tool-context))
+  "Observe the bounded index of stored context objects."
+  (let ((content (rlm--context-index-render
+                  (tool-context-configuration context))))
+    (make-instance 'resource-observation
+                   :uri (resource-uri resource)
+                   :revision (format nil "~D" (length content))
+                   :content content)))
+
+(defmethod resource-tool-read
+    ((resource context-object-index-resource) (tool resource-read-tool)
+     (context tool-context) (arguments hash-table))
+  "Return one bounded numbered window over the context object index."
+  (declare (ignore tool))
+  (tool-success
+   (rlm--resource-window
+    (rlm--context-index-render (tool-context-configuration context))
+    arguments)))
 
 (-> rlm--context-object-text (context-object-resource tool-context) string)
 (defun rlm--context-object-text (resource context)
