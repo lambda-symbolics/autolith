@@ -92,8 +92,8 @@
   :version "git-340579ac634074791e9c2cc3c35323fec3b7cf66"))
 ("cl-exec-sandbox" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-exec-sandbox.git" :ref "f3abae450f0578d2670e60186f427a89c56302b3")
-  :version "git-f3abae450f0578d2670e60186f427a89c56302b3"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-exec-sandbox.git" :ref "00a6e7979a516b84717b0f93b5a1d06770059aa0")
+  :version "git-00a6e7979a516b84717b0f93b5a1d06770059aa0"))
 ("clifff" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/clifff.git" :ref "8bf3ebb0985108593cad105d31639cedbe9e5373")

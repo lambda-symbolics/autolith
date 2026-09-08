@@ -21,7 +21,7 @@ git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref 37aaeef09
 git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref a25e9b141628e682933fc9d45fc7cfb00a6dcdd2
 git cl-skills https://github.com/lambda-symbolics/cl-skills.git :ref ef20ce4bde2eb1d8f483a063788256aad06d0968
 git cl-termdown https://github.com/lambda-symbolics/cl-termdown.git :ref 340579ac634074791e9c2cc3c35323fec3b7cf66
-git cl-exec-sandbox https://github.com/lambda-symbolics/cl-exec-sandbox.git :ref f3abae450f0578d2670e60186f427a89c56302b3
+git cl-exec-sandbox https://github.com/lambda-symbolics/cl-exec-sandbox.git :ref 00a6e7979a516b84717b0f93b5a1d06770059aa0
 git clifff https://github.com/luciusmagn/clifff.git :ref 8bf3ebb0985108593cad105d31639cedbe9e5373
 git colorlisp https://github.com/luciusmagn/colorlisp.git :ref 05a3313d52e2a2c643219a750dd5045df56c1cd7
 git colordiff https://github.com/lambda-symbolics/colordiff.git :ref e224fd4148c399998ba893e71b7da0cc8a2c658a
