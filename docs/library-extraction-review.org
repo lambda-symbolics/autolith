@@ -1,0 +1,399 @@
+#+title: Library extraction review
+#+date: 2026-09-08
+#+options: toc:2
+
+* Decision
+
+Prefer larger ownership transfers into existing Lambda Symbolics libraries.
+Create two new libraries: revisioned document editing, and release distribution
+with checked deployment. The names below describe boundaries, not chosen brands.
+
+The objective is fewer Autolith implementation and test lines, with each generic
+behavior and its exhaustive tests owned once. Extracting a helper while keeping
+its state machine, wrappers and tests here would miss that objective.
+
+This is a review and proposed sequence, not an implementation commitment or a
+replacement product specification. The historical audit remains an input; its
+small extraction candidates are not the proposed library boundaries.
+
+* Evidence and accounting
+
+The source review used =a8ca75d4f552c7e8205540a8f911d0708b26f3fd=.
+After the interruption, master advanced to
+=d052ec7f48d7742805ffa14b158e5c792152900f= through an addition and its revert;
+the tracked trees are identical. The original audit describes =87b3662= and has
+later status notes. Its line numbers and missing-API claims require revalidation.
+
+Twenty upstream checkouts were freshly fetched outside this worktree and used
+read-only. A second fetch after the interruption confirmed the same upstream
+heads. Exact repository URLs and commits are recorded below. Current upstream
+APIs, rather than only the older Qlot pins, informed the destinations.
+
+The review inspected complete source for the principal provider, storage, MCP,
+terminal-presentation and release boundaries. Some large test files and task/UI
+files were inspected as definition inventories, not end to end. Detailed test
+ownership was checked in selected provider, storage, document, session, context
+and release cases. Proposed test transfers below are behavior families, not
+permission to delete every test in a named file.
+
+The following source estimates are conditional net planning ranges: subtract
+replacement adapters, exclude already-extracted implementations, and exclude
+conditional RLM work. They are not measured patches. Mixed test files need an
+assertion-level split during implementation; their entire sizes are not savings.
+
+| Priority | Destination                         | Coherent capability                          | Estimated source reduction |
+|----------+-------------------------------------+----------------------------------------------+----------------------------|
+|        1 | cl-llm-provider-api + cl-rfc8628      | Wire clients and credential lifecycle         | 2,100-2,800 lines           |
+|        2 | mcparen                             | Managed connections and discovery snapshots   | 800-1,400 lines             |
+|        3 | sexp-store + clinker-transcript      | Transactional stores and transcript projection | 700-1,250 lines            |
+|        4 | New document-editing library         | Observed documents and revision-gated editing | 600-850 lines               |
+|        5 | image-daemon                        | Persistent sessions and terminal attachment   | 600-900 lines               |
+|        6 | clinedi + cl-termdown                | Interactive terminal sessions and presentation | 900-1,400 lines            |
+|        7 | cl-llm-provider-api                  | Context assembly and structured outputs       | 450-600 lines for context   |
+|        8 | New release-distribution library    | Artifact publication and checked deployment   | 900-1,700 lines             |
+
+This is roughly 7,000-11,000 implementation lines across the proposed program,
+not a guaranteed target. Generic tests should move with each capability. Test
+reductions are additional; this review does not assign a certified aggregate.
+The first two rows are the best initial vertical slices. Release extraction has
+real value but a larger operational validation cost, so it comes later.
+
+* Extend existing libraries
+
+** Provider implementations and credentials
+
+Destination: optional systems in =cl-llm-provider-api= and =cl-rfc8628=.
+
+The provider library already has semantic events/results, wire generics, bounded
+SSE reading, retry machinery, inference budgets, immutable views and context
+objects. The substantial missing ownership is the concrete wire implementations
+and request execution, rather than another codec or retry package.
+
+Transfer reusable Responses, Chat Completions and Anthropic Messages encoding,
+stream assembly, tool-name translation, usage normalization, transport failure
+classification and detached secret redaction from:
+
+- =src/provider/client.lisp= and =wire-protocol.lisp=;
+- =src/provider/openai-compatible.lisp=;
+- =src/provider/anthropic/client.lisp= and =usage.lisp=.
+
+Use the existing =provider-request-object= and =provider-consume-stream=
+protocols. Accept already-projected messages, tools, model options and an injected
+HTTP transport. Extend the existing retry engine with a delay policy and explicit
+cleanup/deadline hooks. Preserve the distinction between transient retry and
+resampling. Concrete HTTP backends should be optional dependencies.
+
+The credential half belongs alongside the source/manager protocols already in
+=cl-rfc8628=. Move refresh-generation coordination, shared success/failure,
+abandoned-leader recovery, fresh-store rereading, account continuity and scoped
+credential use from =src/provider/authentication.lisp=. Relevant seams include
+=credential-manager-refresh=, =credential-refresh-generation= and
+=call-with-credentials=. Inject the provider refresh exchange and use the existing
+secret-region hook. This does not require a separate single-flight library.
+
+Autolith owns provider registration, model preferences, product credential paths,
+external bootstrap-store ownership, prompt/context projection, tool dispatch,
+provider-specific subscription adapters and checkpoint secret-use quiescence.
+Generic libraries should not accept an Autolith application or conversation.
+
+Transfer exhaustive wire-event sequences, malformed/interrupted streams,
+fragmented tool calls, usage normalization, retry classification and concurrent
+refresh outcomes. Retain a small set of provider/configuration, conversation
+projection, credential ownership and tool-dispatch integration tests. Split
+=tests/openai-compatible-provider-tests.lisp=, =provider-tests.lisp=,
+=anthropic-provider-tests.lisp= and the authentication suites by these behaviors.
+
+** Managed MCP connections
+
+Destination: an optional =mcparen/managed= system.
+
+Mcparen already owns MCP clients, transport sessions, concurrent requests,
+pagination bounds and credential/transport hooks. Extend it with the next
+coherent layer: a set of restartable connections with stable discovery snapshots.
+
+Move generic parts of =mcp-server-runtime= and =mcp-manager= from
+=src/mcp/tools.lisp=: connection generations, notification/change revisions,
+refresh coordination, cached failures, required-first budget allocation, stable
+discovery, partial-startup cleanup and concurrent close/detach.
+
+Expose client factories, server identities, limits, refresh, snapshot, close and
+detach. A snapshot should contain capabilities, generation/revision, state and
+diagnostics. Credential resolution and secret-use scope are injected boundaries;
+local teardown must work even when credential resolution fails.
+
+Autolith owns configuration layering, child permissions, tool registry binding,
+provider schema projection, instruction trust, images and result/status display.
+This should remove manager implementation, not just rename the current classes.
+
+Move generation-change, rediscovery, connection-budget, failure isolation,
+credential-rotation and teardown race tests out of =tests/mcp-tool-tests.lisp=.
+Keep registry rollback, authorization, provider fidelity and attachment tests.
+That file's 4,555 lines are an inspection envelope, not a deletion estimate.
+
+** Transactional stores and transcript projection
+
+Destinations: =sexp-store=, =clinker-transcript= and existing =structlisp=
+collections, with =ls-flock= for exclusion.
+
+The low-level snapshot/log operations are already downstream. Extend =sexp-store=
+with locked read/modify/publish transactions, validated log folds, segmented logs
+and revision-validated derived sidecars. A store descriptor supplies paths,
+schema/header validation, initial state and a reducer. Publish durable state
+before changing the caller-visible in-memory state.
+
+This consolidates repeated transaction shells in =src/state/memories.lisp=,
+=papercuts.lisp= and =agendas.lisp=, plus segment rotation, tail repair, sequence
+handling and picker-index publication in =src/conversation/store.lisp=.
+Preserve exact validation and publication guarantees when adopting helpers:
+finite records, duplicate-key policy, exclusive creation and crash ordering need
+explicit contracts rather than assumptions about atomic rename.
+
+Separately extend =clinker-transcript= from item vocabulary to ordered projection
+and reconciliation. Transfer call/output grouping, duplicate detection,
+missing-output detection, projection replacement and item-metadata maintenance.
+Return repair intents; Autolith supplies wording and decides when to durably
+publish repairs. Avoid moving the Autolith conversation class downstream.
+
+Autolith owns memory relevance/visibility, papercut lifecycle, agenda statuses and
+links, conversation titles, compaction meaning, inherited-reference policy,
+artifact ownership and identifier migration. Reuse Structlisp deques, ordered
+maps, bounded builders and indexes instead of adding another storage-specific
+container implementation.
+
+Move generic replay/tombstone, tail-recovery, segment/index invalidation,
+serialization and reconciliation matrices into the libraries. Retain tests for
+scope, attribution, recall, domain corruption policy and conversation lifecycle.
+The principal test seams are =conversation-tests.lisp=, =memory-tests.lisp=,
+=agenda-tests.lisp= and =papercut-tests.lisp=.
+
+** Persistent interactive sessions
+
+Destination: an optional runtime/attachment system in =image-daemon=.
+
+The packet protocol is already there. The remaining general capability is a
+running local service that clients can discover, inspect and attach to, with
+bounded output replay, observers and one input controller.
+
+Transfer generic registry ownership/reconciliation, attachment queues, transport
+threads, controller takeover, blocked-stream shutdown and client loops from
+=src/localgroup/terminal.lisp=, =runtime.lisp= and =client.lisp=.
+Use explicit storage roots, request callbacks, input/output/resize events and
+start/stop/discover/attach/detach operations. Keep terminal adapters independent
+of Autolith terminal classes.
+
+Autolith owns submission versus steering, conversation leases, permissions,
+checkpoint choices and input-reader coordination. In particular,
+=src/localgroup/handoff.lisp= is application choreography, not another thousand
+lines of generic daemon code.
+
+Move controller exclusivity, observer rejection, takeover, bounded replay,
+queue shutdown, blocked close and registry compare-and-delete tests from
+=tests/localgroup-tests.lisp=. Retain conversation identity, handoff and recovery
+integration. Other plausible consumers are persistent REPL services, simulations
+and detachable administrative consoles; these are potential consumers, not
+verified existing users of the proposed API.
+
+** Terminal sessions and presentation
+
+Destinations: =clinedi= for interaction and transport; =cl-termdown= for semantic
+presentation/layout; =cl-colorist= for ANSI styling; =colordiff= for diff rendering.
+
+Clinedi already has event decoding, Unicode geometry, selectors and live regions.
+The next transfer is the session machinery around them: filtered modal selection,
+stable candidate identity, completion/history snapshot and restore, resize/poll
+coordination, lifecycle rollback, buffered input and terminal mode management.
+Use an optional implementation-specific transport system for native operations.
+
+The main source seams are =src/terminal/ui.lisp=, =stream.lisp=, =input.lisp=,
+=protocol.lisp= and =layout.lisp=. Reuse the existing upstream table allocator;
+add semantic-span fitting/rendering capabilities rather than a new span library.
+Replace private Clinedi history-slot access with public operations.
+
+Autolith owns queue/submission behavior, Lisp/application-command completion,
+image attachment, tool activity, modeline content, interruption policy and
+transcript composition. The 3,784-line =responsive-input.lisp= is not a justified
+wholesale extraction. Move terminal geometry, input, lifecycle, picker, history
+and scrollback matrices upstream; keep product interaction tests in
+=tests/terminal-tests.lisp= and =application-tests.lisp=.
+
+** Request context and structured outputs
+
+Destination: optional capabilities in =cl-llm-provider-api=.
+
+Move contribution deduplication, supersession, conflicts, mandatory/advisory budget
+selection and delivery receipts from =src/agent/context.lisp=. Preserve separate
+instruction/evidence fields, per-session receipt isolation and consumption only
+after successful delivery. Accept contribution values, explicit resolver state,
+a session key and a cost function.
+
+Autolith owns contributor registration, user-init transactions, active tools,
+workspace/goal lookup, built-in contributions and display. Transfer generic
+selection, receipt, reactivation and budget tests from =tests/context-tests.lisp=.
+
+The native structured-output schema/validation machinery in
+=src/task/contracts.lisp= is a related extension, rather than a new JSON wrapper
+library. Preserve its actual supported contract subset; extraction is not a claim
+of complete JSON Schema support. Contract code is excluded from the source
+estimate until its API and retained tool adapters are split.
+
+* New general-purpose libraries
+
+** Revisioned document editing
+
+Own the complete operation: observe a document, expose bounded views, prepare an
+edit in original coordinates, and publish against the observed revision.
+
+The library should own snapshots, observed-range accounting, anchor resolution,
+edit normalization/overlap checks, text transformation, newline preservation,
+revision expiry and typed stale/invalid-edit conditions. Use a small backing-store
+protocol with a file backend. An optional Lisp-source module could later own
+lossless top-level spans and replacement, while Autolith supplies recognized
+definition operators and mutation policy.
+
+Initial sources: =src/resource/workspace-file.lisp= and the observation machinery
+in =src/resource/protocol.lisp=. Relevant seams include
+=workspace-file--resolve-anchored-line=, =workspace-file--normalize-operations=,
+=workspace-file--apply-normalized-operations= and =workspace-file--publish=.
+
+Autolith owns URI/tool dispatch, workspace confinement, permissions, association
+with conversations, domain resources, rendering and delimiter warnings. A
+universal resource-provider framework is unnecessary for this extraction.
+
+The current file backend checks then renames an existing file; it cannot exclude
+an unrelated writer in the final check-to-rename interval. Document the actual
+guarantee and its coordination requirements. Missing-file publication has a
+separate intervening-creation invariant. Neither should be obscured by the phrase
+"revision-gated".
+
+Move original-coordinate edits, overlaps, anchors, hidden-line rejection,
+stale/expired observations, CRLF/final-newline handling, size preflight, cleanup
+and publication races from =tests/workspace-resource-tests.lisp= and selected
+=resource-tests.lisp= cases. Retain confinement, authorization and representative
+tool integration. Rough additional test reduction: 650-950 lines, conditional on
+replacing the large tool fixtures with native library tests.
+
+This is useful beyond agents: review/editor backends, MCP document services and
+batch refactoring tools are plausible consumers. It is substantially broader
+than a standalone line-splicing helper.
+
+** Release distribution and checked deployment
+
+Own release identities, artifact catalogs, complete-only publication, immutable
+asset matching, staged deployment selection, health-gated activation, recovery of
+interrupted transactions and rollback. Provide concrete optional Git/GitHub and
+service-control backends. This is a separate service/library, not an agent SDK.
+
+Sources: =server/release-server.lisp=, =release-builder.lisp= and
+=release-updater.lisp=. Key seams include =release-builder-publish=,
+=release-builder--merge-artifacts=, =release-updater-prepare-deployment=,
+=release-updater-promote= and =release-updater--reconcile=.
+
+Use fixed algorithms with a small application specification: artifact identities
+and completeness rules, fetch/materialize, prepare at the final path, validate
+identity, cycle services and check expected health. Preserve guarded cleanup and
+classify retryable versus identity-specific failures. Avoid a universal workflow
+or build scheduler; the current builder mirrors release assets.
+
+Autolith owns naming/default URLs, platform matrix, Linux-first availability,
+lightweight deployment-tag policy, SBCL/Qlot/native-library packaging, launchers,
+bootstrap/check recipes and host configuration. Most of
+=server/release-archive.lisp= is that packaging recipe. The pre-Lisp shell installer
+also has a legitimate product boundary. Its lines are not claimed as removed.
+
+Use one independently loadable archive/publication module for any genuinely
+shared archive/staging mechanics, including suitable data-import pieces. Keep
+Autolith import schemas, ownership, workspace remapping and conversation leases
+in =src/state/data-transfer-*=. The runtime must not need the release HTTP/GitHub
+stack merely to import user data. Reuse =ls-flock= and =sexp-store= underneath;
+=ls-compat= should contain platform primitives, not deployment transactions.
+
+Split =tests/release-server-tests.lisp=: move catalog completeness, asset matching,
+publication, promotion/rollback, failed-identity suppression and reconciliation
+cases; keep packaging, platform and application health/setup integration. A
+conditional additional test reduction of 350-750 lines is plausible. The large
+=release-script-tests.lisp= was not fully classified and is excluded.
+
+Specify concurrency and crash guarantees before making these public contracts.
+A checksum does not authenticate a publisher; compensating import rollback is
+not a crash-atomic multi-file transaction; later asset merging is not currently
+one atomic archive/checksum publication. Extraction should preserve or deliberately
+strengthen verified behavior, not rename it into a stronger guarantee.
+
+Potential consumers include other Lisp CLI distributions and small service
+publishers. A separately usable catalog/publisher/deployer is the acceptance test;
+a collection of callbacks requiring Autolith internals would not qualify.
+
+* Existing abstractions and conditional work
+
+=cl-jobpond= already supplies bounded admission, job lifecycle/publication hooks,
+progress, cancellation and retention. =sbcl-workers= already owns persistent
+worker processes, requests and images. Use their public extension points and move
+remaining generic fixes there. The current worker adapter is not a second worker
+engine. =sbcl-generations= similarly owns heap checkpoint mechanics; Autolith owns
+secret quiescence, active-state preparation and recovery selection.
+
+RLM budgets/views/context objects already live in =cl-llm-provider-api=. The
+remaining inference directory includes product tools, resource adapters and
+permission classification. Tool-enabled inference and root completion currently
+construct an Autolith agent. A reusable bounded turn executor could justify an
+optional provider-library execution system, but merely passing =agent-run-user-turn=
+as a callback is insufficient evidence of an independent runtime. Defer a new
+RLM library until that boundary is demonstrated. Its conditional savings are not
+included above.
+
+Keep JSON encoding, timestamps, tokenizers, span helpers, locks, bounded buffers
+and retry functions within coherent existing owners or the two proposed libraries.
+Use established CL utilities directly where appropriate. Creating separate
+packages for each would multiply APIs without establishing useful ownership.
+MCP protocol code belongs in Mcparen; Lisp source editing does not belong there.
+
+* Transfer procedure and completion criteria
+
+For each vertical slice:
+
+1. Define the generic invariant and the narrow host boundary against the current
+   upstream checkout. Pin and inspect any prerequisite upstream update.
+2. Implement the capability and its generic behavioral/failure tests downstream.
+   Demonstrate use without loading Autolith or accepting its application classes.
+3. Replace the Autolith implementation with the adapter. Remove the superseded
+   state, duplicate algorithms and generic test matrices in that integration.
+4. Keep a few explicit product integration cases, including failure propagation,
+   lifecycle ownership, permissions or persistence where relevant.
+5. Run both repositories' checks. Record before/after implementation and test LOC
+   separately, including adapters, wrappers and duplicate fixtures. Count moved
+   behavior once; upstream growth also deserves review.
+
+An upstream feature without the corresponding Autolith deletion is unfinished
+extraction work. A changed abstraction must reduce local ownership, not merely
+move function bodies behind another facade. Implement in the priority order
+above, with small independently checked commits rather than a wholesale rewrite.
+
+* Upstream provenance
+
+Each entry is the exact inspected commit from a refreshed, read-only reference
+checkout outside the Autolith worktree. Metadata-only reviews establish public
+scope/API, not every implementation invariant. Implementation reads were deeper
+for the principal destinations discussed above.
+
+| Repository URL | Inspected commit |
+|----------------+------------------|
+| https://github.com/lambda-symbolics/cl-llm-provider-api | a25e9b141628e682933fc9d45fc7cfb00a6dcdd2 |
+| https://github.com/lambda-symbolics/cl-rfc8628 | 37aaeef092c1212d0886bdd68af6eebecd77a98f |
+| https://github.com/lambda-symbolics/mcparen | efd683ed5e5a3e9f4bf807b1fee44eec872ebbc2 |
+| https://github.com/lambda-symbolics/sexp-store | 815ef23b48b9bd9ef974ada28b9e8c1b5cf11b1f |
+| https://github.com/lambda-symbolics/clinker-transcript | 73aebf6c498bc6c9b42d2a5fdbe961163feaa933 |
+| https://github.com/lambda-symbolics/structlisp | 0a276cd18f6d85576de7d761d96e40a34667b8b7 |
+| https://github.com/lambda-symbolics/image-daemon | fb530e996ab83f91b79d316b93c98517b7e25bfd |
+| https://github.com/lambda-symbolics/clinedi | 872782805d5fe3e70af62dccce2f2f7c6b492568 |
+| https://github.com/lambda-symbolics/cl-termdown | a791d0e193ee56224a25940c9e9285e2480e0263 |
+| https://github.com/lambda-symbolics/cl-colorist | 0d3646673d73833e37de74790230c71e80747654 |
+| https://github.com/lambda-symbolics/colordiff | e224fd4148c399998ba893e71b7da0cc8a2c658a |
+| https://github.com/lambda-symbolics/cl-jobpond | a8273ebad0371d5ab218a6dbe13881189a01811a |
+| https://github.com/lambda-symbolics/sbcl-workers | 85bbab4a4c97a7f345ddfa6f15fa187211c96ac7 |
+| https://github.com/lambda-symbolics/sbcl-generations | ea93b14755e80e900d80431640036d0dfae2888c |
+| https://github.com/lambda-symbolics/cl-exec-sandbox | 839879e08b31267e518252654d4ec0679fa7bf47 |
+| https://github.com/lambda-symbolics/ls-compat | 84ca8b1f3be29817f5aff93ac2b341347fd287fb |
+| https://github.com/lambda-symbolics/ls-flock | ff7a6abbc53f069c13d9649232ade062409c12da |
+| https://github.com/lambda-symbolics/sexp-config | ea0dda4202d1a133aa58ad3a367332ed97e8a9a8 |
+| https://github.com/lambda-symbolics/cl-skills | ef20ce4bde2eb1d8f483a063788256aad06d0968 |
+| https://github.com/lambda-symbolics/idsmall | 9cd317d01646f70d73b5cd27e184f51011bc0444 |
