@@ -18,7 +18,10 @@
                #:cl-skills
                #:cl-termdown
                #:clifff
-               #:clinedi/posix
+               #:clinedi
+               (:feature (:not :win32) #:clinedi/posix)
+               (:feature :win32 #:clinedi/win32)
+               #:ls-compat/posix
                #:clingon
                #:colorlisp
                #:colordiff
@@ -54,6 +57,9 @@
                              (:file "localgroup/protocol")
                              (:file "core/json")
                              (:file "core/time")
+                             (:file "core/platform")
+                             (:file "core/platform-posix" :if-feature (:not :win32))
+                             (:file "core/platform-win32" :if-feature :win32)
                              (:file "core/source-files")
                              (:file "core/streams")
                              (:file "core/text-buffer")
