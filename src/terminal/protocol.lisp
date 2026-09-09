@@ -43,7 +43,7 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
 (defclass terminal (clinedi:terminal) ()
   (:documentation "Autolith's terminal transport extension point."))
 
-(defclass stream-terminal (terminal clinedi:posix-terminal) ()
+(defclass stream-terminal (terminal clinedi:host-terminal) ()
   (:default-initargs :event-decoder #'terminal--decode-editing-event
                     :event-prefix-p-function
                     (lambda (character) (find character (list #\Escape (code-char 22))))

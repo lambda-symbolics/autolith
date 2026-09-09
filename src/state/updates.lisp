@@ -82,7 +82,7 @@
   (handler-case
       (let ((directory (uiop:ensure-directory-pathname (pathname value))))
         (and (uiop:directory-exists-p directory)
-             (uiop:ensure-directory-pathname (truename directory))))
+             (uiop:ensure-directory-pathname (platform-truename *platform* directory))))
     (error ()
       nil)))
 
@@ -90,13 +90,26 @@
     ((or pathname string) (or pathname string))
     boolean)
 (defun installation--same-directory-p (left right)
-  "Return true when existing directory pathnames LEFT and RIGHT are identical."
-  (let ((canonical-left  (installation--canonical-directory left))
-        (canonical-right (installation--canonical-directory right)))
-    (and canonical-left
-         canonical-right
-         (equal canonical-left canonical-right)
-         t)))
+  "Return true when existing directory pathnames LEFT and RIGHT are identical.
+
+The platform's file identity decides, so a symbolic link and its target compare
+equal even where TRUENAME leaves directory links unresolved, as on Windows."
+  (flet ((directory-identity (value)
+           "Return VALUE's directory identity, or NIL when it is not an existing directory."
+           (let ((directory (installation--canonical-directory value)))
+             (and directory
+                  (handler-case
+                      (platform-file-status-identity
+                       (platform-path-status *platform* directory
+                                             :follow-links-p t))
+                    (platform-error ()
+                      nil))))))
+    (let ((left-identity  (directory-identity left))
+          (right-identity (directory-identity right)))
+      (and left-identity
+           right-identity
+           (equal left-identity right-identity)
+           t))))
 
 (-> installation--release-fields (pathname) list)
 (defun installation--release-fields (pathname)

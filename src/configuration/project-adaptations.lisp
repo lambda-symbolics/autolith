@@ -206,7 +206,7 @@ discarded or obsolete candidates.
   "Return the canonical project directory key for WORKING-DIRECTORY."
   (namestring
    (uiop:ensure-directory-pathname
-    (truename (workspace-project-root working-directory)))))
+    (platform-truename *platform* (workspace-project-root working-directory)))))
 
 (-> project-adaptation--offer-entry (configuration pathname) (option list))
 (defun project-adaptation--offer-entry (configuration project-root)
@@ -301,10 +301,9 @@ discarded or obsolete candidates.
                  (write-string *project-adaptation-notes-template* stream)
                  (finish-output stream))
                (handler-case
-                   (sb-posix:link (namestring temporary) (namestring pathname))
-                 (sb-posix:syscall-error (cause)
-                   (unless (and (= (sb-posix:syscall-errno cause)
-                                   sb-posix:eexist)
+                   (platform-publish-new-file *platform* temporary pathname)
+                 (platform-error (cause)
+                   (unless (and (eq (platform-error-reason cause) ':exists)
                                 (uiop:file-exists-p pathname))
                      (error cause))))
                pathname)

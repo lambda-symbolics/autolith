@@ -181,14 +181,23 @@
       (uiop:parse-native-namestring
        (concatenate 'string (uiop:native-namestring pathname) "/"))))
 
-(-> data-transfer--relative-name (pathname pathname) string)
-(defun data-transfer--relative-name (pathname root)
-  "Return a native relative name, rejecting paths outside the directory ROOT."
-  (let ((name (uiop:native-namestring pathname))
-        (prefix (uiop:native-namestring (data-transfer--directory-pathname root))))
-    (unless (uiop:string-prefix-p prefix name)
+(-> data-transfer--relative-components (pathname pathname) list)
+(defun data-transfer--relative-components (pathname root)
+  "Return PATHNAME's literal components below directory ROOT, rejecting escapes.
+
+The components come from the parsed pathname rather than from a native
+namestring, so no host directory separator ever has to be split out of a name."
+  (let* ((directory (data-transfer--directory-pathname root))
+         (relative (uiop:enough-pathname pathname directory))
+         (file (uiop:native-namestring
+                (make-pathname :host nil :device nil :directory nil
+                               :defaults relative))))
+    (when (uiop:absolute-pathname-p relative)
       (data-transfer--fail pathname ':invalid "Path escapes the data root."))
-    (subseq name (length prefix))))
+    (append (rest (pathname-directory relative))
+            (if (string= file "")
+                nil
+                (list file)))))
 
 (-> data-transfer--safe-path-p (t) boolean)
 (defun data-transfer--safe-path-p (path)
@@ -207,37 +216,29 @@
 (-> data-transfer--check-path (pathname pathname) null)
 (defun data-transfer--check-path (root pathname)
   "Reject symbolic links and nonregular files below the trusted ROOT."
-  (let* ((parts (uiop:split-string (data-transfer--relative-name pathname root)
-                                   :separator "/"))
-         (current root))
-    (unless (every #'data-transfer--native-component-p (remove "" parts :test #'string=))
+  (let ((parts (data-transfer--relative-components pathname root))
+        (current root))
+    (unless (every #'data-transfer--native-component-p parts)
       (data-transfer--fail pathname ':invalid "Path escapes the data root."))
-    (dolist (part (remove "" parts :test #'string=))
+    (dolist (part parts)
       (setf current (merge-pathnames (uiop:parse-native-namestring part) current))
-      (handler-case
-          (let ((mode (sb-posix:stat-mode (sb-posix:lstat (uiop:native-namestring current)))))
-            (unless (or (sb-posix:s-isdir mode) (sb-posix:s-isreg mode))
-              (data-transfer--fail current ':invalid "Symbolic links and special files are not transferable.")))
-        (sb-posix:syscall-error (condition)
-          (unless (= (sb-posix:syscall-errno condition) sb-posix:enoent)
-            (error condition))))
+      (let ((status (platform-path-status *platform* current)))
+        (when (and status
+                   (not (member (platform-file-status-kind status)
+                                '(:directory :file))))
+          (data-transfer--fail current ':invalid "Symbolic links and special files are not transferable.")))
       (setf current (data-transfer--directory-pathname current))))
   nil)
 
 (-> data-transfer--private-write (pathname vector) pathname)
 (defun data-transfer--private-write (pathname bytes)
-  "Write BYTES to a new mode-0600 file, never following an existing path."
-  (let ((descriptor (sb-posix:open (uiop:native-namestring pathname)
-                                    (logior sb-posix:o-wronly sb-posix:o-creat sb-posix:o-excl)
-                                    #o600))
-        (stream nil))
+  "Write BYTES to a new private file, never following an existing path."
+  (let ((stream (platform-create-private-file *platform* pathname)))
     (unwind-protect
          (progn
-           (setf stream (sb-sys:make-fd-stream descriptor :output t
-                                                        :element-type '(unsigned-byte 8)))
            (write-sequence bytes stream)
            (finish-output stream))
-      (if stream (close stream) (sb-posix:close descriptor))))
+      (close stream)))
   pathname)
 
 (-> data-transfer--publish (pathname pathname boolean) pathname)
@@ -245,7 +246,7 @@
   "Publish TEMPORARY atomically, refusing an occupied new TARGET."
   (if replace-p
       (uiop:rename-file-overwriting-target temporary target)
-      (sb-posix:link (uiop:native-namestring temporary) (uiop:native-namestring target)))
+      (platform-publish-new-file *platform* temporary target))
   target)
 
 (-> data-transfer--temporary (pathname) pathname)
@@ -272,7 +273,7 @@
     (let ((path (data-transfer--directory-pathname (pathname directory))))
       (unless (uiop:absolute-pathname-p path)
         (setf path (merge-pathnames path *default-pathname-defaults*)))
-      (namestring (or (ignore-errors (truename path)) path)))))
+      (namestring (or (ignore-errors (platform-truename *platform* path)) path)))))
 
 (-> data-transfer--workspace-identifier (string) string)
 (defun data-transfer--workspace-identifier (directory)

@@ -38,7 +38,7 @@
              :pathname (pathname directory)
              :operation ':validate
              :cause nil))
-    (namestring (uiop:ensure-directory-pathname (truename existing)))))
+    (namestring (uiop:ensure-directory-pathname (platform-truename *platform* existing)))))
 
 (-> permissions--rule-form-p (t) boolean)
 (defun permissions--rule-form-p (form)

@@ -64,7 +64,9 @@ exit \"$status\""
      configuration session-id token old-pid))
   "The authenticated replacement readiness boundary used by process handoff.")
 
-(defparameter *localgroup-handoff-setsid-function* #'sb-posix:setsid
+(defparameter *localgroup-handoff-setsid-function*
+  (lambda ()
+    (platform-detach-session *platform*))
   "The session-detachment boundary used during replacement startup.")
 
 (defparameter *localgroup-fresh-launch-function*
@@ -178,9 +180,9 @@ exit \"$status\""
 (defun localgroup-handoff--write-record (pathname record)
   "Atomically write private handoff RECORD to PATHNAME."
   (ensure-directories-exist pathname)
-  (sb-posix:chmod (namestring (uiop:pathname-directory-pathname pathname)) #o700)
+  (platform-make-private *platform* (uiop:pathname-directory-pathname pathname))
   (snapshot-write pathname (localgroup-handoff--disk-record record))
-  (sb-posix:chmod (namestring pathname) #o600)
+  (platform-make-private *platform* pathname)
   nil)
 
 (-> localgroup-handoff--write
@@ -217,8 +219,8 @@ exit \"$status\""
       (let* ((root-pathname (localgroup-handoff-directory configuration))
              (root
                (and (probe-file root-pathname)
-                    (uiop:ensure-directory-pathname (truename root-pathname))))
-             (canonical (and (probe-file pathname) (truename pathname))))
+                    (uiop:ensure-directory-pathname (platform-truename *platform* root-pathname))))
+             (canonical (and (probe-file pathname) (platform-truename *platform* pathname))))
         (unless (and root canonical (uiop:subpathp canonical root))
           (error 'localgroup-error
                  :message "The localgroup handoff path is unavailable or outside private state."
@@ -356,9 +358,7 @@ exit \"$status\""
           (merge-pathnames "bin/autolith"
                            (configuration-source-root configuration))))
     (unless (and (probe-file pathname)
-                 (handler-case
-                     (zerop (sb-posix:access (namestring pathname) sb-posix:x-ok))
-                   (error () nil)))
+                 (platform-executable-file-p *platform* pathname))
       (error 'localgroup-error
              :message "The stable Autolith launcher is unavailable for detach."
              :operation ':handoff))
@@ -372,7 +372,14 @@ exit \"$status\""
     t)
 (defun localgroup-handoff--launch-supervised
     (&key arguments handoff-pathname directory output)
-  "Launch ARGUMENTS behind a gated Bash process-group supervisor."
+  "Launch ARGUMENTS behind a gated Bash process-group supervisor.
+
+Signal PLATFORM-CAPABILITY-UNAVAILABLE on hosts without detached sessions
+before any shell is involved."
+  (unless (platform-supports-p *platform* ':detached-sessions)
+    (error 'platform-capability-unavailable
+           :capability ':detached-sessions
+           :message "This host cannot supervise a detached session process, so localgroup handoff is withheld."))
   (let ((launcher-pid-pathname
           (localgroup-handoff--launcher-pid-pathname handoff-pathname))
         (gate-pathname (localgroup-handoff--gate-pathname handoff-pathname)))
@@ -427,7 +434,7 @@ exit \"$status\""
                               :if-exists ':append
                               :if-does-not-exist ':create
                               :external-format ':utf-8)
-        (sb-posix:chmod (namestring log-pathname) #o600)
+        (platform-make-private *platform* log-pathname)
         (localgroup-handoff--launch-supervised
          :arguments arguments
          :handoff-pathname handoff-pathname
@@ -606,11 +613,13 @@ detach is immediate and never interrupts session work."
                      append (append (collect-children pid) (list pid)))))
     (remove-duplicates (collect-children root-pid) :test #'=)))
 
-(-> localgroup-handoff--signal-pid (integer integer) null)
-(defun localgroup-handoff--signal-pid (pid signal)
-  "Best-effort send SIGNAL to PID or process group -PID."
+(-> localgroup-handoff--signal-pid (integer boolean) null)
+(defun localgroup-handoff--signal-pid (pid force-p)
+  "Best-effort terminate PID or process group -PID, forcibly when FORCE-P."
   (handler-case
-      (sb-posix:kill pid signal)
+      (if (minusp pid)
+          (platform-terminate-process-group *platform* (- pid) :force force-p)
+          (platform-terminate-process *platform* pid :force force-p))
     (error () nil))
   nil)
 
@@ -707,11 +716,11 @@ detach is immediate and never interrupts session work."
 
 (-> localgroup-handoff--pid-alive-p (integer) boolean)
 (defun localgroup-handoff--pid-alive-p (pid)
-  "Return true when PID or process group -PID still accepts signal zero."
+  "Return true when PID or process group -PID is still alive."
   (handler-case
-      (progn
-        (sb-posix:kill pid 0)
-        t)
+      (if (minusp pid)
+          (platform-process-group-alive-p *platform* (- pid))
+          (platform-process-alive-p *platform* pid))
     (error () nil)))
 
 (-> localgroup-handoff--delete-state-pathnames (pathname) null)
@@ -736,7 +745,7 @@ detach is immediate and never interrupts session work."
          (deadline (+ started-at (* 5 internal-time-units-per-second))))
     (loop
       (let* ((now (get-internal-real-time))
-             (signal (if (>= now kill-at) sb-posix:sigkill sb-posix:sigterm))
+             (force-p (>= now kill-at))
              (pairs (localgroup-handoff--process-pairs))
              (launcher-pid
                (localgroup-handoff--plain-pid-at
@@ -751,15 +760,15 @@ detach is immediate and never interrupts session work."
                   known-pids)
                  :test #'=)))
         (when launcher-pid
-          (localgroup-handoff--signal-pid launcher-pid signal)
-          (localgroup-handoff--signal-pid (- launcher-pid) signal))
+          (localgroup-handoff--signal-pid launcher-pid force-p)
+          (localgroup-handoff--signal-pid (- launcher-pid) force-p))
         (when replacement-pid
-          (localgroup-handoff--signal-pid replacement-pid signal)
-          (localgroup-handoff--signal-pid (- replacement-pid) signal))
+          (localgroup-handoff--signal-pid replacement-pid force-p)
+          (localgroup-handoff--signal-pid (- replacement-pid) force-p))
         (dolist (pid known-pids)
-          (localgroup-handoff--signal-pid pid signal))
+          (localgroup-handoff--signal-pid pid force-p))
         (when root-pid
-          (localgroup-handoff--signal-pid root-pid signal))
+          (localgroup-handoff--signal-pid root-pid force-p))
         (setf known-pids
               (remove-if-not #'localgroup-handoff--pid-alive-p known-pids))
         (let ((root-alive-p

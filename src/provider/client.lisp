@@ -605,8 +605,10 @@ act on instead of blocking on a dead connection indefinitely."
   (if (and *provider-stream-inactivity-seconds*
            (plusp *provider-stream-inactivity-seconds*))
       (handler-case
-          (sb-sys:with-deadline (:seconds *provider-stream-inactivity-seconds*)
-            (sse-read-line-characters stream))
+          (provider-call-with-response-deadline
+           *provider-stream-inactivity-seconds*
+           (lambda ()
+             (sse-read-line-characters stream)))
         (sb-sys:deadline-timeout ()
           (error 'response-stream-error
                  :message

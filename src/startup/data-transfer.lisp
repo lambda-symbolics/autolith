@@ -46,7 +46,7 @@
                                       :configuration configuration)))
                  (format t "~A~%" (data-transfer-render-report
                                   (if export-p "Exported" "Imported") report)))
-             ((or data-transfer-error file-error sb-posix:syscall-error) (condition)
+             ((or data-transfer-error file-error platform-error) (condition)
                (format *error-output* "~A~%" condition)
                (uiop:quit 1)))))))))
 

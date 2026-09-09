@@ -472,9 +472,9 @@ candidates."
                       protected-roots)
           (handler-case
               (progn
-                (uiop:delete-directory-tree directory
-                                            :validate t
-                                            :if-does-not-exist ':ignore)
+                (platform-delete-directory-tree *platform* directory
+                                                :validate t
+                                                :if-does-not-exist ':ignore)
                 (decf excess))
             (error ()
               nil))))))

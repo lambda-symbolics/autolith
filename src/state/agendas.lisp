@@ -292,7 +292,7 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
       (let ((existing (uiop:directory-exists-p location)))
         (cond
           (existing
-           (namestring (uiop:ensure-directory-pathname (truename existing))))
+           (namestring (uiop:ensure-directory-pathname (platform-truename *platform* existing))))
           (require-existing-p
            (error 'agenda-error
                   :message (format nil "Agenda directory ~A does not exist."
@@ -302,7 +302,7 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
                   :cause nil))
           (t
            (let ((pathname
-                   (uiop:ensure-pathname location
+                   (uiop:ensure-pathname (platform-pathname location)
                                          :ensure-absolute t
                                          :ensure-directory t
                                          :want-non-wild t)))

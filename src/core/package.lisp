@@ -423,6 +423,7 @@
                 #:terminal-styled-p
                 #:terminal-started-p
                 #:terminal-set-dimensions
+                #:terminal-standard-input-file-descriptor
                 #:terminal-start
                 #:terminal-stop
                 #:terminal-read-event

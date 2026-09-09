@@ -94,11 +94,9 @@
 (-> scratchpad-resource--canonical-uri (pathname pathname) string)
 (defun scratchpad-resource--canonical-uri (root path)
   "Return PATH's canonical scratchpad URI relative to ROOT."
-  (let ((relative
-          (uiop:native-namestring (uiop:enough-pathname path root))))
-    (format nil "scratchpad:~A"
-            (workspace-file--encode-identifier
-             (if (zerop (length relative)) "." relative)))))
+  (format nil "scratchpad:~A"
+          (workspace-file--encode-identifier
+           (workspace-tool--relative-identifier path root))))
 
 (-> scratchpad-resource--readable-roots (scratchpad-resource) list)
 (defun scratchpad-resource--readable-roots (resource)
@@ -242,9 +240,9 @@
             (:file
              (delete-file path))
             (:directory
-             (uiop:delete-directory-tree path
-                                         :validate t
-                                         :if-does-not-exist ':error))
+             (platform-delete-directory-tree *platform* path
+                                             :validate t
+                                             :if-does-not-exist ':error))
             (:missing
              (error 'tool-error
                     :message "Cannot delete an observed missing scratchpad resource."

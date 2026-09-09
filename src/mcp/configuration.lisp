@@ -979,41 +979,23 @@ bound policy takes effect without reloading this file."
 (defun mcp-configuration--read-source (pathname)
   "Read one regular PATHNAME as bounded UTF-8 without blocking or racing."
   (handler-case
-      (let ((descriptor nil))
+      (let ((stream nil))
         (unwind-protect
-             (progn
-               (setf descriptor
-                     (sb-posix:open
-                      (namestring pathname)
-                      (logior sb-posix:o-rdonly
-                              sb-posix:o-nonblock)))
-               (unless
-                   (sb-posix:s-isreg
-                    (sb-posix:stat-mode
-                     (sb-posix:fstat descriptor)))
-                 (mcp-configuration--error
-                  "The native MCP configuration must be a regular file."
-                  :pathname pathname))
-               (let* ((buffer
-                        (make-array
-                         (1+ *mcp-configuration-maximum-bytes*)
-                         :element-type '(unsigned-byte 8)))
-                      (count
-                        (loop with offset = 0
-                              while (< offset (length buffer))
-                              for read-count =
-                                (sb-sys:with-pinned-objects (buffer)
-                                  (sb-posix:read
-                                   descriptor
-                                   (sb-sys:sap+
-                                    (sb-sys:vector-sap buffer)
-                                    offset)
-                                   (- (length buffer) offset)))
-                              do
-                                 (when (zerop read-count)
-                                   (return offset))
-                                 (incf offset read-count)
-                              finally (return offset))))
+             (let ((buffer
+                     (make-array
+                      (1+ *mcp-configuration-maximum-bytes*)
+                      :element-type '(unsigned-byte 8))))
+               (handler-case
+                   (setf stream
+                         (platform-open-regular-file *platform* pathname
+                                                     :follow-links-p t))
+                 (platform-error (condition)
+                   (if (eq (platform-error-reason condition) ':not-regular)
+                       (mcp-configuration--error
+                        "The native MCP configuration must be a regular file."
+                        :pathname pathname)
+                       (error condition))))
+               (let ((count (read-sequence buffer stream)))
                  (when (> count *mcp-configuration-maximum-bytes*)
                    (mcp-configuration--error
                     "The native MCP configuration exceeds its byte bound."
@@ -1023,8 +1005,8 @@ bound policy takes effect without reloading this file."
                   :external-format ':utf-8
                   :start 0
                   :end count)))
-          (when descriptor
-            (sb-posix:close descriptor))))
+          (when stream
+            (close stream))))
     (mcp-configuration-error (condition)
       (error condition))
     (serious-condition (cause)
@@ -1041,38 +1023,27 @@ bound policy takes effect without reloading this file."
     (pathname &key (description "native MCP configuration"))
   "Return true when PATHNAME resolves to a regular file named by DESCRIPTION."
   (handler-case
-      (let ((status (sb-posix:stat (namestring pathname))))
-        (unless (sb-posix:s-isreg (sb-posix:stat-mode status))
-          (mcp-configuration--error
-           (format nil "The ~A must be a regular file." description)
-           :pathname pathname))
-        t)
-    (sb-posix:syscall-error (condition)
-      (if (= (sb-posix:syscall-errno condition) sb-posix:enoent)
-          (handler-case
-              (progn
-                (sb-posix:lstat (namestring pathname))
-                (mcp-configuration--error
-                 (format nil "The ~A link has no regular target." description)
-                 :pathname pathname
-                 :cause condition))
-            (sb-posix:syscall-error (link-condition)
-              (if (= (sb-posix:syscall-errno link-condition)
-                     sb-posix:enoent)
-                  nil
-                  (mcp-configuration--error
-                   (format nil
-                           "Could not inspect ~A at ~A: ~A"
-                           description
-                           pathname
-                           link-condition)
-                   :pathname pathname
-                   :cause link-condition))))
-          (mcp-configuration--error
-           (format nil "Could not inspect ~A at ~A: ~A"
-                   description pathname condition)
-           :pathname pathname
-           :cause condition)))))
+      (let ((status (platform-path-status *platform* pathname
+                                          :follow-links-p t)))
+        (cond
+          ((null status)
+           (when (platform-path-status *platform* pathname)
+             (mcp-configuration--error
+              (format nil "The ~A link has no regular target." description)
+              :pathname pathname))
+           nil)
+          ((eq (platform-file-status-kind status) ':file)
+           t)
+          (t
+           (mcp-configuration--error
+            (format nil "The ~A must be a regular file." description)
+            :pathname pathname))))
+    (platform-error (condition)
+      (mcp-configuration--error
+       (format nil "Could not inspect ~A at ~A: ~A"
+               description pathname condition)
+       :pathname pathname
+       :cause condition))))
 
 (-> mcp-configuration--read-form (pathname) t)
 (defun mcp-configuration--read-form (pathname)

@@ -302,8 +302,7 @@
 (-> conversation-identifier-migration--write-date (pathname integer) null)
 (defun conversation-identifier-migration--write-date (pathname universal-time)
   "Set PATHNAME's access and modification times from UNIVERSAL-TIME."
-  (let ((unix-time (max 0 (universal-time->unix-time universal-time))))
-    (sb-posix:utime (namestring pathname) unix-time unix-time))
+  (platform-set-file-times *platform* pathname universal-time)
   nil)
 
 (-> conversation-identifier-migration--write-forms
@@ -335,7 +334,7 @@
                    (prin1 form stream)
                    (terpri stream))))
              (finish-output stream))
-           (sb-posix:chmod (namestring temporary) #o600)
+           (platform-make-private *platform* temporary)
            (uiop:rename-file-overwriting-target temporary pathname)
            (when write-date
              (conversation-identifier-migration--write-date pathname write-date))
@@ -397,7 +396,7 @@ shared structure. An incomplete final form remains ignored, as in log-read."
                               (terpri output)))))
                (finish-output output)))
            (when (or changed-p (not (equal source target)))
-             (sb-posix:chmod (namestring temporary) #o600)
+             (platform-make-private *platform* temporary)
              (uiop:rename-file-overwriting-target temporary target)
              (when write-date
                (conversation-identifier-migration--write-date target write-date)))
@@ -684,7 +683,8 @@ large conversations that contain no legacy reference."
         (delete-file source))
       (conversation-picker-sidecars-delete source)
       (when (uiop:directory-exists-p source-directory)
-        (uiop:delete-directory-tree
+        (platform-delete-directory-tree
+         *platform*
          source-directory
          :validate t
          :if-does-not-exist ':ignore))))

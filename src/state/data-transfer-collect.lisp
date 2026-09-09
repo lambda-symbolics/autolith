@@ -172,8 +172,7 @@
     (data-transfer--check-path (configuration-data-root configuration) root)
     (loop for pathname in (data-transfer--walk-files root)
           collect (list :area area :owner owner
-                        :path (uiop:split-string (data-transfer--relative-name pathname root)
-                                                 :separator "/")
+                        :path (data-transfer--relative-components pathname root)
                         :bytes (data-transfer--bytes pathname)))))
 
 (-> data-transfer--map-input-images (t function) t)

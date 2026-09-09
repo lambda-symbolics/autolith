@@ -829,6 +829,6 @@ complete durable record.  The source is read only and never repaired."
           (ignore-errors (delete-file pathname)))
         (when (probe-file target-artifacts)
           (ignore-errors
-            (uiop:delete-directory-tree target-artifacts
-                                        :validate t
-                                        :if-does-not-exist ':ignore)))))))
+            (platform-delete-directory-tree *platform* target-artifacts
+                                            :validate t
+                                            :if-does-not-exist ':ignore)))))))

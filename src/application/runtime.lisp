@@ -336,9 +336,9 @@
 (-> application--clear-recovery-environment () null)
 (defun application--clear-recovery-environment ()
   "Remove one-shot recovery reconnection metadata after successful startup."
-  (sb-posix:unsetenv "AUTOLITH_RECOVERY_CONVERSATION_ID")
-  (sb-posix:unsetenv "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")
-  (sb-posix:unsetenv "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")
+  (platform-unsetenv "AUTOLITH_RECOVERY_CONVERSATION_ID")
+  (platform-unsetenv "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")
+  (platform-unsetenv "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")
   nil)
 
 (-> terminal--positive-integer-or-nil ((option string)) (option integer))
@@ -367,7 +367,8 @@
 (defun terminal-current-size ()
   "Return current terminal rows and columns, preferring its kernel dimensions."
   (multiple-value-bind (terminal-rows terminal-columns)
-      (terminal-file-descriptor-size 0)
+      (terminal-file-descriptor-size
+       (terminal-standard-input-file-descriptor))
     (values
      (or terminal-rows
          (terminal--query-dimension "lines")
@@ -414,7 +415,10 @@ truthful source of dimensions."
      :terminal
      (localgroup-terminal-create
       (unless (localgroup-startup-detached-p)
-        (stream-terminal-create :rows rows :columns columns)))
+        (stream-terminal-create
+         :rows rows
+         :columns columns
+         :input-file-descriptor (terminal-standard-input-file-descriptor))))
      :prompt *application-prompt*
      :placeholder *application-placeholder*
      :completion-function #'application-command-completion-entries)))

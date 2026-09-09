@@ -283,36 +283,20 @@
 (-> management-repl--token-file-octets (pathname)
     (simple-array (unsigned-byte 8) (*)))
 (defun management-repl--token-file-octets (pathname)
-  "Read a nonempty token from a regular mode-0600 file without following links."
-  (let ((descriptor nil)
-        (stream     nil))
+  "Read a nonempty token from a private regular file without following links."
+  (let ((stream nil))
     (unwind-protect
          (handler-case
-             (progn
-               (setf descriptor
-                     (sb-posix:open
-                      (namestring pathname)
-                      (logior sb-posix:o-rdonly
-                              sb-posix:o-nofollow
-                              sb-posix:o-nonblock)))
-               (let* ((status (sb-posix:fstat descriptor))
-                      (mode (sb-posix:stat-mode status))
-                      (length (sb-posix:stat-size status)))
-                 (unless (and (sb-posix:s-isreg mode)
-                              (= (sb-posix:stat-uid status) (sb-posix:getuid))
-                              (= (logand mode #o777) #o600)
+             (multiple-value-bind (opened status)
+                 (platform-open-regular-file *platform* pathname)
+               (setf stream opened)
+               (let ((length (platform-file-status-size status)))
+                 (unless (and (platform-file-status-private-p status)
                               (<= 1 length 4096))
                    (error 'management-repl-configuration-error
-                          :message "The management token file must be a nonempty regular mode-0600 file owned by the current uid and no larger than 4096 octets."
+                          :message "The management token file must be a nonempty regular file private to the current user and no larger than 4096 octets."
                           :operation ':credentials
                           :reason ':unsafe-token-file))
-                 (setf stream
-                       (sb-sys:make-fd-stream
-                        descriptor
-                        :input t
-                        :element-type '(unsigned-byte 8)
-                        :auto-close t)
-                       descriptor nil)
                  (let ((token (make-array length
                                           :element-type '(unsigned-byte 8))))
                    (unless (= (read-sequence token stream) length)
@@ -330,9 +314,7 @@
                     :operation ':credentials
                     :reason ':token-open)))
       (when stream
-        (ignore-errors (close stream)))
-      (when descriptor
-        (ignore-errors (sb-posix:close descriptor))))))
+        (ignore-errors (close stream))))))
 
 (-> management-repl--hmac
     ((simple-array (unsigned-byte 8) (*))
@@ -523,18 +505,12 @@
     :reader management-repl-runtime-owned-unix-pathname
     :type (option pathname)
     :documentation "The Unix socket pathname created by this runtime.")
-   (owned-unix-device
-    :initarg :owned-unix-device
+   (owned-unix-identity
+    :initarg :owned-unix-identity
     :initform nil
-    :reader management-repl-runtime-owned-unix-device
-    :type (option integer)
-    :documentation "The device identity of the Unix socket created by this runtime.")
-   (owned-unix-inode
-    :initarg :owned-unix-inode
-    :initform nil
-    :reader management-repl-runtime-owned-unix-inode
-    :type (option integer)
-    :documentation "The inode identity of the Unix socket created by this runtime.")
+    :reader management-repl-runtime-owned-unix-identity
+    :type t
+    :documentation "The platform file identity of the Unix socket created by this runtime.")
    (lock
     :initform (make-lock "Autolith management runtime")
     :reader management-repl-runtime-lock
@@ -768,17 +744,16 @@
 
 (-> management-repl--safe-unix-directory (pathname) null)
 (defun management-repl--safe-unix-directory (pathname)
-  "Create and validate PATHNAME as a current-user mode-0700 directory."
+  "Create and validate PATHNAME as a private current-user directory."
   (ensure-directories-exist (merge-pathnames ".keep" pathname))
-  (let* ((name (namestring pathname))
-         (status (sb-posix:lstat name))
-         (mode (sb-posix:stat-mode status)))
-    (unless (and (= (logand mode #o170000) #o040000)
-                 (= (sb-posix:stat-uid status) (sb-posix:getuid)))
+  (let ((status (platform-path-status *platform* pathname)))
+    (unless (and status
+                 (eq (platform-file-status-kind status) ':directory)
+                 (platform-file-status-owned-p status))
       (error 'management-repl-configuration-error
-             :message "The management Unix socket directory is not owned by the current uid."
+             :message "The management Unix socket directory is not owned by the current user."
              :operation ':listen))
-    (sb-posix:chmod name #o700))
+    (platform-make-private *platform* pathname))
   nil)
 
 (-> management-repl--prepare-unix-path (pathname) null)
@@ -789,48 +764,52 @@
                       (format nil ".repl-stale-~A" (make-identifier)) directory)))
     (management-repl--safe-unix-directory directory)
     (handler-case
-        (let* ((status (sb-posix:lstat (namestring pathname)))
-               (mode (sb-posix:stat-mode status))
-               (device (sb-posix:stat-dev status))
-               (inode (sb-posix:stat-ino status)))
-          (unless (and (sb-posix:s-issock mode)
-                       (= (sb-posix:stat-uid status) (sb-posix:getuid)))
-            (error 'management-repl-configuration-error
-                   :message "The management Unix socket path is occupied by an alien or non-socket object."
-                   :operation ':listen
-                   :reason ':unsafe-socket-path))
-          (let ((probe (make-instance 'sb-bsd-sockets:local-socket :type ':stream)))
-            (unwind-protect
-                 (handler-case
-                     (progn
-                       (sb-bsd-sockets:socket-connect probe (namestring pathname))
-                       (error 'management-repl-configuration-error
-                              :message "The configured management Unix endpoint is already active."
-                              :operation ':listen
-                              :reason ':active-endpoint))
-                   (sb-bsd-sockets:connection-refused-error () nil)
-                   (sb-bsd-sockets:socket-error ()
-                     (error 'management-repl-configuration-error
-                            :message "The configured management Unix socket could not be proven stale."
-                            :operation ':listen
-                            :reason ':unproven-stale)))
-              (ignore-errors (sb-bsd-sockets:socket-close probe))))
-          (sb-posix:rename (namestring pathname) (namestring quarantine))
-          (let ((moved (sb-posix:lstat (namestring quarantine))))
-            (unless (and (sb-posix:s-issock (sb-posix:stat-mode moved))
-                         (= device (sb-posix:stat-dev moved))
-                         (= inode (sb-posix:stat-ino moved)))
+        (let ((status (platform-path-status *platform* pathname)))
+          (when status
+            (unless (and (eq (platform-file-status-kind status) ':socket)
+                         (platform-file-status-owned-p status))
               (error 'management-repl-configuration-error
-                     :message "The management Unix socket changed during stale-path quarantine."
+                     :message "The management Unix socket path is occupied by an alien or non-socket object."
                      :operation ':listen
-                     :reason ':socket-replaced))
-            (delete-file quarantine)))
-      (sb-posix:syscall-error (condition)
-        (unless (= (sb-posix:syscall-errno condition) sb-posix:enoent)
-          (error 'management-repl-configuration-error
-                 :message "The management Unix socket path could not be inspected safely."
-                 :operation ':listen
-                 :reason ':socket-inspection))))))
+                     :reason ':unsafe-socket-path))
+            (management-repl--require-stale-unix-endpoint pathname)
+            (platform-replace-file *platform* pathname quarantine)
+            (let ((moved (platform-path-status *platform* quarantine)))
+              (unless (and moved
+                           (eq (platform-file-status-kind moved) ':socket)
+                           (platform-file-status-same-object-p status moved))
+                (error 'management-repl-configuration-error
+                       :message "The management Unix socket changed during stale-path quarantine."
+                       :operation ':listen
+                       :reason ':socket-replaced))
+              (delete-file quarantine))))
+      (platform-error ()
+        (error 'management-repl-configuration-error
+               :message "The management Unix socket path could not be inspected safely."
+               :operation ':listen
+               :reason ':socket-inspection)))))
+
+(-> management-repl--require-stale-unix-endpoint (pathname) null)
+(defun management-repl--require-stale-unix-endpoint (pathname)
+  "Signal unless the socket at PATHNAME provably refuses connections."
+  (let ((probe nil))
+    (unwind-protect
+         (handler-case
+             (progn
+               (setf probe (platform-connect-local *platform* pathname))
+               (error 'management-repl-configuration-error
+                      :message "The configured management Unix endpoint is already active."
+                      :operation ':listen
+                      :reason ':active-endpoint))
+           (platform-error (condition)
+             (unless (eq (platform-error-reason condition) ':refused)
+               (error 'management-repl-configuration-error
+                      :message "The configured management Unix socket could not be proven stale."
+                      :operation ':listen
+                      :reason ':unproven-stale))))
+      (when probe
+        (ignore-errors (sb-bsd-sockets:socket-close probe)))))
+  nil)
 
 (-> management-repl--make-listener (configuration)
     (values sb-bsd-sockets:socket (option pathname)))
@@ -844,23 +823,14 @@
            :reason ':frame-size))
   (ecase (configuration-management-repl-transport configuration)
     (:unix
-     (let* ((pathname
-              (configuration-management-repl-unix-socket-path configuration))
-            (listener
-              (make-instance 'sb-bsd-sockets:local-socket
-                             :type ':stream)))
+     (let ((pathname
+             (configuration-management-repl-unix-socket-path configuration)))
        (management-repl--prepare-unix-path pathname)
-       (handler-case
-           (progn
-             (sb-bsd-sockets:socket-bind listener (namestring pathname))
-             (sb-posix:chmod (namestring pathname) #o600)
-             (sb-bsd-sockets:socket-listen
-              listener
-              (configuration-management-repl-maximum-clients configuration))
-             (values listener pathname))
-         (error (condition)
-           (ignore-errors (sb-bsd-sockets:socket-close listener))
-           (error condition)))))
+       (values (platform-local-listener
+                *platform* pathname
+                :backlog (configuration-management-repl-maximum-clients
+                          configuration))
+               pathname)))
     (:tcp
      (let ((address
              (configuration-management-repl-tcp-address configuration))
@@ -1013,7 +983,7 @@
   (multiple-value-bind (listener pathname)
       (management-repl--make-listener (application-configuration application))
     (let* ((status
-             (and pathname (sb-posix:lstat (namestring pathname))))
+             (and pathname (platform-path-status *platform* pathname)))
            (runtime
              (make-instance 'management-repl-runtime
                             :configuration
@@ -1021,10 +991,9 @@
                             :application application
                             :listener listener
                             :owned-unix-pathname pathname
-                            :owned-unix-device
-                            (and status (sb-posix:stat-dev status))
-                            :owned-unix-inode
-                            (and status (sb-posix:stat-ino status)))))
+                            :owned-unix-identity
+                            (and status
+                                 (platform-file-status-identity status)))))
       (setf (application-management-repl-runtime application) runtime)
       (handler-case
           (progn
@@ -1050,12 +1019,12 @@
   (let ((pathname (management-repl-runtime-owned-unix-pathname runtime)))
     (and pathname
          (handler-case
-             (let ((status (sb-posix:lstat (namestring pathname))))
-               (and (sb-posix:s-issock (sb-posix:stat-mode status))
-                    (= (sb-posix:stat-dev status)
-                       (management-repl-runtime-owned-unix-device runtime))
-                    (= (sb-posix:stat-ino status)
-                       (management-repl-runtime-owned-unix-inode runtime))))
+             (let ((status (platform-path-status *platform* pathname)))
+               (and status
+                    (eq (platform-file-status-kind status) ':socket)
+                    (equal (platform-file-status-identity status)
+                           (management-repl-runtime-owned-unix-identity runtime))
+                    t))
            (error () nil)))))
 
 (-> management-repl--wait-for-threads (list real) list)
@@ -1075,31 +1044,29 @@
 (-> management-repl--wake-listener (management-repl-runtime) null)
 (defun management-repl--wake-listener (runtime)
   "Wake a blocking accept during bounded shutdown."
-  (let* ((configuration (management-repl-runtime-configuration runtime))
-         (socket
-           (ecase (configuration-management-repl-transport configuration)
-             (:unix
-              (make-instance 'sb-bsd-sockets:local-socket
-                             :type ':stream))
-             (:tcp
-              (make-instance 'sb-bsd-sockets:inet-socket
-                             :type ':stream
-                             :protocol ':tcp)))))
+  (let ((configuration (management-repl-runtime-configuration runtime))
+        (socket nil))
     (unwind-protect
          (ignore-errors
            (ecase (configuration-management-repl-transport configuration)
              (:unix
-              (sb-bsd-sockets:socket-connect
-               socket
-               (namestring
-                (configuration-management-repl-unix-socket-path configuration))))
+              (setf socket
+                    (platform-connect-local
+                     *platform*
+                     (configuration-management-repl-unix-socket-path
+                      configuration))))
              (:tcp
+              (setf socket
+                    (make-instance 'sb-bsd-sockets:inet-socket
+                                   :type ':stream
+                                   :protocol ':tcp))
               (sb-bsd-sockets:socket-connect
                socket
                (sb-bsd-sockets:make-inet-address
                 (configuration-management-repl-tcp-address configuration))
                (configuration-management-repl-tcp-port configuration)))))
-      (ignore-errors (sb-bsd-sockets:socket-close socket))))
+      (when socket
+        (ignore-errors (sb-bsd-sockets:socket-close socket)))))
   nil)
 
 (-> management-repl-transfer (application application) null)
