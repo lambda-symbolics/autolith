@@ -40,6 +40,9 @@
 (defparameter *terminal-ui-command-pending-completion-limit* 64
   "The maximum completed primary commands retained until their first paint.")
 
+(defparameter *terminal-ui-choice-column-gap* 4
+  "The cells separating candidate row columns, measured from the widest visible label.")
+
 (defparameter *terminal-ui-agent-compact-trace-limit* 3
   "The child tool milestones retained on one compact activity row.")
 
@@ -643,8 +646,10 @@ name."
 (defun terminal-ui--choice-rows (selector row-width)
   "Return styled candidate rows and nonselectable group headings.
 
-When any candidate carries a non-empty :TALLY string, rows render three
-columns: name, tally, and description."
+Column widths follow the rows currently in view, so descriptions start
+*TERMINAL-UI-CHOICE-COLUMN-GAP* cells after the widest visible label. When any
+visible candidate carries a non-empty :TALLY string, rows render three columns:
+name, tally, and description."
   (multiple-value-bind (index-rows arrangement-widths)
       (selector-arrange selector
                         row-width
@@ -653,11 +658,14 @@ columns: name, tally, and description."
                           (text-cell-width
                            (terminal-completion-label entry))))
     (declare (ignore arrangement-widths))
-    (let* ((tally-p
-             (loop for entry in (selector-items selector)
+    (let* ((visible-entries
+             (loop for index-row in index-rows
+                   collect (nth (first index-row) (selector-items selector))))
+           (tally-p
+             (loop for entry in visible-entries
                    thereis (plusp (length (terminal-ui--choice-tally entry)))))
            (cell-rows
-             (loop for entry in (selector-items selector)
+             (loop for entry in visible-entries
                    collect
                    (if tally-p
                        (list (terminal-completion-label entry)
@@ -665,10 +673,12 @@ columns: name, tally, and description."
                              (or (getf entry :description) ""))
                        (list (terminal-completion-label entry)
                              (or (getf entry :description) "")))))
+           (gap (make-string *terminal-ui-choice-column-gap*
+                             :initial-element #\Space))
            (column-widths
              (layout-column-widths cell-rows
                                    (max 0 (- row-width 2))
-                                   :gap-width 2
+                                   :gap-width *terminal-ui-choice-column-gap*
                                    :minimum-widths
                                    (if tally-p
                                        '(1 0 0)
@@ -713,7 +723,7 @@ columns: name, tally, and description."
                         (list
                          (terminal-span ':plain
                                         (if (plusp tally-width)
-                                            "  "
+                                            gap
                                             ""))
                          (terminal-span
                           (if selected-p ':plain ':dim)
@@ -724,7 +734,7 @@ columns: name, tally, and description."
                        (list
                         (terminal-span ':plain
                                        (if (plusp description-width)
-                                           "  "
+                                           gap
                                            "")))
                        (terminal-ui--choice-description-spans
                         entry selected-p description-width)))

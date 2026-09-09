@@ -1567,6 +1567,10 @@
                        "typing a command prefix paints matching suggestions")
           (test-assert (search "/rollback ID" painted)
                        "every matching command is suggested")
+          (test-assert
+           (and (search "/rollback ID    select a generation" painted)
+                (search "/resume ID      load a conversation" painted))
+           "descriptions start four cells after the widest visible label")
           (test-assert (not (search "/quit" painted))
                        "commands outside the typed prefix are not suggested"))
           (recording-terminal-reset terminal)
