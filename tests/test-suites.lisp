@@ -42,7 +42,9 @@
 
 (define-test-suite prompt-cache
   test-prompt-cache-miss-detection
-  test-prompt-cache-baseline-from-conversation)
+  test-prompt-cache-baseline-from-conversation
+  test-prompt-cache-miss-notices
+  test-cache-misses-command)
 
 (define-test-suite permissions
   test-command-permission-persistence

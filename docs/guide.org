@@ -483,6 +483,18 @@ summary path as automatic compaction. During an active turn, the command waits
 in the idle queue. An empty conversation needs no provider request. Compaction
 adds a durable checkpoint without adding a user message or starting a model turn.
 
+Providers bill context served from their prompt cache at a fraction of the
+uncached input price, so a request that re-reads context the previous request
+had cached costs noticeably more. =/cache-misses on= or =(cache-misses "on")=
+enables a dim notice after any request whose cache reads fell below half of the
+previous prompt. The notice gives the re-read and total prompt token counts and
+the likely cause: a model change, an idle gap past the roughly five-minute
+provider cache lifetime, rewritten earlier context, or a resumed conversation
+whose cache had expired. The first request after compaction is expected to miss
+and stays quiet. Autolith carries no price table, so the notice reports tokens
+rather than currency. The setting is off by default and persists across
+restarts.
+
 ** Providers
 
 Register a OpenAI-compatible provider:

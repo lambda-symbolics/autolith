@@ -73,6 +73,33 @@
     :accessor application-turn-timestamps-p
     :type boolean
     :documentation "Whether user and assistant headers show local timestamps.")
+   (cache-miss-notices-p
+    :initarg :cache-miss-notices-p
+    :initform nil
+    :accessor application-cache-miss-notices-p
+    :type boolean
+    :documentation
+    "Whether provider requests that re-read uncached context are reported.")
+   (prompt-cache-baseline
+    :initform nil
+    :accessor application-prompt-cache-baseline
+    :type (option prompt-cache-baseline)
+    :documentation "What the next provider request should find in the prompt cache.")
+   (prompt-cache-conversation-id
+    :initform nil
+    :accessor application-prompt-cache-conversation-id
+    :type (option string)
+    :documentation "The conversation whose persisted usage seeded the baseline.")
+   (prompt-cache-request-started-at
+    :initform nil
+    :accessor application-prompt-cache-request-started-at
+    :type (option timestamp)
+    :documentation "When the provider request in flight started.")
+   (prompt-cache-request-model
+    :initform nil
+    :accessor application-prompt-cache-request-model
+    :type (option string)
+    :documentation "The model serving the provider request in flight.")
    (hurry-up-p
     :initarg :hurry-up-p
     :initform nil
@@ -943,6 +970,9 @@ newly acquired lease."
                            (turn-timestamps-p
                              (preferences-turn-timestamps-p
                               preferred-configuration))
+                           (cache-miss-notices-p
+                             (preferences-cache-miss-notices-p
+                              preferred-configuration))
                            (permission-state
                              (permissions-load preferred-configuration))
                            (configuration
@@ -995,6 +1025,7 @@ newly acquired lease."
                                :reasoning-traces-p reasoning-traces-p
                                :compact-view-p compact-view-p
                                :turn-timestamps-p turn-timestamps-p
+                               :cache-miss-notices-p cache-miss-notices-p
                                :installation-provenance
                                installation-provenance
                                :update-availability update-availability
@@ -1125,6 +1156,8 @@ newly acquired lease."
                             (preferences-compact-view-p prepared-configuration))
                            (turn-timestamps-p
                             (preferences-turn-timestamps-p prepared-configuration))
+                           (cache-miss-notices-p
+                            (preferences-cache-miss-notices-p prepared-configuration))
                            (permission-state (permissions-load prepared-configuration))
                            (recovery-state
                             (multiple-value-list
@@ -1210,6 +1243,7 @@ newly acquired lease."
                                :reasoning-traces-p reasoning-traces-p
                                :compact-view-p compact-view-p
                                :turn-timestamps-p turn-timestamps-p
+                               :cache-miss-notices-p cache-miss-notices-p
                                :installation-provenance installation-provenance
                                :update-availability update-availability
                                :recovery-startup-p
@@ -3120,6 +3154,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
             (text-buffer-clear stream-text)
             (setf presented-reasoning-text nil
                   activity-label (application-thinking-label))
+            (application-note-prompt-cache-request-started application)
             (application-publish-recovery-session application)
             (application-set-activity application activity-label))
            (:provider-retrying
@@ -3166,7 +3201,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
               (application-render-records
                application
                :streamed-assistant-text completed-stream-text
-               :streamed-reasoning-text completed-reasoning-text)))
+               :streamed-reasoning-text completed-reasoning-text))
+            (application-note-prompt-cache-request-completed
+             application details))
            (:tool-call-started
             (application-set-activity
              application
@@ -3202,6 +3239,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
             (terminal-ui-set-compacting ui t))
            (:compaction-completed
             (terminal-ui-set-compacting ui nil)
+            ;; The rewritten prompt cannot hit the old cache, so the expected
+            ;; miss on the next request is not worth a notice.
+            (setf (application-prompt-cache-baseline application) nil)
             (application-render-records application)
             (application-set-activity application activity-label))
            (:turn-completed

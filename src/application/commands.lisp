@@ -241,6 +241,81 @@
             (if rate (format nil " (~D% of input)" rate) "")
             (application--token-count-description created))))
 
+
+;;;; -- Prompt-Cache Miss Notices --
+
+(-> application--prompt-cache-miss-cause-text (list) string)
+(defun application--prompt-cache-miss-cause-text (miss)
+  "Return the likely-cause clause for the prompt-cache MISS."
+  (ecase (getf miss :cause)
+    (:model-changed
+     "the model changed since the previous request")
+    (:idle
+     (format nil "idle for ~D min, past the ~D min provider cache lifetime"
+             (round (getf miss :idle-seconds) 60)
+             (round *prompt-cache-lifetime-seconds* 60)))
+    (:context-rewritten
+     "earlier context was rewritten")
+    (:resumed
+     "the resumed conversation was no longer cached")
+    (:prefix-changed
+     "the prompt prefix changed")))
+
+(-> application--prompt-cache-miss-notice (list) string)
+(defun application--prompt-cache-miss-notice (miss)
+  "Return the one-line transcript notice for the prompt-cache MISS."
+  (format nil
+          "∙ prompt cache miss: ~A of ~A prompt tokens re-read at the uncached input price; ~A"
+          (application--token-count-description (getf miss :re-read-tokens))
+          (application--token-count-description (getf miss :prompt-tokens))
+          (application--prompt-cache-miss-cause-text miss)))
+
+(-> application-note-prompt-cache-request-started (application) null)
+(defun application-note-prompt-cache-request-started (application)
+  "Record the start of a provider request for prompt-cache miss detection.
+
+The first request of each conversation seeds the baseline from its newest
+persisted provider usage, so a resumed session notices its cold cache."
+  (let ((conversation (application-conversation application)))
+    (unless (equal (application-prompt-cache-conversation-id application)
+                   (conversation-identifier conversation))
+      (setf (application-prompt-cache-conversation-id application)
+            (conversation-identifier conversation)
+            (application-prompt-cache-baseline application)
+            (prompt-cache-baseline-from-conversation conversation)))
+    (setf (application-prompt-cache-request-started-at application)
+          (get-universal-time)
+          (application-prompt-cache-request-model application)
+          (configuration-model (application-configuration application))))
+  nil)
+
+(-> application-note-prompt-cache-request-completed (application list) null)
+(defun application-note-prompt-cache-request-completed (application details)
+  "Report a prompt-cache miss for the request completing with DETAILS.
+
+The completed request's usage becomes the next baseline whether or not the
+notice preference is on, so enabling it mid-session takes effect immediately."
+  (let* ((usage (getf details :usage))
+         (model (application-prompt-cache-request-model application))
+         (miss (prompt-cache-miss-detect
+                (application-prompt-cache-baseline application)
+                usage
+                :started-at
+                (application-prompt-cache-request-started-at application)
+                :model model))
+         (baseline (prompt-cache-baseline-create
+                    usage
+                    :completed-at (get-universal-time)
+                    :model model)))
+    (when baseline
+      (setf (application-prompt-cache-baseline application) baseline))
+    (when (and miss (application-cache-miss-notices-p application))
+      (application-present
+       application
+       (list (terminal-span ':hint
+                            (application--prompt-cache-miss-notice miss))))))
+  nil)
+
 (-> application--window-label ((option integer) string) string)
 (defun application--window-label (minutes fallback)
   "Return the human name of a MINUTES-long rate limit window."
@@ -325,6 +400,10 @@
       "timestamps"
       (application--toggle-state
        (application-turn-timestamps-p application)))
+     (application--field-spans
+      "cache misses"
+      (application--toggle-state
+       (application-cache-miss-notices-p application)))
      (application--field-spans
       "compact view"
       (application--toggle-state
@@ -787,6 +866,39 @@
       (t
        (error 'configuration-error
               :message "Usage: /timestamps on or /timestamps off."))))
+  nil)
+
+(-> application-set-cache-miss-notices (application boolean) null)
+(defun application-set-cache-miss-notices (application enabled-p)
+  "Persist and apply whether prompt-cache misses are reported after requests."
+  (preferences-set-cache-miss-notices
+   (application-configuration application)
+   enabled-p)
+  (setf (application-cache-miss-notices-p application) enabled-p)
+  nil)
+
+(-> application-cache-miss-notices-command (application (option string)) null)
+(defun application-cache-miss-notices-command (application argument)
+  "Show or change APPLICATION's optional prompt-cache miss notices."
+  (let ((mode (and argument (string-downcase argument))))
+    (cond
+      ((null mode)
+       (application-present
+        application
+        (format nil
+                "Prompt-cache miss notices are ~:[off~;on~]. This setting persists across restarts."
+                (application-cache-miss-notices-p application))))
+      ((string= mode "on")
+       (application-set-cache-miss-notices application t)
+       (application-present
+        application
+        "Prompt-cache miss notices are on and saved. Requests that re-read uncached context will be reported."))
+      ((string= mode "off")
+       (application-set-cache-miss-notices application nil)
+       (application-present application "Prompt-cache miss notices are off and saved."))
+      (t
+       (error 'configuration-error
+              :message "Usage: /cache-misses on or /cache-misses off."))))
   nil)
 
 (-> application-simple-technical-english-command
@@ -2208,6 +2320,18 @@ are forwarded to TERMINAL-UI-SELECT."
      :static-options ("on" "off"))
     (application &optional mode)
   (application-session-titles-command application mode)
+  ':continue)
+
+(define-application-command application--builtin-cache-misses-command
+    (:name "/cache-misses"
+     :description "notify when a request re-reads uncached context"
+     :tip "reports prompt-cache misses and their likely cause after each affected request."
+     :busy-behavior :apply
+     :terminal-behavior :shared
+     :callable t
+     :static-options ("on" "off"))
+    (application &optional mode)
+  (application-cache-miss-notices-command application mode)
   ':continue)
 
 (define-application-command application--builtin-hurry-up-command
