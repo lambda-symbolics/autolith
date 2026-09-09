@@ -40,6 +40,10 @@
 (define-test-suite preferences
   test-preferences)
 
+(define-test-suite prompt-cache
+  test-prompt-cache-miss-detection
+  test-prompt-cache-baseline-from-conversation)
+
 (define-test-suite permissions
   test-command-permission-persistence
   test-command-permission-corruption)
