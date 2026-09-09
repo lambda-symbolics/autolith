@@ -59,9 +59,9 @@
 (defun skill-tests--delete-root (root)
   "Delete temporary test ROOT when it exists."
   (when (probe-file root)
-    (uiop:delete-directory-tree root
-                                :validate t
-                                :if-does-not-exist ':ignore))
+    (platform-delete-directory-tree *platform* root
+                                    :validate t
+                                    :if-does-not-exist ':ignore))
   nil)
 
 

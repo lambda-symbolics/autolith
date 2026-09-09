@@ -152,7 +152,7 @@
         (fmakunbound 'user-init-tests--command))
       (when (fboundp 'user-init-tests--contributor)
         (fmakunbound 'user-init-tests--contributor))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-local-source-tree-registration () null)
@@ -202,7 +202,7 @@
                                     (asdf:find-system "autolith"))
                                    version-before)
                           "registration keeps the loaded system authoritative")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-directory-user-init () null)
@@ -275,5 +275,5 @@
       (mcp--registry-restore mcp-registrations)
       (when (fboundp 'directory-user-init-tests--definition)
         (fmakunbound 'directory-user-init-tests--definition))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

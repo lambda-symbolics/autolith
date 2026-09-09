@@ -126,5 +126,5 @@
                    (search "Broken replay."
                            (uiop:read-file-string log-pathname)))
               "a rejected replay probe persists its complete output beside the script")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

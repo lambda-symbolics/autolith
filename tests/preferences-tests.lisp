@@ -56,7 +56,7 @@
           "unchanged missing preferences reuse their validated state"))
        (preferences-tests--without-model-environment
         (lambda ()
-          (sb-posix:setenv "AUTOLITH_CODEX_FAST_MODE" "on" 1)
+          (platform-setenv "AUTOLITH_CODEX_FAST_MODE" "on")
           (let ((environment-configuration
                   (configuration-create
                    :source-root (asdf:system-source-directory :autolith)
@@ -72,7 +72,7 @@
                 :working-directory (asdf:system-source-directory :autolith)
                 :codex-fast-mode-p nil)))
              "an explicit Fast mode choice overrides the environment"))
-          (sb-posix:setenv "AUTOLITH_CODEX_FAST_MODE" "invalid" 1)
+          (platform-setenv "AUTOLITH_CODEX_FAST_MODE" "invalid")
           (test-assert
            (handler-case
                (progn
@@ -249,7 +249,7 @@
                "saved Codex Fast mode becomes the startup default")))))
       (preferences-tests--without-model-environment
        (lambda ()
-         (sb-posix:setenv "AUTOLITH_CODEX_FAST_MODE" "off" 1)
+         (platform-setenv "AUTOLITH_CODEX_FAST_MODE" "off")
          (test-assert
           (not
            (configuration-codex-fast-mode-p
@@ -257,17 +257,15 @@
              (configuration-with-codex-fast-mode configuration nil))))
           "the environment can disable saved Codex Fast mode")
          (preferences-set-codex-fast-mode configuration nil)
-         (sb-posix:setenv "AUTOLITH_CODEX_FAST_MODE" "on" 1)
+         (platform-setenv "AUTOLITH_CODEX_FAST_MODE" "on")
          (test-assert
           (configuration-codex-fast-mode-p
            (preferences-apply-model-selection
             (configuration-with-codex-fast-mode configuration t)))
           "the environment can enable Codex Fast mode over a saved default")
          (preferences-set-codex-fast-mode configuration t)))
-      (let ((mode (sb-posix:stat-mode
-                   (sb-posix:stat (namestring pathname)))))
-        (test-assert (= (logand mode #o777) #o600)
-                     "global preferences remain private to the user"))
+      (test-assert (test-fixture-permissions-p *platform* pathname ':private-file)
+                   "global preferences remain private to the user")
       (preferences-set-reasoning-traces configuration nil)
       (let ((preferences (preferences-load configuration)))
         (test-assert

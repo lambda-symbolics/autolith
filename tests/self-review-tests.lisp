@@ -110,5 +110,5 @@
                       :key #'context-contribution-identifier
                       :test #'string=)))
               "a triggered reminder reaches the request context")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

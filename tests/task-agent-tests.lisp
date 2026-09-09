@@ -215,8 +215,8 @@
                    (format nil
                            "~A native role input returns complete typed diagnostic metadata"
                            name))))))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -319,8 +319,8 @@
                                 (task-agent-definition-error-cause
                                  dupe-diagnostic))))
                   "case-normalized duplicate filenames fail closed before parsing")))))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-agents-tool () null)
@@ -568,8 +568,8 @@
                                   "~A child has no discoverable spawn targets"
                                   name))))))))))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-tool-default-argument-types () null)
@@ -698,8 +698,8 @@
                         "job.wait rejects explicit timeout-seconds ~A"
                         value)))))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -956,8 +956,8 @@
                             "dependency unavailable")
                    (not (task-completion-data-present-p completion)))
               "an explained failed yield is an accepted terminal result")))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -1819,8 +1819,8 @@
                          (zerop (task-job-steering-pending-count job))
                          (task-job-steering-closed-p job))
                     "terminal publication records queued and in-flight prompts")))))
-        (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist ':ignore)))
+        (platform-delete-directory-tree *platform* root :validate t
+                                             :if-does-not-exist ':ignore)))
     nil)))
 
 (-> test-task-child-messaging () null)

@@ -412,7 +412,7 @@
          (saved-recovered (uiop:getenv "AUTOLITH_RECOVERED")))
     (unwind-protect
          (progn
-           (sb-posix:unsetenv "AUTOLITH_RECOVERED")
+           (platform-unsetenv "AUTOLITH_RECOVERED")
            (let* ((immutable-configuration
                     (configuration--clone configuration :immutable-p t))
                   (immutable-application
@@ -428,7 +428,7 @@
              (test-assert
               (search "mode          immutable" text)
               "the startup banner identifies immutable mode"))
-           (sb-posix:setenv "AUTOLITH_RECOVERED" "1" 1)
+           (platform-setenv "AUTOLITH_RECOVERED" "1")
            (let* ((spans (application-banner application))
                   (recovery-styles
                     (loop for span in spans
@@ -439,7 +439,7 @@
              (test-assert
               (equal recovery-styles *application-recovery-gradient-styles*)
               "a recovered startup banner styles every logo row as recovered"))
-           (sb-posix:unsetenv "AUTOLITH_RECOVERED")
+           (platform-unsetenv "AUTOLITH_RECOVERED")
            (let* ((text
                     (format nil "~{~A~}"
                             (mapcar #'terminal-span-text
@@ -455,9 +455,9 @@
                       1))
               "one security notice appears before the startup command tip")))
       (if saved-recovered
-          (sb-posix:setenv "AUTOLITH_RECOVERED" saved-recovered 1)
-          (sb-posix:unsetenv "AUTOLITH_RECOVERED"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+          (platform-setenv "AUTOLITH_RECOVERED" saved-recovered)
+          (platform-unsetenv "AUTOLITH_RECOVERED"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-startup-update-choice () null)
@@ -556,9 +556,9 @@
                 (and (null (application-update-check-thread application))
                      (not (thread-alive-p thread)))
                 "checkpoint quiescence joins the background update check")))
-        (uiop:delete-directory-tree root
-                                    :validate t
-                                    :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -619,317 +619,320 @@
               (test-assert
                (search "could not check the release service" (first presented))
                "a failed explicit check is nonfatal and reports no installation change"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-command-permission-modes () null)
 (defun test-command-permission-modes ()
   "Test session permission commands and fail-closed command authorization."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (terminal (make-instance 'recording-terminal :columns 72))
-         (ui (terminal-ui-create :terminal terminal))
-          (state (permissions-load configuration))
-          (conversation
-            (conversation-create configuration :identifier "permission-modes"))
-          (application
-            (make-instance 'application
-                           :configuration configuration
-                           :conversation conversation
-                           :ui ui
-                           :permission-state state
-                           :provider
-                          (make-instance
-                           'rlm-inference-test-provider
-                           :results
-                           (list (rlm-inference-test-result
-                                  "classify-1"
-                                  "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
-                                  20)
-                                 (rlm-inference-test-result
-                                  "classify-2"
-                                  "{\"decision\": \"deny\", \"reason\": \"privilege escalation\"}"
-                                  20)
-                                 (rlm-inference-test-result
-                                  "classify-3"
-                                  "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
-                                  20)
-                                 (rlm-inference-test-result
-                                  "classify-4"
-                                  "{\"decision\": \"full\", \"reason\": \"sandbox unavailable\"}"
-                                  20)
-                                  (rlm-inference-test-result
-                                   "classify-5"
-                                   "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
-                                   20)
-                                 (rlm-inference-test-result
-                                  "classify-6"
-                                  "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
-                                  20))))))
-    (unwind-protect
-         (progn
-           (terminal-ui-start ui)
-            (conversation-append-user-message
-             conversation
-             "Fetch dependencies and inspect this workspace.")
-            (test-call-with-function-replacements
-             (list
-                (list 'permissions-model-classify-command
-                      (lambda (command directory &key provider configuration
-                                                      sandbox-available-p
-                                                      user-instructions)
-                        (declare (ignore command directory provider
-                                         configuration sandbox-available-p))
-                        (test-assert
-                         (string= user-instructions
-                                  "Fetch dependencies and inspect this workspace.")
-                         "application classification receives current user instructions")
-                        (values ':sandboxed "read-only inspection"))))
-             (lambda ()
-               (test-assert
-                (eq (application-authorize-command
-                     application "printf unknown" root)
-                    ':sandboxed)
-                "ask mode classifies commands when no approval UI is available")
-               (test-assert
-                (eq (application-permission-mode application) ':ask)
-                "noninteractive classification preserves ask mode")))
-            (conversation-append-user-message
-             conversation
-             "Run the exact pending command with the access it needs.")
-            (test-call-with-function-replacements
-             (list
-              (list 'permissions-model-classify-command
-                    (lambda (command directory &key provider configuration
-                                                    sandbox-available-p
-                                                    user-instructions)
-                      (declare (ignore command directory provider configuration
-                                       sandbox-available-p))
-                      (test-assert
-                       (string= user-instructions
-                                "Run the exact pending command with the access it needs.")
-                       "classification cache keys include current user instructions")
-                      (values ':full-access "explicitly requested"))))
-             (lambda ()
-               (test-assert
-                (eq (application-authorize-command
-                     application "printf unknown" root)
-                    ':full-access)
-                "changed user instructions trigger fresh classification")))
-            (permissions-allow :configuration configuration
-                               :state         state
-                               :command       "printf saved"
-                               :directory     root)
-            (test-assert
-             (eq (application-authorize-command
-                  application "printf saved" root)
-                 ':full-access)
-             "ask mode runs an exact saved approval with full access")
-           (application-command application "/permissions sandbox")
-           (test-assert
-            (eq (application-authorize-command
-                 application "printf any" root)
-                ':sandboxed)
-            "/permissions sandbox allows sandboxed commands for the session")
-           (test-call-with-function-replacements
-            (list
-             (list 'sandbox-supported-p
-                   (lambda (&optional capability)
-                     (declare (ignore capability))
-                     nil)))
-            (lambda ()
-               (test-assert
-                (handler-case
-                    (progn
-                      (application-authorize-command
-                       application "printf any" root)
-                      nil)
-                  (command-authorization-unavailable ()
-                    t))
-                "session sandbox mode explicitly rejects after helper loss")
-              (test-assert
-               (equal (mapcar (lambda (item) (getf item ':name))
-                              (application--permission-mode-items application))
-                      '("ask" "auto" "full"))
-               "the permission mode picker omits an unavailable sandbox")
-              (test-assert
-               (handler-case
-                   (progn
-                     (application-permissions-command application "sandbox")
-                     nil)
-                 (configuration-error ()
-                   t))
-               "direct sandbox mode selection rejects unavailable containment")))
-           (application-command application "/permissions full")
-           (test-assert
-            (eq (application-authorize-command
-                 application "printf any" root)
-                ':full-access)
-            "/permissions full grants full command access for the session")
-           (application-command application "/permissions auto")
-           (test-assert (eq (application-permission-mode application) ':auto)
-                         "/permissions auto selects autonomous classification mode")
-           (test-assert
-            (eq (application-authorize-command
-                 application "git status" root)
-                ':sandboxed)
-            "auto mode allows safe inspection inside the sandbox")
-           (test-assert
-            (eq (application-authorize-command
-                 application "sudo ls" root)
-                ':deny)
-            "auto mode refuses privilege-escalation commands")
-            (test-call-with-function-replacements
-             (list
-              (list 'permissions-model-classify-command
-                    (lambda (command directory &key provider configuration
-                                                    sandbox-available-p
-                                                    user-instructions)
-                      (declare (ignore command directory provider configuration
-                                       sandbox-available-p user-instructions))
-                      (values ':pick "destructive change"))))
-             (lambda ()
-               (test-assert
-                (eq (application-authorize-command
-                     application "git restore file" root)
-                    ':deny)
-                "auto mode rejects a classifier pick decision")))
-            (let ((provider (application-provider application)))
-              (unwind-protect
-                   (progn
-                     (setf (application-provider application) nil)
-                     (test-assert
-                      (eq (application-authorize-command
-                           application "uname -a" root)
-                          ':deny)
-                      "auto mode denies when no classifier is available"))
-                (setf (application-provider application) provider)))
-            (let ((capability-checks 0))
-              (test-call-with-function-replacements
-               (list
-                (list 'sandbox-supported-p
-                      (lambda (&optional capability)
-                        (declare (ignore capability))
-                        (= (incf capability-checks) 1)))
-                (list 'application--interactive-command-approval-p
-                      (lambda (ignored)
-                        (declare (ignore ignored))
-                        t))
-                (list 'application--ask-command-permission
-                      (lambda (&rest ignored)
-                        (declare (ignore ignored))
-                        (error "auto mode attempted to open a permission picker"))))
-               (lambda ()
-                 (test-assert
-                  (eq (application-authorize-command
-                       application "git diff" root)
-                      ':deny)
-                  "auto mode denies when containment disappears with a picker available")
-                 (test-assert
-                  (= capability-checks 2)
-                  "a sandbox grant is checked at the final authorization boundary"))))
-           (test-call-with-function-replacements
-            (list
-             (list 'sandbox-supported-p
-                   (lambda (&optional capability)
-                     (eq capability ':network-isolated))))
-            (lambda ()
-              (test-assert
-               (application--command-sandbox-available-p)
-               "optional sandbox capabilities do not disable auto containment")))
-            (let ((authorization-item-names nil))
-             (test-call-with-function-replacements
-              (list
-               (list 'sandbox-supported-p
-                     (lambda (&optional capability)
-                       (declare (ignore capability))
-                       nil))
-               (list 'application-input-controller
-                     (lambda (ignored)
-                       (declare (ignore ignored))
-                       ':test-controller))
-               (list 'terminal-interactive-p
-                     (lambda (ignored)
-                       (declare (ignore ignored))
-                       t))
-               (list 'application-input-controller-call-with-reader-paused
-                     (lambda (ignored function)
-                       (declare (ignore ignored))
-                       (funcall function)))
-               (list 'terminal-ui-select
-                     (lambda (ignored &key items &allow-other-keys)
-                       (declare (ignore ignored))
-                       (setf authorization-item-names
-                             (mapcar (lambda (item) (getf item ':name)) items))
-                       "once")))
-              (lambda ()
-                (test-assert
-                 (eq (application-authorize-command
-                      application "git status" root)
-                     ':full-access)
-                 "sandbox availability separates cached auto decisions")
+  (if (application--command-sandbox-available-p)
+      (let* ((configuration (test-configuration))
+             (root (test-configuration-root configuration))
+             (terminal (make-instance 'recording-terminal :columns 72))
+             (ui (terminal-ui-create :terminal terminal))
+              (state (permissions-load configuration))
+              (conversation
+                (conversation-create configuration :identifier "permission-modes"))
+              (application
+                (make-instance 'application
+                               :configuration configuration
+                               :conversation conversation
+                               :ui ui
+                               :permission-state state
+                               :provider
+                              (make-instance
+                               'rlm-inference-test-provider
+                               :results
+                               (list (rlm-inference-test-result
+                                      "classify-1"
+                                      "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
+                                      20)
+                                     (rlm-inference-test-result
+                                      "classify-2"
+                                      "{\"decision\": \"deny\", \"reason\": \"privilege escalation\"}"
+                                      20)
+                                     (rlm-inference-test-result
+                                      "classify-3"
+                                      "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
+                                      20)
+                                     (rlm-inference-test-result
+                                      "classify-4"
+                                      "{\"decision\": \"full\", \"reason\": \"sandbox unavailable\"}"
+                                      20)
+                                      (rlm-inference-test-result
+                                       "classify-5"
+                                       "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
+                                       20)
+                                     (rlm-inference-test-result
+                                      "classify-6"
+                                      "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
+                                      20))))))
+        (unwind-protect
+             (progn
+               (terminal-ui-start ui)
+                (conversation-append-user-message
+                 conversation
+                 "Fetch dependencies and inspect this workspace.")
+                (test-call-with-function-replacements
+                 (list
+                    (list 'permissions-model-classify-command
+                          (lambda (command directory &key provider configuration
+                                                          sandbox-available-p
+                                                          user-instructions)
+                            (declare (ignore command directory provider
+                                             configuration sandbox-available-p))
+                            (test-assert
+                             (string= user-instructions
+                                      "Fetch dependencies and inspect this workspace.")
+                             "application classification receives current user instructions")
+                            (values ':sandboxed "read-only inspection"))))
+                 (lambda ()
+                   (test-assert
+                    (eq (application-authorize-command
+                         application "printf unknown" root)
+                        ':sandboxed)
+                    "ask mode classifies commands when no approval UI is available")
+                   (test-assert
+                    (eq (application-permission-mode application) ':ask)
+                    "noninteractive classification preserves ask mode")))
+                (conversation-append-user-message
+                 conversation
+                 "Run the exact pending command with the access it needs.")
+                (test-call-with-function-replacements
+                 (list
+                  (list 'permissions-model-classify-command
+                        (lambda (command directory &key provider configuration
+                                                        sandbox-available-p
+                                                        user-instructions)
+                          (declare (ignore command directory provider configuration
+                                           sandbox-available-p))
+                          (test-assert
+                           (string= user-instructions
+                                    "Run the exact pending command with the access it needs.")
+                           "classification cache keys include current user instructions")
+                          (values ':full-access "explicitly requested"))))
+                 (lambda ()
+                   (test-assert
+                    (eq (application-authorize-command
+                         application "printf unknown" root)
+                        ':full-access)
+                    "changed user instructions trigger fresh classification")))
+                (permissions-allow :configuration configuration
+                                   :state         state
+                                   :command       "printf saved"
+                                   :directory     root)
                 (test-assert
                  (eq (application-authorize-command
                       application "printf saved" root)
                      ':full-access)
-                 "auto mode reclassifies saved commands without a sandbox")
-                (setf (application-permission-mode application) ':ask)
-                (test-assert
-                 (eq (application-authorize-command
-                      application "git log" root)
-                     ':full-access)
-                 "manual once approval grants full access")
-                (test-assert
-                 (equal authorization-item-names
-                        '("auto" "once" "always" "full" "deny"))
-                 "the manual command picker retains full-access approvals without a sandbox")
-                (test-assert
-                 (eq (application--apply-command-authorization-choice
-                      application "git log" root "once")
-                     ':full-access)
-                 "once grants full access without changing session mode")
-                (test-assert
-                 (eq (application-permission-mode application) ':ask)
-                 "once preserves manual permission mode")
-                 (test-assert
-                  (eq (application--apply-command-authorization-choice
-                       application "git log" root "always")
-                      ':full-access)
-                  "always grants full access when the sandbox is unavailable")
-                 (test-assert
-                  (permissions-allowed-p state "git log" root)
-                  "always persists the exact full-access approval"))))
-           (setf (application-permission-mode application) ':ask)
-            (test-call-with-function-replacements
-             (list
-              (list 'permissions-model-classify-command
-                    (lambda (command directory &key provider configuration
-                                                    sandbox-available-p
-                                                    user-instructions)
-                      (declare (ignore command directory provider
-                                       configuration sandbox-available-p
-                                       user-instructions))
-                      (values ':full-access "prints a literal"))))
-             (lambda ()
+                 "ask mode runs an exact saved approval with full access")
+               (application-command application "/permissions sandbox")
                (test-assert
-                (eq (application--apply-command-authorization-choice
-                     application "printf picked" root "auto")
+                (eq (application-authorize-command
+                     application "printf any" root)
+                    ':sandboxed)
+                "/permissions sandbox allows sandboxed commands for the session")
+               (test-call-with-function-replacements
+                (list
+                 (list 'sandbox-supported-p
+                       (lambda (&optional capability)
+                         (declare (ignore capability))
+                         nil)))
+                (lambda ()
+                   (test-assert
+                    (handler-case
+                        (progn
+                          (application-authorize-command
+                           application "printf any" root)
+                          nil)
+                      (command-authorization-unavailable ()
+                        t))
+                    "session sandbox mode explicitly rejects after helper loss")
+                  (test-assert
+                   (equal (mapcar (lambda (item) (getf item ':name))
+                                  (application--permission-mode-items application))
+                          '("ask" "auto" "full"))
+                   "the permission mode picker omits an unavailable sandbox")
+                  (test-assert
+                   (handler-case
+                       (progn
+                         (application-permissions-command application "sandbox")
+                         nil)
+                     (configuration-error ()
+                       t))
+                   "direct sandbox mode selection rejects unavailable containment")))
+               (application-command application "/permissions full")
+               (test-assert
+                (eq (application-authorize-command
+                     application "printf any" root)
                     ':full-access)
-                "auto classifies the pending command immediately")))
-           (test-assert
-            (eq (application-permission-mode application) ':auto)
-            "auto stays the session permission mode like full and sandbox")
-           (application-command application "/permissions ask")
-           (test-assert (eq (application-permission-mode application) ':ask)
-                        "/permissions ask restores prompt mode")
-           (application-command application "/permissions clear")
-           (test-assert (null (permission-state-rules state))
-                        "/permissions clear removes saved exact approvals")
-           (test-assert (search "/permissions" (application-help))
-                        "the command reference includes /permissions")
-           (terminal-ui-stop ui))
-      (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+                "/permissions full grants full command access for the session")
+               (application-command application "/permissions auto")
+               (test-assert (eq (application-permission-mode application) ':auto)
+                             "/permissions auto selects autonomous classification mode")
+               (test-assert
+                (eq (application-authorize-command
+                     application "git status" root)
+                    ':sandboxed)
+                "auto mode allows safe inspection inside the sandbox")
+               (test-assert
+                (eq (application-authorize-command
+                     application "sudo ls" root)
+                    ':deny)
+                "auto mode refuses privilege-escalation commands")
+                (test-call-with-function-replacements
+                 (list
+                  (list 'permissions-model-classify-command
+                        (lambda (command directory &key provider configuration
+                                                        sandbox-available-p
+                                                        user-instructions)
+                          (declare (ignore command directory provider configuration
+                                           sandbox-available-p user-instructions))
+                          (values ':pick "destructive change"))))
+                 (lambda ()
+                   (test-assert
+                    (eq (application-authorize-command
+                         application "git restore file" root)
+                        ':deny)
+                    "auto mode rejects a classifier pick decision")))
+                (let ((provider (application-provider application)))
+                  (unwind-protect
+                       (progn
+                         (setf (application-provider application) nil)
+                         (test-assert
+                          (eq (application-authorize-command
+                               application "uname -a" root)
+                              ':deny)
+                          "auto mode denies when no classifier is available"))
+                    (setf (application-provider application) provider)))
+                (let ((capability-checks 0))
+                  (test-call-with-function-replacements
+                   (list
+                    (list 'sandbox-supported-p
+                          (lambda (&optional capability)
+                            (declare (ignore capability))
+                            (= (incf capability-checks) 1)))
+                    (list 'application--interactive-command-approval-p
+                          (lambda (ignored)
+                            (declare (ignore ignored))
+                            t))
+                    (list 'application--ask-command-permission
+                          (lambda (&rest ignored)
+                            (declare (ignore ignored))
+                            (error "auto mode attempted to open a permission picker"))))
+                   (lambda ()
+                     (test-assert
+                      (eq (application-authorize-command
+                           application "git diff" root)
+                          ':deny)
+                      "auto mode denies when containment disappears with a picker available")
+                     (test-assert
+                      (= capability-checks 2)
+                      "a sandbox grant is checked at the final authorization boundary"))))
+               (test-call-with-function-replacements
+                (list
+                 (list 'sandbox-supported-p
+                       (lambda (&optional capability)
+                         (eq capability ':network-isolated))))
+                (lambda ()
+                  (test-assert
+                   (application--command-sandbox-available-p)
+                   "optional sandbox capabilities do not disable auto containment")))
+                (let ((authorization-item-names nil))
+                 (test-call-with-function-replacements
+                  (list
+                   (list 'sandbox-supported-p
+                         (lambda (&optional capability)
+                           (declare (ignore capability))
+                           nil))
+                   (list 'application-input-controller
+                         (lambda (ignored)
+                           (declare (ignore ignored))
+                           ':test-controller))
+                   (list 'terminal-interactive-p
+                         (lambda (ignored)
+                           (declare (ignore ignored))
+                           t))
+                   (list 'application-input-controller-call-with-reader-paused
+                         (lambda (ignored function)
+                           (declare (ignore ignored))
+                           (funcall function)))
+                   (list 'terminal-ui-select
+                         (lambda (ignored &key items &allow-other-keys)
+                           (declare (ignore ignored))
+                           (setf authorization-item-names
+                                 (mapcar (lambda (item) (getf item ':name)) items))
+                           "once")))
+                  (lambda ()
+                    (test-assert
+                     (eq (application-authorize-command
+                          application "git status" root)
+                         ':full-access)
+                     "sandbox availability separates cached auto decisions")
+                    (test-assert
+                     (eq (application-authorize-command
+                          application "printf saved" root)
+                         ':full-access)
+                     "auto mode reclassifies saved commands without a sandbox")
+                    (setf (application-permission-mode application) ':ask)
+                    (test-assert
+                     (eq (application-authorize-command
+                          application "git log" root)
+                         ':full-access)
+                     "manual once approval grants full access")
+                    (test-assert
+                     (equal authorization-item-names
+                            '("auto" "once" "always" "full" "deny"))
+                     "the manual command picker retains full-access approvals without a sandbox")
+                    (test-assert
+                     (eq (application--apply-command-authorization-choice
+                          application "git log" root "once")
+                         ':full-access)
+                     "once grants full access without changing session mode")
+                    (test-assert
+                     (eq (application-permission-mode application) ':ask)
+                     "once preserves manual permission mode")
+                     (test-assert
+                      (eq (application--apply-command-authorization-choice
+                           application "git log" root "always")
+                          ':full-access)
+                      "always grants full access when the sandbox is unavailable")
+                     (test-assert
+                      (permissions-allowed-p state "git log" root)
+                      "always persists the exact full-access approval"))))
+               (setf (application-permission-mode application) ':ask)
+                (test-call-with-function-replacements
+                 (list
+                  (list 'permissions-model-classify-command
+                        (lambda (command directory &key provider configuration
+                                                        sandbox-available-p
+                                                        user-instructions)
+                          (declare (ignore command directory provider
+                                           configuration sandbox-available-p
+                                           user-instructions))
+                          (values ':full-access "prints a literal"))))
+                 (lambda ()
+                   (test-assert
+                    (eq (application--apply-command-authorization-choice
+                         application "printf picked" root "auto")
+                        ':full-access)
+                    "auto classifies the pending command immediately")))
+               (test-assert
+                (eq (application-permission-mode application) ':auto)
+                "auto stays the session permission mode like full and sandbox")
+               (application-command application "/permissions ask")
+               (test-assert (eq (application-permission-mode application) ':ask)
+                            "/permissions ask restores prompt mode")
+               (application-command application "/permissions clear")
+               (test-assert (null (permission-state-rules state))
+                            "/permissions clear removes saved exact approvals")
+               (test-assert (search "/permissions" (application-help))
+                            "the command reference includes /permissions")
+               (terminal-ui-stop ui))
+          (ignore-errors (terminal-ui-stop ui))
+          (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+      (test-withheld ':command-sandbox
+                     "session permission modes with a workspace sandbox"))
   nil)
 
 (-> test-interrupt-resume-instruction () null)
@@ -972,9 +975,9 @@
                 (not (conversation-storage-occupied-p
                       (conversation-pathname empty)))
                 "Ctrl-C does not persist an empty conversation")))
-        (uiop:delete-directory-tree root
-                                    :validate t
-                                    :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-repeated-interrupt-forces-exit () null)
@@ -1033,7 +1036,7 @@
                (test-assert
                 (search "autolith resume force-resume" output)
                 "forced cancellation carries the exact resume command"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-forced-exit-without-durable-conversation () null)
@@ -1479,7 +1482,7 @@
                                  (:message "recalled queued")
                                  (:message "last queued"))))
                    "idle Ctrl-C preserves restored FIFO work in pending storage")))))
-        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-active-turn-stop-keys () null)
@@ -1611,7 +1614,7 @@
                (search "Press Ctrl-C again within 2.5 seconds"
                        output-before-exit))
               "a promptly cancelled turn never flashes the force-exit hint")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 ;;;; -- Active Command Cancellation --
@@ -1724,7 +1727,7 @@
              (join-thread producer)
              (setf producer nil))
            (application-command--registry-restore registrations))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 ;;;; -- Active Tool Cancellation --
@@ -1890,7 +1893,7 @@
               (string= (json-get output "output")
                        *conversation-interrupted-tool-output*)
               "the repaired result explains that tool state is unknown")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-interrupt-force-window () null)
@@ -2579,7 +2582,7 @@
              (test-assert
               (and (zerop rendered) (null floor))
               "cursor metadata is ignored outside its recovered conversation")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-diagnosis-prompt () null)
@@ -2638,9 +2641,9 @@
                                    :if-does-not-exist ':create
                                    :external-format ':utf-8)
              (write-line (namestring capsule-pathname) stream))
-           (sb-posix:setenv recovered-name "1" 1)
-           (sb-posix:setenv pointer-name (namestring pointer-pathname) 1)
-           (sb-posix:setenv session-name (namestring session-pathname) 1)
+           (platform-setenv recovered-name "1")
+           (platform-setenv pointer-name (namestring pointer-pathname))
+           (platform-setenv session-name (namestring session-pathname))
            (let ((prompt
                    (application-recovery-diagnosis-prompt configuration)))
              (test-assert
@@ -2654,9 +2657,9 @@
                    (search "active image" prompt))
               "a valid recovered capsule requests diagnosis and user-approved repair"))
            (snapshot-write capsule-pathname '(:crash))
-           (sb-posix:setenv conversation-name "untrusted-capsule" 1)
-           (sb-posix:setenv sequence-name "99" 1)
-           (sb-posix:setenv floor-name "98" 1)
+           (platform-setenv conversation-name "untrusted-capsule")
+           (platform-setenv sequence-name "99")
+           (platform-setenv floor-name "98")
            (multiple-value-bind (conversation-id rendered-sequence
                                 history-floor-sequence)
                (application-recovery-state configuration)
@@ -2683,18 +2686,17 @@
                    (null rendered-sequence)
                    (null history-floor-sequence))
               "malformed session state cannot replace invalid crash context"))
-           (sb-posix:setenv pointer-name
+           (platform-setenv pointer-name
                            (namestring
-                            (merge-pathnames "outside.path" root))
-                           1)
+                            (merge-pathnames "outside.path" root)))
            (test-assert
             (null (application-recovery-diagnosis-prompt configuration))
             "diagnosis rejects a crash pointer outside private state"))
       (dolist (entry previous-environment)
         (if (rest entry)
-            (sb-posix:setenv (first entry) (rest entry) 1)
-            (sb-posix:unsetenv (first entry))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+            (platform-setenv (first entry) (rest entry))
+            (platform-unsetenv (first entry))))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-application-construction () null)
@@ -2721,10 +2723,10 @@
          (application nil))
     (labels ((publish-recovery-context ()
                "Publish RECOVERED's one-shot cursor handoff."
-               (sb-posix:setenv
-                conversation-name (conversation-identifier recovered) 1)
-               (sb-posix:setenv sequence-name "2" 1)
-               (sb-posix:setenv floor-name "1" 1))
+               (platform-setenv
+                conversation-name (conversation-identifier recovered))
+               (platform-setenv sequence-name "2")
+               (platform-setenv floor-name "1"))
 
              (close-application ()
                "Close APPLICATION's owned runtime and conversation lease."
@@ -2847,13 +2849,13 @@
         (close-application)
         (dolist (entry previous-environment)
           (if (rest entry)
-              (sb-posix:setenv (first entry) (rest entry) 1)
-              (sb-posix:unsetenv (first entry))))
+              (platform-setenv (first entry) (rest entry))
+              (platform-unsetenv (first entry))))
         (mcp--registry-restore mcp-registration-snapshot)
         (context--registry-restore context-registration-snapshot)
         (application-command--registry-restore command-registration-snapshot)
-        (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t
+                                             :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-bounded-transcript-replay () null)
@@ -2930,7 +2932,7 @@
                      (search "showing 250 newest entries added after recovery"
                              output))
                 "recovery retains only the newest unread transcript page"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -3152,7 +3154,7 @@
                     (conversation-invariant-error ()
                       t))
                   "startup fallback validates the exact preceding segment")))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-hidden-reasoning-does-not-crowd-replay () null)
@@ -3213,7 +3215,7 @@
                    (search "hidden-reasoning-7" output)
                    (search "hidden-reasoning-8" output))
               "changing visibility makes the newest newly visible page replayable")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-paged-transcript-history () null)
@@ -3290,7 +3292,7 @@
             (search "No earlier transcript history remains."
                     (recording-terminal-output terminal))
             "history reports exhaustion after the final page"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-compaction-presentation-lifecycle () null)
@@ -3398,7 +3400,7 @@
                           "turn unwind cleanup removes stale compaction state")))
       (ignore-errors (terminal-ui-stop ui))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-streaming-presentation () null)
@@ -3633,7 +3635,7 @@
                         "streamed code blocks render numbered gutters")
            (funcall send-status :provider-request-completed nil)
            (terminal-ui-stop (application-ui application)))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-provider-retry-presentation () null)
@@ -3691,7 +3693,7 @@
                    (search "Replacement answer" output))
               "the replacement attempt starts a distinct assistant block"))
            (terminal-ui-stop (application-ui application)))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-turn-cursor-visibility () null)
@@ -3764,7 +3766,7 @@
                 (= (application-rendered-sequence application)
                    (1- (conversation-next-sequence conversation)))
                 "the transcript cursor follows the actual durable tail"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-responsive-model-input () null)
@@ -3861,7 +3863,7 @@
               "responsive model turns leave the input cursor visible")
              (test-assert (not (terminal-tests--forbidden-control-p output))
                           "concurrent input and streaming preserve scrollback")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-responsive-goal-inspection () null)
@@ -4077,7 +4079,8 @@
               "boundary commands missing their turn apply before follow-ups"))
         (when controller
           (application-input-controller-stop controller))
-        (uiop:delete-directory-tree
+        (platform-delete-directory-tree
+         *platform*
          root :validate t :if-does-not-exist ':ignore))))
   nil)
 
@@ -4882,7 +4885,7 @@
                     (test-terminal-row-text (application-info-entry application)))
             "/info exposes the session-title preference"))
       (terminal-ui-stop ui)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -4959,7 +4962,7 @@
              (test-assert
               (string= (conversation-title reloaded) "Generated session title")
               "the generated replacement survives conversation reload")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -5071,8 +5074,8 @@
                     observed-recovery-diagnosis recovery-diagnosis
                     observed-resume-offer-p resume-offer-p))))
           (lambda ()
-            (sb-posix:setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
-                            "recovered" 1)
+            (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
+                            "recovered")
             (main-dispatch '("resume"))
             (test-assert
              (and (null observed-conversation-id)
@@ -5087,8 +5090,8 @@
                   observed-initial-command :unset
                   observed-recovery-diagnosis :unset
                   observed-resume-offer-p :unset)
-            (sb-posix:setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
-                            "recovered" 1)
+            (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
+                            "recovered")
             (main-dispatch '("resume" "explicit"))
             (test-assert
              (and (string= observed-conversation-id "explicit")
@@ -5097,8 +5100,8 @@
                   observed-resume-offer-p)
              "an explicit recovered resume still overrides crash reconnection")
             (setf reconnect-failure-p t)
-            (sb-posix:setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
-                            "recovered" 1)
+            (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
+                            "recovered")
             (test-assert
              (handler-case
                  (progn
@@ -5113,8 +5116,8 @@
              "failed recovery application construction preserves recovery metadata")))
       (dolist (entry previous-environment)
         (if (rest entry)
-            (sb-posix:setenv (first entry) (rest entry) 1)
-            (sb-posix:unsetenv (first entry))))))
+            (platform-setenv (first entry) (rest entry))
+            (platform-unsetenv (first entry))))))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (image (merge-pathnames "initial.png" root)))
@@ -5130,7 +5133,7 @@
                    (equal (user-message-input-image-pathnames input)
                           (list (truename image))))
               "command-line images preload a labelled composer draft")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let* ((base-configuration (test-configuration))
          (root (test-configuration-root base-configuration))
          (current-workspace (merge-pathnames "current-workspace/" root))
@@ -5171,14 +5174,12 @@
                                              "older other conversation")
            (conversation-append-user-message other-newer
                                              "newer other conversation")
-           (let ((now (- (get-universal-time)
-                         *unix-epoch-universal-time*)))
+           (let ((now (get-universal-time)))
              (flet ((set-activity (conversation seconds-ago)
-                      (let ((time (- now seconds-ago)))
-                         (sb-posix:utime
-                          (namestring (conversation-log-pathname conversation))
-                          time
-                          time))))
+                      (platform-set-file-times
+                       *platform*
+                       (conversation-log-pathname conversation)
+                       (- now seconds-ago))))
                (set-activity active 10)
                (set-activity other-newer 20)
                (set-activity current-older 30)
@@ -5203,15 +5204,12 @@
                     (failed-image-root
                       (merge-pathnames
                        "conversation-images/cleanup-failure/"
-                       (configuration-data-root configuration)))
-                    (unix-time
-                      (- (get-universal-time)
-                         *unix-epoch-universal-time*)))
+                       (configuration-data-root configuration))))
                (conversation-append-user-message failed "temporary")
-                (sb-posix:utime
-                 (namestring (conversation-log-pathname failed))
-                 (- unix-time 25)
-                 (- unix-time 25))
+               (platform-set-file-times
+                *platform*
+                (conversation-log-pathname failed)
+                (- (get-universal-time) 25))
                (snapshot-write
                 (merge-pathnames "image.sexp" failed-image-root)
                 '(:image))
@@ -5270,7 +5268,7 @@
                          (recording-terminal-output terminal))
                 "confirmed picker deletion reports the removed conversation"))
              (terminal-ui-stop (application-ui application))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let ((application (application-tests--ui-application :columns 60)))
     (test-assert (handler-case
                      (progn
@@ -5488,7 +5486,7 @@
       (uiop:chdir previous-process-directory)
       (setf *default-pathname-defaults* previous-defaults)
       (application--extension-registry-restore extension-registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-application-busy-conversation-resume () null)
@@ -5551,7 +5549,7 @@
       (when (and current-lease
                  (conversation-lease-held-p current-lease))
         (conversation-lease-release current-lease))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-application-fresh-conversation-lease-collision () null)
@@ -5592,7 +5590,7 @@
                             (conversation-pathname conversation))))
                          "fresh ownership skips a leased empty identifier")
                     (conversation-lease-release lease)))))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-application-tool-runtime-lifecycle () null)
@@ -5692,7 +5690,7 @@
                   configuration
                   (conversation-identifier second-conversation)))
                 "checkpoint detachment excludes the conversation lease"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (define-condition application-test-runtime-retirement-interruption
@@ -5754,7 +5752,8 @@
              (application--conversation-input-history conversation :limit 3)
              '("/help" "(+ 1 2)" "last user"))
             "editable history keeps only bounded user inputs in durable order"))
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist :ignore)))
   nil)
 
@@ -6134,7 +6133,8 @@
           (tool-registry-close-runtime-state registry)))
       (uiop:chdir previous-process-directory)
       (setf *default-pathname-defaults* previous-defaults)
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -6308,7 +6308,8 @@
         (context--registry-restore context-registration-snapshot)
         (application-command--registry-restore
          command-registration-snapshot)
-        (uiop:delete-directory-tree
+        (platform-delete-directory-tree
+         *platform*
          root :validate t :if-does-not-exist ':ignore))))
   nil)
 
@@ -6410,7 +6411,8 @@
               (equal command-registration-snapshot
                      (application-command--registry-snapshot)))
              "late construction failure restores declarative registrations")))
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -6726,7 +6728,8 @@
               (context--registry-restore context-registration-snapshot)
               (application-command--registry-restore
                command-registration-snapshot)
-              (uiop:delete-directory-tree
+              (platform-delete-directory-tree
+               *platform*
                root :validate t :if-does-not-exist ':ignore)))))
     (run-case ':pre-commit)
     (run-case ':retirement))
@@ -7113,8 +7116,8 @@
         (ignore-errors
           (tool-registry-close-runtime-state replacement-registry)))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-working-directory-command () null)
@@ -7208,7 +7211,7 @@
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:chdir previous-process-directory)
       (setf *default-pathname-defaults* previous-defaults)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-effort-switch () null)
@@ -7406,7 +7409,7 @@
              (test-assert
               (string= (preference-state-reasoning-effort preferences) "medium")
               "resuming does not replace the global effort default")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-session-goal () null)
@@ -7608,7 +7611,7 @@
            (test-assert (null (application-goal application))
                         "clearing removes the session goal")
            (terminal-ui-stop (application-ui application)))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -7813,7 +7816,7 @@
       (when controller
         (application-input-controller-stop controller))
       (terminal-ui-stop ui)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-hurry-up-mode () null)
@@ -7869,7 +7872,7 @@
             "/hurry-up off restores ordinary session policy"))
       (ignore-errors (terminal-ui-stop ui))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-provider-protocol-failure-is-recoverable () null)
@@ -7923,7 +7926,7 @@
                  ':failed)
              "provider failures from commands bypass the Lisp debugger")))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-failed-turn-publishes-durable-wreckage () null)
@@ -7989,7 +7992,7 @@
                     (= (getf (rest marker) :request-number) 2))
                "failed turns repair incomplete calls before publishing their boundary"))))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-pending-publication-lock-boundaries () null)
@@ -8122,7 +8125,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -8176,9 +8179,9 @@
            (test-assert
             (string= (application--git-branch worktree-nested) "worktree-branch")
             "branch discovery follows linked-worktree gitdir markers"))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 

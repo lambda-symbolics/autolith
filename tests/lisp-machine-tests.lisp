@@ -204,7 +204,8 @@
              (ignore-errors
                (tool-registry-close-runtime-state
                 (application-tool-registry application)))
-             (uiop:delete-directory-tree
+             (platform-delete-directory-tree
+              *platform*
               root :validate t :if-does-not-exist ':ignore)))
     (dolist (condition
              (list (make-condition 'rollback-requested
@@ -1013,9 +1014,9 @@
           (ignore-errors
             (tool-registry-close-runtime-state
              (application-tool-registry application)))
-          (uiop:delete-directory-tree root
-                                      :validate t
-                                      :if-does-not-exist ':ignore)))))
+          (platform-delete-directory-tree *platform* root
+                                          :validate t
+                                          :if-does-not-exist ':ignore)))))
   nil)
 
 (-> test-application-lisp-activity () null)
@@ -1047,9 +1048,9 @@
         (ignore-errors
           (tool-registry-close-runtime-state
            (application-tool-registry application)))
-        (uiop:delete-directory-tree root
-                                    :validate t
-                                    :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -1229,9 +1230,9 @@
         (ignore-errors
           (tool-registry-close-runtime-state
            (application-tool-registry application)))
-        (uiop:delete-directory-tree root
-                                    :validate t
-                                    :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-application-prompt-marker-reader-order () null)
@@ -1288,9 +1289,9 @@
         (ignore-errors
           (tool-registry-close-runtime-state
            (application-tool-registry application)))
-        (uiop:delete-directory-tree root
-                                    :validate t
-                                    :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-application-prompt-marker-lifecycle () null)
@@ -1436,9 +1437,9 @@
           (ignore-errors
             (tool-registry-close-runtime-state
              (application-tool-registry application)))
-          (uiop:delete-directory-tree root
-                                      :validate t
-                                      :if-does-not-exist ':ignore)))))
+          (platform-delete-directory-tree *platform* root
+                                          :validate t
+                                          :if-does-not-exist ':ignore)))))
   nil)
 
 (-> run-lisp-machine-tests () null)

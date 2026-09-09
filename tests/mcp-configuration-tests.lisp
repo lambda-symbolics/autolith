@@ -177,51 +177,58 @@
                     (join-thread thread)
                     caught-condition)))
              (ensure-directories-exist pathname)
-             (sb-posix:mkfifo (namestring pathname) #o600)
-             (test-assert
-              (typep (read-nonregular-source pathname)
-                     'mcp-configuration-error)
-              "a FIFO mcp.sexp is rejected without blocking")
-             (sb-posix:unlink (namestring pathname))
-             (test-assert
-              (handler-case
-                  (progn
-                    (mcp-configuration--source-present-p #P"/dev/null")
-                    nil)
-                (mcp-configuration-error ()
-                  t))
-             "a device node is rejected before the configuration reader opens it")
-             (let ((fifo (merge-pathnames "mcp-source.fifo" root)))
-               (sb-posix:mkfifo (namestring fifo) #o600)
+             (with-test-fixture (':fifos "FIFO configuration sources")
+               (test-fixture-make-fifo *platform* pathname)
+               (test-assert
+                (typep (read-nonregular-source pathname)
+                       'mcp-configuration-error)
+                "a FIFO mcp.sexp is rejected without blocking")
+               (sb-posix:unlink (namestring pathname)))
+             (with-test-fixture (':device-nodes "device configuration sources")
+               (test-assert
+                (handler-case
+                    (progn
+                      (mcp-configuration--source-present-p
+                       (test-fixture-device-node *platform*))
+                      nil)
+                  (mcp-configuration-error ()
+                    t))
+                "a device node is rejected before the configuration reader opens it"))
+             (with-test-fixture (':fifos "symlinked FIFO configuration sources")
+               (let ((fifo (merge-pathnames "mcp-source.fifo" root)))
+                 (test-fixture-make-fifo *platform* fifo)
+                 (unwind-protect
+                      (progn
+                        (test-fixture-make-symbolic-link
+                         *platform*
+                         (namestring fifo)
+                         (namestring pathname))
+                        (test-assert
+                         (typep (read-nonregular-source pathname)
+                                'mcp-configuration-error)
+                         "a symlinked mcp.sexp is rejected without following a FIFO"))
+                   (ignore-errors
+                     (test-fixture-remove-link *platform* (namestring pathname)))
+                   (ignore-errors
+                     (sb-posix:unlink (namestring fifo)))))))
+           (with-test-fixture (':symbolic-links "symlinked configuration sources")
+             (let ((target (merge-pathnames "managed-mcp.sexp" root)))
                (unwind-protect
                     (progn
-                      (sb-posix:symlink
-                       (namestring fifo)
+                      (test-mcp-configuration--write
+                       target
+                       "(:version 1 :servers ())")
+                      (test-fixture-make-symbolic-link
+                       *platform*
+                       (namestring target)
                        (namestring pathname))
                       (test-assert
-                       (typep (read-nonregular-source pathname)
-                              'mcp-configuration-error)
-                       "a symlinked mcp.sexp is rejected without following a FIFO"))
+                       (null (mcp-configuration-read configuration))
+                       "a managed symlink to a regular MCP configuration is accepted"))
                  (ignore-errors
-                   (sb-posix:unlink (namestring pathname)))
+                   (test-fixture-remove-link *platform* (namestring pathname)))
                  (ignore-errors
-                   (sb-posix:unlink (namestring fifo))))))
-           (let ((target (merge-pathnames "managed-mcp.sexp" root)))
-             (unwind-protect
-                  (progn
-                    (test-mcp-configuration--write
-                     target
-                     "(:version 1 :servers ())")
-                    (sb-posix:symlink
-                     (namestring target)
-                     (namestring pathname))
-                    (test-assert
-                     (null (mcp-configuration-read configuration))
-                     "a managed symlink to a regular MCP configuration is accepted"))
-               (ignore-errors
-                 (sb-posix:unlink (namestring pathname)))
-               (ignore-errors
-                 (delete-file target))))
+                   (delete-file target)))))
            (test-mcp-configuration--write
             pathname
             "(:version 1
@@ -872,6 +879,7 @@
               (equal before (mcp--registry-snapshot))
               "a malformed reload leaves every prior MCP layer intact")))
       (mcp--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)

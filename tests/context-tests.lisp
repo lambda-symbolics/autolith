@@ -186,7 +186,7 @@
            (test-assert
             (not (unregister-context-contributor "session-state"))
             "built-in context cannot be unregistered"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-request-local-context () null)
@@ -358,5 +358,5 @@
                        "inspect this request")
               "contributors receive the latest durable user text"))
            (context-tests--serialized-invocation configuration conversation))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

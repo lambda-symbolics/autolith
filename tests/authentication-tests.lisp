@@ -307,61 +307,39 @@
                :stream (make-string-output-stream))
               "known-wrapper-key")
      "a transport-provided descriptor permits hidden input through a wrapper"))
-  (let ((process nil))
-    (unwind-protect
-         (progn
-           (setf process
-                 (sb-ext:run-program "/bin/sh"
-                                     '("-c" "sleep 10")
-                                     :pty t
-                                     :wait nil))
-           (let* ((pty (sb-ext:process-pty process))
-                  (descriptor (sb-sys:fd-stream-fd pty))
-                  (input (make-string-input-stream (format nil "wrapped-key~%"))))
-             (test-assert
-              (not (interactive-stream-p input))
-              "the descriptor test uses a noninteractive input wrapper")
-             (test-assert
-              (api-key--interactive-file-descriptor-p descriptor)
-              "API-key entry recognizes the wrapped TTY descriptor")
-              (let* ((original (sb-posix:tcgetattr descriptor))
-                     (echo-mode (sb-posix:tcgetattr descriptor)))
-                (unwind-protect
-                     (progn
-                       (setf (sb-posix:termios-lflag echo-mode)
-                             (logior (sb-posix:termios-lflag echo-mode)
-                                     sb-posix:echo))
-                       (sb-posix:tcsetattr descriptor sb-posix:tcsanow echo-mode)
-                       (let* ((before (sb-posix:tcgetattr descriptor))
-                              (before-flags (sb-posix:termios-lflag before))
-                              (saved-mode
-                                (api-key--hidden-input-mode input descriptor))
-                              (during (sb-posix:tcgetattr descriptor))
-                              (during-flags (sb-posix:termios-lflag during)))
-                         (unwind-protect
-                              (test-assert
-                               (and
-                                (not (zerop (logand before-flags sb-posix:echo)))
-                                (zerop (logand during-flags sb-posix:echo)))
-                               "API-key concealment clears ECHO on the actual TTY")
-                           (api-key--restore-input-mode saved-mode))
-                         (test-assert
-                          (= (sb-posix:termios-lflag (sb-posix:tcgetattr descriptor))
-                             before-flags)
-                          "API-key concealment restores the actual TTY mode")))
-                  (sb-posix:tcsetattr descriptor sb-posix:tcsanow original)))
-             (test-assert
-              (string=
-               (api-key-read-hidden
-                "Example"
-                :input input
-                :input-file-descriptor descriptor
-                :stream (make-string-output-stream))
-               "wrapped-key")
-              "API-key entry conceals a TTY reached through a noninteractive wrapper")))
-      (when process
-        (ignore-errors (sb-ext:process-kill process 15))
-        (ignore-errors (sb-ext:process-wait process)))))
+  (with-test-fixture (':pseudo-terminals
+                      "API-key entry through a wrapped pseudo-terminal")
+    (test-fixture-call-with-pseudo-terminal
+     *platform*
+     (lambda (descriptor)
+       (let ((input (make-string-input-stream (format nil "wrapped-key~%"))))
+         (test-assert
+          (not (interactive-stream-p input))
+          "the descriptor test uses a noninteractive input wrapper")
+         (test-assert
+          (api-key--interactive-file-descriptor-p descriptor)
+          "API-key entry recognizes the wrapped TTY descriptor")
+         (let* ((before (test-fixture-terminal-input-mode *platform* descriptor))
+                (before-echo-p (test-fixture-terminal-echo-p *platform* descriptor))
+                (saved-mode (api-key--hidden-input-mode input descriptor))
+                (during-echo-p (test-fixture-terminal-echo-p *platform* descriptor)))
+           (unwind-protect
+                (test-assert
+                 (and before-echo-p (not during-echo-p))
+                 "API-key concealment clears ECHO on the actual TTY")
+             (api-key--restore-input-mode saved-mode))
+           (test-assert
+            (= (test-fixture-terminal-input-mode *platform* descriptor) before)
+            "API-key concealment restores the actual TTY mode"))
+         (test-assert
+          (string=
+           (api-key-read-hidden
+            "Example"
+            :input input
+            :input-file-descriptor descriptor
+            :stream (make-string-output-stream))
+           "wrapped-key")
+          "API-key entry conceals a TTY reached through a noninteractive wrapper")))))
   nil)
 
 (-> authentication-tests--test-provider-api-key-prompts () null)
@@ -402,7 +380,7 @@
              :stream (make-string-output-stream)
              :input (make-string-input-stream "")
              :input-file-descriptor 17)))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))
     (test-assert
      (and
       (find "Anthropic" calls :key #'first :test #'string=)
@@ -447,7 +425,7 @@
                (authentication-error ()
                  t))
              "Fireworks login propagates validation failure")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))
     (test-assert
      (and fireworks-secret-use-active-p
           (not (secret-use-active-p)))
@@ -504,7 +482,7 @@
             (test-assert (and (eq observed-styled-p t)
                               (string= observed-method "device"))
                          "command-line auth passes styling and method selection"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-authentication-store () null)
@@ -535,16 +513,16 @@
                                     (configuration-state-root configuration)))
             "private credentials live under the state root")
            (credential-source-save source credentials)
-           (let* ((loaded (credential-source-load source))
-                  (mode (sb-posix:stat-mode
-                         (sb-posix:stat
-                          (namestring (configuration-auth-path configuration))))))
+           (let ((loaded (credential-source-load source)))
              (test-assert
               (string= (oauth-credentials-account-id loaded) "test-account")
               "the private credential store round-trips its account")
-             (test-assert (= (logand mode #o777) #o600)
-                          "the private credential store has mode 0600")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+             (test-assert (test-fixture-permissions-p
+                           *platform*
+                           (configuration-auth-path configuration)
+                           ':private-file)
+                          "the private credential store is private to the user")))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-write-codex-auth
@@ -713,5 +691,5 @@
                   condition
                   "[OAUTH CREDENTIAL REDACTED]"))
                 "OAuth failure diagnostics redact an echoed refresh token"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

@@ -100,7 +100,7 @@
                (equalp (json-get request "include")
                        (json-array "reasoning.encrypted_content"))
               "disabled Grok search omits citation metadata"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> grok-provider-test--transport-headers () null)
@@ -167,7 +167,7 @@
                           "the Grok transport opts into server loop detection")
              (test-assert (string= (header "Accept") "text/event-stream")
                           "the Grok transport requests an event stream")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> grok-provider-test--selection () null)
@@ -186,7 +186,7 @@
             "Grok models select the Grok proxy endpoint")
            (test-assert (= (configuration-context-window configuration) 500000)
                         "Grok models select the Grok context window"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> grok-provider-test--doom-loop-stream (list) string)
@@ -299,7 +299,7 @@
                             (zerop (provider-retry-event-delay event)))
                           retry-events))
               "resample retries surface immediate retry events")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (test-assert
    (grok--empty-response-p
     (make-instance 'provider-result

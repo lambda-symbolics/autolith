@@ -35,8 +35,8 @@
 (defun openrouter-provider-test--restore-environment (name value)
   "Restore environment variable NAME to VALUE."
   (if value
-      (sb-posix:setenv name value 1)
-      (sb-posix:unsetenv name))
+      (platform-setenv name value)
+      (platform-unsetenv name))
   nil)
 
 (-> openrouter-provider-test--credentials () null)
@@ -47,8 +47,7 @@
          (saved (uiop:getenv *openrouter-environment-variable*)))
     (unwind-protect
          (progn
-           (setf (uiop:getenv *openrouter-environment-variable*)
-                 "openrouter-environment-key")
+           (platform-setenv *openrouter-environment-variable* "openrouter-environment-key")
            (let ((manager (openrouter-credential-manager-create configuration)))
              (api-key-credential-manager-save-key manager "openrouter-private-key"))
            (let* ((manager (openrouter-credential-manager-create configuration))
@@ -57,7 +56,7 @@
               (string= (oauth-credentials-access-token loaded)
                        "openrouter-environment-key")
               "OpenRouter environment credentials take precedence"))
-           (sb-posix:unsetenv *openrouter-environment-variable*)
+           (platform-unsetenv *openrouter-environment-variable*)
            (let* ((manager (openrouter-credential-manager-create configuration))
                   (loaded (credential-manager-load manager)))
              (test-assert
@@ -66,7 +65,7 @@
               "OpenRouter uses its private key when the environment is absent")))
       (openrouter-provider-test--restore-environment
        *openrouter-environment-variable* saved)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> openrouter-provider-test--model-decoding () null)
@@ -132,7 +131,7 @@
                 (test-assert
                  (null (json-get request "max_completion_tokens"))
                 "OpenRouter requests omit max_completion_tokens"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> openrouter-provider-test--endpoints-and-discovery () null)
@@ -142,13 +141,16 @@
          (root (test-configuration-root configuration))
          (saved-chat (uiop:getenv "AUTOLITH_OPENROUTER_PROVIDER_ENDPOINT"))
          (saved-models (uiop:getenv "AUTOLITH_OPENROUTER_MODELS_ENDPOINT"))
+         (saved-key (uiop:getenv *openrouter-environment-variable*))
          (observed nil))
     (unwind-protect
          (progn
-           (setf (uiop:getenv "AUTOLITH_OPENROUTER_PROVIDER_ENDPOINT")
-                 "https://chat.openrouter.invalid/v1/chat/completions"
-                 (uiop:getenv "AUTOLITH_OPENROUTER_MODELS_ENDPOINT")
-                 "https://models.openrouter.invalid/v1/models")
+           ;; A key in the host environment would outrank the stored one.
+           (platform-unsetenv *openrouter-environment-variable*)
+           (platform-setenv "AUTOLITH_OPENROUTER_PROVIDER_ENDPOINT"
+                            "https://chat.openrouter.invalid/v1/chat/completions")
+           (platform-setenv "AUTOLITH_OPENROUTER_MODELS_ENDPOINT"
+                            "https://models.openrouter.invalid/v1/models")
            (test-assert
             (string= (configuration--provider-endpoint-for
                       "openrouter/openai/gpt-5-mini")
@@ -228,7 +230,9 @@
        "AUTOLITH_OPENROUTER_PROVIDER_ENDPOINT" saved-chat)
       (openrouter-provider-test--restore-environment
        "AUTOLITH_OPENROUTER_MODELS_ENDPOINT" saved-models)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (openrouter-provider-test--restore-environment
+       *openrouter-environment-variable* saved-key)
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> openrouter-provider-test--builtin-registration () null)

@@ -241,5 +241,5 @@
             "private Grok credentials live under the state root")
            (grok-authentication-tests--test-bootstrap configuration)
            (grok-authentication-tests--test-refresh configuration))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

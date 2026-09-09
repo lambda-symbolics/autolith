@@ -219,35 +219,37 @@
                          (string= canonical-uri "workspace:src/c%2B%2B/x.cpp")
                          (search "plus path" (tool-result-content result)))
                     "workspace URIs preserve literal plus characters")))
-              (let* ((relative "src/notes*[1]?\\x.md")
-                     (path
-                       (merge-pathnames
-                        (uiop:parse-native-namestring relative) workspace)))
-                (workspace-resource-tests--write-text path "native path")
-                (multiple-value-bind (result canonical-uri revision)
-                    (read-resource
-                     first-context "workspace:src/notes*[1]?\\x.md")
-                  (test-assert
-                   (and (tool-result-success-p result)
-                        (string=
-                         canonical-uri
-                         "workspace:src/notes%2A%5B1%5D%3F%5Cx.md")
-                        (search "native path" (tool-result-content result)))
-                   "workspace resources preserve native pathname metacharacters")
-                  (let ((edited
-                          (edit-resource
-                           first-context canonical-uri revision
-                           (list
-                            (workspace-resource-tests--operation
-                             "replace-lines"
-                             "start-line" 1
-                             "end-line" 1
-                             "content" "edited native path")))))
+              (with-test-fixture (':wildcard-file-names
+                                  "workspace paths holding pathname metacharacters")
+                (let* ((relative "src/notes*[1]?\\x.md")
+                       (path
+                         (merge-pathnames
+                          (uiop:parse-native-namestring relative) workspace)))
+                  (workspace-resource-tests--write-text path "native path")
+                  (multiple-value-bind (result canonical-uri revision)
+                      (read-resource
+                       first-context "workspace:src/notes*[1]?\\x.md")
                     (test-assert
-                     (and (tool-result-success-p edited)
-                          (search "edited native path"
-                                  (tool-result-content edited)))
-                     "resource.edit publishes files with native pathname metacharacters"))))
+                     (and (tool-result-success-p result)
+                          (string=
+                           canonical-uri
+                           "workspace:src/notes%2A%5B1%5D%3F%5Cx.md")
+                          (search "native path" (tool-result-content result)))
+                     "workspace resources preserve native pathname metacharacters")
+                    (let ((edited
+                            (edit-resource
+                             first-context canonical-uri revision
+                             (list
+                              (workspace-resource-tests--operation
+                               "replace-lines"
+                               "start-line" 1
+                               "end-line" 1
+                               "content" "edited native path")))))
+                      (test-assert
+                       (and (tool-result-success-p edited)
+                            (search "edited native path"
+                                    (tool-result-content edited)))
+                       "resource.edit publishes files with native pathname metacharacters")))))
               (let ((path (merge-pathnames "descriptor-growth.txt" workspace)))
                 (workspace-resource-tests--write-text path "before")
                 (test-assert
@@ -483,74 +485,77 @@
                    (and (tool-result-success-p result)
                         (search "secret" (tool-result-content result)))
                    "resource.read accepts full-access approval for out-of-root paths"))
-                (let ((escape (merge-pathnames "escape" workspace)))
-                  (unwind-protect
-                       (progn
-                         (sb-posix:symlink
-                          (namestring outside-directory)
-                          (namestring escape))
-                         (dolist (uri '(("workspace:escape" . "outside/")
-                                        ("workspace:escape/new.txt"
-                                         . "outside/new.txt")))
-                           (let ((resource
-                                   (resource-registry-resolve
-                                    (tool-registry-resource-registry registry)
-                                    (first uri) first-context)))
+                (with-test-fixture (':symbolic-links
+                                    "out-of-root resources reached through symlinks")
+                  (let ((escape (merge-pathnames "escape" workspace)))
+                    (unwind-protect
+                         (progn
+                           (test-fixture-make-symbolic-link
+                            *platform*
+                            (namestring outside-directory)
+                            (namestring escape))
+                           (dolist (uri '(("workspace:escape" . "outside/")
+                                          ("workspace:escape/new.txt"
+                                           . "outside/new.txt")))
+                             (let ((resource
+                                     (resource-registry-resolve
+                                      (tool-registry-resource-registry registry)
+                                      (first uri) first-context)))
+                               (test-assert
+                                (uiop:pathname-equal
+                                 (workspace-file-resource-pathname resource)
+                                 (merge-pathnames (rest uri) root))
+                                (format nil
+                                        "workspace resource resolution preserves symlink target ~A"
+                                        (first uri)))))
+                           (multiple-value-bind (result canonical-uri revision)
+                               (read-resource full-access-context
+                                              "workspace:escape/new.txt")
                              (test-assert
-                              (uiop:pathname-equal
-                               (workspace-file-resource-pathname resource)
-                               (merge-pathnames (rest uri) root))
-                              (format nil
-                                      "workspace resource resolution preserves symlink target ~A"
-                                      (first uri)))))
-                         (multiple-value-bind (result canonical-uri revision)
-                             (read-resource full-access-context
-                                            "workspace:escape/new.txt")
-                           (test-assert
-                            (and (tool-result-success-p result)
-                                 (search "Kind: missing"
-                                         (tool-result-content result)))
-                            "resource.read observes an approved missing out-of-root path")
-                           (let ((denied
-                                   (edit-resource
-                                    first-context canonical-uri revision
-                                    (list
-                                     (workspace-resource-tests--operation
-                                      "replace-empty" "content" "created")))))
-                             (test-assert
-                              (and (not (tool-result-success-p denied))
-                                   (not (probe-file
-                                         (merge-pathnames "new.txt"
-                                                          outside-directory))))
-                              "resource.edit denies an unapproved out-of-root creation"))
-                           (let ((edited
-                                   (edit-resource
-                                    full-access-context canonical-uri revision
-                                    (list
-                                     (workspace-resource-tests--operation
-                                      "replace-empty" "content" "created")))))
-                             (test-assert
-                              (and (tool-result-success-p edited)
-                                   (string=
-                                    (workspace-file--read-content
-                                     (merge-pathnames "new.txt" outside-directory))
-                                    "created"))
-                              "resource.edit accepts full-access approval for out-of-root creation"))))
-                    (when (probe-file escape)
-                      (sb-posix:unlink (namestring escape)))))
-                (test-assert
-                 (and (some (lambda (request)
-                              (uiop:string-prefix-p "resource.read -- "
-                                                    (first request)))
-                            authorization-requests)
-                      (some (lambda (request)
-                              (uiop:string-prefix-p "resource.edit -- "
-                                                    (first request)))
-                            authorization-requests)
-                      (every (lambda (request)
-                               (uiop:pathname-equal (second request) workspace))
-                             authorization-requests))
-                 "out-of-root resource authorization uses the active workspace directory"))
+                              (and (tool-result-success-p result)
+                                   (search "Kind: missing"
+                                           (tool-result-content result)))
+                              "resource.read observes an approved missing out-of-root path")
+                             (let ((denied
+                                     (edit-resource
+                                      first-context canonical-uri revision
+                                      (list
+                                       (workspace-resource-tests--operation
+                                        "replace-empty" "content" "created")))))
+                               (test-assert
+                                (and (not (tool-result-success-p denied))
+                                     (not (probe-file
+                                           (merge-pathnames "new.txt"
+                                                            outside-directory))))
+                                "resource.edit denies an unapproved out-of-root creation"))
+                             (let ((edited
+                                     (edit-resource
+                                      full-access-context canonical-uri revision
+                                      (list
+                                       (workspace-resource-tests--operation
+                                        "replace-empty" "content" "created")))))
+                               (test-assert
+                                (and (tool-result-success-p edited)
+                                     (string=
+                                      (workspace-file--read-content
+                                       (merge-pathnames "new.txt" outside-directory))
+                                      "created"))
+                                "resource.edit accepts full-access approval for out-of-root creation"))))
+                      (when (probe-file escape)
+                        (test-fixture-remove-link *platform* (namestring escape)))))
+                  (test-assert
+                   (and (some (lambda (request)
+                                (uiop:string-prefix-p "resource.read -- "
+                                                      (first request)))
+                              authorization-requests)
+                        (some (lambda (request)
+                                (uiop:string-prefix-p "resource.edit -- "
+                                                      (first request)))
+                              authorization-requests)
+                        (every (lambda (request)
+                                 (uiop:pathname-equal (second request) workspace))
+                               authorization-requests))
+                   "out-of-root resource authorization uses the active workspace directory")))
              (let ((oversized (merge-pathnames "oversized.txt" workspace)))
                (workspace-resource-tests--write-text oversized "123456789")
                (let ((*workspace-file-resource-maximum-bytes* 8))
@@ -575,20 +580,21 @@
                   (and (not (tool-result-success-p result))
                        (search "valid UTF-8" (tool-result-content result)))
                   "resource.read rejects invalid UTF-8 without retaining a snapshot")))
-             (let ((fifo (merge-pathnames "not-regular" workspace)))
-               (unwind-protect
-                    (progn
-                      (sb-posix:mkfifo (namestring fifo) #o600)
-                      (let ((result
-                              (read-resource first-context
-                                             "workspace:not-regular")))
-                        (test-assert
-                         (and (not (tool-result-success-p result))
-                              (search "not a regular file"
-                                      (tool-result-content result)))
-                         "resource.read rejects special files before opening them")))
-                 (when (probe-file fifo)
-                   (sb-posix:unlink (namestring fifo)))))
+             (with-test-fixture (':fifos "resource.read of special files")
+               (let ((fifo (merge-pathnames "not-regular" workspace)))
+                 (unwind-protect
+                      (progn
+                        (test-fixture-make-fifo *platform* fifo)
+                        (let ((result
+                                (read-resource first-context
+                                               "workspace:not-regular")))
+                          (test-assert
+                           (and (not (tool-result-success-p result))
+                                (search "not a regular file"
+                                        (tool-result-content result)))
+                           "resource.read rejects special files before opening them")))
+                   (when (probe-file fifo)
+                     (sb-posix:unlink (namestring fifo))))))
              (let ((path (merge-pathnames "visible.txt" workspace)))
                (workspace-resource-tests--write-text
                 path (format nil "one~%two~%three~%four~%five~%"))
@@ -948,7 +954,8 @@
                     (path (merge-pathnames "crlf.txt" workspace))
                     (original (format nil "one~Atwo~A" crlf crlf)))
                (workspace-resource-tests--write-text path original)
-               (sb-posix:chmod (namestring path) #o640)
+               (when (test-fixture-available-p *platform* ':file-modes)
+                 (test-fixture-set-file-mode *platform* path #o640))
                (multiple-value-bind (read-result uri revision)
                    (read-resource first-context "workspace:crlf.txt")
                  (declare (ignore read-result))
@@ -967,11 +974,9 @@
                   (string= (workspace-file--read-content path)
                            (format nil "one~ATWO~A" crlf crlf))
                   "resource.edit preserves CRLF and the final newline")
-                 (test-assert (= (logand #o777
-                                         (sb-posix:stat-mode
-                                          (sb-posix:stat (namestring path))))
-                                 #o640)
-                              "resource.edit preserves file permissions where practical"))
+                 (with-test-fixture (':file-modes "resource.edit preserving file modes")
+                   (test-assert (= (test-fixture-file-mode *platform* path) #o640)
+                                "resource.edit preserves file permissions where practical")))
              (let* ((crlf (format nil "~C~C" #\Return #\Newline))
                     (path (merge-pathnames "mixed-line-endings.txt" workspace))
                     (original (format nil "one~%two~Athree~%" crlf)))
@@ -1427,37 +1432,38 @@
                      "workspace directory resources are read-only through capabilities")))
                 (unwind-protect
                      (progn
-                       (sb-posix:mkfifo (namestring fifo) #o600)
-                       (let ((result nil)
-                             (thread nil))
-                         (unwind-protect
-                              (progn
-                                (setf thread
-                                      (make-thread
-                                       (lambda ()
-                                         (setf result
-                                               (read-resource
-                                                first-context
-                                                "workspace:listing")))
-                                       :name "bounded FIFO directory resource read"))
-                                (multiple-value-bind (value join-status)
-                                    (sb-thread:join-thread thread
-                                                           :timeout 2
-                                                           :default ':timed-out)
-                                  (declare (ignore value))
-                                  (test-assert
-                                   (and (not (eq join-status ':timeout))
-                                        result
-                                        (tool-result-success-p result)
-                                        (search "o           named-pipe"
-                                                (tool-result-content result)))
-                                   "directory reads classify FIFOs without opening or blocking")))
-                           (when (and thread (thread-alive-p thread))
-                             (sb-thread:terminate-thread thread))
-                           (when thread
-                             (ignore-errors
-                               (sb-thread:join-thread
-                                thread :timeout 0.2 :default nil)))))
+                       (with-test-fixture (':fifos "directory reads classifying FIFOs")
+                         (test-fixture-make-fifo *platform* fifo)
+                         (let ((result nil)
+                               (thread nil))
+                           (unwind-protect
+                                (progn
+                                  (setf thread
+                                        (make-thread
+                                         (lambda ()
+                                           (setf result
+                                                 (read-resource
+                                                  first-context
+                                                  "workspace:listing")))
+                                         :name "bounded FIFO directory resource read"))
+                                  (multiple-value-bind (value join-status)
+                                      (sb-thread:join-thread thread
+                                                             :timeout 2
+                                                             :default ':timed-out)
+                                    (declare (ignore value))
+                                    (test-assert
+                                     (and (not (eq join-status ':timeout))
+                                          result
+                                          (tool-result-success-p result)
+                                          (search "o           named-pipe"
+                                                  (tool-result-content result)))
+                                     "directory reads classify FIFOs without opening or blocking")))
+                             (when (and thread (thread-alive-p thread))
+                               (sb-thread:terminate-thread thread))
+                             (when thread
+                               (ignore-errors
+                                 (sb-thread:join-thread
+                                  thread :timeout 0.2 :default nil))))))
                        (workspace-resource-tests--write-text extra-file "extra")
                        (let* ((*workspace-file-resource-maximum-directory-entries* 2)
                               (*workspace-file-resource-maximum-result-characters* 96)
@@ -1495,23 +1501,27 @@
                                   (format nil "created~%")))
                     "replace-empty creates an observed missing file and its parents"))))
              (dolist (race
-                      (list
-                       (list ':file
-                             (lambda (path)
-                               (workspace-resource-tests--write-text path "racer"))
-                             nil)
-                       (list ':directory
-                             (lambda (path)
-                               (ensure-directories-exist
-                                (merge-pathnames
-                                 "marker"
-                                 (uiop:ensure-directory-pathname path))))
-                             nil)
-                       (list ':other
-                             (lambda (path)
-                               (sb-posix:mkfifo (namestring path) #o600))
-                             (lambda (path)
-                               (sb-posix:unlink (namestring path))))))
+                      (append
+                       (list
+                        (list ':file
+                              (lambda (path)
+                                (workspace-resource-tests--write-text path "racer"))
+                              nil)
+                        (list ':directory
+                              (lambda (path)
+                                (ensure-directories-exist
+                                 (merge-pathnames
+                                  "marker"
+                                  (uiop:ensure-directory-pathname path))))
+                              nil))
+                       (if (test-fixture-available-p *platform* ':fifos)
+                           (list
+                            (list ':other
+                                  (lambda (path)
+                                    (test-fixture-make-fifo *platform* path))
+                                  (lambda (path)
+                                    (sb-posix:unlink (namestring path)))))
+                           (test-withheld ':fifos "a missing resource racing with a FIFO"))))
                (destructuring-bind (kind creator cleanup) race
                  (let* ((name (format nil "missing-race-~(~A~)" kind))
                         (path (merge-pathnames name workspace))
@@ -1568,7 +1578,7 @@
                    (null (tool-registry-find registry "fs" "write")))
               "redundant fs.list and fs.write tools are absent"))))
       (tool-registry-close-runtime-state registry)
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)

@@ -193,14 +193,11 @@
                      (conversation-create configuration
                                           :identifier "touched-short")))
                (conversation-append-user-message touched "still short")
-               (let ((unix-time
-                       (- (+ (conversation-created-at touched)
-                             *project-adaptation-substantial-seconds*)
-                          *unix-epoch-universal-time*)))
-                 (sb-posix:utime
-                  (namestring (conversation-log-pathname touched))
-                  unix-time
-                  unix-time))
+               (platform-set-file-times
+                *platform*
+                (conversation-log-pathname touched)
+                (+ (conversation-created-at touched)
+                   *project-adaptation-substantial-seconds*))
                (test-assert
                 (not
                  (project-adaptation--substantial-conversation-p
@@ -383,7 +380,7 @@
                   "compaction provider requests never receive project notes"))
                (test-assert (not (conversation-persisted-p conversation))
                             "project advice never creates conversation history"))))
-      (uiop:delete-directory-tree temporary-root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* temporary-root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)

@@ -31,8 +31,8 @@
 (defun mistral-provider-test--restore-environment (name value)
   "Restore environment variable NAME to VALUE."
   (if value
-      (sb-posix:setenv name value 1)
-      (sb-posix:unsetenv name))
+      (platform-setenv name value)
+      (platform-unsetenv name))
   nil)
 
 (-> mistral-provider-test--credentials () null)
@@ -43,8 +43,7 @@
          (saved (uiop:getenv *mistral-environment-variable*)))
     (unwind-protect
          (progn
-           (setf (uiop:getenv *mistral-environment-variable*)
-                 "mistral-environment-key")
+           (platform-setenv *mistral-environment-variable* "mistral-environment-key")
            (let ((manager (mistral-credential-manager-create configuration)))
              (api-key-credential-manager-save-key manager "mistral-private-key"))
            (let* ((manager (mistral-credential-manager-create configuration))
@@ -53,7 +52,7 @@
               (string= (oauth-credentials-access-token loaded)
                        "mistral-environment-key")
               "Mistral environment credentials take precedence"))
-           (sb-posix:unsetenv *mistral-environment-variable*)
+           (platform-unsetenv *mistral-environment-variable*)
            (let* ((manager (mistral-credential-manager-create configuration))
                   (loaded (credential-manager-load manager)))
              (test-assert
@@ -62,7 +61,7 @@
               "Mistral uses its private key when the environment is absent")))
       (mistral-provider-test--restore-environment
        *mistral-environment-variable* saved)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> mistral-provider-test--model-decoding () null)
@@ -110,7 +109,7 @@
               (test-assert
                (null (json-get request "max_completion_tokens"))
               "Mistral requests omit max_completion_tokens"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> mistral-provider-test--endpoints-and-discovery () null)
@@ -123,10 +122,10 @@
          (observed nil))
     (unwind-protect
          (progn
-           (setf (uiop:getenv "AUTOLITH_MISTRAL_PROVIDER_ENDPOINT")
-                 "https://chat.mistral.invalid/v1/chat/completions"
-                 (uiop:getenv "AUTOLITH_MISTRAL_MODELS_ENDPOINT")
-                 "https://models.mistral.invalid/v1/models")
+           (platform-setenv "AUTOLITH_MISTRAL_PROVIDER_ENDPOINT"
+                            "https://chat.mistral.invalid/v1/chat/completions")
+           (platform-setenv "AUTOLITH_MISTRAL_MODELS_ENDPOINT"
+                            "https://models.mistral.invalid/v1/models")
            (test-assert
             (string= (configuration--provider-endpoint-for "mistral-test")
                      "https://chat.mistral.invalid/v1/chat/completions")
@@ -183,7 +182,7 @@
        "AUTOLITH_MISTRAL_PROVIDER_ENDPOINT" saved-chat)
       (mistral-provider-test--restore-environment
        "AUTOLITH_MISTRAL_MODELS_ENDPOINT" saved-models)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-mistral-provider () null)

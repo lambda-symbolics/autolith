@@ -81,7 +81,7 @@
                                      :test #'string=))
                       10))
               "inference metadata persists canonical cache usage")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (defclass rlm-inference-test-provider (model-provider)

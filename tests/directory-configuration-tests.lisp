@@ -177,5 +177,5 @@
               (equal (mcp--registry-snapshot) before)
               "a malformed inherited file leaves registrations unchanged")))
       (mcp--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

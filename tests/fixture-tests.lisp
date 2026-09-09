@@ -72,7 +72,7 @@
                           "every exit restores the previous process-global fixture parent")
              (test-assert (probe-file unrelated)
                           "cleanup preserves an unrelated run directory")))
-      (uiop:delete-directory-tree unrelated :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* unrelated :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-configuration-fixture-cleanup () null)
@@ -153,8 +153,14 @@
   "Test nested environment fixtures restore absent, empty, and nonempty values."
   (let* ((name (format nil "AUTOLITH_FIXTURE_~A" (make-identifier)))
          (original (uiop:getenv name)))
+    (unless (test-fixture-available-p *platform* ':empty-environment-values)
+      (test-withheld ':empty-environment-values
+                     "environment fixtures restoring an empty value"))
     (with-test-environment ((name nil))
-      (dolist (initial '(nil "" "outer"))
+      (dolist (initial (if (test-fixture-available-p *platform*
+                                                     ':empty-environment-values)
+                           '(nil "" "outer")
+                           '(nil "outer")))
         (with-test-environment ((name initial))
           (dolist (fail-p '(nil t))
             (test-assert

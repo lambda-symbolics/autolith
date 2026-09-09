@@ -114,7 +114,7 @@
              (test-assert
               (null (papercut-find configuration (papercut-identifier legacy)))
               "unassessed legacy papercuts may be closed")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration)))
     (unwind-protect
@@ -138,7 +138,7 @@
             (papercut-tests--error-p
              (lambda () (papercut-list configuration)))
             "replay rejects closures following unfavorable assessments"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-papercuts () null)
@@ -380,5 +380,5 @@
            (test-assert (search "/papercut-close [ID]" (application-help))
                         "interactive help includes optional /papercut-close syntax"))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

@@ -595,7 +595,7 @@
               (test-assert
                (null (application-operation-call application name))
                (format nil "(~A) accepts its omitted optional argument" name)))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (dolist (case '(("/auth grok device typo" 4)
                   ("/mcp refresh typo" 3)
                   ("/permissions auto garbage" 3)))
@@ -660,7 +660,7 @@
          (published-count 0))
     (unwind-protect
          (progn
-           (sb-posix:unsetenv "AUTOLITH_CODEX_FAST_MODE")
+           (platform-unsetenv "AUTOLITH_CODEX_FAST_MODE")
            (test-call-with-function-replacements
             (list
              (list
@@ -749,7 +749,7 @@
                  (configuration-error ()
                    t))
                "/fast rejects unsupported modes")
-              (sb-posix:setenv "AUTOLITH_CODEX_FAST_MODE" "off" 1)
+              (platform-setenv "AUTOLITH_CODEX_FAST_MODE" "off")
               (application--builtin-fast-command application "status")
               (test-assert
                (search "AUTOLITH_CODEX_FAST_MODE controls it" (first presented))
@@ -768,11 +768,11 @@
                     (= published-count 2))
                "invalid or environment-controlled /fast input has no side effects"))))
       (if previous-fast-mode
-          (sb-posix:setenv "AUTOLITH_CODEX_FAST_MODE" previous-fast-mode 1)
-          (sb-posix:unsetenv "AUTOLITH_CODEX_FAST_MODE"))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+          (platform-setenv "AUTOLITH_CODEX_FAST_MODE" previous-fast-mode)
+          (platform-unsetenv "AUTOLITH_CODEX_FAST_MODE"))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (defclass application-authentication-test-provider (model-provider)

@@ -380,5 +380,5 @@
                          (eq (json-get variant "additionalProperties") false))
                        variants)
                 "every resource.edit operation variant remains closed"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil))

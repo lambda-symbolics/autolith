@@ -170,9 +170,9 @@ fi
      (list "chmod" "-R" "u+w" (namestring root))
      :ignore-error-status t
      :output nil)
-    (uiop:delete-directory-tree root
-                                :validate t
-                                :if-does-not-exist ':ignore))
+    (platform-delete-directory-tree *platform* root
+                                    :validate t
+                                    :if-does-not-exist ':ignore))
   nil)
 
 (-> release-script-tests--make-release
@@ -310,6 +310,8 @@ fi
     (ensure-directories-exist script)
     (uiop:copy-file (merge-pathnames "script/build-fff.lisp" source-root)
                     script)
+    (uiop:copy-file (merge-pathnames "script/roots.lisp" source-root)
+                    (merge-pathnames "roots.lisp" script-directory))
     (release-script-tests--write-file
      (merge-pathnames "commit" native-directory)
      (format nil "~A~%" commit))
@@ -2256,7 +2258,7 @@ esac
   (let ((old-platform (uiop:getenv "AUTOLITH_RELEASE_PLATFORM")))
     (unwind-protect
          (progn
-           (sb-posix:setenv "AUTOLITH_RELEASE_PLATFORM" "sparc-sunos" 1)
+           (platform-setenv "AUTOLITH_RELEASE_PLATFORM" "sparc-sunos")
            (test-assert
             (handler-case
                 (progn
@@ -2267,15 +2269,15 @@ esac
                         (release-archive-error-cause condition))))
             "release platform overrides must match the native host"))
       (if old-platform
-          (sb-posix:setenv "AUTOLITH_RELEASE_PLATFORM" old-platform 1)
-          (sb-posix:unsetenv "AUTOLITH_RELEASE_PLATFORM"))))
+          (platform-setenv "AUTOLITH_RELEASE_PLATFORM" old-platform)
+          (platform-unsetenv "AUTOLITH_RELEASE_PLATFORM"))))
   (when (string-equal (software-type) "Linux")
     (let* ((old-libc (uiop:getenv "AUTOLITH_LIBC"))
            (detected (release-archive--linux-libc))
            (mismatch (if (string= detected "musl") "glibc" "musl")))
       (unwind-protect
            (progn
-             (sb-posix:setenv "AUTOLITH_LIBC" mismatch 1)
+             (platform-setenv "AUTOLITH_LIBC" mismatch)
              (test-assert
               (handler-case
                   (progn
@@ -2286,8 +2288,8 @@ esac
                           (release-archive-error-cause condition))))
               "release libc overrides must match the native host"))
         (if old-libc
-            (sb-posix:setenv "AUTOLITH_LIBC" old-libc 1)
-            (sb-posix:unsetenv "AUTOLITH_LIBC")))))
+            (platform-setenv "AUTOLITH_LIBC" old-libc)
+            (platform-unsetenv "AUTOLITH_LIBC")))))
   nil)
 
 (-> release-script-tests--launcher-bsd (pathname pathname) null)
@@ -2658,12 +2660,10 @@ esac
     (release-script-tests--chmod "755" sha256)
     (unwind-protect
          (progn
-           (setf (uiop:getenv "PATH")
-                 (string-right-trim "/" (namestring bin)))
+           (platform-setenv "PATH" (string-right-trim "/" (namestring bin)))
            (test-assert (string= (release-archive--sha256-command) "sha256")
                         "sha256 helper accepts sha256")
-           (setf (uiop:getenv "PATH")
-                 (string-right-trim "/" (namestring empty)))
+           (platform-setenv "PATH" (string-right-trim "/" (namestring empty)))
            (test-assert
             (handler-case
                 (progn
@@ -2674,7 +2674,7 @@ esac
                      (search "sha256sum, shasum, or sha256 is required."
                              (release-archive-error-cause condition)))))
             "sha256 helper names every accepted digest command"))
-        (setf (uiop:getenv "PATH") saved)))
+        (platform-setenv "PATH" saved)))
     (test-assert
      (equal *release-archive-extra-command-directories*
             '("/usr/local/bin" "/usr/pkg/bin" "/opt/local/bin" "/bin" "/usr/bin"))
@@ -2692,14 +2692,12 @@ esac
       (release-script-tests--chmod "755" gnutar)
       (unwind-protect
            (progn
-             (setf (uiop:getenv "PATH")
-                   (string-right-trim "/" (namestring bin)))
+             (platform-setenv "PATH" (string-right-trim "/" (namestring bin)))
              (test-assert
               (equal (namestring (truename (release-archive--gnu-tar-command)))
                      (namestring (truename gtar)))
               "gnu tar lookup finds gtar on PATH")
-             (setf (uiop:getenv "PATH")
-                   (string-right-trim "/" (namestring empty)))
+             (platform-setenv "PATH" (string-right-trim "/" (namestring empty)))
              (let ((*release-archive-extra-command-directories*
                      (list (string-right-trim "/" (namestring extra)))))
                (test-assert
@@ -2709,8 +2707,7 @@ esac
              (let ((*release-archive-extra-command-directories* '()))
                (test-assert (null (release-archive--gnu-tar-command))
                             "gnu tar lookup is silent when gtar is absent"))
-             (setf (uiop:getenv "PATH")
-                   (string-right-trim "/" (namestring bin)))
+             (platform-setenv "PATH" (string-right-trim "/" (namestring bin)))
              (let ((command
                      (release-archive--tar-command
                       (merge-pathnames "release.tar" root)
@@ -2724,7 +2721,7 @@ esac
                  (test-assert
                   (string= (first command) (namestring (truename gtar)))
                   "tar command uses the discovered GNU tar pathname"))))
-          (setf (uiop:getenv "PATH") saved)))
+          (platform-setenv "PATH" saved)))
     nil)
 
 (-> release-script-tests--linux-release-validator (pathname pathname) null)

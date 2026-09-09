@@ -251,9 +251,9 @@
         (application-release-conversation-lease application))
       (when controller
         (application-input-controller-stop controller))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-localgroup--abandonment-fixture
@@ -280,7 +280,7 @@
     (application-release-conversation-lease application))
   (when controller
     (application-input-controller-stop controller))
-  (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)
+  (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)
   nil)
 
 (-> test-localgroup-abandoned-session-exit () null)
@@ -526,7 +526,7 @@
                            (localgroup-handoff-directory configuration))))
                  1)
               "a failed fresh spawn removes its own pending record")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-localgroup-process-handoff () null)

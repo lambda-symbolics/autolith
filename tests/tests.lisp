@@ -4,10 +4,10 @@
 
 (-> test-configuration-source-platform-reading () null)
 (defun test-configuration-source-platform-reading ()
-  "Test settings source reads under each supported platform feature set."
-  (let ((settings-path
+  "Test the POSIX adapter source reads under each supported platform feature set."
+  (let ((source-path
           (merge-pathnames
-           "src/configuration/settings.lisp"
+           "src/core/platform-posix.lisp"
            (asdf:system-source-directory :autolith)))
         (native-features
           (remove-if
@@ -16,20 +16,21 @@
                      '(:linux :darwin :macos :macosx :bsd
                        :freebsd :netbsd :openbsd)))
            *features*)))
-    (dolist (platform-features
-             '((:linux) (:darwin :bsd) (:bsd) nil))
-      (test-assert
-       (handler-case
-           (let ((*features* (append platform-features native-features))
-                 (*read-eval* nil))
-             (with-open-file (stream settings-path
-                                     :direction ':input
-                                     :external-format ':utf-8)
-               (loop until (eq (read stream nil ':eof) ':eof)))
-             t)
-         (error ()
-           nil))
-       "configuration source reads with each supported platform feature set")))
+    (with-test-fixture (':posix-adapter "reading the POSIX adapter source")
+      (dolist (platform-features
+               '((:linux) (:darwin :bsd) (:bsd) nil))
+        (test-assert
+         (handler-case
+             (let ((*features* (append platform-features native-features))
+                   (*read-eval* nil))
+               (with-open-file (stream source-path
+                                       :direction ':input
+                                       :external-format ':utf-8)
+                 (loop until (eq (read stream nil ':eof) ':eof)))
+               t)
+           (error ()
+             nil))
+         "POSIX adapter source reads with each supported platform feature set"))))
   nil)
 
 
@@ -37,8 +38,8 @@
 (defun tests--restore-environment (name value)
   "Restore environment variable NAME to VALUE."
   (if value
-      (sb-posix:setenv name value 1)
-      (sb-posix:unsetenv name))
+      (platform-setenv name value)
+      (platform-unsetenv name))
   nil)
 
 
@@ -49,12 +50,12 @@
         (saved    (uiop:getenv "AUTOLITH_CONTEXT_WINDOW")))
     (unwind-protect
          (progn
-           (sb-posix:setenv variable "200000" 1)
+           (platform-setenv variable "200000")
            (test-assert
             (= (configuration--context-window-for "unknown-model") 200000)
             "AUTOLITH_CONTEXT_WINDOW accepts a positive integer")
            (dolist (invalid '("200k" "abc" "0" "-1"))
-             (sb-posix:setenv variable invalid 1)
+             (platform-setenv variable invalid)
              (test-assert
               (handler-case
                   (progn
@@ -74,7 +75,7 @@
         (root     (asdf:system-source-directory :autolith)))
     (unwind-protect
          (progn
-           (sb-posix:setenv variable "gpt-5.6-typo" 1)
+           (platform-setenv variable "gpt-5.6-typo")
            (test-assert
             (handler-case
                 (progn
@@ -121,6 +122,9 @@
   (let* ((source-root (asdf:system-source-directory :autolith))
          (home (user-homedir-pathname))
          (direct-variable "AUTOLITH_TEST_XDG_DIRECTORY")
+         ;; Each case names the variable, the root it selects, and the
+         ;; directory the XDG convention chooses without it; the host's own
+         ;; fallback is observed with the variable absent.
          (cases
            (list
             (list "XDG_CONFIG_HOME"
@@ -142,33 +146,42 @@
          (progn
            (let* ((absolute (merge-pathnames "xdg-home/" source-root))
                   (fallback (merge-pathnames "xdg-fallback/" source-root)))
-             (sb-posix:setenv direct-variable (namestring absolute) 1)
+             (platform-setenv direct-variable (namestring absolute))
              (test-assert
               (equal (environment-directory direct-variable fallback) absolute)
               "environment-directory accepts an absolute directory")
              (dolist (invalid '("" "relative/xdg-home"))
-               (sb-posix:setenv direct-variable invalid 1)
+               (platform-setenv direct-variable invalid)
                (test-assert
                 (equal (environment-directory direct-variable fallback) fallback)
                 "environment-directory rejects empty and relative directories"))
-             (sb-posix:unsetenv direct-variable)
+             (platform-unsetenv direct-variable)
              (test-assert
               (equal (environment-directory direct-variable fallback) fallback)
               "environment-directory uses its fallback when the variable is absent"))
            (dolist (case cases)
-             (destructuring-bind (variable accessor fallback) case
-               (dolist (invalid '("" "relative/xdg-home"))
-                 (sb-posix:setenv variable invalid 1)
-                 (let ((configuration
-                         (configuration-create
-                          :source-root source-root
-                          :working-directory source-root
-                          :defer-provider-validation-p t)))
-                   (test-assert
-                    (equal (funcall accessor configuration) fallback)
-                    (format nil "~A ignores empty and relative values" variable))))))
+             (destructuring-bind (variable accessor conventional) case
+               (flet ((root ()
+                        "Return the root ACCESSOR selects for a fresh configuration."
+                        (funcall accessor
+                                 (configuration-create
+                                  :source-root source-root
+                                  :working-directory source-root
+                                  :defer-provider-validation-p t))))
+                 (platform-unsetenv variable)
+                 (let ((fallback (root)))
+                   (with-test-fixture (':posix-adapter
+                                       (format nil "the ~A convention" variable))
+                     (test-assert
+                      (equal fallback conventional)
+                      (format nil "~A falls back to the XDG convention" variable)))
+                   (dolist (invalid '("" "relative/xdg-home"))
+                     (platform-setenv variable invalid)
+                     (test-assert
+                      (equal (root) fallback)
+                      (format nil "~A ignores empty and relative values" variable)))))))
            (let ((state-home (merge-pathnames "xdg-state/" source-root)))
-             (sb-posix:setenv "XDG_STATE_HOME" (namestring state-home) 1)
+             (platform-setenv "XDG_STATE_HOME" (namestring state-home))
              (test-assert
               (equal
                (environment-api-key-credential-source--pathname "fixture")
@@ -182,17 +195,34 @@
                     (test-assert
                      (every
                       (lambda (directory)
-                        (= (logand
-                            (sb-posix:stat-mode
-                             (sb-posix:stat (namestring directory)))
-                            #o777)
-                           #o700))
+                        (test-fixture-permissions-p
+                         *platform* directory ':private-directory))
                       (list (configuration-config-root configuration)
                             (configuration-data-root configuration)
                             (configuration-state-root configuration)
                             (configuration-cache-root configuration)))
-                     "new XDG application roots have mode 0700"))
-               (uiop:delete-directory-tree
+                     "new XDG application roots are private to the user")
+                    ;; A file that plain OPEN creates below a private root
+                    ;; must stay usable by its creator: Windows gives it the
+                    ;; root's inheritable entries, POSIX the process umask.
+                    (let ((created (merge-pathnames "created-inside.txt"
+                                                    (configuration-state-root configuration))))
+                      (with-open-file (stream created
+                                              :direction ':output
+                                              :if-exists ':supersede
+                                              :if-does-not-exist ':create
+                                              :external-format ':utf-8)
+                        (write-line "inside" stream))
+                      (test-assert
+                       (and (string= (with-open-file (stream created :external-format ':utf-8)
+                                       (read-line stream))
+                                     "inside")
+                            (eq (platform-file-status-kind
+                                 (platform-path-status *platform* created))
+                                ':file))
+                       "files created below a private root stay readable by their creator")))
+               (platform-delete-directory-tree
+                *platform*
                 root :validate t :if-does-not-exist ':ignore)))
       (dolist (entry saved)
         (tests--restore-environment (first entry) (rest entry)))))

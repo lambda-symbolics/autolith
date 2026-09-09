@@ -5,6 +5,14 @@
 (-> test-localgroup-handoff-cancellation () null)
 (defun test-localgroup-handoff-cancellation ()
   "Test that timeout cancellation defeats delayed startup and reaps its process."
+  (with-platform-capability (':detached-sessions
+                             "handoff cancellation against a supervised process")
+    (test-localgroup--handoff-cancellation))
+  nil)
+
+(-> test-localgroup--handoff-cancellation () null)
+(defun test-localgroup--handoff-cancellation ()
+  "Race a supervised replacement against handoff timeout and claim cancellation."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (application nil)
@@ -114,9 +122,9 @@
       (when application
         (localgroup-stop application)
         (application-release-conversation-lease application))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-localgroup-fresh-startup-selection () null)
@@ -192,7 +200,7 @@
               "durable handoff startup reconnects its explicit conversation")))
       (when application
         (application-release-conversation-lease application))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)

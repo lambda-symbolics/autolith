@@ -81,7 +81,7 @@
       (setf *test-self-definition-reader-side-effect-p* nil)
       (when (fboundp 'test-self-definition-reader-target)
         (fmakunbound 'test-self-definition-reader-target))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-mutation-journal-tail-repair () null)
@@ -118,7 +118,7 @@
                                   records)
                           '("complete-before" "complete-after")))
               "the next mutation append atomically repairs the interrupted tail")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-self-tools () null)
@@ -394,7 +394,7 @@
              (when (fboundp symbol)
                (fmakunbound symbol))
              (unintern symbol implementation-package)))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-self-definition-installation-rollback () null)
@@ -505,7 +505,7 @@
         (fmakunbound new-name))
       (remhash existing-target *exploratory-definitions*)
       (remhash new-target *exploratory-definitions*)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-self-application-command-definitions () null)
@@ -787,7 +787,7 @@
             *active-image-commit-identifier* previous-commit-identifier
             *active-image-history-commit* previous-history-commit
             *active-image-lineage-identifier* previous-lineage-identifier)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-self-restart-selection () null)
@@ -844,7 +844,7 @@
                                      "(cerror \"Keep going.\" \"Stop.\")"
                                      "restart" "NO-SUCH-RESTART")))
                           "unknown restart names still fail with the menu")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-self-discard () null)
@@ -1024,7 +1024,7 @@
       (when (fboundp 'test-new-discard-target)
         (fmakunbound 'test-new-discard-target))
       (clrhash *exploratory-undo-actions*)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-standard-mutation-checker () null)
@@ -1354,12 +1354,10 @@
                                (configuration-image-commit-root configuration))
                 "the reconstruction script stays under private Autolith data")
                (test-assert
-                (= (logand #o777
-                           (sb-posix:stat-mode
-                            (sb-posix:stat
-                             (namestring
-                              (image-commit-script-pathname first-commit)))))
-                   #o444)
+                (test-fixture-permissions-p
+                 *platform*
+                 (image-commit-script-pathname first-commit)
+                 ':read-only)
                 "published private replay scripts are read-only")
                 (test-assert
                  (string= (or (image-commit-parent-identifier first-commit) "")
@@ -1510,9 +1508,11 @@
                     (history-directory
                       (image-history--artifact-directory
                        configuration identifier)))
-               (uiop:delete-directory-tree
+               (platform-delete-directory-tree
+                *platform*
                 history-directory :validate t :if-does-not-exist ':ignore)
-               (uiop:delete-directory-tree
+               (platform-delete-directory-tree
+                *platform*
                 canonical-directory :validate t :if-does-not-exist ':ignore)
                (setf (symbol-function 'test-self-target) previous-function
                      *test-self-setting* :baseline
@@ -1602,9 +1602,9 @@
          *durable-mutations*)
         (dolist (identifier test-identifiers)
           (remhash identifier *durable-mutations*)))
-      (uiop:delete-directory-tree source-root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* source-root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-durable-definition-publication-boundary () null)
@@ -1741,9 +1741,9 @@
       (remhash target *exploratory-definitions*)
       (when mutation
         (remhash (durable-mutation-identifier mutation) *durable-mutations*))
-      (uiop:delete-directory-tree source-root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* source-root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-self-tuning-experiments () null)
@@ -1913,7 +1913,7 @@
             *active-image-history-commit* previous-history-commit
             *active-image-lineage-identifier* previous-lineage-identifier)
       (clrhash *exploratory-undo-actions*)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-self-replay-foreign-home () null)

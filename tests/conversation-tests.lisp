@@ -105,7 +105,7 @@
                         turn-start-sequence)
                      (= (count :turn-aborted records :key #'first) 1))
                 "loading validates and projects the durable aborted boundary"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-image-input () null)
@@ -303,7 +303,7 @@
                 (image-input-error (condition)
                   (eq (image-input-error-stage condition) ':loading)))
               "conversation replay rejects a missing image artifact")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-compaction () null)
@@ -344,7 +344,7 @@
                           "the bridge item explains its provenance")
              (test-assert (zerop (conversation-last-total-tokens reloaded))
                           "replay resets usage tracked before the summary")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-native-compaction () null)
@@ -405,7 +405,7 @@
                     (= (length (conversation-input-items-for-family reloaded ':grok))
                        1))
                "native checkpoint replay preserves each family projection")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -562,7 +562,7 @@
                    (not (find identity (conversation-list configuration)
                               :test #'equal)))
               "conversation deletion removes deterministic chunks behind the identity")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -665,7 +665,7 @@
                                (nreverse records))
                        '(1 2 3))
                 "restored deterministic chunks are fully scannable"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-legacy-storage () null)
@@ -682,7 +682,8 @@
                   (forms (copy-tree (conversation--read-records active))))
              (setf (getf (rest (first forms)) :version) 1)
              (conversation-identifier-migration--write-forms identity forms)
-             (uiop:delete-directory-tree
+             (platform-delete-directory-tree
+              *platform*
               (conversation-storage-directory-pathname identity)
               :validate t
               :if-does-not-exist ':ignore))
@@ -713,7 +714,7 @@
                         (mapcar (lambda (record) (getf (rest record) :seq)) records)
                         '(1 2)))
                   "newest-chunk resume and full scans preserve mixed legacy history")))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-ephemeral-tool-projection () null)
@@ -829,9 +830,9 @@
              (test-assert
               (= (length (conversation-input-items reloaded)) 1)
               "replay after compaction contains only the durable summary bridge")))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-ephemeral-append-interruption () null)
@@ -884,7 +885,8 @@
               (null (conversation-input-items conversation))
               (null (conversation-ephemeral-input-entries conversation)))
              "request-local cleanup removes the interrupted provider item")))
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -924,7 +926,7 @@
              (test-assert
               (not (find legacy (conversation-list configuration) :test #'equal))
               "header-only legacy conversations stay out of saved listings")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-model-selection () null)
@@ -990,7 +992,7 @@
                             "legacy conversations load without a model")
                (test-assert (null (conversation-reasoning-effort loaded))
                             "legacy conversations load without an effort"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-interrupted-tool-call () null)
@@ -1056,7 +1058,7 @@
                           "type")
                          "function_call_output")
                 "reloaded history keeps the repaired provider ordering"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-late-duplicate-tool-output () null)
@@ -1134,7 +1136,7 @@
              (test-assert
               (string= (json-get (fourth items) "role") "user")
               "replay retains history produced after the selected output")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-malformed-tool-projections () null)
@@ -1175,7 +1177,7 @@
               (conversation-invariant-error ()
                 t))
             "replay rejects a tool result with competing wire projections"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-private-storage () null)
@@ -1216,7 +1218,7 @@
               (conversation-error ()
                 t))
             "public identifier loading cannot reach a private transcript"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-concurrent-appends () null)
@@ -1261,41 +1263,20 @@
       (dolist (thread threads)
         (when (thread-alive-p thread)
           (join-thread thread)))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
-
-(-> test-conversation--descriptor-read-byte (integer) integer)
-(defun test-conversation--descriptor-read-byte (descriptor)
-  "Read one synchronization byte from DESCRIPTOR and return the byte count."
-  (let ((buffer
-          (make-array
-           1
-           :element-type '(unsigned-byte 8)
-           :initial-element 0)))
-    (sb-sys:with-pinned-objects (buffer)
-      (sb-posix:read descriptor (sb-sys:vector-sap buffer) 1))))
-
-(-> test-conversation--descriptor-write-byte (integer) integer)
-(defun test-conversation--descriptor-write-byte (descriptor)
-  "Write one synchronization byte to DESCRIPTOR and return the byte count."
-  (let ((buffer
-          (make-array
-           1
-           :element-type '(unsigned-byte 8)
-           :initial-element 1)))
-    (sb-sys:with-pinned-objects (buffer)
-      (sb-posix:write descriptor (sb-sys:vector-sap buffer) 1))))
 
 (-> test-conversation--single-thread-p () boolean)
 (defun test-conversation--single-thread-p ()
-  "Return true when this image may safely use SB-POSIX:FORK."
-  (= 1 (length (sb-thread:list-all-threads))))
+  "Return true when this image may safely fork a child."
+  (and (test-fixture-available-p *platform* ':fork)
+       (= 1 (length (sb-thread:list-all-threads)))))
 
 (-> test-conversation--sbcl-command () string)
 (defun test-conversation--sbcl-command ()
   "Return the SBCL command used to spawn isolated lease children."
   (or (uiop:getenv "AUTOLITH_SBCL")
-      (namestring (truename (uiop:argv0)))
+      (namestring sb-ext:*runtime-pathname*)
       "sbcl"))
 
 (-> test-conversation--child-configuration-form (configuration) string)
@@ -1352,7 +1333,7 @@
           (format nil "(load ~S)"
                   (namestring (test-conversation--child-project-setup)))
           "--eval"
-          (format nil "(asdf:load-asd ~S)"
+          (format nil "(asdf:load-asd (pathname ~S))"
                   (namestring (merge-pathnames "autolith.asd" source-root)))
           "--eval" "(asdf:load-system :autolith)"
           "--eval" form
@@ -1360,20 +1341,11 @@
 
 (-> test-conversation--run-child-form
     (string &key (:environment list))
-    (integer 0 255))
+    (values integer string))
 (defun test-conversation--run-child-form (form &key environment)
   "Evaluate FORM in a fresh SBCL and return its status and captured output."
-  (multiple-value-bind (output error-output status)
-      (uiop:run-program
-       (let ((command (test-conversation--child-command form)))
-         (if environment
-             (append (list "env") environment command)
-             command))
-       :output ':string
-       :error-output ':output
-       :ignore-error-status t)
-    (declare (ignore error-output))
-    (values status output)))
+  (test-run-program-with-environment (test-conversation--child-command form)
+                                     environment))
 
 (-> test-conversation-child-project-setup () null)
 (defun test-conversation-child-project-setup ()
@@ -1400,9 +1372,9 @@
               (format nil
                       "the clean child loads locked Autolith dependencies:~%~A"
                       output))))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation--call-with-child-lease/fork
@@ -1410,52 +1382,21 @@
     null)
 (defun test-conversation--call-with-child-lease/fork
     (configuration identifier function)
-  "Call FUNCTION while a forked child holds IDENTIFIER until released."
-  (multiple-value-bind (ready-read ready-write)
-      (sb-posix:pipe)
-    (multiple-value-bind (release-read release-write)
-        (sb-posix:pipe)
-      (let ((child-pid (sb-posix:fork))
-            (child-status nil))
-        (if (zerop child-pid)
-            (progn
-              (ignore-errors (sb-posix:close ready-read))
-              (ignore-errors (sb-posix:close release-write))
-              (handler-case
-                  (progn
-                    (conversation-lease-acquire configuration identifier)
-                    (test-conversation--descriptor-write-byte ready-write)
-                    (test-conversation--descriptor-read-byte release-read)
-                    ;; Deliberately bypass release to exercise kernel cleanup
-                    ;; after a dead conversation owner.
-                    (sb-posix:_exit 0))
-                (serious-condition ()
-                  (sb-posix:_exit 1))))
-            (progn
-              (sb-posix:close ready-write)
-              (sb-posix:close release-read)
-              (unwind-protect
-                   (progn
-                     (test-assert
-                      (= (test-conversation--descriptor-read-byte ready-read) 1)
+  "Call FUNCTION while a forked child holds IDENTIFIER until released.
+
+The child deliberately bypasses release, exercising kernel cleanup after a
+dead conversation owner."
+  (multiple-value-bind (reaped-p clean-exit-p)
+      (test-fixture-call-with-forked-holder
+       *platform*
+       (lambda ()
+         (conversation-lease-acquire configuration identifier))
+       (lambda (ready-p)
+         (test-assert ready-p
                       "the child process acquired its conversation lease")
-                     (funcall function))
-                (ignore-errors
-                  (test-conversation--descriptor-write-byte release-write))
-                (ignore-errors
-                  (sb-posix:close ready-read))
-                (ignore-errors
-                  (sb-posix:close release-write))
-                (multiple-value-bind (waited-pid status)
-                    (sb-posix:waitpid child-pid 0)
-                  (test-assert
-                   (= waited-pid child-pid)
-                   "the conversation lease holder was reaped")
-                  (setf child-status status)))
-              (test-assert
-               (and (sb-posix:wifexited child-status)
-                    (zerop (sb-posix:wexitstatus child-status)))
-               "the child conversation owner exited cleanly"))))))
+         (funcall function)))
+    (test-assert reaped-p "the conversation lease holder was reaped")
+    (test-assert clean-exit-p "the child conversation owner exited cleanly"))
   nil)
 
 (-> test-conversation--call-with-child-lease/process
@@ -1489,8 +1430,10 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
            :error-output ':output))
     (unwind-protect
          (progn
+           ;; The child loads the whole system from fasls, which takes tens
+           ;; of seconds on Windows while the parallel check loads the host.
            (loop with deadline = (+ (get-internal-real-time)
-                                    (* 30 internal-time-units-per-second))
+                                    (* 90 internal-time-units-per-second))
                  until (or (probe-file ready-path)
                            (not (uiop:process-alive-p process)))
                  do (when (> (get-internal-real-time) deadline)
@@ -1533,22 +1476,17 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
     (configuration identifier)
   "Return true when a separate child process can claim IDENTIFIER."
   (if (test-conversation--single-thread-p)
-      (let ((child-pid (sb-posix:fork)))
-        (if (zerop child-pid)
-            (handler-case
-                (progn
-                  (ls-flock:reset-after-fork)
-                  (conversation-lease-acquire configuration identifier)
-                  (sb-posix:_exit 0))
-              (conversation-in-use ()
-                (sb-posix:_exit 2))
-              (serious-condition ()
-                (sb-posix:_exit 1)))
-            (multiple-value-bind (waited-pid status)
-                (sb-posix:waitpid child-pid 0)
-              (and (= waited-pid child-pid)
-                   (sb-posix:wifexited status)
-                   (zerop (sb-posix:wexitstatus status))))))
+      (eql 0
+           (test-fixture-run-forked
+            *platform*
+            (lambda ()
+              (handler-case
+                  (progn
+                    (ls-flock:reset-after-fork)
+                    (conversation-lease-acquire configuration identifier)
+                    0)
+                (conversation-in-use ()
+                  2)))))
       (zerop
        (test-conversation--run-child-form
         (format
@@ -1629,7 +1567,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                        configuration identifier))
                      "the process-local guard retains the kernel lease"))
                (conversation-lease-release lease))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-inherited-reference () null)
@@ -1822,7 +1760,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                (conversation-invariant-error ()
                  t))
              "replay wraps malformed inherited-reference JSON")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-persistence () null)
@@ -1894,7 +1832,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                      (string= (getf (rest (first (last records))) :content)
                               "after interrupted write"))
                 "the next conversation append atomically repairs its tail"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-working-seconds () null)
@@ -1974,7 +1912,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
              (test-assert
               (= (conversation-working-seconds reloaded) 110)
               "replay reproduces the accumulated working seconds exactly")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-picker-rebuild-exclusion () null)
@@ -2131,7 +2069,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                       (conversation-picker-metadata-source-segment metadata)
                       (namestring (conversation-log-pathname conversation))))
                 "rebuilt picker metadata records the exact active segment"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-picker-search () null)
@@ -2395,7 +2333,7 @@ assistant needle"))
                          (conversation-picker-search-find pathname))
                         expected))
                   "tail repair leaves the complete history searchable on demand"))))
-        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -2481,7 +2419,7 @@ assistant needle"))
               (and (not (conversation-incomplete-tail-p loaded))
                    (= (conversation-next-sequence loaded) (1+ next-sequence)))
               "a later append repairs the tail and commits exactly one record")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -2567,7 +2505,7 @@ assistant needle"))
         (join-thread first-thread))
       (when (and second-thread (thread-alive-p second-thread))
         (join-thread second-thread))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -2705,7 +2643,7 @@ assistant needle"))
                           "cleanup failure leaves undeleted artifacts recoverable")))
       (when lease
         (conversation-lease-release lease))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-titles () null)
@@ -2960,7 +2898,7 @@ assistant needle"))
                      (string= (conversation-picker-metadata-title metadata)
                               "Generated header title"))
                 "picker rebuilds recover titles from self-contained chunk headers"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -3014,5 +2952,5 @@ assistant needle"))
                              collect (json-get item "encrypted_content"))
                      '("grok-private-blob"))
               "replay restores each item's producing family")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

@@ -276,9 +276,9 @@
            (test-assert (eq (test-resource-resolver-last-context resolver) context)
                         "resource tool dispatch preserves the exact authority context"))
       (tool-registry-close-runtime-state registry)
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   (let ((condition (make-condition 'resource-revision-stale
                                    :uri               "test:item"
                                    :expected-revision "revision-1"

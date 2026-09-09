@@ -161,9 +161,9 @@
                           (first (workspace-agenda-items copied)))
                          (list (memory-identifier memory))))
              "copying an agenda preserves its source, items, and memory links"))
-          (uiop:delete-directory-tree source
-                                      :validate t
-                                      :if-does-not-exist ':ignore)
+          (platform-delete-directory-tree *platform* source
+                                          :validate t
+                                          :if-does-not-exist ':ignore)
           (agenda-transport :configuration source-configuration
                             :state loaded
                             :source-directory source-name
@@ -181,13 +181,10 @@
                             loaded
                             (agenda-item-identifier note))
              "agenda removal targets the current workspace only")))
-        (test-assert (= (logand (sb-posix:stat-mode
-                                 (sb-posix:stat
-                                  (namestring
-                                   (configuration-agenda-path
-                                    source-configuration))))
-                                #o777)
-                        #o600)
+        (test-assert (test-fixture-permissions-p
+                      *platform*
+                      (configuration-agenda-path source-configuration)
+                      ':private-file)
                      "agenda state is private to the current user"))))
   nil)
 

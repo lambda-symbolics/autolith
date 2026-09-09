@@ -448,8 +448,8 @@
           (application-input-controller-stop controller))
         (ignore-errors (terminal-ui-stop ui))
         (ignore-errors (tool-registry-close-runtime-state registry))
-        (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t
+                                             :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-tool-boolean-argument () null)
@@ -878,7 +878,7 @@
               "malformed local tool argument plists fail through the Lisp condition boundary"))
            t)
       (ignore-errors (terminal-ui-stop (application-ui application)))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
 
 
 ;;;; -- On-demand Compaction --
@@ -902,7 +902,7 @@
                   :worker nil))
            (funcall function application))
       (terminal-ui-stop (application-ui application))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-compact-operation () null)
