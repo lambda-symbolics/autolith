@@ -446,12 +446,15 @@
               (captured-budget nil))
           (test-call-with-function-replacements
            (list
-            (list 'dexador:post
-                  (lambda (url &key headers content &allow-other-keys)
-                    (declare (ignore headers content))
-                    (test-assert (string= url *web-search-endpoint*)
-                                 "web.search posts to the Parallel endpoint")
-                    (values (tool-tests--web-search-response) 200)))
+              (list 'dexador:post
+                    (lambda (url &key headers content &allow-other-keys)
+                      (declare (ignore headers))
+                      (test-assert (string= url *web-search-endpoint*)
+                                   "web.search posts to the Parallel endpoint")
+                      (test-assert
+                       (search "\"search_queries\":[\"release notes\"]" content)
+                       "the Parallel request sends search_queries from the objective")
+                      (values (tool-tests--web-search-response) 200)))
             (list 'web-gist--retrieve
                   (lambda (url)
                     (with-lock-held (fetch-lock)
