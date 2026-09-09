@@ -23,6 +23,7 @@ Autolith supports the following platforms
 - FreeBSD (x86_64)
 - NetBSD (x86_64)
 - OpenBSD (x86_64)
+- Windows (x86_64), from a source checkout
 
 Adding more platform support is always welcome!
 
@@ -42,7 +43,8 @@ in spam.
 * Install
 
 Autolith supports Linux, MacOS and the BSDs via standalone binary releases
-and Nix.
+and Nix. Windows runs from a source checkout through =script\bootstrap.ps1=
+and =bin\autolith.cmd=; see the guide.
 
 The curl-into-sh installer installs or updates the packaged release for your
 platform. Inspect the [[https://sh.lambda-symbolics.com/autolith][installer script]] before piping it into a shell, or trust
