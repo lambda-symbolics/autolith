@@ -137,6 +137,40 @@ ln -sfn "$PWD/bin/autolith" ~/.local/bin/autolith
 
 This is assuming you have .local/bin/ in PATH.
 
+** Windows source checkout
+
+Windows x86-64 runs Autolith from a source checkout; there is no packaged
+Windows release yet. Install Git for Windows, Rust with the MSVC toolchain
+and Cargo, and Quicklisp under =%USERPROFILE%\quicklisp=. Put =clang= on
+=PATH= for the ColorLisp syntax library. An SBCL 2.6.6 or newer on =PATH= is
+used when present; otherwise the bootstrap downloads the official SBCL Windows
+binary pinned in =sbcl-windows-releases.sha256=, verifies its SHA-256, and
+unpacks it below the data root without registering it with Windows. OpenSSL 3
+comes from Git for Windows, from =AUTOLITH_OPENSSL_DIRECTORY=, or from a
+=native\openssl= directory beside the sources.
+
+From PowerShell, bootstrap and check the checkout:
+
+#+BEGIN_SRC powershell
+script\bootstrap.ps1
+script\check.ps1
+#+END_SRC
+
+=script\check.ps1= takes the same selectors as =./script/check=. Checks that
+need FIFOs, forked children, pseudo-terminals, POSIX file modes, or the POSIX
+shell are recorded as skipped; the release scripts and the release server are
+POSIX-only and are not built.
+
+Start a session with =bin\autolith.cmd= or =bin\autolith.ps1=; both take the
+arguments =bin/autolith= takes. Windows Terminal is the primary console;
+legacy consoles without virtual-terminal input are refused with a message.
+
+Windows withholds, with a message where the feature would be reached:
+sandboxed command execution, detaching a session from its terminal and
+client-first starts, checkpoints and rollback, and the =unix= management
+REPL transport. Everything else, including local sessions over loopback TCP,
+workers, the search engine, MCP, and skills, works as on POSIX hosts.
+
 * Talk to Autolith
 
 ** Prose, Lisp, and commands
@@ -311,6 +345,12 @@ autolith localgroup kill   SESSION-ID
 =pause= cancels active work and holds queued primary work.
 =kill= requests graceful shutdown.
 
+Detaching hands a session to a supervised process group that outlives the
+terminal. Windows has no process groups or detached sessions, so sessions
+there always run directly in the terminal that started them: =/detach= and
+client-first starts report that the handoff is withheld, while the loopback
+endpoint and the =localgroup= commands work as elsewhere.
+
 Autolith stores configuration, durable data, process state, and replaceable
 caches below =${XDG_CONFIG_HOME:-~/.config}/autolith/=,
 =${XDG_DATA_HOME:-~/.local/share}/autolith/=,
@@ -318,6 +358,14 @@ caches below =${XDG_CONFIG_HOME:-~/.config}/autolith/=,
 =${XDG_CACHE_HOME:-~/.cache}/autolith/=. XDG base-directory values must be
 nonempty absolute paths; invalid values use these defaults. Newly created
 Autolith roots have mode =0700=.
+
+On Windows the same four roots are, unless an absolute XDG variable overrides
+one, =%APPDATA%\autolith\=, =%LOCALAPPDATA%\autolith\data\=,
+=%LOCALAPPDATA%\autolith\state\=, and =%LOCALAPPDATA%\autolith\cache\=.
+Private files and directories carry an access control list granting only the
+owner and SYSTEM, which is what mode =0600= and =0700= mean there; a file
+Autolith publishes read-only withholds write access through that list and
+keeps the read-only attribute clear, so it can still be replaced and deleted.
 
 Conversation leases, Localgroup endpoint records, and recovery state live under
 =${XDG_STATE_HOME:-~/.local/state}/autolith/= rather than =XDG_RUNTIME_DIR=.
@@ -355,7 +403,7 @@ The following environment variables configure newly created applications:
 | Variable | Default | Meaning |
 |-
 | =AUTOLITH_MANAGEMENT_REPL= | =off= | Enable the endpoint. |
-| =AUTOLITH_MANAGEMENT_REPL_TRANSPORT= | =unix= | =unix= or =tcp=. |
+| =AUTOLITH_MANAGEMENT_REPL_TRANSPORT= | =unix=, or =tcp= on Windows | =unix= or =tcp=. |
 | =AUTOLITH_MANAGEMENT_REPL_UNIX_SOCKET= | =${XDG_STATE_HOME:-~/.local/state}/autolith/management/repl.sock= | Unix socket pathname. |
 | =AUTOLITH_MANAGEMENT_REPL_TCP_ADDRESS= | =127.0.0.1= | IPv4 loopback listener address. |
 | =AUTOLITH_MANAGEMENT_REPL_TCP_PORT= | =4141= | TCP listener port. |
@@ -375,7 +423,8 @@ and proof between trusted local clients. Treat loopback TCP clients as locally
 trusted. Unix transport creates a
 mode-0700 private directory and a mode-0600 socket. Startup refuses an active
 socket and any alien or non-socket path; it removes a socket only after proving
-that it is a stale current-user endpoint.
+that it is a stale current-user endpoint. Windows has no filesystem sockets, so
+=unix= is refused there with a message and =tcp= is the default.
 
 *** Wire protocol
 
@@ -683,6 +732,9 @@ Primary shell and Lisp executions and child agents appear as live rows with
 spinners and elapsed time. The command and agent strips share a viewport bound,
 and provider activity remains visible below them. =shell.run= accepts an optional
 short =:description= for its row label; otherwise it derives one from the command.
+Commands run through =/bin/sh -c=; on Windows they run through Git for
+Windows' =sh.exe= when it is installed and through PowerShell otherwise, and the
+sandboxed execution choices are unavailable there.
 
 The default pool admits eight concurrent children.
 =AUTOLITH_TASK_MAX_CONCURRENCY= raises that up to 32. Child jobs have no

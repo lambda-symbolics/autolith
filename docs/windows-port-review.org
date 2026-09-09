@@ -1,0 +1,210 @@
+#+TITLE: Windows port review notes
+
+These notes accompany the Windows x86-64 port on branch =port/windows=. They
+record the decisions the maintainer asked to be told about, the upstream
+revisions inspected, and what was verified where.
+
+* Decisions taken
+
+- Official binary, no source build on Windows. =bin/autolith-runtime.ps1=
+  downloads the official SBCL 2.6.6 Windows MSI pinned in
+  =sbcl-windows-releases.sha256= and unpacks it below the data root with
+  =msiexec /a=, which registers nothing with Windows. An SBCL on =PATH= that
+  satisfies =sbcl.version= is used instead when present; a release newer than
+  the pin runs Autolith but has no verified source archive, so the runtime
+  script says so and Lisp workers report implementation source unavailable
+  rather than the bootstrap failing.
+- Privacy policy. A private file or directory carries a protected access
+  control list granting only the owner and SYSTEM. A file published read-only
+  keeps that list and withholds =FILE_WRITE_DATA= and =FILE_APPEND_DATA= from
+  the owner; the read-only attribute is never set, so the file stays deletable
+  and replaceable, as an unwritable POSIX file in a writable directory is.
+  =ls-compat.posix:file-mode= implements the mapping for every library;
+  Autolith's adapter delegates to it and reads privacy back through the
+  security descriptor of an open handle. A private directory's entries are
+  inheritable, so a lock file or token file that plain =open= creates below
+  it takes them over; without that a file created inside carried an empty
+  list and denied everyone, which is how the localgroup registry lock refused
+  the session that had just created it. The entries name the process token's
+  user rather than the object's owner, so a session started from an elevated
+  terminal, whose files Windows owns as Administrators, still opens them
+  un-elevated later. An elevated process owns what it
+  creates as the Administrators group, which ownership checks accept only
+  while the process token is elevated.
+- Default shell. =shell.run= uses Git for Windows' =sh.exe= when installed and
+  PowerShell otherwise, through =platform-shell-command-line=. There is no
+  sandbox backend on Windows; the sandboxed approval choices are unavailable.
+- Localgroup handoff withheld. Detaching a session needs a process group
+  supervisor; =localgroup-handoff--launch-supervised= refuses on hosts without
+  detached sessions before any shell runs, and client-first starts keep the
+  direct path there. Note that =bash= on a Windows =PATH= is WSL's launcher,
+  so no Windows code may shell out to it.
+- Checkpoints withheld. =checkpoint-backend-create= refuses on hosts without a
+  forked image saver. Workers save images by restarting from a saved core: the
+  worker answers the save request, saves its heap, and exits; sbcl-workers
+  reaps it, probes and publishes the core, adopts the image, and starts the
+  same named worker again from that core, so the name stays live at the cost
+  of one process restart. The preloaded active image is built the same way:
+  =active-image-install= starts =script/build-active.lisp --child= in a fresh
+  process of the same runtime, which loads the system and saves itself, then
+  probes and publishes the core as the forked saver's parent does on POSIX.
+- Console input. SBCL's Windows runtime reads console handles through its
+  own reader thread, written for cooked line input, and it drops every
+  carriage return; in raw virtual-terminal mode the Enter key is a lone
+  carriage return, so it never reached the line editor. clinedi's Windows
+  terminal therefore reads the console itself: a Gray stream over
+  =ReadConsoleW=, reporting pending input through =PeekConsoleInputW= and
+  counting only key-down records that carry a character, so a key release
+  never makes a read block. Secret prompts still read standard input, which
+  is fine because the terminal is stopped, and the console cooked, around
+  them.
+- Stream deadlines. SBCL deadlines do not interrupt Windows socket reads, so
+  =cl-llm-provider-api:provider-call-with-response-deadline= uses a timer
+  that interrupts the thread there and reports =sb-sys:deadline-timeout=.
+- Management REPL transport defaults to =tcp= on Windows; =unix= is refused
+  with a message.
+- Environment changes go through =platform-set-environment-variable= (with
+  the =platform-setenv= and =platform-unsetenv= helpers) in sources and
+  tests alike. On Windows =sb-posix:setenv= only calls =_putenv=, which the C
+  runtime propagates to the process environment block for new variables but
+  not for inherited ones, so =UIOP:GETENV= and child processes kept seeing the
+  old value; the adapter updates the block with =SetEnvironmentVariableW= and
+  the runtime copy with =_wputenv=. Windows 11 answers
+  =NUMBER_OF_PROCESSORS= from the processor count itself whatever the block
+  holds, so the check script's utility fallback is recorded as withheld there.
+- Directory trees are removed through =platform-delete-directory-tree=. Git
+  marks loose objects read-only and Windows refuses to delete such files
+  whatever the directory allows, so the Windows adapter clears the attribute
+  below the tree once the tree passes UIOP's validation, then defers to
+  =uiop:delete-directory-tree=. Worker cores saved read-only by sbcl-workers
+  now use =ls-compat.posix:file-mode=, which never sets the attribute.
+- Self source enumeration skips ASDF components whose =:if-feature= the image
+  lacks, since the POSIX adapter's file does not even read on Windows; the
+  tracked-definition walk of =src/= leaves the same files out.
+- Link resolution goes through =platform-truename=. SBCL's Windows =truename=
+  only normalizes the name with =GetFullPathName= and =GetLongPathName= and
+  leaves symbolic links and junctions in place, which would have let a linked
+  scratchpad or workspace path escape its root unnoticed; the Windows adapter
+  asks =GetFinalPathNameByHandleW= for the final path instead. Every
+  =truename= call in =src/= now uses it, and =installation--same-directory-p=
+  compares platform file identities as well.
+- Temporary files beside a workspace file are named from the file name alone:
+  a pathname with its Windows device kept printed as =C:name=, which NTFS
+  reads as a named stream on a file called =.C=.
+- Data transfer derives archive paths from parsed pathname components rather
+  than by splitting a native namestring on =/=, which Windows never contains,
+  and workspace and scratchpad URIs join parsed components with a slash for
+  the same reason, so =workspace:src/c%2B%2B/x.cpp= reads the same everywhere.
+- Resource revisions digest the snapshot printed without =*print-readably*=:
+  SBCL's readable syntax sets base strings apart from other strings, and on
+  Windows namestrings and environment values are base strings while the same
+  text built elsewhere is not, so equal snapshots had different revisions.
+- The standalone scripts set environment variables through
+  =autolith-script-setenv= in =script/roots.lisp=, which also updates the
+  Windows process block through =SetEnvironmentVariableW= found at run time.
+  They publish files through =autolith-script-replace-file=, which clears a
+  read-only attribute an older build left on the target, and set modes
+  through =autolith-script-set-file-mode=, which does nothing on Windows:
+  =sb-posix:chmod= there only sets the attribute, and a recovery core or
+  manifest carrying it could never be replaced by the next bootstrap.
+- cl-llm-provider-api closed its context-object temporary file only after
+  renaming it (the =:close-stream= marker sat inside an =unwind-protect=, where
+  =with-temporary-file= does not see it). POSIX renames open files; Windows
+  refuses, which failed every interned object. The stream is now closed first.
+- Tests that need file names holding =*=, =[=, or a backslash use them only
+  where the =:wildcard-file-names= fixture is available and plain names
+  elsewhere; tests that need symbolic links create them through the fixture
+  protocol instead of shelling out to =ln=.
+- Provider tests clear the host's own API key variables before exercising
+  stored keys, since a developer's =OPENROUTER_API_KEY= outranks a stored key.
+- =#+win32= appears in the two adapters, in =autolith.asd=, and in the
+  standalone scripts that run before the system loads (=script/check.lisp=,
+  =script/launcher.lisp=); =script/roots.lisp= and =script/runtime.lisp= use
+  =uiop:os-windows-p= at run time instead.
+- =.gitattributes= pins LF line endings for every text file: a carriage return
+  after a tilde breaks =format= control strings when SBCL reads a source file
+  checked out with =core.autocrlf= on Windows.
+- Tests reach POSIX facilities through the fixture protocol in
+  =tests/test-support.lisp=. Checks a host cannot run are recorded as FiveAM
+  skips, never as passes. The release server and release scripts are
+  POSIX-only and are not built on Windows.
+
+* Upstream references
+
+- SBCL sources at tag =sbcl-2.6.8= (commit 62f4bd1) for the Windows runtime
+  behaviour: fd-streams take handles, =sb-posix:lstat= is =stat=,
+  =sb-posix:opendir= corrupts non-ASCII names, =sb-ext:exit :abort t= is
+  =_exit=, and deadlines do not interrupt socket reads.
+- qlot v1.8.4 (commit 0929984) does not load on Windows SBCL; the bootstrap
+  uses a locally patched copy until upstream accepts the guard.
+- Library revisions patched on =windows-port= branches, each against the
+  =qlfile.lock= pin: cl-exec-sandbox 00a6e79, ls-compat 84ca8b1, sexp-store
+  6d8ec5d, image-daemon 9941c1c, sbcl-generations e65e27e, ls-flock ff7a6ab,
+  sbcl-workers 85bbab4, clinedi 3b7365e, mcparen c990e32, cl-skills ef20ce4,
+  parenchek a7dc0a7, colorlisp 05a3313, cl-llm-provider-api 259e135. The
+  patches are the library pull requests of the plan's PR 2 to PR 5.
+
+* Verification
+
+- Linux (WSL2 Ubuntu, SBCL 2.6.6): =./script/check= green, 470 cases and
+  5,852 checks with the recovery probes, after every autolith change and
+  library patch. One run made while the Windows check occupied the same
+  machine failed =test-active-turn-stop-keys= on timing; it passes alone
+  and in every other run.
+- Windows 11 (pinned SBCL 2.6.6 in its managed location): =script\check.ps1
+  --jobs 8= compiles the system and the test system without warnings and
+  reports 467 cases and 5,126 checks with 0 failed cases; checks a host
+  cannot run are FiveAM skips. The recovery probe and listing pass; the
+  recovery fallback fails by construction on this uncommitted branch,
+  because it runs the source committed at HEAD, which predates the port and
+  does not read on Windows, and it passes once the port is committed. =bin\autolith-runtime.ps1
+  --install= fetched and verified the SBCL 2.6.6 source tree below the data
+  root, so workers resolve implementation source. =script\bootstrap.ps1=
+  builds the native libraries, the recovery image, and the fast-startup
+  image, and =bin\autolith.cmd= then starts a session from the fast-startup
+  image. The bootstrap and the check must run under the same SBCL: the
+  pristine recovery core is bound to the runtime that saved it, and a core
+  saved under 2.6.8 refuses to start under 2.6.6 with "core was built for
+  runtime".
+- Startup on the Windows host used here: the launcher boots the fast-startup
+  image in 0.8 s (the core alone answers its probe in 0.14 s), while a fresh
+  SBCL that loads the whole system from its fasls takes 15 s idle and about
+  30 s while eight check workers run, against a few seconds on Linux. Tests
+  that wait a fixed twenty or thirty seconds for such a child pass in
+  isolation but can time out under the full parallel check.
+- Files inside the per-user data root are owned by BUILTIN\Administrators
+  when the terminal that created them was elevated, as the reviewer's Windows
+  Terminal is. The access lists name the token's user, so those files stay
+  usable from an un-elevated session; ownership checks accept the
+  Administrators owner only while elevated, so credential files should be
+  created and used from sessions of the same kind. Windows Terminal was exercised through the console probe:
+  raw input mode, virtual-terminal output, and UTF-8 code pages are set and
+  restored.
+- The launcher chain =bin\autolith.cmd= -> =bin\autolith.ps1= ->
+  =bin\autolith-runtime.ps1= -> =script\runtime.lisp= -> =script\launcher.lisp=
+  runs =--version= from a source checkout.
+
+* Not done
+
+- No packaged Windows release, installer, or CI job yet (plan PR 9).
+- The check's recovery fallback fails on this branch until the port is
+  committed, since it runs the source committed at HEAD.
+- Interactive flows exercised by hand on Windows so far: startup from the
+  fast-startup image, the banner, typing and submitting input. The secret
+  prompts (=/login= and the API-key commands) and =--immutable= startup were
+  verified by reading, not by running; the prompts stop the terminal and read
+  a cooked console line, which SBCL's own reader handles.
+- Three tests that wait for a fresh SBCL child (the task child cancellation,
+  the busy worker blocker, and the process lease holder) now allow ninety
+  seconds instead of twenty or thirty, because a child that loads the system
+  from fasls takes about thirty seconds on Windows under the parallel check;
+  the bound is a failure detector and a passing run is not slowed by it.
+- ColorLisp needs =clang= on =PATH=; its native library is built by the
+  bootstrap with =-fPIC= dropped on Windows, and its entry points carry
+  =__declspec(dllexport)= there, since the GCC visibility attribute exports
+  nothing from a Windows DLL. The check script isolates =XDG_CACHE_HOME= for
+  every worker, so a check run rebuilds the library and needs =clang= too.
+- parenchek and cl-skills identify files on Windows through
+  =GetFileInformationByHandle=; directory traversal is verified by path
+  rather than by an open directory descriptor, which Windows has no
+  counterpart for.

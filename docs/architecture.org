@@ -136,6 +136,8 @@ provider request --> semantic events --> agent --> validated tool calls
   backend based on operating system:
   - Bubblewrap on Linux
   - Seatbelt via =sandbox-exec= on macOS
+  - No backend on Windows, where sandboxed policies are unavailable and
+    commands run through Git for Windows' shell or PowerShell
 - The default policy we select is:
   - no network
   - host read-only
@@ -196,6 +198,9 @@ compile and install --> checks --> replay script and manifest
   to the separate mutation-history repository, and atomically selects it
 - Checkpoints use =sbcl-generations=. Before the fork, Autolith quiesces
   work, clears credentials, detaches workers, and checks provenance
+- Windows cannot fork. Checkpoints and rollback are withheld there, and a
+  worker saves its image by exiting through =save-lisp-and-die= and
+  restarting from the saved core instead of forking a saver
 
 * Startup, update, and recovery
 

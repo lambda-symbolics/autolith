@@ -29,11 +29,28 @@ Do not leave TODOs, FIXMEs, stubs, placeholders, or knowingly partial
 implementations. If a requirement is genuinely too broad or conflicts with
 another requirement, stop and ask.
 
-Supported source-development targets are Linux x86-64 and macOS arm64 on SBCL
-with a terminal interface, one primary agent, and no claim of hostile-code
-sandboxing. Nix builds support Linux x86-64 and macOS arm64. Packaged binary
-releases support Linux x86-64 and aarch64 with glibc or musl, macOS x86-64 and
-arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64.
+Supported source-development targets are Linux x86-64, macOS arm64, and
+Windows x86-64 on SBCL with a terminal interface, one primary agent, and no
+claim of hostile-code sandboxing. Nix builds support Linux x86-64 and macOS
+arm64. Packaged binary releases support Linux x86-64 and aarch64 with glibc or
+musl, macOS x86-64 and arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64.
+
+Host differences live behind the platform protocol in `src/core/platform.lisp`
+with one adapter per host family; `#+win32` appears only in those adapters, in
+`autolith.asd` feature expressions, and in the standalone scripts that run
+before the system loads. Windows withholds, each with a user-visible reason:
+sandboxed command execution, detached sessions and the localgroup handoff,
+fork-based checkpoints and forked image saves, and filesystem sockets. Checks
+that depend on POSIX facilities go through the test fixture protocol in
+`tests/test-support.lisp` and are recorded as skipped where the host lacks
+them. Sources and tests alike change the environment through
+`platform-setenv` and `platform-unsetenv`, resolve links through
+`platform-truename`, and remove trees through `platform-delete-directory-tree`,
+never through `sb-posix`, `truename`, or `uiop:delete-directory-tree`
+directly: Windows keeps two environments, leaves links unresolved in
+`truename`, and refuses to delete read-only files. Names carrying pathname
+metacharacters or backslashes belong only behind the `:wildcard-file-names`
+fixture.
 
 ## Upstream References
 
@@ -297,6 +314,13 @@ running bootstrap. The SBCL must satisfy the tracked minimum version and have a
 source archive identity in `sbcl-source-releases.sha256`. Bootstrap records that
 runtime and installs its hash-verified matching source under the Autolith data
 root; it never replaces the Homebrew host SBCL.
+
+On Windows x86-64, install Git for Windows, Rust with the MSVC toolchain and
+Cargo, `clang` on `PATH`, and Quicklisp under `%USERPROFILE%\quicklisp`, then
+run `script\bootstrap.ps1` from PowerShell. An SBCL 2.6.6 or newer on `PATH` is
+used when present; otherwise the bootstrap installs the official Windows binary
+pinned in `sbcl-windows-releases.sha256` below the data root. `script\check.ps1`
+runs the checks and `bin\autolith.cmd` starts a session.
 
 Rebuild only the installed pristine recovery image with:
 
