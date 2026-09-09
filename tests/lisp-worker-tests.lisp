@@ -95,7 +95,7 @@
                  (test-assert nil "the pristine image name is reserved"))
              (lisp-image-error ()
                (test-assert t "the pristine image name is reserved"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-lisp-worker-protocol () null)
@@ -183,16 +183,16 @@
   (let ((previous-command (uiop:getenv "AUTOLITH_SBCL")))
     (unwind-protect
          (progn
-           (sb-posix:setenv "AUTOLITH_SBCL" "/tmp/autolith-test-sbcl" 1)
+           (platform-setenv "AUTOLITH_SBCL" "/tmp/autolith-test-sbcl")
            (test-assert (string= (lisp-worker-sbcl-command)
                                  "/tmp/autolith-test-sbcl")
                         "the disposable worker honors the configured SBCL")
-           (sb-posix:setenv "AUTOLITH_SBCL" "" 1)
+           (platform-setenv "AUTOLITH_SBCL" "")
            (test-assert (string= (lisp-worker-sbcl-command) "sbcl")
                         "the disposable worker falls back to PATH"))
       (if previous-command
-          (sb-posix:setenv "AUTOLITH_SBCL" previous-command 1)
-          (sb-posix:unsetenv "AUTOLITH_SBCL"))))
+          (platform-setenv "AUTOLITH_SBCL" previous-command)
+          (platform-unsetenv "AUTOLITH_SBCL"))))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (worker (lisp-worker-create configuration)))
@@ -213,78 +213,79 @@
                  (search "src/code/list.lisp" (getf (rest source) :output)))
             "a launched worker can read its matching implementation source"))
       (lisp-worker-stop worker)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
-  (let* ((source-root (asdf:system-source-directory :autolith))
-         (launcher (merge-pathnames "bin/autolith" source-root))
-         (output
-           (with-input-from-string
-               (input
-                (format nil
-                        "(:request :id 7 :operation :source :arguments (:name ~
-                         \"CL:MAPCAR\" :kind \"function\"))~%"))
-             (uiop:run-program
-              (list "env"
-                    "-u"
-                    "AUTOLITH_SBCL_SOURCE_ROOT"
-                    (namestring launcher)
-                    "--worker")
-              :input input
-              :output ':string
-              :error-output *error-output*))))
-    (let ((*read-eval* nil))
-      (with-input-from-string (stream output)
-        (let ((handshake (read stream t nil))
-              (response (read stream t nil)))
-          (test-assert (and (eq (first handshake) :autolith-worker)
-                            (eq (getf (rest response) :status) :ok)
-                            (search "src/code/list.lisp"
-                                    (getf (rest response) :output)))
-                       "the stable launcher exports matching source to workers")))))
-  (let* ((source-root (asdf:system-source-directory :autolith))
-         (launcher (merge-pathnames "bin/autolith" source-root))
-         (runtime-source (uiop:getenv "AUTOLITH_SBCL_SOURCE_ROOT"))
-         (temporary-root
-           (merge-pathnames
-            (format nil "autolith-inherited-source-~A/" (make-identifier))
-            (uiop:temporary-directory)))
-         (data-home (merge-pathnames "data/" temporary-root))
-         (state-home (merge-pathnames "state/" temporary-root)))
-    (unwind-protect
-         (progn
-           (unless (non-empty-string-p runtime-source)
-             (error "The test runtime has no matching SBCL source root."))
-           (ensure-directories-exist data-home)
-           (ensure-directories-exist state-home)
-           (let ((output
-                   (with-input-from-string
-                       (input
-                        (format nil
-                                "(:request :id 8 :operation :source :arguments ~
-                                 (:name \"CL:MAPCAR\" :kind \"function\"))~%"))
-                     (uiop:run-program
-                      (list "env"
-                            (format nil "XDG_DATA_HOME=~A" data-home)
-                            (format nil "XDG_STATE_HOME=~A" state-home)
-                            (format nil "AUTOLITH_SBCL_SOURCE_ROOT=~A"
-                                    runtime-source)
-                            (namestring launcher)
-                            "--worker")
-                      :input input
-                      :output ':string
-                      :error-output *error-output*))))
-             (let ((*read-eval* nil))
-               (with-input-from-string (stream output)
-                 (let ((handshake (read stream t nil))
-                       (response (read stream t nil)))
-                   (test-assert
-                    (and (eq (first handshake) :autolith-worker)
-                         (eq (getf (rest response) :status) :ok)
-                         (search "src/code/list.lisp"
-                                 (getf (rest response) :output)))
-                    "the stable launcher preserves inherited matching source"))))))
-      (uiop:delete-directory-tree temporary-root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  (with-test-fixture (':posix-shell "the stable launcher exporting worker source")
+    (let* ((source-root (asdf:system-source-directory :autolith))
+           (launcher (merge-pathnames "bin/autolith" source-root))
+           (output
+             (with-input-from-string
+                 (input
+                  (format nil
+                          "(:request :id 7 :operation :source :arguments (:name ~
+                           \"CL:MAPCAR\" :kind \"function\"))~%"))
+               (uiop:run-program
+                (list "env"
+                      "-u"
+                      "AUTOLITH_SBCL_SOURCE_ROOT"
+                      (namestring launcher)
+                      "--worker")
+                :input input
+                :output ':string
+                :error-output *error-output*))))
+      (let ((*read-eval* nil))
+        (with-input-from-string (stream output)
+          (let ((handshake (read stream t nil))
+                (response (read stream t nil)))
+            (test-assert (and (eq (first handshake) :autolith-worker)
+                              (eq (getf (rest response) :status) :ok)
+                              (search "src/code/list.lisp"
+                                      (getf (rest response) :output)))
+                         "the stable launcher exports matching source to workers")))))
+    (let* ((source-root (asdf:system-source-directory :autolith))
+           (launcher (merge-pathnames "bin/autolith" source-root))
+           (runtime-source (uiop:getenv "AUTOLITH_SBCL_SOURCE_ROOT"))
+           (temporary-root
+             (merge-pathnames
+              (format nil "autolith-inherited-source-~A/" (make-identifier))
+              (uiop:temporary-directory)))
+           (data-home (merge-pathnames "data/" temporary-root))
+           (state-home (merge-pathnames "state/" temporary-root)))
+      (unwind-protect
+           (progn
+             (unless (non-empty-string-p runtime-source)
+               (error "The test runtime has no matching SBCL source root."))
+             (ensure-directories-exist data-home)
+             (ensure-directories-exist state-home)
+             (let ((output
+                     (with-input-from-string
+                         (input
+                          (format nil
+                                  "(:request :id 8 :operation :source :arguments ~
+                                   (:name \"CL:MAPCAR\" :kind \"function\"))~%"))
+                       (uiop:run-program
+                        (list "env"
+                              (format nil "XDG_DATA_HOME=~A" data-home)
+                              (format nil "XDG_STATE_HOME=~A" state-home)
+                              (format nil "AUTOLITH_SBCL_SOURCE_ROOT=~A"
+                                      runtime-source)
+                              (namestring launcher)
+                              "--worker")
+                        :input input
+                        :output ':string
+                        :error-output *error-output*))))
+               (let ((*read-eval* nil))
+                 (with-input-from-string (stream output)
+                   (let ((handshake (read stream t nil))
+                         (response (read stream t nil)))
+                     (test-assert
+                      (and (eq (first handshake) :autolith-worker)
+                           (eq (getf (rest response) :status) :ok)
+                           (search "src/code/list.lisp"
+                                   (getf (rest response) :output)))
+                      "the stable launcher preserves inherited matching source"))))))
+        (platform-delete-directory-tree *platform* temporary-root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (pool (lisp-worker-pool-create configuration)))
@@ -395,7 +396,7 @@
            (test-assert (not (search "beta" (lisp-worker-pool-render pool)))
                         "stopping one REPL leaves it out of the pool"))
       (lisp-worker-pool-stop-all pool)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-lisp-execution-jobs () null)
@@ -712,9 +713,9 @@
                   "the asynchronous scratchpad loads once into its selected REPL"))))
         (ignore-errors (tool-registry-close-runtime-state registry))
         (ignore-errors (lisp-worker-pool-stop-all pool))
-        (uiop:delete-directory-tree root
-                                    :validate t
-                                    :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -774,10 +775,12 @@
                                   "repl" name
                                   "async" t))
                       (job (execution-job result "lisp.eval")))
+                 ;; A fresh SBCL worker takes tens of seconds to start on
+                 ;; Windows while the parallel check loads the host.
                  (test-assert
                   (and job
                        (task-tests--wait-until
-                       (lambda () (probe-file marker)) 20))
+                        (lambda () (probe-file marker)) 90))
                   (format nil "the ~A blocker reaches its Lisp worker" name))
                  job))
 
@@ -865,9 +868,9 @@
                                  "the delayed worker resolution completes")))))
         (ignore-errors (tool-registry-close-runtime-state registry))
         (ignore-errors (lisp-worker-pool-stop-all pool))
-        (uiop:delete-directory-tree root
-                                    :validate t
-                                    :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -992,17 +995,19 @@
                  (and (tool-result-success-p result)
                       (search "(+ 1 2)" (tool-result-content result)))
                  "scratchpad URIs preserve literal plus characters"))
-              (create-resource
-               context "scratchpad:notes*[1]?\\x.lisp" "(+ 2 3)")
-              (let ((result
-                      (read-resource
-                       context "scratchpad:notes*[1]?\\x.lisp")))
-                (test-assert
-                 (and (tool-result-success-p result)
-                      (search "URI: scratchpad:notes%2A%5B1%5D%3F%5Cx.lisp"
-                              (tool-result-content result))
-                      (search "(+ 2 3)" (tool-result-content result)))
-                 "scratchpad resources preserve native pathname metacharacters"))
+              (with-test-fixture (':wildcard-file-names
+                                  "scratchpad names holding pathname metacharacters")
+                (create-resource
+                 context "scratchpad:notes*[1]?\\x.lisp" "(+ 2 3)")
+                (let ((result
+                        (read-resource
+                         context "scratchpad:notes*[1]?\\x.lisp")))
+                  (test-assert
+                   (and (tool-result-success-p result)
+                        (search "URI: scratchpad:notes%2A%5B1%5D%3F%5Cx.lisp"
+                                (tool-result-content result))
+                        (search "(+ 2 3)" (tool-result-content result)))
+                   "scratchpad resources preserve native pathname metacharacters")))
              (create-resource context "scratchpad:oversized.txt" "123456789")
              (let* ((*workspace-file-resource-maximum-bytes* 8)
                     (result (read-resource context "scratchpad:oversized.txt")))
@@ -1035,29 +1040,32 @@
                      (not (equal (lisp-scratchpad-root context)
                                  (lisp-scratchpad-root other-context))))
                 "different conversations resolve isolated scratchpad roots"))
-             (let* ((outside (merge-pathnames "outside/" root))
-                    (escape (merge-pathnames "escape"
-                                             (lisp-scratchpad-root context))))
-               (ensure-directories-exist (merge-pathnames "secret.txt" outside))
-               (with-open-file (stream (merge-pathnames "secret.txt" outside)
-                                       :direction ':output
-                                       :if-exists ':supersede
-                                       :if-does-not-exist ':create
-                                       :external-format ':utf-8)
-                 (write-string "secret" stream))
-               (sb-posix:symlink (namestring outside) (namestring escape))
-               (test-assert
-                (handler-case
-                    (progn
-                      (resource-registry-resolve
-                       (tool-registry-resource-registry registry)
-                       "scratchpad:escape/new.lisp"
-                       context)
-                      nil)
-                  (tool-error ()
-                    t))
-                "scratchpad URI resolution rejects missing descendants through escaping symlinks")
-               (delete-file escape))
+             (with-test-fixture (':symbolic-links
+                                 "scratchpad URI resolution through escaping symlinks")
+               (let* ((outside (merge-pathnames "outside/" root))
+                      (escape (merge-pathnames "escape"
+                                               (lisp-scratchpad-root context))))
+                 (ensure-directories-exist (merge-pathnames "secret.txt" outside))
+                 (with-open-file (stream (merge-pathnames "secret.txt" outside)
+                                         :direction ':output
+                                         :if-exists ':supersede
+                                         :if-does-not-exist ':create
+                                         :external-format ':utf-8)
+                   (write-string "secret" stream))
+                 (test-fixture-make-symbolic-link
+                  *platform* (namestring outside) (namestring escape))
+                 (test-assert
+                  (handler-case
+                      (progn
+                        (resource-registry-resolve
+                         (tool-registry-resource-registry registry)
+                         "scratchpad:escape/new.lisp"
+                         context)
+                        nil)
+                    (tool-error ()
+                      t))
+                  "scratchpad URI resolution rejects missing descendants through escaping symlinks")
+                 (test-fixture-remove-link *platform* (namestring escape))))
              (let* ((observed (read-resource context "scratchpad:program.lisp"))
                     (path (merge-pathnames "program.lisp"
                                            (lisp-scratchpad-root context))))
@@ -1130,9 +1138,9 @@
                 "scratchpad-delete clears the exactly observed conversation root")))
         (ignore-errors (tool-registry-close-runtime-state registry))
         (ignore-errors (lisp-worker-pool-stop-all pool))
-        (uiop:delete-directory-tree root
-                                    :validate t
-                                    :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-lisp-worker-image-snapshot () null)
@@ -1185,5 +1193,5 @@
                         (lisp-worker-pool-render pool))
                 "the pool identifies which REPL uses the modified image"))))
       (lisp-worker-pool-stop-all pool)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

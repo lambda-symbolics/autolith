@@ -449,5 +449,5 @@
                               (eq (gethash "additionalProperties" variant) false))
                             variants))
                 "resource.edit advertises closed papercut assessment schemas"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil))

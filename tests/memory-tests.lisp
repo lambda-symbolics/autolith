@@ -179,5 +179,5 @@
                                     (context-delivery-failures delivery)))
                            "related-memories")
                   "malformed memory data degrades to context diagnostics without reader evaluation")))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

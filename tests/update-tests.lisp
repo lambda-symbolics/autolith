@@ -60,66 +60,68 @@
             (merge-pathnames "RELEASE" release-root)
             release-tag)
            (ensure-directories-exist (merge-pathnames ".keep" install-root))
-           (uiop:run-program
-            (list "ln" "-s" (format nil "releases/~A" release-tag)
-                  (namestring (merge-pathnames "current" install-root))))
-           (let* ((packaged-configuration
-                    (make-instance
-                     'configuration
-                     :source-root packaged-source
-                     :working-directory packaged-source
-                     :config-root (configuration-config-root configuration)
-                     :data-root (configuration-data-root configuration)
-                     :state-root (configuration-state-root configuration)
-                     :cache-root (configuration-cache-root configuration)
-                     :codex-auth-path
-                     (configuration-codex-auth-path configuration)
-                     :model *default-model*
-                     :reasoning-effort *default-reasoning-effort*
-                     :provider-endpoint *codex-responses-endpoint*))
-                  (release
-                    (installation-provenance-detect
-                     packaged-configuration
-                     :kind "release"
-                     :release-root (namestring release-root))))
-             (test-assert (eq (installation-provenance-method release) ':release)
-                          "selected packaged topology validates release provenance")
-             (test-assert
-              (string= (installation-provenance-current-tag release) release-tag)
-              "release provenance carries its validated current tag")
+           (with-test-fixture (':symbolic-links "packaged release provenance")
+             (test-fixture-make-symbolic-link
+              *platform*
+              (format nil "releases/~A" release-tag)
+              (uiop:native-namestring (merge-pathnames "current" install-root)))
+             (let* ((packaged-configuration
+                      (make-instance
+                       'configuration
+                       :source-root packaged-source
+                       :working-directory packaged-source
+                       :config-root (configuration-config-root configuration)
+                       :data-root (configuration-data-root configuration)
+                       :state-root (configuration-state-root configuration)
+                       :cache-root (configuration-cache-root configuration)
+                       :codex-auth-path
+                       (configuration-codex-auth-path configuration)
+                       :model *default-model*
+                       :reasoning-effort *default-reasoning-effort*
+                       :provider-endpoint *codex-responses-endpoint*))
+                    (release
+                      (installation-provenance-detect
+                       packaged-configuration
+                       :kind "release"
+                       :release-root (namestring release-root))))
+               (test-assert (eq (installation-provenance-method release) ':release)
+                            "selected packaged topology validates release provenance")
+               (test-assert
+                (string= (installation-provenance-current-tag release) release-tag)
+                "release provenance carries its validated current tag")
 
-             (update-state--write
-              configuration
-              (make-instance 'update-state
-                             :last-attempt-at 100
-                             :last-success-at 100
-                             :latest-tag newer-tag))
-             (test-assert
-              (not (update-state-check-due-p
-                    (update-state-load configuration)
-                    :now 101
-                    :interval 20))
-              "a fresh cache suppresses another network request")
-             (test-assert
-              (update-state-check-due-p
-               (update-state-load configuration)
-               :now 120
-               :interval 20)
-              "a stale cache permits another bounded request")
-             (test-assert
-              (string=
-               (update-availability-tag
-                (update-availability-current configuration release))
-               newer-tag)
-              "a newer cached release becomes startup availability")
-             (update-state-dismiss configuration newer-tag)
-             (test-assert
-              (null (update-availability-current configuration release))
-              "skipping one exact cached version suppresses its notice")
-             (update-state--record-success configuration 130 "v100.0.0")
-             (test-assert
-              (update-availability-current configuration release)
-              "a later release becomes visible despite an older dismissal"))
+               (update-state--write
+                configuration
+                (make-instance 'update-state
+                               :last-attempt-at 100
+                               :last-success-at 100
+                               :latest-tag newer-tag))
+               (test-assert
+                (not (update-state-check-due-p
+                      (update-state-load configuration)
+                      :now 101
+                      :interval 20))
+                "a fresh cache suppresses another network request")
+               (test-assert
+                (update-state-check-due-p
+                 (update-state-load configuration)
+                 :now 120
+                 :interval 20)
+                "a stale cache permits another bounded request")
+               (test-assert
+                (string=
+                 (update-availability-tag
+                  (update-availability-current configuration release))
+                 newer-tag)
+                "a newer cached release becomes startup availability")
+               (update-state-dismiss configuration newer-tag)
+               (test-assert
+                (null (update-availability-current configuration release))
+                "skipping one exact cached version suppresses its notice")
+               (update-state--record-success configuration 130 "v100.0.0")
+               (test-assert
+                (update-availability-current configuration release)
+                "a later release becomes visible despite an older dismissal")))
 
            (snapshot-write state-path '(:update-state :version 999))
            (let ((state (update-state-load configuration)))
@@ -166,5 +168,5 @@
                        (= (update-state-last-success-at state) 201)
                        (string= (update-state-latest-tag state) "v101.2.3"))
                   "failed refresh retains the last valid release cache")))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

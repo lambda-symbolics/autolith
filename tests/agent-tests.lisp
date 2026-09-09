@@ -643,7 +643,7 @@
              (test-assert
               (= (count :provider-progress statuses) 2)
               "every streamed delta refreshes visible provider progress")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-tool-free-turn () null)
@@ -708,7 +708,7 @@
              (test-assert
               (= (length (conversation-input-items call-conversation)) 1)
               "a rejected tool-free call is never persisted or executed")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-read-only-tool-allowlist () null)
@@ -791,7 +791,7 @@
              (test-assert
               (= (length (conversation-input-items forbidden-conversation)) 1)
               "a forbidden mutation call is neither persisted nor executed")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -885,7 +885,7 @@
                            (third outputs)))
               "a restricted turn rejects memory resources")))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-restricted-tool-round-limit () null)
@@ -938,7 +938,7 @@
            (test-assert
             (= (length (conversation-input-items conversation)) 3)
             "the over-limit call is rejected before persistence or execution"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-empty-tool-allowlist () null)
@@ -985,7 +985,7 @@
            (test-assert
             (= (length (conversation-input-items conversation)) 1)
             "an empty restriction persists no rejected call or tool result"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-steering () null)
@@ -1069,7 +1069,7 @@
             "the observer acknowledges each steering append immediately")
            (test-assert (member :steering-applied statuses)
                         "the observer is notified after steering becomes durable"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-explicit-continuation () null)
@@ -1108,7 +1108,7 @@
             "the continuation request receives request-local routing state")
            (test-assert (null (conversation-turn-state conversation))
                         "explicit continuation state is cleared after the user turn"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-provider-request-limit () null)
@@ -1149,7 +1149,7 @@
            (test-assert
             (= (length (scripted-provider-input-snapshots provider)) 2)
             "the request safety limit prevents another paid provider call"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-invalid-call-history () null)
@@ -1218,7 +1218,7 @@
                           "only the first call and its correlated output remain")
              (test-assert (null (conversation-turn-state conversation))
                           "turn state clears after a duplicate-call invariant failure")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-malformed-tool-arguments () null)
@@ -1339,7 +1339,7 @@
                  (test-assert
                   (string= (json-get provider-call "arguments") "{}")
                   "recovered legacy history is replayable on the next request")))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -1498,7 +1498,7 @@
                 (equal (agent-test-tool-outputs conversation)
                        '("echo: same" "echo: same" "echo: same" "echo: same"))
                 "repeated read-only calls remain executable"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -1599,7 +1599,7 @@
                      (search "Previous failure for this exact call: changing failure 1"
                              (second outputs)))
                 "a changed exact-call failure quotes the previous diagnosis"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-tool-failures () null)
@@ -1648,7 +1648,7 @@
                                tool-results)
                        '(:ok :error))
                 "successful and failed calls remain explicitly distinguished"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-provider-failure-persistence () null)
@@ -1719,7 +1719,7 @@
                                  "role")
                        "user")
               "replayed input retains the user message that failed")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-incomplete-provider-failure-persistence () null)
@@ -1785,7 +1785,7 @@
              (test-assert
               (string= (getf failure :response-id) "response-incomplete")
               "incomplete failure metadata retains its response identifier")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-provider-credential-failure-containment () null)
@@ -1886,7 +1886,8 @@
                    *provider-credential-redaction-marker*)
                   (search *provider-credential-redaction-marker* text))
                  "durable provider failure metadata retains sanitized diagnostics"))))
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -1930,7 +1931,7 @@
                           (conversation-pathname conversation)))
                12)
             "every long-turn tool call receives a durable correlated output"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-unbounded-tool-calls () null)
@@ -1978,7 +1979,7 @@
                           (conversation-pathname conversation)))
                257)
             "every call above the former ceiling receives a durable result"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-default-turn-has-no-step-guillotine () null)
@@ -2036,7 +2037,7 @@
                               (getf (rest record) :call-id)))
                   :test #'string=)
             "the tool requested on provider step 64 executes normally"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-skill-provider-barrier () null)
@@ -2228,9 +2229,9 @@
                          "conversation reload does not replay Skill presentation or instructions")))
                  (ignore-errors (terminal-ui-stop replay-ui))))))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-compaction-missing-summary () null)
@@ -2280,7 +2281,7 @@
                    (conversation--read-records
                     (conversation-pathname conversation)))
             "failed compaction persists no partial summary state"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-compaction () null)
@@ -2350,7 +2351,7 @@
                                        0)
                                  "text"))
                         "the live projection starts from the summary bridge"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-native-compaction () null)
@@ -2433,7 +2434,7 @@
            (test-assert
             (= (length (conversation-input-items-for-family conversation ':grok)) 3)
             "another provider receives the portable handoff and new messages"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-parallel-tool-wave () null)
@@ -2526,7 +2527,7 @@
                    (equal (subseq events 2)
                           '((:finish "b") (:finish "a"))))
               "both bodies start before reverse completion finishes")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-tool-concurrency-key () null)
@@ -2579,7 +2580,7 @@
                    '((:start "a") (:finish "a")
                      (:start "b") (:finish "b")))
             "shared-runtime calls preserve provider order"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-exclusive-tool-waves () null)
@@ -2650,7 +2651,7 @@
                      (:start "exclusive") (:finish "exclusive")
                      (:start "after") (:finish "after")))
             "the exclusive call divides calls into ordered waves"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-parallel-tool-failure () null)
@@ -2705,7 +2706,7 @@
              (test-assert
               (string= (second outputs) "completed: sibling")
               "the successful sibling result remains available")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-parallel-fatal-propagation () null)
@@ -2776,7 +2777,8 @@
                         (list *conversation-interrupted-tool-output*
                               "completed: sibling"))
                  "unknown and sibling results persist before fatal propagation"))
-          (uiop:delete-directory-tree
+          (platform-delete-directory-tree
+           *platform*
            root :validate t :if-does-not-exist ':ignore)))))
   nil)
 
@@ -2846,7 +2848,7 @@
               "the next provider round receives the failed shell tool result")
              (test-assert (not (probe-file marker))
                           "unavailable approval never starts the subprocess")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))
   nil))
 
 

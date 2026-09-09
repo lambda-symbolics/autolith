@@ -568,7 +568,7 @@
                      (equal (user-message-input-image-pathnames pruned)
                             (list (truename second-image))))
                 "deleted image labels prune attachments and renumber survivors"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -1905,8 +1905,8 @@ sources keeps the tests deterministic under an interactive terminal."
             :events (list :submit)
             :read-callback
             (lambda ()
-              (sb-posix:setenv "COLUMNS" "19" 1)
-              (sb-posix:setenv "LINES" "9" 1)
+              (platform-setenv "COLUMNS" "19")
+              (platform-setenv "LINES" "9")
               (setf *terminal-resize-pending-p* t))))
          (ui (terminal-ui-create :terminal terminal)))
     (unwind-protect
@@ -1926,11 +1926,11 @@ sources keeps the tests deterministic under an interactive terminal."
                (null *terminal-resize-pending-p*)
                "the application consumes a resize raised during read"))))
       (if previous-columns
-          (sb-posix:setenv "COLUMNS" previous-columns 1)
-          (sb-posix:unsetenv "COLUMNS"))
+          (platform-setenv "COLUMNS" previous-columns)
+          (platform-unsetenv "COLUMNS"))
       (if previous-lines
-          (sb-posix:setenv "LINES" previous-lines 1)
-          (sb-posix:unsetenv "LINES"))))
+          (platform-setenv "LINES" previous-lines)
+          (platform-unsetenv "LINES"))))
   nil)
 
 

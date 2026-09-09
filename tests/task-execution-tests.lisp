@@ -69,8 +69,8 @@
               (condition ()
                 nil))
             "tool registry dispatch propagates job-aborted as control flow"))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-orchestration () null)
@@ -456,7 +456,7 @@
                 (task-yield-error ()
                   t))
               "yield validation rejects data outside the output contract")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -541,9 +541,11 @@
                  (and identifier
                       (task-orchestrator-find-visible-job
                        orchestrator identifier child "lisp.eval")))
+           ;; The evaluation starts a fresh SBCL worker, which takes tens of
+           ;; seconds on Windows while the parallel check loads the host.
            (test-assert
             (and execution
-                 (task-tests--wait-until (lambda () (probe-file marker)) 20))
+                 (task-tests--wait-until (lambda () (probe-file marker)) 90))
             "a child asynchronous Lisp evaluation starts before cleanup")
            (setf worker (lisp-worker-pool-worker worker-pool "child-cleanup"))
            (test-assert
@@ -564,7 +566,7 @@
       (when (and execution (not (job-terminal-p execution)))
         (job-cancel execution :reason ':test-cleanup))
       (ignore-errors (lisp-worker-pool-stop-all worker-pool))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -668,5 +670,5 @@
                           (subseq results 0 2))
                    (null (getf (rest (third results)) :cpu-microseconds)))
               "executed child calls retain timings while rejected calls omit them")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

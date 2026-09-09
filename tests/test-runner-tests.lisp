@@ -144,36 +144,45 @@
      (test-assert
       (= 3 (getf (test-check--call "CHECK--PARSE-ARGUMENTS" '("--jobs" "3")) ':jobs))
       "explicit concurrency overrides CPU detection")))
-  (dolist (case '(("8" 0 8) (" 12 " 0 12) ("0" 0 1) ("-2" 0 1)
-                 ("" 0 1) ("unknown" 0 1) ("8 junk" 0 1) ("8" 1 1)))
-    (destructuring-bind (output status expected) case
-      (test-call-with-function-replacements
-       (list (list 'uiop:run-program
-                   (lambda (&rest arguments)
-                     (declare (ignore arguments))
-                     (values output nil status))))
-       (lambda ()
-         (test-assert (= expected (test-check--call "CHECK--PROCESSOR-COUNT"))
-                      "CPU detection requires successful positive integer output")))))
-  (let ((attempts 0))
-    (test-call-with-function-replacements
-     (list (list 'uiop:run-program
-                 (lambda (&rest arguments)
-                   (declare (ignore arguments))
-                   (if (= (incf attempts) 1)
-                       (error 'file-error :pathname #P"missing-cpu-probe")
-                       (values "6" nil 0)))))
-     (lambda ()
-       (test-assert (= 6 (test-check--call "CHECK--PROCESSOR-COUNT"))
-                    "CPU detection tries another utility when the first is absent"))))
-  (test-call-with-function-replacements
-   (list (list 'uiop:run-program
-               (lambda (&rest arguments)
-                 (declare (ignore arguments))
-                 (error 'file-error :pathname #P"missing-cpu-probe"))))
-   (lambda ()
-     (test-assert (= 1 (test-check--call "CHECK--PROCESSOR-COUNT"))
-                  "unavailable CPU detection falls back to one worker")))
+  ;; Windows publishes the count in the environment; the utilities are the
+  ;; path every host takes without it. Windows 11 answers the variable from
+  ;; the processor count itself whatever the environment block holds, so the
+  ;; utility path is only reachable where removing it actually removes it.
+  (with-test-environment (("NUMBER_OF_PROCESSORS" nil))
+    (if (uiop:getenv "NUMBER_OF_PROCESSORS")
+        (test-withheld ':removable-processor-count
+                       "CPU detection through host utilities")
+        (progn
+          (dolist (case '(("8" 0 8) (" 12 " 0 12) ("0" 0 1) ("-2" 0 1)
+                         ("" 0 1) ("unknown" 0 1) ("8 junk" 0 1) ("8" 1 1)))
+            (destructuring-bind (output status expected) case
+              (test-call-with-function-replacements
+               (list (list 'uiop:run-program
+                           (lambda (&rest arguments)
+                             (declare (ignore arguments))
+                             (values output nil status))))
+               (lambda ()
+                 (test-assert (= expected (test-check--call "CHECK--PROCESSOR-COUNT"))
+                              "CPU detection requires successful positive integer output")))))
+          (let ((attempts 0))
+            (test-call-with-function-replacements
+             (list (list 'uiop:run-program
+                         (lambda (&rest arguments)
+                           (declare (ignore arguments))
+                           (if (= (incf attempts) 1)
+                               (error 'file-error :pathname #P"missing-cpu-probe")
+                               (values "6" nil 0)))))
+             (lambda ()
+               (test-assert (= 6 (test-check--call "CHECK--PROCESSOR-COUNT"))
+                            "CPU detection tries another utility when the first is absent"))))
+          (test-call-with-function-replacements
+           (list (list 'uiop:run-program
+                       (lambda (&rest arguments)
+                         (declare (ignore arguments))
+                         (error 'file-error :pathname #P"missing-cpu-probe"))))
+           (lambda ()
+             (test-assert (= 1 (test-check--call "CHECK--PROCESSOR-COUNT"))
+                          "unavailable CPU detection falls back to one worker"))))))
   (dolist (arguments '(("--jobs" "0") ("--timeout" "-1") ("--jobs" "2x")
                        ("--suite") ("--unknown")))
     (test-assert
@@ -233,6 +242,13 @@
 (-> test-check-process-lifecycle () null)
 (defun test-check-process-lifecycle ()
   "Test concurrent process admission, exit failures and descendant cleanup."
+  (with-test-fixture (':posix-shell "check processes driven by shell commands")
+    (test-check--process-lifecycle))
+  nil)
+
+(-> test-check--process-lifecycle () null)
+(defun test-check--process-lifecycle ()
+  "Drive CHECK--RUN-PROCESSES with shell commands and verify each outcome."
   (with-test-configuration (configuration root)
     (declare (ignore configuration))
     (let* ((marker-a (merge-pathnames "a" root))
@@ -284,6 +300,13 @@
 (-> test-check-worker-temporary-cleanup () null)
 (defun test-check-worker-temporary-cleanup ()
   "Test parent-owned cleanup after worker success, crash, timeout and unwind."
+  (with-test-fixture (':posix-shell "check workers replaced by shell commands")
+    (test-check--worker-temporary-cleanup))
+  nil)
+
+(-> test-check--worker-temporary-cleanup () null)
+(defun test-check--worker-temporary-cleanup ()
+  "Replace check workers with shell commands and verify parent-owned cleanup."
   (with-test-configuration (configuration root)
     (declare (ignore configuration))
     (test-check--call "CHECK--PARSE-ARGUMENTS" '("--jobs" "1"))
@@ -344,5 +367,5 @@
                  (test-assert
                   (not (uiop:process-alive-p (test-check--call "CHECK-PROCESS-PROCESS" entry)))
                   "workers terminate before parent cleanup finishes"))))
-        (uiop:delete-directory-tree unrelated :validate t :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* unrelated :validate t :if-does-not-exist ':ignore))))
   nil)

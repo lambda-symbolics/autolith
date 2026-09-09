@@ -129,8 +129,8 @@
                      (task-job-cancel job :test-cleanup)
                      (task-job-await job 2)))
                  (ignore-errors (tool-registry-close-runtime-state registry))
-                 (uiop:delete-directory-tree root :validate t
-                                                  :if-does-not-exist ':ignore)))))
+                 (platform-delete-directory-tree *platform* root :validate t
+                                                      :if-does-not-exist ':ignore)))))
     (run-case
      "default-detached"
      (json-object "name" "default-detached"
@@ -251,8 +251,8 @@
                 "cancelled ordinary tool execution releases scheduler accounting")))
         (task-tests--release-blocking-tool blocking-tool)
         (ignore-errors (tool-registry-close-runtime-state registry))
-        (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t
+                                             :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-task-runtime-deadline () null)
@@ -262,7 +262,7 @@
           (uiop:getenv "AUTOLITH_TASK_MAX_RUNTIME_MS")))
     (unwind-protect
          (progn
-           (sb-posix:unsetenv "AUTOLITH_TASK_MAX_RUNTIME_MS")
+           (platform-unsetenv "AUTOLITH_TASK_MAX_RUNTIME_MS")
            (let ((orchestrator (task-tests--orchestrator)))
              (test-assert
               (and
@@ -270,7 +270,7 @@
                (= (task-orchestrator-maximum-runtime-milliseconds orchestrator)
                   *task-default-maximum-runtime-milliseconds*))
               "task children have a bounded default runtime deadline"))
-           (sb-posix:setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "1000" 1)
+           (platform-setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "1000")
            (let* ((configuration (test-configuration))
                   (root          (test-configuration-root configuration))
                   (registry      (make-default-tool-registry))
@@ -373,13 +373,13 @@
                    (join-thread runner))
                  (ignore-errors
                    (tool-registry-close-runtime-state registry))
-                 (uiop:delete-directory-tree root :validate t
-                                                  :if-does-not-exist
-                                                  :ignore)))))
+                 (platform-delete-directory-tree *platform* root :validate t
+                                                      :if-does-not-exist
+                                                      :ignore)))))
       (if previous-runtime
-          (sb-posix:setenv "AUTOLITH_TASK_MAX_RUNTIME_MS"
-                          previous-runtime 1)
-          (sb-posix:unsetenv "AUTOLITH_TASK_MAX_RUNTIME_MS"))))
+          (platform-setenv "AUTOLITH_TASK_MAX_RUNTIME_MS"
+                          previous-runtime)
+          (platform-unsetenv "AUTOLITH_TASK_MAX_RUNTIME_MS"))))
   nil)
 
 (-> test-task-artifact-retention () null)
@@ -412,8 +412,8 @@
                  (probe-file incomplete)
                  (= (length (task--completed-artifact-records group-root)) 2))
             "artifact retention removes only the oldest completed child tree"))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -501,8 +501,8 @@
                 "nested parent cancellation leaves no orphan or live-count leak")))
         (task-tests--release-blocking-tool blocking-tool)
         (ignore-errors (tool-registry-close-runtime-state registry))
-        (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t
+                                             :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-task-admission-cancellation-barrier () null)
@@ -668,8 +668,8 @@ exactly that race."
                    (zerop (task-orchestrator-live-count orchestrator))
                    (= (cl-jobpond::job-pool--next-index (task-orchestrator-pool orchestrator)) 1))
               "cancel-first admission consumes no identity or live capacity")))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-hurry-up-admission-races () null)
@@ -910,8 +910,8 @@ exactly that race."
                      (= (task-orchestrator-hurry-up-admission-count orchestrator)
                         3))
                 "a limit change takes effect after the atomic submission boundary")))
-        (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t
+                                             :if-does-not-exist ':ignore))))
   nil)
 
 (-> task-tests--release-publication-barrier
@@ -1096,8 +1096,8 @@ exactly that race."
                   (format nil
                           "post-claim ~A forces one coherent terminal failure"
                           failure))))))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-terminal-wakeup-ordering () null)
@@ -1191,8 +1191,8 @@ exactly that race."
         (with-lock-held ((cl-jobpond::job--lock job))
           (task--condition-broadcast (cl-jobpond::job--condition-variable job)))
         (join-thread waiter))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-job-visibility () null)
@@ -1283,8 +1283,8 @@ exactly that race."
             (and (eq (job-state foreign) :queued)
                  (null (job-cancellation-reason foreign)))
             "invisible wait and cancel attempts cannot mutate the job"))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -1390,8 +1390,8 @@ exactly that race."
                   (search "No visible job" report)
                   "durable lookup does not expose another conversation or task branch"))))
         (ignore-errors (tool-registry-close-runtime-state registry))
-        (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t
+                                             :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -1564,8 +1564,8 @@ exactly that race."
           (task-job-cancel root-job :test-cleanup)
           (task-job-await root-job 2))
         (ignore-errors (tool-registry-close-runtime-state registry))
-        (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t
+                                             :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -1706,15 +1706,16 @@ exactly that race."
                       (= (execution-count) before)
                       (not (probe-file slow-path)))
                  "unavailable interactive authorization becomes a failed tool result before subprocess admission"))
-              (let ((result
-                      (run-shell context
-                                 "command" "pwd -P"
-                                 "directory" "/")))
-                (test-assert
-                 (and (tool-result-success-p result)
-                      (search (format nil "~%/~%")
-                              (tool-result-content result)))
-                 "full-access shell execution accepts a directory outside workspace roots"))
+              (with-test-fixture (':posix-shell "shell execution below the POSIX root")
+                (let ((result
+                        (run-shell context
+                                   "command" "pwd -P"
+                                   "directory" "/")))
+                  (test-assert
+                   (and (tool-result-success-p result)
+                        (search (format nil "~%/~%")
+                                (tool-result-content result)))
+                   "full-access shell execution accepts a directory outside workspace roots")))
               (test-assert
                (handler-case
                    (progn
@@ -1728,6 +1729,7 @@ exactly that race."
                "sandboxed shell execution still rejects a directory outside workspace roots")
              (let* ((*tool-execution-blocking-grace-seconds* 2)
                     (before (execution-count))
+                    (authorizations-before authorization-count)
                     (result
                       (run-shell context
                                  "command" "printf fast-shell")))
@@ -1737,7 +1739,7 @@ exactly that race."
                      (search "exit 0" (tool-result-content result))
                      (search "fast-shell" (tool-result-content result))
                      (= (execution-count) (1+ before))
-                      (= authorization-count 2))
+                     (= authorization-count (1+ authorizations-before)))
                 "a fast default shell job returns its ordinary result"))
              (let* ((*tool-execution-blocking-grace-seconds* 0.01)
                     (before (execution-count))
@@ -1859,8 +1861,8 @@ exactly that race."
                           content))
                     "an asynchronous shell job retains its admission-time output bound")))))
         (ignore-errors (tool-registry-close-runtime-state registry))
-        (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t
+                                             :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -1897,8 +1899,8 @@ exactly that race."
             "execution workers inherit the complete-result spill function"))
       (ignore-errors (task-orchestrator-close orchestrator))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-tool-execution-retention () null)
@@ -1963,8 +1965,8 @@ exactly that race."
       (unless closed-p
         (ignore-errors (task-orchestrator-close orchestrator)))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-job-list-pagination () null)
@@ -2062,8 +2064,8 @@ exactly that race."
                        (remove-duplicates identifiers :test #'string=))
                       *task-job-page-maximum*))
               "job.list pagination returns every oversized summary exactly once")))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-refresh-after-delayed-close () null)
@@ -2274,8 +2276,8 @@ exactly that race."
                      (probe-file
                       (getf (job-result race-job) :output-path)))
                 "concurrent duplicate publication claims one artifact and event"))))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-retention-and-admission () null)
@@ -2401,8 +2403,8 @@ exactly that race."
                      (= (task-orchestrator-live-count orchestrator)
                         live-count))
                 "failed live admission consumes no identity or scheduler state"))))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-evicted-identity-retention () null)
@@ -2458,8 +2460,8 @@ exactly that race."
                       (job-index parent))
                    (= (task-orchestrator-live-count orchestrator) 2))
               "eviction never permits a generated ancestor identity to be reused")))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-live-activity-snapshots () null)
@@ -2597,8 +2599,8 @@ exactly that race."
            ':aborted
            (task-tests--terminal-result
             job :status ':aborted :output "test cleanup"))))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-cumulative-child-usage () null)
@@ -2710,8 +2712,8 @@ exactly that race."
              job ':aborted
              (task-tests--terminal-result
               job :status ':aborted :output "test cleanup"))))
-        (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t
+                                             :if-does-not-exist ':ignore))))
   nil))
 
 
@@ -2846,8 +2848,8 @@ exactly that race."
                  (task--milliseconds-between started-at
                                              (get-internal-real-time)))))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist ':ignore))))
+      (platform-delete-directory-tree *platform* root :validate t
+                                           :if-does-not-exist ':ignore))))
 
 (-> test-task-run-native-manifest () null)
 (defun test-task-run-native-manifest ()
@@ -2857,8 +2859,8 @@ exactly that race."
         (previous-runtime (uiop:getenv "AUTOLITH_TASK_MAX_RUNTIME_MS")))
     (unwind-protect
          (progn
-           (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "1" 1)
-           (sb-posix:setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "5000" 1)
+           (platform-setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "1")
+           (platform-setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "5000")
            (let* ((provider
                     (make-instance 'task-test-provider :mode ':manifest))
                   (tasks
@@ -2934,13 +2936,13 @@ exactly that race."
                    (every #'listp artifacts))
               "every child artifact remains exactly one readable native result")))
       (if previous-concurrency
-          (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY"
-                          previous-concurrency 1)
-          (sb-posix:unsetenv "AUTOLITH_TASK_MAX_CONCURRENCY"))
+          (platform-setenv "AUTOLITH_TASK_MAX_CONCURRENCY"
+                          previous-concurrency)
+          (platform-unsetenv "AUTOLITH_TASK_MAX_CONCURRENCY"))
       (if previous-runtime
-          (sb-posix:setenv "AUTOLITH_TASK_MAX_RUNTIME_MS"
-                          previous-runtime 1)
-          (sb-posix:unsetenv "AUTOLITH_TASK_MAX_RUNTIME_MS"))))
+          (platform-setenv "AUTOLITH_TASK_MAX_RUNTIME_MS"
+                          previous-runtime)
+          (platform-unsetenv "AUTOLITH_TASK_MAX_RUNTIME_MS"))))
   nil)
 
 (-> test-task-closed-runtime-refresh () null)
@@ -2980,8 +2982,8 @@ exactly that race."
         (previous-runtime (uiop:getenv "AUTOLITH_TASK_MAX_RUNTIME_MS")))
     (unwind-protect
          (progn
-           (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "2" 1)
-           (sb-posix:setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "1000" 1)
+           (platform-setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "2")
+           (platform-setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "1000")
            (let* ((provider (make-instance 'task-test-provider
                                            :mode ':concurrent))
                   (tasks
@@ -3120,7 +3122,7 @@ exactly that race."
               (equal (mapcar (lambda (item) (json-get item "role")) inputs)
                      '("user"))
               "inheritance is disabled when its boundary exceeds the budget"))
-           (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "1" 1)
+           (platform-setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "1")
            (let* ((provider (make-instance 'task-test-provider :mode ':nested))
                   (observation
                    (task-tests--run-scheduler-case
@@ -3145,17 +3147,17 @@ exactly that race."
               "a nested child inherits its immediate parent's assignment")
              (test-assert (< (getf observation :duration-ms) 1000)
                           "nested help-join avoids a concurrency-one deadlock"))
-           (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "999" 1)
+           (platform-setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "999")
            (let ((orchestrator (task-tests--orchestrator)))
              (test-assert
               (= (task-orchestrator-maximum-concurrency orchestrator)
                  *task-maximum-concurrency*)
               "environment concurrency cannot exceed the hard pool cap")))
       (if previous-concurrency
-          (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY"
-                          previous-concurrency 1)
-          (sb-posix:unsetenv "AUTOLITH_TASK_MAX_CONCURRENCY"))
+          (platform-setenv "AUTOLITH_TASK_MAX_CONCURRENCY"
+                          previous-concurrency)
+          (platform-unsetenv "AUTOLITH_TASK_MAX_CONCURRENCY"))
       (if previous-runtime
-          (sb-posix:setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" previous-runtime 1)
-          (sb-posix:unsetenv "AUTOLITH_TASK_MAX_RUNTIME_MS"))))
+          (platform-setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" previous-runtime)
+          (platform-unsetenv "AUTOLITH_TASK_MAX_RUNTIME_MS"))))
   nil)

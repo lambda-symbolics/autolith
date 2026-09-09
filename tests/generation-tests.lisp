@@ -170,7 +170,8 @@
           (setf release-secret-p t)
           (condition-notify secret-condition))
         (join-thread secret-thread))
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -259,7 +260,8 @@
                    (= successful-resume-count 1)
                    (zerop failed-resume-count))
               "checkpoint recovery resumes only the runtime that actually closed"))
-        (uiop:delete-directory-tree
+        (platform-delete-directory-tree
+         *platform*
          root :validate t :if-does-not-exist ':ignore))))
   nil)
 
@@ -324,7 +326,8 @@
         (setf release-p t)
         (condition-notify barrier))
       (join-thread thread)
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -420,7 +423,7 @@
                 (string= (rollback-requested-generation-id command-condition)
                          "rollback-generation")
                 "/rollback carries the selected generation into recovery"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> generation-tests--test-reconstruction-capture () null)
@@ -482,12 +485,10 @@
                     (generation-directory generation)))
               "a generation receives a contained full replay script")
              (test-assert
-              (= (logand #o777
-                         (sb-posix:stat-mode
-                          (sb-posix:stat
-                           (namestring
-                            (generation-reconstruction-pathname generation)))))
-                 #o444)
+              (test-fixture-permissions-p
+               *platform*
+               (generation-reconstruction-pathname generation)
+               ':read-only)
               "generation replay scripts are published read-only")
              (test-assert
               (null (image-commit-pending-records configuration))
@@ -499,7 +500,7 @@
             *active-image-lineage-identifier* previous-lineage-identifier)
       (remhash (definition-key '(defun test-generation-replay-target () 0))
                *exploratory-definitions*)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -579,7 +580,7 @@
                      (list (list ':detach worker)
                            '(:state :saved-application)))
               "the saver detaches worker and application state before saving")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> generation-tests--test-active-image-single-thread-check () null)
@@ -608,7 +609,7 @@
                       (equal (active-image-build-error-pathname condition)
                              core-pathname))))))
           "active-image installation checks for one live thread before forking")
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> generation-tests--test-autolith-error-translation () null)
@@ -641,10 +642,11 @@
 (-> test-generation-manifest () null)
 (defun test-generation-manifest ()
   "Test generation publication, loading, selection, and compatibility checks."
-  (generation-tests--test-checkpoint-runtime-resume)
-  (generation-tests--test-partial-runtime-quiescence)
-  (generation-tests--test-active-provider-secret-refusal)
-  (generation-tests--test-checkpoint-worker-detachment)
+  (with-platform-capability (':forked-image-saver "checkpoint backend behaviour")
+    (generation-tests--test-checkpoint-runtime-resume)
+    (generation-tests--test-partial-runtime-quiescence)
+    (generation-tests--test-active-provider-secret-refusal)
+    (generation-tests--test-checkpoint-worker-detachment))
   (generation-tests--test-active-image-single-thread-check)
   (generation-tests--test-autolith-error-translation)
   (let* ((configuration (test-configuration))
@@ -696,7 +698,7 @@
                         (generation-selected configuration))
                        "generation-under-test")
               "publication atomically selects the ready generation")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (directory (merge-pathnames "legacy-generation/"
@@ -724,7 +726,7 @@
                             "legacy-generation")
                    (null (generation-reconstruction-pathname legacy)))
               "version-one generation manifests remain readable")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (wrong-commit
@@ -799,7 +801,7 @@
             (generation-tests--unpublished-p configuration
                                              missing-reconstruction)
             "missing reconstruction leaves publication paths untouched"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (generation-tests--test-rollback-control-path)
   (generation-tests--test-reconstruction-capture)
   nil)
@@ -834,10 +836,9 @@
            (conversation-append-user-message conversation "preserve crash context")
            (setf (application-rendered-sequence application) 42
                  (application-history-floor-sequence application) 7)
-           (sb-posix:setenv "AUTOLITH_CRASH_POINTER" (namestring pointer) 1)
-           (sb-posix:setenv "AUTOLITH_RECOVERY_SESSION_POINTER"
-                            (namestring session-pointer)
-                            1)
+           (platform-setenv "AUTOLITH_CRASH_POINTER" (namestring pointer))
+           (platform-setenv "AUTOLITH_RECOVERY_SESSION_POINTER"
+                            (namestring session-pointer))
            (application-publish-recovery-session application)
            (let ((record (read-portable-form session-pointer)))
              (test-assert
@@ -861,10 +862,8 @@
                                      :format-control "secret ~A"
                                      :format-arguments '("credential-value"))
                      :backtrace '((secret-frame "credential-value"))))
-                  (record (read-portable-form capsule))
-                  (mode (sb-posix:stat-mode
-                         (sb-posix:stat (namestring capsule)))))
-             (test-assert (= (logand mode #o777) #o600)
+                  (record (read-portable-form capsule)))
+             (test-assert (test-fixture-permissions-p *platform* capsule ':private-file)
                           "crash capsules are private user state")
              (test-assert
               (not (search "credential-value"
@@ -905,12 +904,11 @@
               (not (probe-file session-pointer))
               "an empty active conversation clears stale recovery correlation")))
       (if previous-pointer
-          (sb-posix:setenv "AUTOLITH_CRASH_POINTER" previous-pointer 1)
-          (sb-posix:unsetenv "AUTOLITH_CRASH_POINTER"))
+          (platform-setenv "AUTOLITH_CRASH_POINTER" previous-pointer)
+          (platform-unsetenv "AUTOLITH_CRASH_POINTER"))
       (if previous-session-pointer
-          (sb-posix:setenv "AUTOLITH_RECOVERY_SESSION_POINTER"
-                           previous-session-pointer
-                           1)
-          (sb-posix:unsetenv "AUTOLITH_RECOVERY_SESSION_POINTER"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+          (platform-setenv "AUTOLITH_RECOVERY_SESSION_POINTER"
+                           previous-session-pointer)
+          (platform-unsetenv "AUTOLITH_RECOVERY_SESSION_POINTER"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

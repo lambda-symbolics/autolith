@@ -152,7 +152,7 @@
                         (file-length stream)))
                    (search "inspect me" (get-output-stream-string output)))
               "replay reads and renders a conversation without writing storage")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-replay-command-line () null)
@@ -251,7 +251,7 @@
                         (conversation-pathname-for-id configuration
                                                       "rejected-target")))))
               "invalid or nonexistent fork heads leave no target")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-fork-rejections () null)
@@ -291,7 +291,7 @@
                         (conversation-pathname-for-id configuration
                                                       "gapped-target")))))
               "a gapped source head is rejected without a partial target")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-fork-command-line () null)

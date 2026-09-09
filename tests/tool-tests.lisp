@@ -134,7 +134,7 @@
                   (test-assert
                    (null (header "ChatGPT-Account-ID"))
                    "web.run does not send Codex-only headers to Grok"))))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (defclass tool-test-overflow-tool (tool)
@@ -229,7 +229,7 @@
                          context)))
              (test-assert (null (search "context:" (tool-result-content small)))
                           "small results carry no overflow notice")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> tool-tests--web-gist-call (tool-registry tool-context json-object) tool-result)
@@ -498,7 +498,7 @@
                (test-assert
                 (null (gethash "query" (json-get parameters "properties")))
                 "web.run no longer declares its incompatible query shim"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let* ((registry (make-instance 'tool-registry))
          (empty-schema (tool-object-schema (json-object) nil))
          (replaceable
@@ -756,39 +756,42 @@
                       (configuration--clone configuration
                                             :working-directory root)))
                (unwind-protect
-                    (let ((result
-                            (tool-registry-execute-call
-                             registry
-                             (json-object
-                              "namespace" "shell"
-                              "name" "run"
-                              "arguments"
-                              (json-encode
-                               (json-object
-                                "command"
-                                (format nil
-                                        "printf ok > ~A; printf blocked > ~A"
-                                        (uiop:escape-shell-token
-                                         (namestring inside))
-                                        (uiop:escape-shell-token
-                                         (namestring outside))))))
-                             (make-instance
-                              'tool-context
-                              :configuration sandbox-configuration
-                              :worker nil
-                              :conversation conversation
-                              :command-authorization-function
-                              (lambda (command directory)
-                                (declare (ignore command directory))
-                                ':sandboxed)))))
-                      (test-assert
-                       (tool-result-success-p result)
-                       "an authorized shell command runs inside the sandbox")
-                      (test-assert (probe-file inside)
-                                   "the command sandbox permits workspace writes")
-                      (test-assert
-                       (not (probe-file outside))
-                       "the command sandbox rejects writes outside the workspace"))
+                    (if (application--command-sandbox-available-p)
+                        (let ((result
+                                (tool-registry-execute-call
+                                 registry
+                                 (json-object
+                                  "namespace" "shell"
+                                  "name" "run"
+                                  "arguments"
+                                  (json-encode
+                                   (json-object
+                                    "command"
+                                    (format nil
+                                            "printf ok > ~A; printf blocked > ~A"
+                                            (uiop:escape-shell-token
+                                             (namestring inside))
+                                            (uiop:escape-shell-token
+                                             (namestring outside))))))
+                                 (make-instance
+                                  'tool-context
+                                  :configuration sandbox-configuration
+                                  :worker nil
+                                  :conversation conversation
+                                  :command-authorization-function
+                                  (lambda (command directory)
+                                    (declare (ignore command directory))
+                                    ':sandboxed)))))
+                          (test-assert
+                           (tool-result-success-p result)
+                           "an authorized shell command runs inside the sandbox")
+                          (test-assert (probe-file inside)
+                                       "the command sandbox permits workspace writes")
+                          (test-assert
+                           (not (probe-file outside))
+                           "the command sandbox rejects writes outside the workspace"))
+                        (test-withheld ':command-sandbox
+                                       "sandboxed shell commands"))
                  (when (probe-file outside)
                    (delete-file outside))))
              (let ((result (run "shell" "run"
@@ -798,7 +801,7 @@
                             "shell.run stops runaway commands")
                (test-assert (search "stopped after 1"
                                     (tool-result-content result))
-                            "shell.run explains its timeout"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+                             "shell.run explains its timeout"))))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (tool-test--grok-web-run)
   nil)

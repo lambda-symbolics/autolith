@@ -40,19 +40,21 @@
          (saved (uiop:getenv "ANTHROPIC_API_KEY")))
     (unwind-protect
          (progn
-           (setf (uiop:getenv "ANTHROPIC_API_KEY") "")
+           (platform-setenv "ANTHROPIC_API_KEY" "")
            (test-assert
             (handler-case
                 (progn (credential-manager-load manager) nil)
               (credentials-unavailable () t))
             "Anthropic requires credentials when no source is configured")
-           (setf (uiop:getenv "ANTHROPIC_API_KEY") "environment-key")
+           (platform-setenv "ANTHROPIC_API_KEY" "environment-key")
            (test-assert
             (string= (oauth-credentials-access-token
                       (credential-manager-load manager))
                      "environment-key")
             "Anthropic loads its environment credential"))
-      (setf (uiop:getenv "ANTHROPIC_API_KEY") saved)))
+      (if saved
+          (platform-setenv "ANTHROPIC_API_KEY" saved)
+          (platform-unsetenv "ANTHROPIC_API_KEY"))))
   nil)
 
 (-> anthropic-provider-test--ephemeral-cache-boundary () null)
@@ -109,7 +111,7 @@
                           (provider-request-object
                            provider conversation #() :compaction-p t))))
             "compaction omits every explicit cache breakpoint"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> anthropic-provider-test--inherited-reference-order () null)

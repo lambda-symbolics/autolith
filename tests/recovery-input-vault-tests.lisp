@@ -120,7 +120,7 @@
                    (equalp vault-octets
                            (recovery-input-vault-tests--octets vault-pathname)))
               "a conflicting replay preserves both the pending snapshot and vault")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-legacy-isolation () null)
@@ -216,7 +216,7 @@
                      :id)
                     "migration-snapshot"))
               "migration recovery reuses canonical identity and removes both sources")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-corruption () null)
@@ -284,7 +284,7 @@
                 (recovery-input-vault-error ()
                   t))
               "strict vault inspection reports the same corruption")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-unattributed-legacy () null)
@@ -323,7 +323,7 @@
                    (equalp legacy-octets
                            (recovery-input-vault-tests--octets legacy-pathname)))
               "unattributed corrupt global legacy bytes remain untouched")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 ;;;; -- Vault Controls --
@@ -468,7 +468,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-active-restore-crash () null)
@@ -559,7 +559,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-restore-rollback () null)
@@ -653,7 +653,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-post-delete-rollback () null)
@@ -761,7 +761,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-discard () null)
@@ -870,7 +870,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-disabled-ingress () null)
@@ -924,7 +924,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-disabled-recalled-ingress () null)
@@ -988,7 +988,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -1137,7 +1137,7 @@
                    (search "/vault-restore" output)
                    (search "/vault-discard" output))
               "recovery startup warns how to inspect, restore, or discard vaulted input")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-corrupt-startup () null)
@@ -1320,7 +1320,7 @@
                    (search "/vault-restore" output)
                    (search "/vault-discard" output))
               "corrupt startup warns without submitting or hiding vault controls")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-ordinary-startup () null)
@@ -1423,7 +1423,7 @@
                    (not (probe-file vault-pathname))
                    (not (search "Nothing was submitted automatically." output)))
               "ordinary startup neither vaults pending input nor presents a recovery warning")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-live-primary-submit () null)
@@ -1478,7 +1478,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-capture-message () null)
@@ -1520,7 +1520,7 @@
                    (equal (application-recovery-input-vault--capture-work capture)
                           '((:message "child steer"))))
               "a child-steer capture survives reload from disk")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-capture-during-restore () null)
@@ -1664,7 +1664,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> run-recovery-input-vault-tests () boolean)

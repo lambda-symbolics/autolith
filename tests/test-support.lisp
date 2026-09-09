@@ -99,10 +99,10 @@ Use SYMBOL-GLOBAL-VALUE so configuration fixtures in child threads share it.")
   "Atomically create a short, private test directory below PARENT or TMPDIR."
   (uiop:ensure-directory-pathname
    (truename
-    (sb-posix:mkdtemp
-     (namestring
-      (merge-pathnames "autolith-tests-XXXXXX"
-                       (or parent (uiop:temporary-directory))))))))
+    (platform-make-temporary-directory
+     *platform*
+     (or parent (uiop:temporary-directory))
+     "autolith-tests-"))))
 
 (-> test-call-with-temporary-root (function &key (:temporary-root (or null pathname))) t)
 (defun test-call-with-temporary-root (function &key temporary-root)
@@ -117,7 +117,7 @@ process-global fixture parent on exit; parallel runs need separate processes."
            (setf (sb-ext:symbol-global-value '*test-temporary-root*) root)
            (funcall function root))
       (setf (sb-ext:symbol-global-value '*test-temporary-root*) previous)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
 
 (-> test-configuration () configuration)
 (defun test-configuration ()
@@ -167,7 +167,7 @@ Delete that root on every exit and return all values produced by FUNCTION."
          (root (test-configuration-root configuration)))
     (unwind-protect
          (funcall function configuration root)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
 
 (defmacro with-test-configuration ((configuration &optional root) &body body)
   "Bind CONFIGURATION and optional ROOT around BODY with automatic cleanup.
@@ -197,8 +197,8 @@ changes are process-global, so concurrent tests require separate processes."
                (dolist (binding bindings)
                  (destructuring-bind (name value) binding
                    (if value
-                       (sb-posix:setenv name value 1)
-                       (sb-posix:unsetenv name))))))
+                       (platform-setenv name value)
+                       (platform-unsetenv name))))))
       (unwind-protect
            (progn
              (install bindings)
@@ -231,3 +231,141 @@ and return all of BODY's values. Use process isolation for parallel execution."
                    :model *default-model*
                    :reasoning-effort *default-reasoning-effort*
                    :provider-endpoint *codex-responses-endpoint*)))
+
+(-> test-run-program-with-environment (list list) (values integer string))
+(defun test-run-program-with-environment (command environment)
+  "Run COMMAND with ENVIRONMENT entries replacing this process's variables.
+
+ENVIRONMENT holds NAME=VALUE strings. Return the exit status and the combined
+output."
+  (flet ((variable-name (entry)
+           "Return the variable ENTRY assigns."
+           (subseq entry 0 (position #\= entry))))
+    (let* ((names (mapcar #'variable-name environment))
+           (inherited (remove-if (lambda (entry)
+                                   (member (variable-name entry) names
+                                           :test #'string=))
+                                 (sb-ext:posix-environ)))
+           (output (make-string-output-stream))
+           (process (sb-ext:run-program (first command) (rest command)
+                                        :search t
+                                        :environment (append environment inherited)
+                                        :input nil
+                                        :output output
+                                        :error ':output
+                                        :wait t)))
+      (values (sb-ext:process-exit-code process)
+              (get-output-stream-string output)))))
+
+
+;;;; -- Host Fixtures --
+
+;;; Some checks need host facilities Autolith itself never uses, such as
+;;; symbolic links, FIFOs, forked children, and POSIX file modes. The
+;;; protocol below dispatches on *PLATFORM*; tests/posix-fixtures.lisp and
+;;; tests/win32-fixtures.lisp implement it for their hosts. A host without a
+;;; fixture says so through TEST-FIXTURE-AVAILABLE-P, and the checks that need
+;;; it are recorded as skipped through WITH-TEST-FIXTURE.
+
+(deftype test-fixture-kind ()
+  "A host facility the tests may depend on.
+
+:EMPTY-ENVIRONMENT-VALUES distinguishes an empty variable from an absent one,
+:WILDCARD-FILE-NAMES allows * ? and [ in file names, and :POSIX-ADAPTER means
+the POSIX platform adapter and the SB-POSIX symbols it reads exist."
+  '(member :symbolic-links :fifos :device-nodes :file-modes :fork
+           :pseudo-terminals :posix-shell :empty-environment-values
+           :wildcard-file-names :posix-adapter))
+
+(deftype test-file-permissions ()
+  "A permission expectation TEST-FIXTURE-PERMISSIONS-P verifies."
+  '(member :private-file :private-directory :read-only))
+
+(defgeneric test-fixture-available-p (platform fixture)
+  (:documentation
+   "Return true when PLATFORM provides FIXTURE, a TEST-FIXTURE-KIND."))
+
+(-> test-withheld (keyword string) null)
+(defun test-withheld (facility description)
+  "Record the checks DESCRIPTION names as skipped for want of FACILITY.
+
+FACILITY is a TEST-FIXTURE-KIND or a platform capability."
+  (when *tests-running-p*
+    (fiveam:skip "~A: this host has no ~(~A~)" description facility))
+  nil)
+
+(defmacro with-test-fixture ((fixture description) &body body)
+  "Run BODY when this host provides FIXTURE, else record DESCRIPTION as skipped."
+  `(if (test-fixture-available-p *platform* ,fixture)
+       (progn ,@body)
+       (test-withheld ,fixture ,description)))
+
+(defmacro with-platform-capability ((capability description) &body body)
+  "Run BODY when *PLATFORM* supports CAPABILITY, else record DESCRIPTION as skipped."
+  `(if (platform-supports-p *platform* ,capability)
+       (progn ,@body)
+       (test-withheld ,capability ,description)))
+
+(defgeneric test-fixture-make-symbolic-link (platform target link)
+  (:documentation
+   "Create symbolic LINK pointing at TARGET, both native namestrings."))
+
+(defgeneric test-fixture-remove-link (platform link)
+  (:documentation
+   "Remove symbolic LINK, a native namestring, leaving its target alone."))
+
+(defgeneric test-fixture-make-fifo (platform pathname)
+  (:documentation
+   "Create a FIFO at PATHNAME that only the current user may open."))
+
+(defgeneric test-fixture-device-node (platform)
+  (:documentation
+   "Return the pathname of a character device such as /dev/null."))
+
+(defgeneric test-fixture-permissions-p (platform pathname permissions)
+  (:documentation
+   "Return true when PATHNAME carries PERMISSIONS, a TEST-FILE-PERMISSIONS.
+
+:PRIVATE-FILE and :PRIVATE-DIRECTORY mean POSIX modes #o600 and #o700, or an
+owner-only access control list on Windows. :READ-ONLY means POSIX mode #o444,
+or the read-only attribute on Windows."))
+
+(defgeneric test-fixture-file-mode (platform pathname)
+  (:documentation "Return PATHNAME's POSIX permission bits."))
+
+(defgeneric test-fixture-set-file-mode (platform pathname mode)
+  (:documentation "Set PATHNAME's POSIX permission bits to MODE."))
+
+(defgeneric test-fixture-call-with-descriptor-input (platform content function)
+  (:documentation
+   "Call FUNCTION with a descriptor-backed character input stream holding CONTENT."))
+
+(defgeneric test-fixture-run-forked (platform function)
+  (:documentation
+   "Run FUNCTION in a forked child and return the child's exit status.
+
+FUNCTION returns the status to exit with; a child whose FUNCTION signals exits
+with status 1. Return NIL when the child did not exit normally."))
+
+(defgeneric test-fixture-call-with-forked-holder (platform holder-function
+                                                  function)
+  (:documentation
+   "Call FUNCTION while a forked child that ran HOLDER-FUNCTION stays alive.
+
+FUNCTION receives true when the child reported that HOLDER-FUNCTION completed.
+The child then exits without unwinding, so FUNCTION's caller observes kernel
+cleanup after a dead holder. Return whether the child was reaped and whether
+it exited cleanly."))
+
+(defgeneric test-fixture-call-with-pseudo-terminal (platform function)
+  (:documentation
+   "Call FUNCTION with the descriptor of a pseudo-terminal that echoes its input.
+
+The terminal's original mode is restored on every exit."))
+
+(defgeneric test-fixture-terminal-input-mode (platform descriptor)
+  (:documentation
+   "Return DESCRIPTOR's terminal input mode as a comparable integer."))
+
+(defgeneric test-fixture-terminal-echo-p (platform descriptor)
+  (:documentation "Return true when DESCRIPTOR's terminal echoes its input."))

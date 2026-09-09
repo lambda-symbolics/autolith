@@ -61,20 +61,20 @@
                            :expires-at nil
                            :source-path
                            (configuration-fireworks-auth-path configuration)))
-           (setf (uiop:getenv "FIREWORKS_API_KEY") "environment-key-a")
+           (platform-setenv "FIREWORKS_API_KEY" "environment-key-a")
            (test-assert
             (string= (oauth-credentials-access-token
                       (credential-manager-load manager))
                      "environment-key-a")
             "the environment key takes precedence over the saved key")
-           (setf (uiop:getenv "FIREWORKS_API_KEY") "")
+           (platform-setenv "FIREWORKS_API_KEY" "")
            (test-assert
             (string= (oauth-credentials-access-token
                       (credential-manager-load manager))
                      "saved-fireworks-key")
             "the saved interactive key is the environment fallback"))
-      (setf (uiop:getenv "FIREWORKS_API_KEY") (or saved ""))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-setenv "FIREWORKS_API_KEY" (or saved ""))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -107,7 +107,7 @@
                                 "additional_tools"))
                      (json-get request "input"))
               "Fireworks requests omit Responses Lite additional tools")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> fireworks-provider-test--reasoning-omission () null)
@@ -129,7 +129,7 @@
              (declare (ignore reasoning))
              (test-assert (not present-p)
                           "reasoning-free models omit the reasoning object")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 

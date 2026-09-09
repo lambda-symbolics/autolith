@@ -16,39 +16,7 @@
     t)
 (defun openai-compatible-provider-tests--call-with-input (content function)
   "Call FUNCTION with a descriptor-backed input stream containing CONTENT."
-  (multiple-value-bind (read-descriptor write-descriptor)
-      (sb-posix:pipe)
-    (let ((input nil)
-          (output nil))
-      (unwind-protect
-           (progn
-             (setf input
-                   (sb-sys:make-fd-stream
-                    read-descriptor
-                    :input t
-                    :element-type 'character
-                    :external-format ':utf-8
-                    :buffering ':none
-                    :auto-close nil)
-                   output
-                   (sb-sys:make-fd-stream
-                    write-descriptor
-                    :output t
-                    :element-type 'character
-                    :external-format ':utf-8
-                    :buffering ':none
-                    :auto-close nil))
-              (write-string content output)
-              (finish-output output)
-              (close output)
-              (setf output nil)
-              (funcall function input))
-        (when input
-          (close input))
-        (when output
-          (close output))
-        (ignore-errors (sb-posix:close read-descriptor))
-        (ignore-errors (sb-posix:close write-descriptor))))))
+  (test-fixture-call-with-descriptor-input *platform* content function))
 
 (-> test-openai-compatible-provider-bootstrap () null)
 (defun test-openai-compatible-provider-bootstrap ()
@@ -115,8 +83,8 @@
                      (string= (configuration-reasoning-effort restored)
                               (configuration-reasoning-effort configuration)))
                 "a conversation without a recorded selection keeps the active choices")))
-           (sb-posix:setenv "AUTOLITH_MODEL" model 1)
-           (sb-posix:setenv "AUTOLITH_REASONING_EFFORT" "minimal" 1)
+           (platform-setenv "AUTOLITH_MODEL" model)
+           (platform-setenv "AUTOLITH_REASONING_EFFORT" "minimal")
            (let ((selected (configuration-create
                             :defer-provider-validation-p t)))
              (test-assert
@@ -124,13 +92,13 @@
                    (string= (configuration-reasoning-effort selected) "minimal"))
               "startup defers environment effort validation for init-defined models")))
       (if old-environment-model
-          (sb-posix:setenv "AUTOLITH_MODEL" old-environment-model 1)
-          (sb-posix:unsetenv "AUTOLITH_MODEL"))
+          (platform-setenv "AUTOLITH_MODEL" old-environment-model)
+          (platform-unsetenv "AUTOLITH_MODEL"))
       (if old-environment-effort
-          (sb-posix:setenv "AUTOLITH_REASONING_EFFORT" old-environment-effort 1)
-          (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT"))
+          (platform-setenv "AUTOLITH_REASONING_EFFORT" old-environment-effort)
+          (platform-unsetenv "AUTOLITH_REASONING_EFFORT"))
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-openai-compatible-provider-deferred-main-validation () null)
@@ -141,8 +109,8 @@
         (old-environment-effort (uiop:getenv "AUTOLITH_REASONING_EFFORT")))
     (unwind-protect
          (progn
-           (sb-posix:setenv "AUTOLITH_MODEL" model 1)
-           (sb-posix:setenv "AUTOLITH_REASONING_EFFORT" "minimal" 1)
+           (platform-setenv "AUTOLITH_MODEL" model)
+           (platform-setenv "AUTOLITH_REASONING_EFFORT" "minimal")
            (let ((observed-configuration nil)
                  (*active-application* nil))
              (test-call-with-function-replacements
@@ -198,12 +166,12 @@
                             "minimal"))
               "localgroup commands do not validate custom providers before init")))
       (if old-environment-model
-          (sb-posix:setenv "AUTOLITH_MODEL" old-environment-model 1)
-          (sb-posix:unsetenv "AUTOLITH_MODEL"))
+          (platform-setenv "AUTOLITH_MODEL" old-environment-model)
+          (platform-unsetenv "AUTOLITH_MODEL"))
       (if old-environment-effort
-          (sb-posix:setenv "AUTOLITH_REASONING_EFFORT"
-                          old-environment-effort 1)
-          (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT"))))
+          (platform-setenv "AUTOLITH_REASONING_EFFORT"
+                          old-environment-effort)
+          (platform-unsetenv "AUTOLITH_REASONING_EFFORT"))))
   nil)
 
 (-> test-openai-compatible-provider-bare-auth-selection () null)
@@ -217,8 +185,8 @@
          (old-environment-effort (uiop:getenv "AUTOLITH_REASONING_EFFORT")))
     (unwind-protect
          (progn
-           (sb-posix:unsetenv "AUTOLITH_MODEL")
-           (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT")
+           (platform-unsetenv "AUTOLITH_MODEL")
+           (platform-unsetenv "AUTOLITH_REASONING_EFFORT")
            (preferences--write
             configuration
             (make-instance 'preference-state
@@ -298,14 +266,14 @@
                        (string= (third explicit) "device"))
                   "command-line auth passes its explicit provider and method")))))
       (if old-environment-model
-          (sb-posix:setenv "AUTOLITH_MODEL" old-environment-model 1)
-          (sb-posix:unsetenv "AUTOLITH_MODEL"))
+          (platform-setenv "AUTOLITH_MODEL" old-environment-model)
+          (platform-unsetenv "AUTOLITH_MODEL"))
       (if old-environment-effort
-          (sb-posix:setenv "AUTOLITH_REASONING_EFFORT"
-                          old-environment-effort 1)
-          (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT"))
+          (platform-setenv "AUTOLITH_REASONING_EFFORT"
+                          old-environment-effort)
+          (platform-unsetenv "AUTOLITH_REASONING_EFFORT"))
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-openai-compatible-provider-discovery-is-on-demand () null)
@@ -359,7 +327,7 @@
             "startup loads the last successful model list from cache"))
       (setf (symbol-function 'dexador:get) original-get)
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-openai-compatible-provider-model-cache-boundary () null)
@@ -415,7 +383,7 @@
               "cache reload does not resurrect removed static models"))
         (setf (symbol-function 'dexador:get) original-get)
         (provider--registry-restore registry-snapshot)
-        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 (define-condition test-provider-model-discovery-interrupt (serious-condition)
@@ -595,7 +563,7 @@
              "model discovery does not swallow non-error interrupts")
       (setf (symbol-function 'dexador:get) original-get)
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-openai-compatible-provider-registration-identity () null)
@@ -620,7 +588,7 @@
               (configuration-error () t))
             "reload rejects a same-name user provider replaced by a built-in"))
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-openai-compatible-provider-authentication-bootstrap () null)
@@ -717,7 +685,7 @@
                         :test #'string=)
                 "failed authentication refresh retains the last dynamic model list"))))
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-provider-sse-bounds () null)
@@ -787,9 +755,8 @@
          (let ((pathname (configuration-api-keys-path configuration)))
            (test-assert (probe-file pathname)
             "API keys are persisted in the private provider-key store")
-           (let ((mode (sb-posix:stat-mode (sb-posix:stat (namestring pathname)))))
-             (test-assert (= (logand mode 511) 384)
-              "the provider-key store has mode 0600")))
+           (test-assert (test-fixture-permissions-p *platform* pathname ':private-file)
+            "the provider-key store is private to the user"))
          (let* ((model "test/chat-model")
                 (provider-configuration (configuration-with-model configuration model))
                 (provider (provider-create provider-configuration))

@@ -23,9 +23,9 @@
        (list "chmod" "-R" "u+w" (namestring root))
        :output nil
        :error-output nil)))
-  (uiop:delete-directory-tree root
-                              :validate t
-                              :if-does-not-exist ':ignore)
+  (platform-delete-directory-tree *platform* root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)
   nil)
 
 (-> release-server-tests--write-artifact
@@ -120,7 +120,7 @@
     (unwind-protect
          (progn
            (dolist (entry environment)
-             (sb-posix:setenv (first entry) (rest entry) 1))
+             (platform-setenv (first entry) (rest entry)))
            (multiple-value-bind (deployment source-tag)
                (release-server-tests--git-deployment root "0.0.1")
              (declare (ignore deployment))
@@ -129,8 +129,8 @@
               "release Git fixtures ignore inherited signing configuration")))
       (dolist (entry previous)
         (if (rest entry)
-            (sb-posix:setenv (first entry) (rest entry) 1)
-            (sb-posix:unsetenv (first entry))))
+            (platform-setenv (first entry) (rest entry))
+            (platform-unsetenv (first entry))))
         (release-server-tests--delete-tree root)))
   nil)
 

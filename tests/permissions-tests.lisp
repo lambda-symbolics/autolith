@@ -24,13 +24,11 @@
                               :state         state
                               :command       "git status"
                               :directory     root)
-           (let ((mode
-                   (sb-posix:stat-mode
-                    (sb-posix:stat
-                     (namestring
-                      (configuration-permissions-path configuration))))))
-             (test-assert (= (logand mode #o777) #o600)
-                          "command permissions are private on disk"))
+           (test-assert (test-fixture-permissions-p
+                         *platform*
+                         (configuration-permissions-path configuration)
+                         ':private-file)
+                        "command permissions are private on disk")
            (let ((loaded (permissions-load configuration)))
              (test-assert (permissions-allowed-p loaded "git status" root)
                           "an exact command approval survives reload")
@@ -43,7 +41,7 @@
               (not (permissions-allowed-p
                     (permissions-load configuration) "git status" root))
               "clearing approvals persists an empty permission state")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-command-permission-corruption () null)
@@ -74,6 +72,6 @@
              (test-assert
               (not (permissions-allowed-p state "anything" root))
               "malformed command permissions fail closed")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
     nil)
 

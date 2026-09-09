@@ -96,7 +96,7 @@
               (test-assert
                (search--installed-manifest-valid-p library)
                "bootstrap installs a manifest matching the pinned fff source"))
-           (sb-posix:setenv "AUTOLITH_FFF_LIBRARY" (namestring library) 1)
+           (platform-setenv "AUTOLITH_FFF_LIBRARY" (namestring library))
            (ensure-directories-exist workspace-root)
            (search-tests--write-file
             (merge-pathnames "src/model-selection.lisp" workspace-root)
@@ -269,7 +269,7 @@
                                        (configuration-cache-root configuration))))
                (search-tests--write-file frecency-marker "discard me")
                (search-tests--write-file history-marker "discard me")
-               (sb-posix:kill failed-pid sb-posix:sigkill)
+               (platform-terminate-process *platform* failed-pid :force t)
                (loop repeat 100
                      while (uiop:process-alive-p failed-process)
                      do (sleep 0.01))
@@ -293,13 +293,14 @@
       (when registry
         (ignore-errors (tool-registry-close-runtime-state registry)))
       (if previous-library
-          (sb-posix:setenv "AUTOLITH_FFF_LIBRARY" previous-library 1)
-          (sb-posix:unsetenv "AUTOLITH_FFF_LIBRARY"))
-      (uiop:delete-directory-tree workspace-root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)
+          (platform-setenv "AUTOLITH_FFF_LIBRARY" previous-library)
+          (platform-unsetenv "AUTOLITH_FFF_LIBRARY"))
+      (platform-delete-directory-tree *platform* workspace-root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)
       (when configuration
-        (uiop:delete-directory-tree
+        (platform-delete-directory-tree
+         *platform*
          (test-configuration-root configuration)
          :validate t
          :if-does-not-exist ':ignore))))

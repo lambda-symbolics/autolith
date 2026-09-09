@@ -42,7 +42,10 @@
                 :text "Next task" :memory-identifiers (list (memory-identifier global)
                                                           (memory-identifier memory)))
     (plan-update configuration '((:text "Finish transfer" :status :doing)))
-    (dolist (name '("plain.bin" "nested [folder]*\\dir/a\\b *?[literal].bin"))
+    ;; Asset names hold pathname metacharacters where the host allows them.
+    (dolist (name (if (test-fixture-available-p *platform* ':wildcard-file-names)
+                      '("plain.bin" "nested [folder]*\\dir/a\\b *?[literal].bin")
+                      '("plain.bin" "nested folder/dir/a/b literal.bin")))
       (test-data-transfer--write
        (merge-pathnames (uiop:parse-native-namestring name)
                         (data-transfer--asset-root configuration ':scratchpad identifier))
@@ -84,8 +87,14 @@
   (with-test-configuration (source root)
     (dolist (workspace (list nil (configuration-working-directory source)))
       (with-test-configuration (target target-root)
-        (let* ((path (merge-pathnames (uiop:parse-native-namestring
-                                     (if workspace "empty workspace [*].sexp" "empty all\\data.sexp")) root))
+        ;; Archive names carry pathname metacharacters where the host allows
+        ;; them in file names, and stay plain elsewhere.
+        (let* ((path (merge-pathnames
+                      (uiop:parse-native-namestring
+                       (if (test-fixture-available-p *platform* ':wildcard-file-names)
+                           (if workspace "empty workspace [*].sexp" "empty all\\data.sexp")
+                           (if workspace "empty workspace.sexp" "empty all data.sexp")))
+                      root))
                (destination (merge-pathnames "relocated/" target-root)))
           (ensure-directories-exist destination)
           (data-export (uiop:native-namestring path) :workspace workspace :configuration source)
@@ -150,7 +159,7 @@
           (test-assert (= (getf report :conversations) 1) "all export includes the conversation")
           (test-assert (= (getf report :inferences) 1) "all export includes inference replay")
           (test-assert (= (getf report :memories) 3) "all export retains forgotten memory history")
-          (test-assert (= (logand #o777 (sb-posix:stat-mode (sb-posix:stat (namestring path)))) #o600)
+          (test-assert (test-fixture-permissions-p *platform* path ':private-file)
                        "the archive is private"))
         (test-assert (plusp (getf (data-import path :configuration target) :installed-files))
                      "the first import publishes durable files")
@@ -217,31 +226,36 @@
 (-> test-data-transfer--stored-workspace () null)
 (defun test-data-transfer--stored-workspace ()
   "Preserve archived workspace ownership when the original directory becomes a symlink."
-  (with-test-configuration (base root)
-    (with-test-configuration (target)
-      (let* ((directory (merge-pathnames "original/" root))
-             (source (test-data-transfer--workspace base directory))
-             (replacement (merge-pathnames "replacement/" root))
-             (fixture (test-data-transfer--populate source root))
-             (key (workspace-directory-name directory))
-             (path (merge-pathnames "original.sexp" root))
-             (after-path (merge-pathnames "after-replacement.sexp" root)))
-        (declare (ignore fixture))
-        (data-export path :configuration source)
-        (ensure-directories-exist replacement)
-        (sb-posix:rmdir (uiop:native-namestring directory))
-        (sb-posix:symlink (uiop:native-namestring replacement)
-                          (string-right-trim "/" (uiop:native-namestring directory)))
-        (unwind-protect
-             (progn
-               (test-assert (plusp (getf (data-import path :configuration target) :installed-files))
-                            "archive validation does not resolve stored workspace keys")
-               (data-export after-path :configuration source)
-               (test-assert (equal (list key) (getf (data-transfer--read after-path) :workspaces))
-                            "collection preserves the original ownership of every durable entity")
-               (test-assert (zerop (getf (data-import after-path :configuration target) :installed-files))
-                            "a changed filesystem alias does not change session identity"))
-          (sb-posix:unlink (string-right-trim "/" (uiop:native-namestring directory)))))))
+  (with-test-fixture (':symbolic-links "workspace ownership across a symlinked directory")
+    (with-test-configuration (base root)
+      (with-test-configuration (target)
+        (let* ((directory (merge-pathnames "original/" root))
+               (source (test-data-transfer--workspace base directory))
+               (replacement (merge-pathnames "replacement/" root))
+               (fixture (test-data-transfer--populate source root))
+               (key (workspace-directory-name directory))
+               (path (merge-pathnames "original.sexp" root))
+               (after-path (merge-pathnames "after-replacement.sexp" root)))
+          (declare (ignore fixture))
+          (data-export path :configuration source)
+          (ensure-directories-exist replacement)
+          (sb-posix:rmdir (uiop:native-namestring directory))
+          (test-fixture-make-symbolic-link
+           *platform*
+           (uiop:native-namestring replacement)
+           (string-right-trim "/" (uiop:native-namestring directory)))
+          (unwind-protect
+               (progn
+                 (test-assert (plusp (getf (data-import path :configuration target) :installed-files))
+                              "archive validation does not resolve stored workspace keys")
+                 (data-export after-path :configuration source)
+                 (test-assert (equal (list key) (getf (data-transfer--read after-path) :workspaces))
+                              "collection preserves the original ownership of every durable entity")
+                 (test-assert (zerop (getf (data-import after-path :configuration target) :installed-files))
+                              "a changed filesystem alias does not change session identity"))
+            (test-fixture-remove-link
+             *platform*
+             (string-right-trim "/" (uiop:native-namestring directory))))))))
   nil)
 
 (-> test-data-transfer--native-workspaces () null)
@@ -251,10 +265,15 @@
     (with-test-configuration (target target-root)
       (let ((path (merge-pathnames "native-workspace.sexp" root)))
         (data-export path :workspace (configuration-working-directory source) :configuration source)
-        (dolist (name '("new [repo]" "new \\repo" "new *repo"))
+        ;; Literal metacharacters appear only where the host allows them.
+        (dolist (name (if (test-fixture-available-p *platform* ':wildcard-file-names)
+                          '("new [repo]" "new \\repo" "new *repo")
+                          '("new repo")))
           (let* ((native (uiop:native-namestring
                           (merge-pathnames (uiop:parse-native-namestring name) target-root)))
-                 (directory (concatenate 'string native "/")))
+                 (directory (uiop:native-namestring
+                             (data-transfer--directory-pathname
+                              (uiop:parse-native-namestring native)))))
             (dolist (existing-p '(nil t))
               (when existing-p
                 (ensure-directories-exist (uiop:parse-native-namestring directory)))
@@ -278,7 +297,12 @@
              (fixture (test-data-transfer--populate source root))
              (foreign (conversation-create other))
              (foreign-memory (memory-remember other :title "Foreign fact" :content "not exported"))
-             (destination (merge-pathnames (uiop:parse-native-namestring "new [repo]*\\name/") target-root))
+             (destination (merge-pathnames
+                           (uiop:parse-native-namestring
+                            (if (test-fixture-available-p *platform* ':wildcard-file-names)
+                                "new [repo]*\\name/"
+                                "new repo name/"))
+                           target-root))
              (path (merge-pathnames "workspace.sexp" root)))
         (conversation-append-user-message foreign "private foreign workspace history")
         (conversation-append-user-message
@@ -358,48 +382,53 @@
 (-> test-data-transfer--nested-symlinks () null)
 (defun test-data-transfer--nested-symlinks ()
   "Reject symlinks below literal native directory names before reading or publishing assets."
-  (dolist (name '("[directory]" "*directory" "back\\directory"))
-    (with-test-configuration (source root)
-      (with-test-configuration (target target-root)
-        (let* ((conversation (conversation-create source))
-               (identifier (conversation-identifier conversation))
-               (relative (uiop:parse-native-namestring (format nil "~A/link/file.bin" name)))
-               (source-file (merge-pathnames relative (data-transfer--asset-root source ':scratchpad identifier)))
-               (target-file (merge-pathnames relative (data-transfer--asset-root target ':scratchpad identifier)))
-               (source-link (uiop:native-namestring
-                             (uiop:pathname-directory-pathname source-file)))
-               (target-link (uiop:native-namestring
-                             (uiop:pathname-directory-pathname target-file)))
-               (outside (merge-pathnames "outside/" target-root))
-               (path (merge-pathnames "native-symlink.sexp" root))
-               (rejected (merge-pathnames "rejected.sexp" root)))
-          (conversation-append-user-message conversation "Owned native assets")
-          (test-data-transfer--write source-file (vector 1 2 3))
-          (data-export path :configuration source)
-          (ensure-directories-exist (uiop:pathname-parent-directory-pathname
-                                    (uiop:pathname-directory-pathname target-file)))
-          (ensure-directories-exist outside)
-          (sb-posix:symlink (uiop:native-namestring outside) (string-right-trim "/" target-link))
-          (unwind-protect
-               (progn
-                 (test-assert (eq ':invalid
-                                  (handler-case (data-import path :configuration target)
-                                    (data-transfer-error (condition)
-                                      (data-transfer-error-reason condition))))
-                              "import detects the actual symlink below a native directory")
-                 (test-assert (and (null (conversation-list target))
-                                   (null (uiop:directory-files outside)))
-                              "symlink preflight publishes neither sessions nor external files"))
-            (sb-posix:unlink (string-right-trim "/" target-link)))
-          (delete-file source-file)
-          (sb-posix:rmdir source-link)
-          (sb-posix:symlink (uiop:native-namestring outside) (string-right-trim "/" source-link))
-          (unwind-protect
-               (test-assert (and (test-data-transfer--fails-p
-                                 (lambda () (data-export rejected :configuration source)))
-                                (not (probe-file rejected)))
-                            "export rejects nested symlinks before publishing an archive")
-            (sb-posix:unlink (string-right-trim "/" source-link)))))))
+  (with-test-fixture (':symbolic-links "symlinks below literal native directory names")
+    (dolist (name (if (test-fixture-available-p *platform* ':wildcard-file-names)
+                      '("[directory]" "*directory" "back\\directory")
+                      '("plain directory")))
+      (with-test-configuration (source root)
+        (with-test-configuration (target target-root)
+          (let* ((conversation (conversation-create source))
+                 (identifier (conversation-identifier conversation))
+                 (relative (uiop:parse-native-namestring (format nil "~A/link/file.bin" name)))
+                 (source-file (merge-pathnames relative (data-transfer--asset-root source ':scratchpad identifier)))
+                 (target-file (merge-pathnames relative (data-transfer--asset-root target ':scratchpad identifier)))
+                 (source-link (uiop:native-namestring
+                               (uiop:pathname-directory-pathname source-file)))
+                 (target-link (uiop:native-namestring
+                               (uiop:pathname-directory-pathname target-file)))
+                 (outside (merge-pathnames "outside/" target-root))
+                 (path (merge-pathnames "native-symlink.sexp" root))
+                 (rejected (merge-pathnames "rejected.sexp" root)))
+            (conversation-append-user-message conversation "Owned native assets")
+            (test-data-transfer--write source-file (vector 1 2 3))
+            (data-export path :configuration source)
+            (ensure-directories-exist (uiop:pathname-parent-directory-pathname
+                                      (uiop:pathname-directory-pathname target-file)))
+            (ensure-directories-exist outside)
+            (test-fixture-make-symbolic-link
+             *platform* (uiop:native-namestring outside) (string-right-trim "/" target-link))
+            (unwind-protect
+                 (progn
+                   (test-assert (eq ':invalid
+                                    (handler-case (data-import path :configuration target)
+                                      (data-transfer-error (condition)
+                                        (data-transfer-error-reason condition))))
+                                "import detects the actual symlink below a native directory")
+                   (test-assert (and (null (conversation-list target))
+                                     (null (uiop:directory-files outside)))
+                                "symlink preflight publishes neither sessions nor external files"))
+              (test-fixture-remove-link *platform* (string-right-trim "/" target-link)))
+            (delete-file source-file)
+            (sb-posix:rmdir source-link)
+            (test-fixture-make-symbolic-link
+             *platform* (uiop:native-namestring outside) (string-right-trim "/" source-link))
+            (unwind-protect
+                 (test-assert (and (test-data-transfer--fails-p
+                                   (lambda () (data-export rejected :configuration source)))
+                                  (not (probe-file rejected)))
+                              "export rejects nested symlinks before publishing an archive")
+              (test-fixture-remove-link *platform* (string-right-trim "/" source-link))))))))
   nil)
 
 (-> test-data-transfer-rejection () null)

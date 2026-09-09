@@ -76,8 +76,8 @@
 (defun recovery-tests--restore-environment (name previous)
   "Restore environment variable NAME to PREVIOUS."
   (if previous
-      (sb-posix:setenv name previous 1)
-      (sb-posix:unsetenv name))
+      (platform-setenv name previous)
+      (platform-unsetenv name))
   nil)
 
 (-> test-recovery-xdg-directories () null)
@@ -86,33 +86,33 @@
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (source-root (asdf:system-source-directory :autolith))
-         (home (user-homedir-pathname))
          (saved-data (uiop:getenv "XDG_DATA_HOME"))
          (saved-state (uiop:getenv "XDG_STATE_HOME")))
     (unwind-protect
          (progn
            (dolist (invalid '("" "relative/xdg-home"))
-             (sb-posix:setenv "XDG_DATA_HOME" invalid 1)
-             (sb-posix:setenv "XDG_STATE_HOME" invalid 1)
-             (let ((context (recovery-context-create source-root)))
+             (platform-setenv "XDG_DATA_HOME" invalid)
+             (platform-setenv "XDG_STATE_HOME" invalid)
+             ;; The platform adapter applies the same rule, so its roots are
+             ;; the host's defaults once the variables are ignored.
+             (let ((context (recovery-context-create source-root))
+                   (data-root (platform-application-root *platform* ':data))
+                   (state-root (platform-application-root *platform* ':state)))
                (test-assert
                 (equal (recovery-context-generation-root context)
-                       (merge-pathnames
-                        ".local/share/autolith/generations/" home))
+                       (merge-pathnames "generations/" data-root))
                 "recovery ignores an invalid XDG data home")
                (test-assert
                 (equal (recovery-context-worktree-root context)
-                       (merge-pathnames
-                        ".local/share/autolith/recovery-worktrees/" home))
+                       (merge-pathnames "recovery-worktrees/" data-root))
                 "recovery worktrees use the default data home")
                (test-assert
-                (equal (recovery-context-state-root context)
-                       (merge-pathnames ".local/state/autolith/" home))
+                (equal (recovery-context-state-root context) state-root)
                 "recovery ignores an invalid XDG state home")))
            (let ((data-home (merge-pathnames "xdg-data/" root))
                  (state-home (merge-pathnames "xdg-state/" root)))
-             (sb-posix:setenv "XDG_DATA_HOME" (namestring data-home) 1)
-             (sb-posix:setenv "XDG_STATE_HOME" (namestring state-home) 1)
+             (platform-setenv "XDG_DATA_HOME" (namestring data-home))
+             (platform-setenv "XDG_STATE_HOME" (namestring state-home))
              (let ((context (recovery-context-create source-root)))
                (test-assert
                 (equal (recovery-context-generation-root context)
@@ -124,9 +124,9 @@
                 "recovery accepts an absolute XDG state home"))))
       (recovery-tests--restore-environment "XDG_DATA_HOME" saved-data)
       (recovery-tests--restore-environment "XDG_STATE_HOME" saved-state)
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> recovery-tests--write-executable (pathname string) pathname)
@@ -243,9 +243,9 @@
               (error ()
                 t))
             "recovery rejects duplicate current migration destinations"))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-session-handoff () null)
@@ -300,7 +300,7 @@
                   :conversation-id capsule-id
                   :rendered-sequence 73
                   :history-floor-sequence 29))
-           (sb-posix:setenv pointer-name (namestring session-pathname) 1)
+           (platform-setenv pointer-name (namestring session-pathname))
            (recovery-report-crash context :status nil :capsule nil)
            (test-assert
             (string= (uiop:getenv conversation-name) session-id)
@@ -324,7 +324,7 @@
            (test-assert
             (string= (uiop:getenv history-floor-name) "29")
             "the preferred crash capsule separately propagates its history floor")
-           (sb-posix:unsetenv crash-pointer-name)
+           (platform-unsetenv crash-pointer-name)
            (recovery-refresh-crash-context
             context (namestring capsule-pathname) :session-p nil)
            (test-assert
@@ -351,10 +351,9 @@
                   :conversation-id session-id
                   :rendered-sequence 41
                   :history-floor-sequence 17))
-           (sb-posix:setenv
+           (platform-setenv
             pointer-name
-            (namestring outside-pointer-pathname)
-            1)
+            (namestring outside-pointer-pathname))
            (test-assert
             (handler-case
                 (progn
@@ -371,7 +370,7 @@
                     :conversation-id session-id
                     :rendered-sequence 41
                     :history-floor-sequence invalid-floor))
-             (sb-posix:setenv pointer-name (namestring session-pathname) 1)
+             (platform-setenv pointer-name (namestring session-pathname))
              (test-assert
               (handler-case
                   (progn
@@ -388,9 +387,9 @@
        history-floor-name previous-history-floor)
       (recovery-tests--restore-environment
        crash-pointer-name previous-crash-pointer)
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-status-boundary () null)
@@ -403,6 +402,13 @@
     (test-assert
      (recovery-generation-terminal-status-p status)
      "success and terminal signals stop retained-generation fallback"))
+  (with-test-fixture (':posix-shell "the stable launcher preserving status 64")
+    (recovery-tests--launcher-status-boundary))
+  nil)
+
+(-> recovery-tests--launcher-status-boundary () null)
+(defun recovery-tests--launcher-status-boundary ()
+  "Run the stable launcher over a fake SBCL that exits with status 64."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (source-root (asdf:system-source-directory :autolith))
@@ -441,9 +447,9 @@ exit 64
            (test-assert
             (= (count #\Newline (uiop:read-file-string log)) 1)
             "the stable launcher does not enter recovery for active status 64"))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-source-failure-reporting () null)
@@ -494,9 +500,9 @@ exit 64
                (and (zerop (length output))
                     (eq refreshed-capsule :unset))
                "successful source recovery emits no failure report"))))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-generation-revision-boundary () null)
@@ -711,9 +717,9 @@ exit 64
                 (test-assert
                  (equal (nreverse booted) '("current-a" "current-b"))
                  "retained fallback never tries a cross-revision generation")))))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> run-recovery-tests () null)

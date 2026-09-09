@@ -200,9 +200,9 @@
                           (eq (context-contribution-class warning)
                               ':mandatory))
                      "deferred body failure becomes request-local warning")))))))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-skill-load-presentation () null)
@@ -328,7 +328,7 @@
                    (search "Selected skill expanded-view" output))
               "expanded tool view presents its ordinary result exactly once")))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)

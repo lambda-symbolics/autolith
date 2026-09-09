@@ -501,9 +501,12 @@
   test-localgroup-handoff-cancellation
   test-localgroup-fresh-startup-selection)
 
-(define-test-suite release-script
-  test-installer-checksum-verification
-  test-release-scripts)
+;;; The release scripts and the release server that drives them deploy to
+;;; POSIX hosts, so their suites exist only where the POSIX shell does.
+(when (test-fixture-available-p *platform* ':posix-shell)
+  (define-test-suite release-script
+    test-installer-checksum-verification
+    test-release-scripts))
 
 (define-test-suite data-transfer
   test-data-transfer-commands
@@ -512,8 +515,9 @@
   test-data-transfer-rejection
   test-data-transfer-rollback)
 
-(define-test-suite release-server
-  test-release-server)
+(when (test-fixture-available-p *platform* ':posix-shell)
+  (define-test-suite release-server
+    test-release-server))
 
 (define-test-suite application
   test-application-command-tips

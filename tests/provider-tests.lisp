@@ -98,24 +98,24 @@
                                (or (provider-error-response error) ""))
                        t)))
               "a streamed failure body reaches both the message and the response"))
-           (dolist (status '(500 503))
-             (let ((transient-condition
-                     (make-condition
-                      'http-request-failed
-                      :body "temporary provider failure"
-                      :status status
-                      :headers nil
-                      :uri nil
-                      :method ':post)))
-               (test-assert
-                (handler-case
-                    (progn
-                      (provider-signal-http-failure provider transient-condition)
-                      nil)
-                  (provider-retryable-error (error)
-                    (= (provider-error-status error) status)))
-                (format nil "HTTP ~D is eligible for bounded retry" status)))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+            (dolist (status '(500 503))
+              (let ((transient-condition
+                      (make-condition
+                       'http-request-failed
+                       :body "temporary provider failure"
+                       :status status
+                       :headers nil
+                       :uri nil
+                       :method ':post)))
+                (test-assert
+                 (handler-case
+                     (progn
+                       (provider-signal-http-failure provider transient-condition)
+                       nil)
+                   (provider-retryable-error (error)
+                     (= (provider-error-status error) status)))
+                 (format nil "HTTP ~D is eligible for bounded retry" status)))))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> provider-tests--request-tools (json-object) vector)
@@ -291,7 +291,7 @@
                                    (grok-provider-create base-configuration)
                                    search-only))))
               "filtering the sole search tool omits the empty namespace")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-provider-deferred-tool-loading () null)
@@ -420,7 +420,7 @@
                     (json-object "type" "tool_search_call"
                                  "status" "completed")))
               "tool search items never replay into another provider family")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-provider-request () null)
@@ -648,28 +648,28 @@
                    (search "context checkpoint compaction"
                            (json-get compaction-request "instructions")))
               "portable compaction fallback is tool-free and serial"))
-           (let* ((fallback-configuration
-                    (configuration--clone configuration :model "gpt-5.3-codex"))
-                  (fallback-provider (provider-create fallback-configuration))
-                  (local-call
-                    (json-object
-                     "type" "function_call"
-                     "namespace" "test"
-                     "name" "inspect"
-                     "call_id" "call-standard"))
-                  (wire-call
-                    (provider-wire-input-item fallback-provider local-call))
-                  (normalized
-                    (provider-normalize-output-item
-                     fallback-provider (json-object-copy wire-call))))
-             (test-assert
-              (and (null (json-get wire-call "namespace"))
-                   (provider-wire-function-name--valid-p
-                    (json-get wire-call "name"))
-                   (string= (json-get normalized "namespace") "test")
-                   (string= (json-get normalized "name") "inspect"))
-              "eager Codex wire hooks round-trip the local tool namespace")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+            (let* ((fallback-configuration
+                     (configuration--clone configuration :model "gpt-5.3-codex"))
+                   (fallback-provider (provider-create fallback-configuration))
+                   (local-call
+                     (json-object
+                      "type" "function_call"
+                      "namespace" "test"
+                      "name" "inspect"
+                      "call_id" "call-standard"))
+                   (wire-call
+                     (provider-wire-input-item fallback-provider local-call))
+                   (normalized
+                     (provider-normalize-output-item
+                      fallback-provider (json-object-copy wire-call))))
+              (test-assert
+               (and (null (json-get wire-call "namespace"))
+                    (provider-wire-function-name--valid-p
+                     (json-get wire-call "name"))
+                    (string= (json-get normalized "namespace") "test")
+                    (string= (json-get normalized "name") "inspect"))
+               "eager Codex wire hooks round-trip the local tool namespace")))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-provider-native-compaction () null)
@@ -882,7 +882,7 @@
                  :tool-namespaces schemas
                  :event-callback #'identity))
                "an unavailable native endpoint falls back without failing compaction"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-sse-event-string (json-object) string)
@@ -1304,7 +1304,7 @@
                 (provider-error (condition)
                   (not (typep condition 'provider-retryable-error))))
               "non-transient TLS setup failures remain typed and terminal")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> provider-tests--credentials (configuration) oauth-credentials)
@@ -1577,7 +1577,8 @@
                (test-assert
                 (not (search collision marker))
                 "credential collisions select a marker without the credential")))
-        (uiop:delete-directory-tree
+        (platform-delete-directory-tree
+         *platform*
          root :validate t :if-does-not-exist ':ignore)))
     (test-assert
      (and (null *provider-active-credential-values*)
@@ -1744,7 +1745,7 @@
               (equal (nreverse (test-codex-provider-refresh-flags provider))
                      '(nil))
               "a rejected static API key is not retried or refreshed")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-provider-persistent-transient-retries () null)
@@ -2012,7 +2013,7 @@
         (ignore-errors (sb-bsd-sockets:socket-close accepted))
         (ignore-errors (sb-bsd-sockets:socket-close client))
         (ignore-errors (sb-bsd-sockets:socket-close listener))
-        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
   (let ((stream
           (make-instance 'test-failing-close-stream
                          :source "{\"error\":\"synthetic\"}")))
@@ -2081,7 +2082,7 @@
                "model discovery preserves typed HTTP failure mapping")))
            (test-assert (test-failing-close-stream-close-abort-p stream)
                         "model discovery drains and abort-closes a streamed error body"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (credentials
@@ -2137,7 +2138,7 @@
                    grok-manager credentials "deadline-refresh"))
                 'token-refresh-failed)
                "Grok refresh deadlines map to a typed token failure"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (conversation (conversation-create configuration :identifier "response-deadlines"))
@@ -2213,7 +2214,7 @@
            (test-assert
             (equal (nreverse deadlines) '(300 300 30 300 300 300 300 300))
             "every provider response and stream-open path uses its response deadline"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (defun test-provider-stream-retries ()
@@ -2317,23 +2318,23 @@
                     (test-codex-provider-refresh-flags provider))
                    1)
                 "turn cancellation prevents another provider attempt")))
-           (let ((provider
-                   (test-codex-provider-create
-                    configuration
-                    (append (make-list 7 :initial-element :server-error)
-                            (list result)))))
-             (test-assert
-              (handler-case
-                  (progn
-                    (provider-stream-turn provider conversation
-                                          :tool-namespaces #()
-                                          :event-callback #'identity)
-                    nil)
-                (provider-retryable-error ()
-                  t))
-              "transient provider recovery stops after six retries")
-             (test-assert
-              (= (length (test-codex-provider-refresh-flags provider)) 7)
-              "retry exhaustion permits exactly seven total attempts")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+            (let ((provider
+                    (test-codex-provider-create
+                     configuration
+                     (append (make-list 7 :initial-element :server-error)
+                             (list result)))))
+              (test-assert
+               (handler-case
+                   (progn
+                     (provider-stream-turn provider conversation
+                                           :tool-namespaces #()
+                                           :event-callback #'identity)
+                     nil)
+                 (provider-retryable-error ()
+                   t))
+               "transient provider recovery stops after six retries")
+              (test-assert
+               (= (length (test-codex-provider-refresh-flags provider)) 7)
+               "retry exhaustion permits exactly seven total attempts")))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

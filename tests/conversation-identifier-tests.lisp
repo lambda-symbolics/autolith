@@ -89,7 +89,7 @@ match a new library version is never the correct repair."
                      timestamp)))
               "occupying every seed signals structured exhaustion")))
       (identifier-clear-reservations)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-identifier--legacy-conversation
@@ -274,7 +274,7 @@ match a new library version is never the correct repair."
              (test-assert
               (equal entries (conversation-identifier-migrate configuration))
               "running a completed migration again is idempotent")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-identifier-migration-validation () null)
@@ -362,7 +362,7 @@ match a new library version is never the correct repair."
               (and (conversation-storage-occupied-p first-source)
                    (conversation-storage-occupied-p second-source))
               "one invalid target preserves every legacy source before cleanup")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-identifier-migration-resumption () null)
@@ -410,7 +410,7 @@ match a new library version is never the correct repair."
                             :status)
                       ':complete))
                  "a repeated migration safely completes every remaining phase"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-identifiers () null)

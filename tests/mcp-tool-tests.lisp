@@ -506,7 +506,8 @@
             (= 5 tool-list-request-count)
             "pagination and tool discovery both restart after generation churn"))
       (ignore-errors (mcp-server-runtime-close runtime))
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -664,7 +665,8 @@
       (mcp--registry-restore original-mcp-registrations)
       (context--registry-restore original-context-registrations)
       (application-command--registry-restore original-command-registrations)
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -919,7 +921,8 @@
         (context--registry-restore original-context-registrations)
         (application-command--registry-restore
          original-command-registrations)
-        (uiop:delete-directory-tree
+        (platform-delete-directory-tree
+         *platform*
          root :validate t :if-does-not-exist ':ignore))))
   nil)
 
@@ -1278,7 +1281,8 @@
                   original-context-registrations)
                  (application-command--registry-restore
                   original-command-registrations)
-                 (uiop:delete-directory-tree
+                 (platform-delete-directory-tree
+                  *platform*
                   root :validate t :if-does-not-exist ':ignore)))))
     (run-case ':agent-creation)
     (run-case ':presentation)
@@ -1511,7 +1515,7 @@
          (input-runtime nil))
     (unwind-protect
          (progn
-           (sb-posix:setenv environment-name credential 1)
+           (platform-setenv environment-name credential)
            (setf
             transport
             (make-instance
@@ -1787,8 +1791,9 @@
       (when manager
         (ignore-errors
           (mcp-manager-close manager)))
-      (sb-posix:unsetenv environment-name)
-      (uiop:delete-directory-tree
+      (platform-unsetenv environment-name)
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -1818,7 +1823,7 @@
          (thread-failure nil))
     (unwind-protect
          (progn
-           (sb-posix:setenv environment-name credential 1)
+           (platform-setenv environment-name credential)
            (mcp--registry-restore nil)
            (register-mcp-server
             `(:name "credential-http"
@@ -1896,8 +1901,9 @@
         (ignore-errors
           (mcp-manager-close manager)))
       (mcp--registry-restore registrations)
-      (sb-posix:unsetenv environment-name)
-      (uiop:delete-directory-tree
+      (platform-unsetenv environment-name)
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -1928,7 +1934,7 @@
          (conversation nil))
     (unwind-protect
          (progn
-           (sb-posix:setenv environment-name credential 1)
+           (platform-setenv environment-name credential)
            (setf
             transport
             (make-instance
@@ -2176,8 +2182,9 @@
       (when manager
         (ignore-errors
           (mcp-manager-close manager)))
-      (sb-posix:unsetenv environment-name)
-      (uiop:delete-directory-tree
+      (platform-unsetenv environment-name)
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -2299,7 +2306,8 @@
               "stdio without mapped credentials preserves normal diagnostics")))
       (mcp-transport-close credential-transport)
       (mcp-transport-close plain-transport)
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -2378,7 +2386,8 @@
                          first
                          (mcp-tools--environment-snapshot-fingerprint snapshot))
                         "detaching one manager preserves the process fingerprint key"))
-                  (uiop:delete-directory-tree
+                  (platform-delete-directory-tree
+                   *platform*
                    root :validate t :if-does-not-exist ':ignore)))
              (mcp-tools--clear-environment-fingerprint-key)
              (test-assert
@@ -2500,7 +2509,7 @@
            (rendered nil))
       (unwind-protect
            (progn
-             (sb-posix:setenv environment-name credential 1)
+             (platform-setenv environment-name credential)
              (mcp-tools--call-with-server-secret-use
               server
               (lambda ()
@@ -2515,7 +2524,7 @@
                (search marker rendered)
                (not (search credential rendered)))
               "short MCP credentials receive collision-free redaction markers"))
-        (sb-posix:unsetenv environment-name))))
+        (platform-unsetenv environment-name))))
   nil)
 
 (-> test-mcp-stdio-credential-snapshot-rotation () null)
@@ -2575,7 +2584,7 @@
          (process-b nil))
     (unwind-protect
          (progn
-           (sb-posix:setenv environment-name credential-a 1)
+           (platform-setenv environment-name credential-a)
            (mcp-server-runtime-connect runtime)
            (mcp-tool-registry-register-manager registry manager)
            (setf process-a (slot-value transport process-slot))
@@ -2597,7 +2606,7 @@
                     (symbol-function
                      'mcp-tools--resolve-environment-snapshot))
                   (result nil))
-             (sb-posix:setenv environment-name credential-b 1)
+             (platform-setenv environment-name credential-b)
              (test-call-with-function-replacements
               (list
                (list
@@ -2605,8 +2614,8 @@
                 (lambda (server-configuration)
                   (multiple-value-prog1
                       (funcall snapshot-function server-configuration)
-                    (sb-posix:setenv
-                     environment-name credential-c 1)))))
+                    (platform-setenv
+                     environment-name credential-c)))))
               (lambda ()
                 (setf
                  result
@@ -2651,7 +2660,7 @@
                  (not (search credential-b conversation-text))
                  (not (search credential-c conversation-text)))
                 "one exact snapshot drives rotation, launch, redaction, and persistence"))
-             (sb-posix:unsetenv environment-name)
+             (platform-unsetenv environment-name)
              (let ((result
                      (tool-execute
                       provider-tool context (json-object))))
@@ -2717,7 +2726,7 @@
                 (mcp-server-runtime-launch-environment-fingerprint runtime))
                (null *mcp-environment-fingerprint-key*))
               "checkpoint detachment removes MCP tools, digests, and keys")))
-      (sb-posix:unsetenv environment-name)
+      (platform-unsetenv environment-name)
       (ignore-errors (tool-registry-close-runtime-state registry))
       (when (test-mcp--process-alive-p process-a)
         (ignore-errors (uiop:terminate-process process-a :urgent t))
@@ -2725,7 +2734,8 @@
       (when (test-mcp--process-alive-p process-b)
         (ignore-errors (uiop:terminate-process process-b :urgent t))
         (ignore-errors (uiop:wait-process process-b)))
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -2832,7 +2842,8 @@
                    (equal first-names second-names))
               "equal MCP raw tool names have readable stable server-scoped identifiers")))
       (ignore-errors (mcp-manager-close manager))
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -2955,7 +2966,8 @@
       (ignore-errors
         (tool-registry-close-runtime-state registry))
       (ignore-errors (mcp-manager-close manager))
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -3041,7 +3053,8 @@
                                "string"))
                          "provider projection detaches mutable JSON strings")))))
              (mcp-manager-close manager)))
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -3069,21 +3082,21 @@
       (unwind-protect
            (progn
              (dolist (invalid '("" "relative/xdg-home"))
-               (sb-posix:setenv xdg-name invalid 1)
+               (platform-setenv xdg-name invalid)
                (test-assert
                 (notany
                  (lambda (entry)
                    (string= (mcp-tools--environment-entry-name entry) xdg-name))
                  (environment))
                 "stdio MCP children omit invalid inherited XDG bases"))
-             (sb-posix:setenv xdg-name "/absolute/xdg-home" 1)
+             (platform-setenv xdg-name "/absolute/xdg-home")
              (test-assert
               (member "XDG_DATA_HOME=/absolute/xdg-home"
                       (environment)
                       :test #'string=)
               "stdio MCP children inherit absolute XDG bases")
-             (sb-posix:setenv xdg-name "relative/inherited" 1)
-             (sb-posix:setenv source-name "relative/explicit" 1)
+             (platform-setenv xdg-name "relative/inherited")
+             (platform-setenv source-name "relative/explicit")
              (let* ((mapped-server
                       (mcp-server-configuration-create
                        :name "explicit-xdg-environment"
@@ -3156,7 +3169,7 @@
                    (null attachments)
                    (equal provider-blocks '("bounded")))
               "bounded MCP result text retains its provider projection")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-mcp-tools () null)
@@ -3267,30 +3280,32 @@
                     (test-mcp--context
                      configuration conversation registry)))
              (mcp-tool-registry-register-manager registry manager)
-             (let* ((environment-name "HOME")
-                    (server
-                      (mcp-server-configuration-create
-                       :name "late-environment"
-                       :transport
-                       `(:type :http
-                         :url "https://example.test/mcp"
-                         :headers
-                         (("Authorization" :environment
-                           ,environment-name)))))
-                    (transport-configuration
-                      (mcp-server-configuration-transport server))
-                    (headers
-                      (mcp-tools--call-with-server-secret-use
-                       server
-                       (lambda ()
-                         (funcall
-                          (mcp-tools--http-headers-function
-                           server transport-configuration))))))
-               (test-assert
-                (string=
-                 (rest (first headers))
-                 (uiop:getenv environment-name))
-                "HTTP header values are resolved from the environment on demand"))
+             ;; A variable the test owns, since HOME is unset on Windows.
+             (with-test-environment (("AUTOLITH_MCP_TEST_LATE" "late-secret"))
+               (let* ((environment-name "AUTOLITH_MCP_TEST_LATE")
+                      (server
+                        (mcp-server-configuration-create
+                         :name "late-environment"
+                         :transport
+                         `(:type :http
+                           :url "https://example.test/mcp"
+                           :headers
+                           (("Authorization" :environment
+                             ,environment-name)))))
+                      (transport-configuration
+                        (mcp-server-configuration-transport server))
+                      (headers
+                        (mcp-tools--call-with-server-secret-use
+                         server
+                         (lambda ()
+                           (funcall
+                            (mcp-tools--http-headers-function
+                             server transport-configuration))))))
+                 (test-assert
+                  (string=
+                   (rest (first headers))
+                   (uiop:getenv environment-name))
+                  "HTTP header values are resolved from the environment on demand")))
              (let* ((missing-name
                       (loop for index from 0
                             for name =
@@ -3343,7 +3358,7 @@
                       (mcp-server-configuration-transport server)))
                (unwind-protect
                     (progn
-                      (sb-posix:setenv sentinel-name "must-not-leak" 1)
+                      (platform-setenv sentinel-name "must-not-leak")
                       (let ((environment
                               (mcp-tools--call-with-server-secret-use
                                server
@@ -3433,7 +3448,7 @@
                            (string= (rest entry) "snapshot-one"))
                          snapshot))
                        "one environment source is read once per exact snapshot"))
-                 (sb-posix:unsetenv sentinel-name)))
+                 (platform-unsetenv sentinel-name)))
              (let* ((read-tool
                       (test-mcp--tool-with-raw-name
                        registry "read file"))
@@ -3862,7 +3877,8 @@
              (test-assert
               (= (test-mcp-transport-detach-count transport) 1)
               "a shared MCP manager detaches exactly once through its registry")))
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root :validate t :if-does-not-exist ':ignore)))
   (test-mcp--generation-rediscovery)
   (let* ((configuration (test-configuration))
@@ -3912,7 +3928,8 @@
                           (json-get request "method")))))
             "a resources-only MCP server connects without tools/list"))
       (ignore-errors (mcp-server-runtime-close runtime))
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        (test-configuration-root configuration)
        :validate t
        :if-does-not-exist ':ignore)))
@@ -3971,7 +3988,8 @@
                   "required-missing"))))
             "a required missing MCP directory prevents startup"))
       (mcp--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree
+      (platform-delete-directory-tree
+       *platform*
        root
        :validate t
        :if-does-not-exist ':ignore)))

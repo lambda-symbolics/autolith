@@ -218,12 +218,14 @@
 (asdf:defsystem #:autolith/tests
   :description "Tests for Autolith."
   :depends-on (#:autolith
-               #:autolith/release-server
+               (:feature (:not :win32) #:autolith/release-server)
                #:fiveam)
   :serial t
   :components ((:module "tests"
                 :serial t
                 :components ((:file "test-support")
+                             (:file "posix-fixtures" :if-feature (:not :win32))
+                             (:file "win32-fixtures" :if-feature :win32)
                              (:file "device-authentication-test-support")
                              (:file "stream-tests")
                              (:file "memory-tests")
@@ -289,9 +291,9 @@
                              (:file "localgroup-handoff-tests")
                              (:file "localgroup-handoff-boundary-tests")
 
-                             (:file "release-script-tests")
-                             (:file "installer-checksum-tests")
-                             (:file "release-server-tests")
+                             (:file "release-script-tests" :if-feature (:not :win32))
+                             (:file "installer-checksum-tests" :if-feature (:not :win32))
+                             (:file "release-server-tests" :if-feature (:not :win32))
                              (:file "application-tests")
                              (:file "lisp-machine-tests")
                              (:file "data-transfer-command-tests")

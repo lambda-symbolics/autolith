@@ -101,9 +101,9 @@
               (request-context-session-state configuration)
               "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE"
               "STE guidance rides in mutable context")))
-      (uiop:delete-directory-tree (test-configuration-root configuration)
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* (test-configuration-root configuration)
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -139,7 +139,7 @@
               (and (<= (length agenda) *request-context-agenda-limit*)
                    (search *system-prompt-context-truncation-marker* agenda))
               "active agenda rendering obeys the complete-line context bound")))
-      (uiop:delete-directory-tree (test-configuration-root configuration)
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* (test-configuration-root configuration)
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)

@@ -126,9 +126,9 @@
                       condition
                       "account-mismatch-secret"))))
             "the stored account identity must match the access JWT subject"))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> nous-authentication-test--refresh-validation () null)
@@ -186,9 +186,9 @@
                 (token-refresh-failed ()
                   t))
               "a Nous refresh response rejects invalid scope, rotation, or account data")))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> nous-authentication-test--serialized-refresh () null)
@@ -297,9 +297,9 @@
                      (not (search "single-use-refresh"
                                   (getf captured-request :content))))
                 "Nous refresh uses the header token and form-encoded public fields"))
-          (uiop:delete-directory-tree root
-                                      :validate t
-                                      :if-does-not-exist ':ignore)))))
+          (platform-delete-directory-tree *platform* root
+                                          :validate t
+                                          :if-does-not-exist ':ignore)))))
   nil)
 
 (-> nous-authentication-test--refresh-redaction () null)
@@ -340,9 +340,9 @@
                            "echoed-refresh-secret"))
                      (test-object-contains-string-p condition "auth nous"))))
             "Nous refresh failures redact echoed tokens and point at reauthentication"))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> run-nous-authentication-tests () boolean)

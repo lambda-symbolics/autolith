@@ -8,8 +8,8 @@
 (defun nous-provider-test--restore-environment (name value)
   "Restore environment variable NAME to VALUE or its absent state."
   (if value
-      (sb-posix:setenv name value 1)
-      (sb-posix:unsetenv name))
+      (platform-setenv name value)
+      (platform-unsetenv name))
   nil)
 
 (-> nous-provider-test--save-credentials (configuration) oauth-credentials)
@@ -68,12 +68,12 @@
                       (provider-credential-manager authentication-provider)))
                     (configuration-nous-auth-path configuration)))
               "autolith auth nous constructs a provider before model discovery"))
-           (sb-posix:setenv "AUTOLITH_NOUS_PORTAL_URL"
-                            "https://portal.nous.test/" 1)
-           (sb-posix:setenv "AUTOLITH_NOUS_INFERENCE_BASE_URL"
-                            "https://inference.nous.test/v1/" 1)
-           (sb-posix:setenv "AUTOLITH_NOUS_PROVIDER_ENDPOINT"
-                            "https://override.nous.test/chat" 1)
+           (platform-setenv "AUTOLITH_NOUS_PORTAL_URL"
+                            "https://portal.nous.test/")
+           (platform-setenv "AUTOLITH_NOUS_INFERENCE_BASE_URL"
+                            "https://inference.nous.test/v1/")
+           (platform-setenv "AUTOLITH_NOUS_PROVIDER_ENDPOINT"
+                            "https://override.nous.test/chat")
            (test-assert
             (and (string= (nous-portal-url) "https://portal.nous.test")
                  (string= (nous-models-endpoint)
@@ -166,9 +166,9 @@
       (nous-provider-test--restore-environment
        "AUTOLITH_NOUS_PROVIDER_ENDPOINT"
        saved-provider)
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -188,9 +188,9 @@
          (posts nil))
     (unwind-protect
          (progn
-           (sb-posix:setenv "AUTOLITH_NOUS_INFERENCE_BASE_URL"
-                            "https://transport.nous.test/v1" 1)
-           (sb-posix:unsetenv "AUTOLITH_NOUS_PROVIDER_ENDPOINT")
+           (platform-setenv "AUTOLITH_NOUS_INFERENCE_BASE_URL"
+                            "https://transport.nous.test/v1")
+           (platform-unsetenv "AUTOLITH_NOUS_PROVIDER_ENDPOINT")
            (nous-provider-test--save-credentials configuration)
            (setf (symbol-function 'dexador:get)
                  (lambda (url &rest arguments)
@@ -284,9 +284,9 @@
       (nous-provider-test--restore-environment
        "AUTOLITH_NOUS_PROVIDER_ENDPOINT"
        saved-provider)
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-nous-provider () null)

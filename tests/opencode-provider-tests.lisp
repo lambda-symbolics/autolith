@@ -31,8 +31,8 @@
 (defun opencode-provider-test--restore-environment (name value)
   "Restore NAME to VALUE, preserving an originally absent variable."
   (if value
-      (sb-posix:setenv name value 1)
-      (sb-posix:unsetenv name))
+      (platform-setenv name value)
+      (platform-unsetenv name))
   nil)
 
 (-> opencode-provider-test--selection () null)
@@ -56,8 +56,8 @@
               (declare (ignore reasoning-summaries-p))
               (opencode-provider-create selected))
             :source ':runtime)
-           (setf (uiop:getenv "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT") ""
-                 (uiop:getenv *opencode-models-environment-variable*) "")
+           (platform-setenv "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT" "")
+           (platform-setenv *opencode-models-environment-variable* "")
            (let ((selected
                    (configuration-with-model
                     configuration "opencode/endpoint-test")))
@@ -68,10 +68,10 @@
              (test-assert
               (string= (opencode-models-endpoint) *opencode-models-endpoint*)
               "OpenCode uses its default models endpoint"))
-           (setf (uiop:getenv "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT")
-                 "https://chat.invalid/v1/chat/completions"
-                 (uiop:getenv *opencode-models-environment-variable*)
-                 "https://models.invalid/v1/models")
+           (platform-setenv "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT"
+                            "https://chat.invalid/v1/chat/completions")
+           (platform-setenv *opencode-models-environment-variable*
+                            "https://models.invalid/v1/models")
            (let ((selected
                    (configuration-with-model
                     configuration "opencode/endpoint-test")))
@@ -114,7 +114,7 @@
       (opencode-provider-test--restore-environment
        *opencode-models-environment-variable* saved-models)
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> opencode-provider-test--credential-source () null)
@@ -136,20 +136,20 @@
                            :expires-at nil
                            :source-path
                            (configuration-opencode-auth-path configuration)))
-           (setf (uiop:getenv "OPENCODE_API_KEY") "environment-key-a")
+           (platform-setenv "OPENCODE_API_KEY" "environment-key-a")
            (test-assert
             (string= (oauth-credentials-access-token
                       (credential-manager-load manager))
                      "environment-key-a")
             "the environment key takes precedence over the saved key")
-           (setf (uiop:getenv "OPENCODE_API_KEY") "")
+           (platform-setenv "OPENCODE_API_KEY" "")
            (test-assert
             (string= (oauth-credentials-access-token
                       (credential-manager-load manager))
                      "saved-opencode-key")
             "the saved interactive key is the environment fallback"))
       (opencode-provider-test--restore-environment "OPENCODE_API_KEY" saved)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> opencode-provider-test--login () null)
@@ -194,7 +194,7 @@
             (setf stored
                   (credential-source-load
                    (credential-manager-primary-source manager)))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))
     (test-assert
      (and read-secret-use-active-p
           save-secret-use-active-p
@@ -233,7 +233,7 @@
                (authentication-error ()
                  t))
              "OpenCode rejects an empty entered key")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (test-assert (not (secret-use-active-p))
                "OpenCode releases secret-use scope after login failure")
   nil)
@@ -296,7 +296,7 @@
                          :test #'string=))
             "named OpenCode authentication immediately refreshes model discovery"))
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -331,7 +331,7 @@
               (configuration-error ()
                 t))
             "OpenCode rejects an unnamespaced local model identifier"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> opencode-provider-test--session-header () null)
@@ -400,7 +400,7 @@
                        (provider-session-id provider))
               "OpenCode reconfiguration preserves the session identity")))
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -424,11 +424,10 @@
            "{\"data\":[{\"id\":\"gpt-5.6-luna\"},{\"id\":\"grok-4.5\"},{\"id\":\"kimi-k3\"}]}"))
     (unwind-protect
          (progn
-           (setf (uiop:getenv *opencode-environment-variable*)
-                 "synthetic-opencode-key"
-                 (uiop:getenv *opencode-models-environment-variable*)
-                 "https://models.invalid/v1/models"
-                 (symbol-function 'dexador:get)
+           (platform-setenv *opencode-environment-variable* "synthetic-opencode-key")
+           (platform-setenv *opencode-models-environment-variable*
+                            "https://models.invalid/v1/models")
+           (setf (symbol-function 'dexador:get)
                  (lambda (url &rest arguments)
                    (setf observed-url url
                          observed-headers (getf arguments :headers))
@@ -513,16 +512,16 @@
                     original-registration)
                    saved-discovered-models)
             "registry restoration restores discovered provider models")
-           (setf (uiop:getenv *opencode-models-environment-variable*)
-                 "https://other-models.invalid/v1/models")
+           (platform-setenv *opencode-models-environment-variable*
+                            "https://other-models.invalid/v1/models")
            (provider-load-model-cache configuration)
            (test-assert
             (not (member "opencode/gpt-5.6-luna"
                          (provider-model-identifiers)
                          :test #'string=))
             "OpenCode rejects cached models from another discovery endpoint")
-           (setf (uiop:getenv *opencode-models-environment-variable*)
-                 "https://models.invalid/v1/models")
+           (platform-setenv *opencode-models-environment-variable*
+                            "https://models.invalid/v1/models")
            (provider-load-model-cache configuration)
            (test-assert
             (member "opencode/gpt-5.6-luna"
@@ -587,7 +586,7 @@
       (opencode-provider-test--restore-environment
        *opencode-models-environment-variable* saved-endpoint)
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> opencode-provider-test--legacy-registry-snapshot () null)
@@ -657,7 +656,7 @@
                  (list static-model dynamic-model))
                 "re-registration retains legacy-restored dynamic models")))
         (provider--registry-restore registry-snapshot)
-        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 

@@ -567,10 +567,10 @@
                      (search "memory:id/<percent-encoded-stable-id>"
                              (tool-description resource-edit)))
                 "resource.edit advertises guarded memory mutation"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)
-      (uiop:delete-directory-tree empty-root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)
+      (platform-delete-directory-tree *platform* empty-root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-memory-resource-mutations () null)
@@ -992,5 +992,5 @@
                                   false))
                             memory-variants))
                 "resource.edit advertises three closed memory operation variants")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil))

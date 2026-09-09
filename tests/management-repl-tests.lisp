@@ -9,7 +9,10 @@
                    (:maximum-frame-size integer))
     configuration)
 (defun management-repl-test-configuration
-    (root &key (transport ':unix) (address "127.0.0.1") (port 4141)
+    (root &key (transport (if (platform-supports-p *platform* ':local-sockets)
+                              ':unix
+                              ':tcp))
+               (address "127.0.0.1") (port 4141)
                (timeout 1) (maximum-output-size 4096)
                (maximum-clients 2) (authentication-timeout 1)
                (maximum-frame-size 65536))
@@ -41,7 +44,7 @@
                             :if-exists ':supersede
                             :external-format ':utf-8)
       (write-string token stream))
-    (sb-posix:chmod (namestring pathname) #o600))
+    (platform-make-private *platform* pathname))
   nil)
 
 (-> management-repl-test-connect (configuration string)
@@ -51,24 +54,19 @@
   (let ((socket
           (ecase (configuration-management-repl-transport configuration)
             (:unix
-             (make-instance 'sb-bsd-sockets:local-socket
-                            :type ':stream))
+             (platform-connect-local
+              *platform*
+              (configuration-management-repl-unix-socket-path configuration)))
             (:tcp
-             (make-instance 'sb-bsd-sockets:inet-socket
-                            :type ':stream
-                            :protocol ':tcp)))))
-    (ecase (configuration-management-repl-transport configuration)
-      (:unix
-       (sb-bsd-sockets:socket-connect
-        socket
-        (namestring
-         (configuration-management-repl-unix-socket-path configuration))))
-      (:tcp
-       (sb-bsd-sockets:socket-connect
-        socket
-        (sb-bsd-sockets:make-inet-address
-         (configuration-management-repl-tcp-address configuration))
-        (configuration-management-repl-tcp-port configuration))))
+             (let ((socket (make-instance 'sb-bsd-sockets:inet-socket
+                                          :type ':stream
+                                          :protocol ':tcp)))
+               (sb-bsd-sockets:socket-connect
+                socket
+                (sb-bsd-sockets:make-inet-address
+                 (configuration-management-repl-tcp-address configuration))
+                (configuration-management-repl-tcp-port configuration))
+               socket)))))
     (let* ((maximum
              (configuration-management-repl-maximum-frame-size configuration))
            (stream
@@ -194,9 +192,9 @@
                   nil)
               (management-repl-configuration-error () t))
             "management TCP rejects non-loopback addresses"))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-management-repl-protocol () null)
@@ -266,7 +264,9 @@
 (defun management-repl-test-listener-stop ()
   "Test a shutdown wakeup exits the accept loop before its listener is closed."
   (let ((runtime (make-instance 'management-repl-runtime :listener nil))
-        (socket (make-instance 'sb-bsd-sockets:local-socket :type ':stream))
+        (socket (make-instance 'sb-bsd-sockets:inet-socket
+                               :type ':stream
+                               :protocol ':tcp))
         (accept-count 0))
     (setf (management-repl-runtime-stopping-p runtime) t)
     (unwind-protect
@@ -288,6 +288,13 @@
 (-> test-management-repl-unix-lifecycle () null)
 (defun test-management-repl-unix-lifecycle ()
   "Test Unix authentication, active-image evaluation, quiescence, and shutdown."
+  (with-platform-capability (':local-sockets "the Unix management transport")
+    (management-repl-tests--unix-lifecycle))
+  nil)
+
+(-> management-repl-tests--unix-lifecycle () null)
+(defun management-repl-tests--unix-lifecycle ()
+  "Drive the Unix management transport through its lifecycle."
   (management-repl-test-listener-stop)
   (let* ((root (uiop:ensure-directory-pathname
                 (merge-pathnames
@@ -340,9 +347,9 @@
       (when stream
         (ignore-errors (close stream)))
       (management-repl-stop application)
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-management-repl-tcp-lifecycle () null)
@@ -373,9 +380,9 @@
       (when stream
         (ignore-errors (close stream)))
       (management-repl-stop application)
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-management-repl-start-failure-atomic () null)
@@ -408,9 +415,9 @@
                         configuration))))
             "management startup failure removes all partially started state"))
       (ignore-errors (management-repl-stop application))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-management-repl-adversarial-protocol () null)
@@ -552,9 +559,9 @@
       (when socket
         (ignore-errors (sb-bsd-sockets:socket-close socket)))
       (ignore-errors (management-repl-stop application))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
 
 (-> run-management-repl-tests () null)
