@@ -1,5 +1,6 @@
 (require :asdf)
 (require :sb-posix)
+(load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
 
 (defun fff--environment-directory (variable fallback)
   "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
@@ -64,21 +65,14 @@
        (commit-pathname (merge-pathnames "native/fff/commit" source-root))
        (commit (string-trim '(#\Space #\Tab #\Newline #\Return)
                             (uiop:read-file-string commit-pathname)))
-       (home (user-homedir-pathname))
-       (cache-home
-         (fff--environment-directory
-          "XDG_CACHE_HOME"
-          (merge-pathnames ".cache/" home)))
-       (data-home
-         (fff--environment-directory
-          "XDG_DATA_HOME"
-          (merge-pathnames ".local/share/" home)))
        (checkout
-         (merge-pathnames (format nil "autolith/build/fff/~A/" commit)
-                          cache-home))
-       (install-root (merge-pathnames "autolith/native/fff/" data-home))
+         (merge-pathnames (format nil "build/fff/~A/" commit)
+                          (autolith-application-root :cache)))
+       (install-root (merge-pathnames "native/fff/"
+                                      (autolith-application-root :data)))
        (library-name #+darwin "libfff_c.dylib"
-                     #-darwin "libfff_c.so")
+                     #+win32 "fff_c.dll"
+                     #-(or darwin win32) "libfff_c.so")
        (library (merge-pathnames library-name install-root))
        (static-build-p
          (equal (uiop:getenv "AUTOLITH_BUILD_STATIC_NATIVE") "1"))

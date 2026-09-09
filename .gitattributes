@@ -1,0 +1,3 @@
+# Lisp sources must keep LF line endings: a carriage return after a tilde
+# breaks FORMAT control strings when SBCL reads the file on Windows.
+* text=auto eol=lf

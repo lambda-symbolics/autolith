@@ -1,5 +1,7 @@
 (in-package #:autolith)
 
+(load (merge-pathnames "../script/roots.lisp" *load-truename*))
+
 ;;;; -- Recovery State --
 
 (defparameter *recovery-image-protocol-version* 2
@@ -140,21 +142,13 @@ the library that reads a generation owns only the fields every host shares."
 (serapeum:-> recovery-context-create (pathname) recovery-context)
 (defun recovery-context-create (source-root)
   "Return recovery context rooted at SOURCE-ROOT and XDG user directories."
-  (let* ((home (user-homedir-pathname))
-         (data-home
-           (recovery-environment-directory
-            "XDG_DATA_HOME"
-            (merge-pathnames ".local/share/" home)))
-         (state-home
-           (recovery-environment-directory
-            "XDG_STATE_HOME"
-            (merge-pathnames ".local/state/" home)))
-         (state-root (merge-pathnames "autolith/" state-home)))
+  (let* ((data-root (autolith-application-root :data))
+         (state-root (autolith-application-root :state)))
     (make-instance
      'recovery-context
      :source-root (uiop:ensure-directory-pathname source-root)
-     :generation-root (merge-pathnames "autolith/generations/" data-home)
-     :worktree-root (merge-pathnames "autolith/recovery-worktrees/" data-home)
+     :generation-root (merge-pathnames "generations/" data-root)
+     :worktree-root (merge-pathnames "recovery-worktrees/" data-root)
      :state-root state-root
      :current-pathname (merge-pathnames "current-generation.sexp" state-root))))
 
