@@ -2,6 +2,7 @@
 (pushnew ".qlot" asdf::*default-source-registry-exclusions* :test #'string=)
 (asdf:initialize-source-registry)
 (require :sb-posix)
+(load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
 
 (defun build-recovery--environment-directory (variable fallback)
   "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
@@ -21,12 +22,9 @@
        (arguments (uiop:command-line-arguments))
        (child-p (and arguments (string= (first arguments) "--child")))
        (home (user-homedir-pathname))
-       (data-home
-         (build-recovery--environment-directory
-          "XDG_DATA_HOME"
-          (merge-pathnames ".local/share/" home)))
        (default-core
-         (merge-pathnames "autolith/recovery/autolith-recovery.core" data-home))
+         (merge-pathnames "recovery/autolith-recovery.core"
+                          (autolith-application-root :data)))
        (core-pathname
          (pathname
           (or (if child-p (second arguments) (first arguments))
@@ -166,8 +164,8 @@
                           stream)
                    (terpri stream)
                    (finish-output stream)))
-               (sb-posix:chmod (namestring temporary) #o444)
-               (uiop:rename-file-overwriting-target temporary manifest))))
+               (autolith-script-set-file-mode temporary #o444)
+               (autolith-script-replace-file temporary manifest))))
     (if child-p
         (progn
           (load-recovery-source)
@@ -199,8 +197,8 @@
             (unless (equal identity-before identity-after)
               (error "Recovery image inputs changed while the core was built.")))
           (when (probe-file core-pathname)
-            (sb-posix:chmod (namestring core-pathname) #o600))
-          (uiop:rename-file-overwriting-target temporary core-pathname)
-          (sb-posix:chmod (namestring core-pathname) #o444)
+            (autolith-script-set-file-mode core-pathname #o600))
+          (autolith-script-replace-file temporary core-pathname)
+          (autolith-script-set-file-mode core-pathname #o444)
           (write-manifest core-pathname identity-before)
           (format t "~&Installed pristine recovery image at ~A.~%" core-pathname)))))

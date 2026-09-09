@@ -2,6 +2,7 @@
 
 (require :sb-posix)
 (require :asdf)
+(load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
 
 (defvar *check-script-library-mode* nil
   "Bind true when loading CLI helpers without running the command.")
@@ -20,7 +21,13 @@
 (defun check--processor-count ()
   "Return the available logical CPU count, falling back to one worker.
 
-Prefer affinity-aware nproc, then the online CPU count from getconf or sysctl."
+Prefer the Windows NUMBER_OF_PROCESSORS variable, then affinity-aware nproc,
+then the online CPU count from getconf or sysctl."
+  (let ((environment-count (ignore-errors
+                            (parse-integer
+                             (or (uiop:getenv "NUMBER_OF_PROCESSORS") "")))))
+    (when (typep environment-count '(integer 1 *))
+      (return-from check--processor-count environment-count)))
   (loop for command in '(("nproc") ("getconf" "_NPROCESSORS_ONLN")
                         ("sysctl" "-n" "hw.ncpu"))
         for count = (handler-case
@@ -159,18 +166,41 @@ Selectors and --list bypass recovery checks.
 
 (defstruct check-process
   "One isolated subprocess, its captured output, and its terminal status."
-  label command output names result-path process deadline status problem)
+  label command output names result-path process deadline status problem
+  environment)
 
-(defun check--stop-process (entry)
-  "Kill ENTRY's process group and reap its leader, including on unwind."
-  (let* ((process (check-process-process entry))
-         (pid (uiop:process-info-pid process)))
+(defun check--runtime-command (source-root)
+  "Return the command prefix that runs a Lisp script under the checked runtime.
+
+POSIX hosts go through the stable runtime launcher; Windows runs the SBCL
+that is running this check, since the launcher is a Bash script."
+  #-win32
+  (list (namestring (merge-pathnames "bin/autolith-runtime" source-root)) "--script")
+  #+win32
+  (progn
+    source-root
+    (list (or (uiop:getenv "AUTOLITH_SBCL")
+              (namestring sb-ext:*runtime-pathname*))
+          "--noinform" "--script")))
+
+(defun check--kill-process-group (process)
+  "Kill PROCESS's process group where the host has process groups."
+  #-win32
+  (let ((pid (uiop:process-info-pid process)))
     ;; SBCL gives noninteractive children a separate process group on both
     ;; Linux and macOS. UIOP's terminate-process only signals the leader.
     (handler-case (sb-posix:kill (- pid) sb-posix:sigkill)
       (sb-posix:syscall-error (condition)
         (unless (= (sb-posix:syscall-errno condition) sb-posix:esrch)
-          (error condition))))
+          (error condition)))))
+  #+win32
+  process
+  nil)
+
+(defun check--stop-process (entry)
+  "Kill ENTRY's process group and reap its leader, including on unwind."
+  (let ((process (check-process-process entry)))
+    (check--kill-process-group process)
     (when (uiop:process-alive-p process)
       (uiop:terminate-process process :urgent t))
     (setf (check-process-status entry) (uiop:wait-process process))))
@@ -187,10 +217,13 @@ Selectors and --list bypass recovery checks.
                         do (handler-case
                                (progn
                                  (setf (check-process-process entry)
-                                       (uiop:launch-program
-                                        (check-process-command entry)
-                                        :input nil :output (check-process-output entry)
-                                        :error-output ':output)
+                                       (apply #'uiop:launch-program
+                                              (check-process-command entry)
+                                              :input nil :output (check-process-output entry)
+                                              :error-output ':output
+                                              (when (check-process-environment entry)
+                                                (list :environment
+                                                      (check-process-environment entry))))
                                        (check-process-deadline entry)
                                        (+ (get-internal-real-time)
                                           (* timeout internal-time-units-per-second)))
@@ -246,10 +279,9 @@ Parent cleanup follows process-group termination, including crashes and timeouts
                            :names names :result-path result
                            :output (merge-pathnames "output.log" directory)
                            ;; Leave TMPDIR alone: native Unix-domain sockets need short paths.
-                           :command (list (namestring (merge-pathnames "bin/autolith-runtime" source-root))
-                                          "--script"
-                                          (namestring (merge-pathnames "script/test-worker.lisp" source-root))
-                                          (namestring request) (namestring result)))
+                           :command (append (check--runtime-command source-root)
+                                            (list (namestring (merge-pathnames "script/test-worker.lisp" source-root))
+                                                  (namestring request) (namestring result))))
                           entries))
            (setf entries (nreverse entries))
            (format t "~&Running ~D cases in ~D isolated workers.~%" (length cases) (length entries))
@@ -286,13 +318,6 @@ Parent cleanup follows process-group termination, including crashes and timeouts
       (dolist (root fixture-roots)
         (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))))
 
-(defun check--environment-directory (variable fallback)
-  "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
-  (let* ((value (uiop:getenv variable))
-         (pathname (and value (plusp (length value)) (pathname value))))
-    (uiop:ensure-directory-pathname
-     (if (and pathname (uiop:absolute-pathname-p pathname)) pathname fallback))))
-
 (defun check--committed-version (source-root)
   "Return the version of HEAD, which pristine recovery uses for source fallback."
   (let ((source (uiop:run-program
@@ -311,11 +336,9 @@ Parent cleanup follows process-group termination, including crashes and timeouts
 
 (defun check--run-recovery (&key source-root temporary-root quicklisp-setup jobs timeout)
   "Run the pristine probe, listing, and fallback checks with bounded processes."
-  (let* ((home (user-homedir-pathname))
-         (data-home (check--environment-directory
-                     "XDG_DATA_HOME" (merge-pathnames ".local/share/" home)))
-         (core (merge-pathnames "autolith/recovery/autolith-recovery.core" data-home))
-         (manifest-path (merge-pathnames "autolith/recovery/manifest.sexp" data-home))
+  (let* ((data-root (autolith-application-root :data))
+         (core (merge-pathnames "recovery/autolith-recovery.core" data-root))
+         (manifest-path (merge-pathnames "recovery/manifest.sexp" data-root))
          (temporary-home (merge-pathnames "home/" temporary-root))
          (command (list (or (uiop:getenv "AUTOLITH_SBCL") "sbcl")
                         "--noinform" "--core" (namestring core)
@@ -334,14 +357,19 @@ Parent cleanup follows process-group termination, including crashes and timeouts
                   for arguments in
                   (list (append command '("--probe"))
                         (append command '("--list"))
-                        (append (list "env" (format nil "HOME=~A" temporary-home)
+                        (append command '("--" "--version")))
+                  for environment in
+                  (list nil
+                        nil
+                        (append (list (format nil "HOME=~A" temporary-home)
                                       (format nil "XDG_DATA_HOME=~Adata/" temporary-root)
                                       (format nil "XDG_STATE_HOME=~Astate/" temporary-root)
                                       (format nil "XDG_CACHE_HOME=~Acache/" temporary-root)
                                       (format nil "AUTOLITH_PROJECT_SETUP=~A" quicklisp-setup))
-                                command '("--" "--version")))
+                                (sb-ext:posix-environ)))
                   collect (make-check-process
                            :label label :command arguments
+                           :environment environment
                            :output (merge-pathnames filename temporary-root)))))
       (check--run-processes entries :jobs jobs :timeout timeout)
       (let ((failed-p nil))

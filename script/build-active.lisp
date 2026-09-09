@@ -7,6 +7,7 @@
 (setf asdf:*compile-file-failure-behaviour* :warn)
 (pushnew ".qlot" asdf::*default-source-registry-exclusions* :test #'string=)
 (asdf:initialize-source-registry)
+(load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
 
 (defun build-active--environment-directory (variable fallback)
   "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
@@ -24,17 +25,18 @@
        (source-root (uiop:pathname-parent-directory-pathname script-directory))
        (version-pathname (merge-pathnames "sbcl.version" source-root))
        (project-setup (merge-pathnames ".qlot/setup.lisp" source-root))
-       (home (user-homedir-pathname))
-       (data-home
-         (build-active--environment-directory
-          "XDG_DATA_HOME"
-          (merge-pathnames ".local/share/" home)))
        (default-core
-         (merge-pathnames "autolith/active/autolith-active.core" data-home))
+         (merge-pathnames "active/autolith-active.core"
+                          (autolith-application-root :data)))
        (arguments (uiop:command-line-arguments))
+       ;; ACTIVE-IMAGE-INSTALL starts this script again with --child on hosts
+       ;; without fork; that process loads the system and saves itself.
+       (child-core
+         (and (string= (or (first arguments) "") "--child")
+              (second arguments)))
        (core-pathname
          (pathname
-          (or (first arguments)
+          (or (and (not child-core) (first arguments))
               (uiop:getenv "AUTOLITH_ACTIVE_CORE")
               default-core))))
   (load (merge-pathnames "script/runtime-requirement.lisp" source-root))
@@ -47,7 +49,7 @@
   (load (merge-pathnames "script/build-sandbox.lisp" source-root))
   (uiop:symbol-call '#:ql '#:quickload :cffi :silent t)
   (let ((profile-library-directory
-          (merge-pathnames ".guix-profile/lib/" home))
+          (merge-pathnames ".guix-profile/lib/" (user-homedir-pathname)))
         (library-directories
           (find-symbol "*FOREIGN-LIBRARY-DIRECTORIES*" "CFFI")))
     (when (probe-file profile-library-directory)
@@ -56,9 +58,17 @@
                :test #'equal)))
   (asdf:load-asd (merge-pathnames "autolith.asd" source-root))
   (asdf:load-system :autolith)
-  (format t "~&Saving and validating the preloaded active image.~%")
-  (finish-output)
-  (uiop:symbol-call '#:autolith '#:active-image-install
-                    source-root
-                    core-pathname)
-  (format t "~&Installed preloaded active image at ~A.~%" core-pathname))
+  (cond
+    (child-core
+     (format t "~&Saving the preloaded active image.~%")
+     (finish-output)
+     (uiop:symbol-call '#:autolith '#:active-image-save
+                       source-root
+                       (uiop:parse-native-namestring child-core)))
+    (t
+     (format t "~&Saving and validating the preloaded active image.~%")
+     (finish-output)
+     (uiop:symbol-call '#:autolith '#:active-image-install
+                       source-root
+                       core-pathname)
+     (format t "~&Installed preloaded active image at ~A.~%" core-pathname))))
