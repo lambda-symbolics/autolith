@@ -1,0 +1,266 @@
+#+TITLE: ACP Interface Plan
+#+STARTUP: content
+
+Autolith is the agent. The editor is the client. The transport is JSON-RPC 2.0
+over stdio. This document is a handoff plan: it records the protocol facts, the
+design decisions, the answers to the design questions, and the ordered work.
+
+* Decisions
+
+- Target ACP *v1 stable*. ACP v2 is draft. The method names below are v1 names.
+- Add a new =src/acp/= tree. Do not change the terminal path.
+- Do not call =application-run-message= from ACP mode. It binds the terminal
+  input controller. Call =agent-run-user-turn= directly.
+- Advertise no client =fs= and no =terminal= capability in version one.
+- One commit per step. Run the checks before each commit. Do not push.
+
+* Protocol facts
+
+Sources:
+
+- Documentation index: https://agentclientprotocol.com/llms.txt
+- Machine-readable schema:
+  https://github.com/agentclientprotocol/agent-client-protocol/releases/latest/download/schema.json
+
+** Transport
+
+- JSON-RPC 2.0 over stdio, UTF-8.
+- Messages are delimited by newlines. A message must not contain an embedded
+  newline.
+- The agent writes only ACP messages to stdout.
+- The agent may write logs to stderr. The client may capture, forward, or
+  ignore them.
+
+** Methods, client to agent
+
+- =initialize=
+- =authenticate=
+- =session/new=
+- =session/load=, gated by the =loadSession= capability
+- =session/prompt=
+- =session/set_mode=
+- =logout=, gated by the =auth.logout= capability
+- =session/list=, =session/delete=, =session/close=
+
+** Notifications, client to agent
+
+- =session/cancel=
+
+** Notifications, agent to client
+
+- =session/update=, carrying =agent_message_chunk=, =agent_thought_chunk=,
+  =tool_call=, =tool_call_update=, =plan=, =available_commands_update=, and
+  =current_mode_update=
+
+** Methods, agent to client
+
+- =session/request_permission=
+- =fs/read_text_file=, =fs/write_text_file=
+- =terminal/create=, =terminal/output=, =terminal/release=,
+  =terminal/wait_for_exit=, =terminal/kill=
+- =elicitation/create=
+
+** Key shapes
+
+- =initialize= request: =protocolVersion= (integer), =clientCapabilities=
+  (=fs.readTextFile=, =fs.writeTextFile=, =terminal=, =auth.terminal=,
+  =elicitation=, =session.configOptions.boolean=), =clientInfo= (=name=,
+  =title=, =version=).
+- =initialize= result: =protocolVersion=, =agentCapabilities= (=loadSession=,
+  =promptCapabilities= with =image=, =audio=, =embeddedContext=,
+  =mcpCapabilities=, =auth=, =delete=, =additionalDirectories=), =agentInfo=,
+  =authMethods=.
+- =session/request_permission= options use kinds =allow_once=, =allow_always=,
+  =reject_once=, =reject_always=. The reply carries =outcome= and =optionId=.
+- =session/prompt= result carries =stopReason=: =end_turn=, =max_tokens=,
+  =max_turn_requests=, =refusal=, =cancelled=.
+
+* Autolith seams
+
+These are the exact places the interface attaches to.
+
+| What                          | File and line                                              |
+|-------------------------------+------------------------------------------------------------|
+| =main--start-session=         | =src/startup/main.lisp= line 634                              |
+| =application-run=             | =src/startup/main.lisp= line 311                              |
+| Terminal loop dispatch        | =src/startup/main.lisp= line 745                              |
+| =with-terminal-ui=            | =src/startup/main.lisp= line 360                              |
+| =application-run-message=     | =src/application/runtime.lisp= line 3457                      |
+| =application--run-turn=       | =src/application/runtime.lisp= line 3365                      |
+| =application-agent-observer=  | =src/application/runtime.lisp= line 2983                      |
+| =agent-run-user-turn=         | =src/agent/runtime.lisp= line 467                             |
+| =callback-agent-observer-create= | =src/agent/runtime.lisp= line 410                          |
+| Observer generics             | =src/agent/runtime.lisp= lines 168 to 206                     |
+| =serialized-agent-observer=   | =src/agent/runtime.lisp= line 62                              |
+| Terminal permission prompt    | =src/terminal/responsive-input.lisp= lines 3129 and 3137      |
+
+The observer protocol has these generic functions:
+
+- =agent-observer-text=, line 168
+- =agent-observer-reasoning=, line 172
+- =agent-observer-status=, line 176
+- =agent-observer-take-steering=, line 181
+- =agent-observer-steering-persisted=, line 188
+- =agent-observer-apply-pending-operations=, line 193
+- =agent-observer-authorize-command=, line 200
+- =agent-observer-authorize-tool=, line 206
+
+=callback-agent-observer-create= takes eight callback keyword arguments:
+=text-callback=, =reasoning-callback=, =status-callback=, =steering-callback=,
+=steering-persisted-callback=, =pending-operations-callback=,
+=command-authorization-callback=, and =tool-authorization-callback=.
+
+Permissions already exist:
+
+- =command-permission= with slots =command= and =directory=
+- =permission-state= with slot =rules=
+- =permissions-load=, =permissions-allowed-p=, =permissions-allow=,
+  =permissions-clear=
+- Matching is exact: same command string and same canonical directory
+
+JSON already exists in =src/core/json.lisp=: =json-object= line 9,
+=json-encode= line 92, =json-decode= line 111, =json-get= line 49.
+
+Reusable reference: =src/mcp/tools.lisp= already runs JSON-RPC over stdio. Read
+it and copy its spawn and correlation shape.
+
+Not a model to copy: =src/localgroup/protocol.lisp= holds no framing logic. Its
+own comment says the wire protocol lives in the image-daemon library.
+
+* Answers to the design questions
+
+** Where does an acp mode hook into startup?
+
+Add a =--acp= flag next to the other command parsing in
+=src/startup/main.lisp=. Branch inside =main--start-session= (line 634), before
+the =application-run= call at line 745. Build the application with
+=main--connect-application= (line 727), then run the ACP loop. Skip
+=with-terminal-ui= (line 360) and skip the input controller.
+
+** How does one session/prompt call map to agent-run-user-turn?
+
+Convert the prompt content blocks into a =user-message-input=. Then call
+=agent-run-user-turn= with the ACP observer. Do not call
+=application-run-message=, because it binds the terminal input controller at
+line 3494. Return the ACP =stopReason=.
+
+** How do stream events become session/update notifications?
+
+Build the observer with =callback-agent-observer-create= and give it these
+callbacks:
+
+- =agent-observer-text= becomes =agent_message_chunk=
+- =agent-observer-reasoning= becomes =agent_thought_chunk=
+- =agent-observer-status= becomes =tool_call=, =tool_call_update=, =plan=, or
+  =current_mode_update=
+
+Wrap the observer in =serialized-agent-observer= so notifications never
+interleave. Read =agent--run-provider-loop= first and list every status keyword
+it emits. That list drives the mapping table. Do not guess it.
+
+** How do permission prompts reach the editor when no terminal user exists?
+
+Give the observer two authorization callbacks:
+
+- =agent-observer-authorize-command= (line 200) checks =permissions-allowed-p=
+  first. If a rule exists, return the decision without asking. Otherwise send
+  =session/request_permission=, block on the reply, and map the outcome to a
+  keyword.
+- =agent-observer-authorize-tool= (line 206) uses the same path with the tool
+  call payload.
+
+On =allow_always=, call =permissions-allow= to persist the rule. On timeout,
+client cancel, or a bad reply, deny. The editor is the user. There is no
+terminal prompt in this path.
+
+** What do we do about the fs/* and terminal/* client methods?
+
+Declare no =fs.readTextFile=, no =fs.writeTextFile=, and no =terminal=
+capability. Under stdio the agent runs on the editor machine, so Autolith's own
+file and shell tools are the better path, and they already go through the
+permission system. Report that activity to the editor as =tool_call= and
+=tool_call_update= notifications. Add client-side fs and terminal proxies later,
+only if remote execution becomes a requirement.
+
+** Which files change, in what order?
+
+See the ordered steps below.
+
+** How do we test this without an editor?
+
+See the test plan below.
+
+* Ordered steps
+
+1. Write =src/acp/protocol.lisp=. Add the JSON-RPC layer: one reader thread,
+   one writer lock, a table from request id to response, notification dispatch,
+   and JSON-RPC error mapping. Reuse =json-encode=, =json-decode=,
+   =json-object=, and =json-get=. Read =src/mcp/tools.lisp= first.
+2. Add the startup hook. Parse =--acp= near =main--start-session= (line 634).
+   Branch before =application-run= (line 745). Skip =with-terminal-ui= and the
+   input controller. Send every log to stderr so stdout carries only ACP
+   messages.
+3. Write =src/acp/session.lisp=. Keep a table from =sessionId= to application
+   and conversation. Map =session/new= to a new conversation and =session/load=
+   to =main--connect-application= with =:conversation-id=. Advertise
+   =loadSession= only after =session/load= works. Map ACP modes onto the
+   existing =permission-mode= values. Read those values first.
+4. Write =src/acp/observer.lisp=. Build the observer with
+   =callback-agent-observer-create= and wrap it in
+   =serialized-agent-observer=. Map the callbacks to =session/update=
+   notifications.
+5. Map =session/prompt= to =agent-run-user-turn= and return the =stopReason=.
+6. Add the permission bridge described above.
+7. Add the remaining agent methods. =initialize= replies with
+   =protocolVersion=, =agentCapabilities=, =agentInfo=, and empty
+   =authMethods=. =authenticate= replies empty. =session/set_mode= changes the
+   permission mode and sends =current_mode_update=. =logout= clears in-memory
+   provider credentials; check the authentication API first and do not delete
+   on-disk credentials unless a function already exists for that.
+   =session/cancel= needs a real interruption path.
+8. Keep =fs/*= and =terminal/*= out of scope, as described above.
+9. Register the new files in =autolith.asd= in load order. Document the mode in
+   =docs/architecture.org= and =docs/guide.org=.
+10. Add the tests described below. Register the suite in
+    =tests/test-suites.lisp= with =define-test-suite=.
+11. One commit per step. Run =lisp.paren-check= on =src= and =tests= plus
+    =./script/check= before each commit. Do not push.
+
+* File order
+
+1. =src/acp/protocol.lisp=
+2. =src/startup/main.lisp=
+3. =src/acp/session.lisp=
+4. =src/acp/observer.lisp=
+5. Prompt mapping, in =src/acp/session.lisp=
+6. Permission bridge, in =src/acp/observer.lisp=
+7. Remaining methods, in =src/acp/session.lisp=
+8. =autolith.asd=
+9. =tests/acp-tests.lisp=
+10. =tests/test-suites.lisp=
+11. =docs/architecture.org= and =docs/guide.org=
+
+* Test plan
+
+Test in three layers, without an editor.
+
+- *Framing tests* over in-memory streams. Cover batching, id reuse, unknown
+  method, bad JSON, and notifications that get no reply. These run fast.
+- *Fake client tests*. Spawn the real binary with =--acp= through
+  =uiop:launch-program= using =:input :stream= and =:output :stream=. Drive
+  =initialize=, =session/new=, =session/prompt=, and =session/cancel= against a
+  stub provider.
+- *Stdout purity test*. Assert that every line on stdout parses as ACP JSON.
+
+Register the suite with =define-test-suite= in =tests/test-suites.lisp=. Run
+=./script/check --suite acp= while working, and the full =./script/check=
+before each commit.
+
+* Risks
+
+- *Stdout purity.* Any stray write from the terminal layer, the update checker,
+  or a worker breaks the protocol. Test it directly.
+- *Cancellation.* If =agent--run-provider-loop= has no abort hook, step 7 needs
+  design work, not just wiring.
+- *Status keyword mapping.* The =session/update= mapping depends on the real
+  status keywords. Read the provider loop before writing the table.
