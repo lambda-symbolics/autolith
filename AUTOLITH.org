@@ -18,6 +18,24 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Independent page-retrieval namespace
+
+- Problem: The page-retrieval implementation and prompt used =web_extra.gist=,
+  but the default registry still advertised =web.gist=. The prompt also contained
+  an incomplete static namespace list.
+- Behavior: Register page retrieval as =web_extra.gist= and use the current
+  request's supplied tool names as the namespace authority.
+- Scope and location: tracked =src/tools/defaults.lisp= and
+  =docs/system-prompt.org=; the live factory was persisted in private image commit
+  =380c50d8-6c1d-4cf5-ae13-2dfac13f9a84=, private Git
+  =64d045c74e3450ff6617cdd6581d39860e676a43=. The active registry was updated
+  in place, retaining its runtime bindings.
+- Verification: live and fresh registry/schema assertions passed, a real
+  =web_extra.gist= request returned the Example Domain page, and the private
+  reconstruction passed its clean-process probe.
+- Removal condition: an installed build includes the corrected registration,
+  making the private factory override redundant.
+
 ** Lower-cost delegated inference
 
 - Problem: General task children and unqualified RLM calls inherited the primary

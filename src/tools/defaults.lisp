@@ -355,7 +355,7 @@
    registry
    (list
     'web-gist-tool
-    "web" "gist"
+    "web_extra" "gist"
     "Retrieve one HTML or Markdown page over HTTP or HTTPS as Markdown, following redirects. Supply a known URL from the user or search results."
     (web-gist-parameters)))
   registry)

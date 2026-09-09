@@ -243,7 +243,7 @@
 
 (-> test-web-gist-tool () null)
 (defun test-web-gist-tool ()
-  "Test web.gist registration and URL validation without network access."
+  "Test web_extra.gist registration and URL validation without network access."
   (with-test-configuration (configuration)
     (let* ((registry (make-default-tool-registry))
            (tool (tool-registry-find registry "web_extra" "gist"))
@@ -251,12 +251,14 @@
                      'tool-context :configuration configuration :worker nil
                      :conversation (conversation-create configuration)))
            (fetched nil))
-      (test-assert tool "the default registry contains web.gist")
+      (test-assert tool "the default registry contains web_extra.gist")
+      (test-assert (null (tool-registry-find registry "web" "gist"))
+                   "the default registry does not contain the old web.gist name")
       (test-assert
        (gethash "url" (json-get (tool-parameters tool) "properties"))
-       "web.gist declares its url argument")
+       "web_extra.gist declares its url argument")
       (test-assert (null (tool-child-safe-p tool))
-                   "ordinary child agents cannot use web.gist")
+                   "ordinary child agents cannot use web_extra.gist")
       (test-call-with-function-replacements
        (list (list 'fetch-gist:markdown-from-url
                    (lambda (url)
@@ -340,7 +342,7 @@
                         registry context (json-object "url" url))))
            (test-assert
             (and (not (tool-result-success-p result))
-                 (search "web.gist" (tool-result-content result))
+                 (search "web_extra.gist" (tool-result-content result))
                  (search "404" (tool-result-content result)))
             "native Dexador HTTP failures become named tool failures"))))
       (test-call-with-function-replacements

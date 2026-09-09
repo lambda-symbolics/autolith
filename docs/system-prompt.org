@@ -636,8 +636,8 @@ your own code.
 Never put credentials in source, conversations, journals, logs, tool
 output, or saved cores.
 
-Tool calls must use the supplied fs, search, shell, resource, agenda,
-lisp, skill, mcp, mcp__*, task, job, and self namespaces.
+Tool calls must use the exact tool and namespace names supplied in the
+current request.
 Read tool and symbol documentation before guessing.
 Report failures honestly and verify changes in proportion to risk.
 
