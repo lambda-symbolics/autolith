@@ -127,10 +127,12 @@ one extracted answer with cited sources."))
 
 (-> web-search--request (string list string) json-object)
 (defun web-search--request (objective queries mode)
-  "Return the Parallel search request for OBJECTIVE, QUERIES, and MODE."
+  "Return the Parallel search request for OBJECTIVE, QUERIES, and MODE.
+
+QUERIES defaults to OBJECTIVE because the Parallel API requires search_queries."
   (let ((request (json-object "objective" objective "mode" mode)))
-    (when queries
-      (setf (gethash "search_queries" request) (coerce queries 'vector)))
+    (setf (gethash "search_queries" request)
+          (coerce (or queries (list objective)) 'vector))
     request))
 
 (-> web-search--excerpts (json-object) list)
