@@ -180,7 +180,8 @@ double quotes around strings containing whitespace. For example,
 =/cwd "/tmp/work tree"= is equivalent to =(cwd "/tmp/work tree")=. Commands
 with finite static options appear in the completion menu as one bracketed row,
 such as =/compact [on|off]=. Type the command name and a space to list the
-individual options in either syntax.
+individual options in either syntax. Aliases such as =/exit= for =/quit= stay
+out of the menu until the typed text no longer matches the canonical name.
 
 Use =//= to send a message beginning with a literal slash.
 

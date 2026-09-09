@@ -1540,11 +1540,26 @@
            '((:name "/help" :argument nil :description "show this reference")
              (:name "/resume" :argument "ID" :description "load a conversation")
              (:name "/rollback" :argument "ID" :description "select a generation")
-             (:name "/quit" :argument nil :description "leave Autolith")))
+             (:name "/quit" :argument nil :description "leave Autolith")
+             (:name "/exit" :argument nil :description "leave Autolith (alias of /quit)"
+              :primary "/quit")))
          (ui (terminal-ui-create :terminal terminal
                                  :completions completions)))
     (with-terminal-ui (active-ui ui)
       (let ((editor (terminal-ui-editor active-ui)))
+        (flet ((matching-names ()
+                 "Return the names of the completions matching the input."
+                 (mapcar (lambda (entry) (getf entry :name))
+                         (terminal-ui--matching-completions active-ui))))
+          (terminal-ui-set-input active-ui "/")
+          (test-assert
+           (equal (matching-names) '("/help" "/resume" "/rollback" "/quit"))
+           "browsing every command hides aliases behind their canonical names")
+          (terminal-ui-set-input active-ui "/e")
+          (test-assert
+           (equal (matching-names) '("/exit"))
+           "an alias appears once the typed text stops matching its command")
+          (terminal-ui-set-input active-ui ""))
         (recording-terminal-reset terminal)
         (terminal-ui-process-event active-ui '(:insert "/r"))
         (let ((painted (recording-terminal-output terminal)))

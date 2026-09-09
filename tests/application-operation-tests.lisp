@@ -630,7 +630,12 @@
                       (equal (primary-of "(ste \"off\")") "(ste")
                       (null (primary-of "/ste"))
                       (null (primary-of "(help)")))
-                 "finite option entries stay behind their canonical command rows"))
+                 "finite option entries stay behind their canonical command rows")
+                (test-assert
+                 (and (equal (primary-of "/exit") "/quit")
+                      (equal (primary-of "/usage") "/status")
+                      (null (primary-of "/quit")))
+                 "alias entries stay behind their canonical command rows"))
              (test-assert (member "(update)" entry-names :test #'string=)
                           "completion offers the explicit release update operation")
              (test-assert (member "(eval-now" entry-names :test #'string=)

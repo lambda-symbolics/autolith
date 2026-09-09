@@ -562,8 +562,9 @@ options appear only after the typed text passes the function name."
 
 (-> application-operation-completion-entries (application) list)
 (defun application-operation-completion-entries (application)
-  "Return slash, Lisp operation, and finite-option completions for APPLICATION."
+  "Return slash, alias, Lisp, and finite-option completions for APPLICATION."
   (append (application-command-completion-entries)
+          (application-command-alias-completion-entries)
           (application-command-option-completion-entries)
           (mapcar #'application-operation-completion-entry
                   (application-operation-list application))

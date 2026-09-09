@@ -1044,6 +1044,26 @@ change to the next safe boundary and make :INSPECT wait for the idle queue."
   (mapcar #'application-command-completion-entry
           (application-command-list)))
 
+(-> application-command-alias-completion-entries () list)
+(defun application-command-alias-completion-entries ()
+  "Return completion entries for every command alias in registry order.
+
+Each alias names its canonical command as :PRIMARY, so it appears only once
+the typed text stops matching the canonical name."
+  (loop for command in (application-command-list)
+        for name = (application-command-name command)
+        for argument = (application-command-argument command)
+        append
+        (loop for alias in (application-command-aliases command)
+              collect
+              (list :name (copy-seq alias)
+                    :argument (and argument (copy-seq argument))
+                    :description
+                    (format nil "~A (alias of ~A)"
+                            (application-command-description command)
+                            name)
+                    :primary (copy-seq name)))))
+
 (-> application-command--slash-option-token (string) string)
 (defun application-command--slash-option-token (option)
   "Return OPTION quoted when slash syntax requires it."
