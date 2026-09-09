@@ -40,6 +40,9 @@
           (not (preference-state-turn-timestamps-p preferences))
           "missing preferences default turn timestamps to hidden")
          (test-assert
+          (not (preference-state-cache-miss-notices-p preferences))
+          "missing preferences default prompt-cache miss notices to off")
+         (test-assert
           (not (preference-state-simple-technical-english-p preferences))
           "missing preferences default Simple Technical English to disabled")
          (test-assert
@@ -110,11 +113,14 @@
              (snapshot-read pathname)
            (test-assert sole-form-p
                         "normalizing preferences preserves one form")
-           (test-assert (= (getf (rest form) :version) 5)
-                        "version three preferences migrate to version five")
+           (test-assert (= (getf (rest form) :version) 6)
+                        "version three preferences migrate to version six")
            (test-assert
             (not (getf (rest form) :compact-view-p))
             "normalizing preferences preserves compact presentation")
+           (test-assert
+            (not (getf (rest form) :cache-miss-notices-p))
+            "normalizing preferences adds disabled prompt-cache miss notices")
            (test-assert
             (getf (rest form) :turn-timestamps-p)
             "normalizing preferences preserves turn-timestamp presentation")
@@ -170,8 +176,8 @@
            (test-assert sole-form-p
                         "version four preferences remain one form")
            (test-assert
-            (= (getf (rest form) :version) 5)
-            "version four preferences migrate to version five")))
+            (= (getf (rest form) :version) 6)
+            "version four preferences migrate to version six")))
       (with-open-file (stream pathname
                               :direction ':output
                               :if-exists ':supersede
@@ -312,6 +318,14 @@
         (test-assert
          (not (preference-state-reasoning-traces-p preferences))
          "changing turn timestamps preserves trace mode"))
+      (preferences-set-cache-miss-notices configuration t)
+      (let ((preferences (preferences-load configuration)))
+        (test-assert
+         (preference-state-cache-miss-notices-p preferences)
+         "prompt-cache miss notices survive a preference reload")
+        (test-assert
+         (preference-state-turn-timestamps-p preferences)
+         "changing cache-miss notices preserves turn timestamps"))
       (preferences-set-simple-technical-english configuration t)
       (test-assert
        (preferences-simple-technical-english-p configuration)
@@ -336,6 +350,9 @@
         (test-assert
          (not (preference-state-turn-timestamps-p preferences))
          "changing the response style preserves hidden turn timestamps")
+        (test-assert
+         (preference-state-cache-miss-notices-p preferences)
+         "other preference setters preserve prompt-cache miss notices")
         (test-assert
          (string= (preference-state-model preferences) "gpt-5.6-luna")
          "changing the response style preserves the selected model"))

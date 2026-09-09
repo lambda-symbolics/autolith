@@ -2,7 +2,7 @@
 
 ;;;; -- Global Preferences --
 
-(defparameter *preferences-version* 5
+(defparameter *preferences-version* 6
   "The readable global preferences file format version.")
 
 (defclass preference-state ()
@@ -43,6 +43,13 @@
     :reader preference-state-turn-timestamps-p
     :type boolean
     :documentation "Whether transcript turn headers include local timestamps.")
+   (cache-miss-notices-p
+    :initarg :cache-miss-notices-p
+    :initform nil
+    :reader preference-state-cache-miss-notices-p
+    :type boolean
+    :documentation
+    "Whether provider requests that re-read uncached context are reported.")
    (simple-technical-english-p
     :initarg :simple-technical-english-p
     :initform nil
@@ -72,27 +79,30 @@
         (list :indicator ':model
               :validate (lambda (value)
                           (or (null value) (non-empty-string-p value)))
-              :required '(2 3 4 5))
+              :required '(2 3 4 5 6))
         ;; Model-specific effort names may come from executable user
         ;; initialization. Validate them when applying preferences to the
         ;; active model.
         (list :indicator ':reasoning-effort
               :validate (lambda (value)
                           (or (null value) (non-empty-string-p value)))
-              :required '(2 3 4 5))
+              :required '(2 3 4 5 6))
         (list :indicator ':compact-view-p
               :validate (lambda (value) (typep value 'boolean))
-              :required '(3 4 5))
+              :required '(3 4 5 6))
         (list :indicator ':turn-timestamps-p
               :validate (lambda (value) (typep value 'boolean)))
+        (list :indicator ':cache-miss-notices-p
+              :validate (lambda (value) (typep value 'boolean))
+              :required '(6))
         (list :indicator ':simple-technical-english-p
               :validate (lambda (value) (typep value 'boolean)))
         (list :indicator ':codex-fast-mode-p
               :validate (lambda (value) (typep value 'boolean))
-              :required '(5))
+              :required '(5 6))
         (list :indicator ':session-title-generation-p
               :validate (lambda (value) (typep value 'boolean))
-              :required '(4 5))
+              :required '(4 5 6))
         (list :indicator ':permission-mode
               :validate (lambda (value)
                           (member value '(nil :ask :auto) :test #'eq))))
@@ -103,7 +113,7 @@
   "Return true when FORM is one complete supported preferences record."
   (values (record-check form
                         :tag ':preferences
-                        :versions '(1 2 3 4 5)
+                        :versions '(1 2 3 4 5 6)
                         :fields *preferences-record-fields*)))
 
 (-> preferences--form->state (list) preference-state)
@@ -120,6 +130,8 @@
                      :compact-view-p (getf properties :compact-view-p t)
                      :turn-timestamps-p
                      (getf properties :turn-timestamps-p nil)
+                     :cache-miss-notices-p
+                     (getf properties :cache-miss-notices-p nil)
                      :simple-technical-english-p
                      (getf properties :simple-technical-english-p nil)
                      :session-title-generation-p
@@ -143,6 +155,8 @@
           (preference-state-compact-view-p preferences)
           :turn-timestamps-p
           (preference-state-turn-timestamps-p preferences)
+          :cache-miss-notices-p
+          (preference-state-cache-miss-notices-p preferences)
           :simple-technical-english-p
           (preference-state-simple-technical-english-p preferences)
           :session-title-generation-p
@@ -253,6 +267,11 @@
   "Return the persisted turn-timestamp setting, defaulting to false."
   (preference-state-turn-timestamps-p (preferences-load configuration)))
 
+(-> preferences-cache-miss-notices-p (configuration) boolean)
+(defun preferences-cache-miss-notices-p (configuration)
+  "Return the persisted prompt-cache miss notice setting, defaulting to false."
+  (preference-state-cache-miss-notices-p (preferences-load configuration)))
+
 (-> preferences-simple-technical-english-p (configuration) boolean)
 (defun preferences-simple-technical-english-p (configuration)
   "Return the persisted Simple Technical English setting, defaulting to false."
@@ -334,6 +353,7 @@ model no provider can serve."
      (:reasoning-traces-p boolean)
      (:compact-view-p boolean)
      (:turn-timestamps-p boolean)
+     (:cache-miss-notices-p boolean)
      (:simple-technical-english-p boolean)
      (:session-title-generation-p boolean)
      (:permission-mode (option (member :ask :auto))))
@@ -348,6 +368,8 @@ model no provider can serve."
                    (compact-view-p (preference-state-compact-view-p previous))
                    (turn-timestamps-p
                     (preference-state-turn-timestamps-p previous))
+                   (cache-miss-notices-p
+                    (preference-state-cache-miss-notices-p previous))
                    (simple-technical-english-p
                     (preference-state-simple-technical-english-p previous))
                    (session-title-generation-p
@@ -361,6 +383,7 @@ model no provider can serve."
                  :reasoning-traces-p reasoning-traces-p
                  :compact-view-p compact-view-p
                  :turn-timestamps-p turn-timestamps-p
+                 :cache-miss-notices-p cache-miss-notices-p
                  :simple-technical-english-p simple-technical-english-p
                  :session-title-generation-p session-title-generation-p
                  :permission-mode permission-mode))
@@ -410,6 +433,15 @@ model no provider can serve."
    configuration
    (preferences--copy (preferences-load configuration)
                       :turn-timestamps-p enabled-p))
+  nil)
+
+(-> preferences-set-cache-miss-notices (configuration boolean) null)
+(defun preferences-set-cache-miss-notices (configuration enabled-p)
+  "Atomically persist ENABLED-P without discarding other global choices."
+  (preferences--write
+   configuration
+   (preferences--copy (preferences-load configuration)
+                      :cache-miss-notices-p enabled-p))
   nil)
 
 (-> preferences-set-simple-technical-english (configuration boolean) null)
