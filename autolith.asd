@@ -114,6 +114,7 @@
                              (:file "tools/registry")
                              (:file "skills/tools")
                              (:file "mcp/tools")
+                             (:file "acp/protocol")
                              (:file "tools/papercut")
                              (:file "tools/agenda")
                              (:file "tools/plan")
