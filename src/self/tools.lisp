@@ -1005,14 +1005,43 @@ Legacy two-argument records assume their reader package owned the target."
 
 (-> self-source--component-pathnames (t) list)
 (defun self-source--component-pathnames (component)
-  "Return every existing Common Lisp source file beneath ASDF COMPONENT."
-  (if (typep component 'asdf:cl-source-file)
-      (let ((pathname (asdf:component-pathname component)))
-        (if (probe-file pathname)
-            (list pathname)
-            nil))
-      (mapcan #'self-source--component-pathnames
-              (asdf:component-children component))))
+  "Return every existing Common Lisp source file beneath ASDF COMPONENT.
+
+A component whose :IF-FEATURE this image lacks is not part of the system here,
+and its file may not even read on this host, so it contributes nothing."
+  (let ((feature (asdf/component:component-if-feature component)))
+    (cond ((and feature (not (uiop:featurep feature)))
+           nil)
+          ((typep component 'asdf:cl-source-file)
+           (let ((pathname (asdf:component-pathname component)))
+             (if (probe-file pathname)
+                 (list pathname)
+                 nil)))
+          (t
+           (mapcan #'self-source--component-pathnames
+                   (asdf:component-children component))))))
+
+(-> self-source--dependency-names (t) list)
+(defun self-source--dependency-names (system)
+  "Return the names of ASDF SYSTEM's direct dependencies that apply on this host.
+
+A dependency is a plain name, (:VERSION name version), or (:FEATURE expression
+dependency), which counts only when its feature expression holds."
+  (labels ((dependency-name (specification)
+             "Return the system name SPECIFICATION selects here, or NIL."
+             (cond
+               ((or (stringp specification) (symbolp specification))
+                (string-downcase (string specification)))
+               ((and (consp specification)
+                     (eq (first specification) ':version))
+                (dependency-name (second specification)))
+               ((and (consp specification)
+                     (eq (first specification) ':feature))
+                (and (uiop:featurep (second specification))
+                     (dependency-name (third specification))))
+               (t
+                nil))))
+    (remove nil (mapcar #'dependency-name (asdf:system-depends-on system)))))
 
 (-> self-source--dependency-system (package (option string)) (option t))
 (defun self-source--dependency-system (package requested-name)
@@ -1023,7 +1052,7 @@ Legacy two-argument records assume their reader package owned the target."
                  requested-name
                  (string-downcase (package-name package))))
            (dependencies
-             (asdf:system-depends-on (asdf:find-system '#:autolith))))
+             (self-source--dependency-names (asdf:find-system '#:autolith))))
       (unless (member name dependencies :test #'string-equal)
         (when (non-empty-string-p requested-name)
           (error 'source-mutation-error
@@ -1054,13 +1083,42 @@ Legacy two-argument records assume their reader package owned the target."
          :symbol symbol
          :path-prefix (format nil "~A:" (asdf:component-name system)))))))
 
+(-> self-source--withheld-files () list)
+(defun self-source--withheld-files ()
+  "Return the system's source files, relative to its root, that :IF-FEATURE withholds here.
+
+Such a file is not loaded in this image and may not even read on this host,
+as the POSIX adapter does not on Windows."
+  (let* ((system (asdf:find-system "autolith"))
+         (root (asdf:system-source-directory system)))
+    (labels ((collect (component withheld-p)
+               "Return the withheld files below COMPONENT, all of them when WITHHELD-P."
+               (let* ((feature (asdf/component:component-if-feature component))
+                      (withheld-p (or withheld-p
+                                      (and feature (not (uiop:featurep feature))))))
+                 (cond ((not (typep component 'asdf:cl-source-file))
+                        (mapcan (lambda (child) (collect child withheld-p))
+                                (asdf:component-children component)))
+                       (withheld-p
+                        (list (enough-namestring (asdf:component-pathname component)
+                                                 root)))
+                       (t
+                        nil)))))
+      (collect system nil))))
+
 (-> self-tracked-definitions (configuration symbol) list)
 (defun self-tracked-definitions (configuration symbol)
-  "Return complete tracked top-level definitions whose name is SYMBOL."
+  "Return complete tracked top-level definitions whose name is SYMBOL.
+
+Files the system withholds from this image through :IF-FEATURE are left out."
   (let* ((source-root (configuration-source-root configuration))
-         (editable-root (merge-pathnames "src/" source-root)))
+         (editable-root (merge-pathnames "src/" source-root))
+         (withheld (self-source--withheld-files)))
     (self-source--definitions
-     (source-lisp-pathnames editable-root)
+     (remove-if (lambda (pathname)
+                  (member (enough-namestring pathname source-root) withheld
+                          :test #'string=))
+                (source-lisp-pathnames editable-root))
      :root source-root
      :package (find-package '#:autolith)
      :symbol symbol)))

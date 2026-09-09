@@ -48,8 +48,7 @@
   t)
 
 (defparameter *fff-library-file-name*
-  #+darwin "libfff_c.dylib"
-  #-darwin "libfff_c.so"
+  (platform-shared-library-file-name *platform* "fff_c")
   "The platform file name of the private fff search library.")
 
 (-> search--library-path (configuration) (values pathname boolean))
@@ -112,7 +111,7 @@
                :operation ':load
                :pathname library
                :cause nil))
-      (truename library))))
+      (platform-truename *platform* library))))
 
 
 ;;;; -- Tool Arguments --

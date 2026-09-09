@@ -3112,7 +3112,8 @@ resume-picker reads use the compact sidecar instead of replaying the log."
 
 
 (defparameter *conversation-delete-directory-tree-function*
-  #'uiop:delete-directory-tree
+  (lambda (pathname &rest arguments)
+    (apply #'platform-delete-directory-tree *platform* pathname arguments))
   "Function used to remove private artifact trees after conversation deletion.")
 
 
@@ -3156,7 +3157,8 @@ storage is missing, IDENTIFIER is invalid, or another process owns it."
                  (when (probe-file pathname)
                    (delete-file pathname))
                  (when (uiop:directory-exists-p chunk-directory)
-                   (uiop:delete-directory-tree
+                   (platform-delete-directory-tree
+                    *platform*
                     chunk-directory
                     :validate t
                     :if-does-not-exist ':ignore)))

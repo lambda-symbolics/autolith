@@ -55,7 +55,7 @@
                                   :external-format ':utf-8)
             (write-line (namestring capsule-pathname) stream)
             (finish-output stream))
-          (sb-posix:chmod (namestring temporary-pathname) #o600)
+          (platform-make-private *platform* temporary-pathname)
           (uiop:rename-file-overwriting-target temporary-pathname
                                                pointer-pathname)))))
   nil)
@@ -112,7 +112,7 @@
                                          :element-type '(unsigned-byte 8))
                    (file-length stream))
                  0))))
-    (sb-posix:chmod (namestring pathname) #o600)
+    (platform-make-private *platform* pathname)
     (application-publish-crash-pointer application pathname)
     pathname))
 

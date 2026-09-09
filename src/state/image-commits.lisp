@@ -131,7 +131,7 @@
              (funcall writer stream)
              (finish-output stream))
            (uiop:rename-file-overwriting-target temporary pathname)
-           (sb-posix:chmod (namestring pathname) #o444))
+           (platform-make-read-only *platform* pathname))
       (when (probe-file temporary)
         (delete-file temporary)))
     pathname))
@@ -220,8 +220,8 @@
           (ensure-directories-exist history-manifest)
           (uiop:copy-file manifest-pathname history-manifest)
           (uiop:copy-file script-pathname history-script)
-          (sb-posix:chmod (namestring history-manifest) #o444)
-          (sb-posix:chmod (namestring history-script) #o444)
+          (platform-make-read-only *platform* history-manifest)
+          (platform-make-read-only *platform* history-script)
           (image-history--git-command
            configuration
            (list "add" "--" relative-directory))
@@ -1005,15 +1005,15 @@ the failure stays diagnosable after the tool call ends."
         ;; written only after a passing probe.
         (unless (eq (image-commit-error-stage condition) ':replay-probe)
           (when (probe-file directory)
-            (uiop:delete-directory-tree directory
-                                        :validate t
-                                        :if-does-not-exist ':ignore)))
+            (platform-delete-directory-tree *platform* directory
+                                            :validate t
+                                            :if-does-not-exist ':ignore)))
         (error condition))
       (error (condition)
         (when (probe-file directory)
-          (uiop:delete-directory-tree directory
-                                      :validate t
-                                      :if-does-not-exist ':ignore))
+          (platform-delete-directory-tree *platform* directory
+                                          :validate t
+                                          :if-does-not-exist ':ignore))
         (error 'image-commit-error
                :message (format nil "Could not publish private image commit: ~A"
                                 condition)

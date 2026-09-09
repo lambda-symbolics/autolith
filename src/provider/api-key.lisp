@@ -203,9 +203,7 @@
 (-> api-key--interactive-file-descriptor-p (integer) boolean)
 (defun api-key--interactive-file-descriptor-p (file-descriptor)
   "Return true when FILE-DESCRIPTOR names an interactive terminal."
-  (and (not (minusp file-descriptor))
-       (let ((result (sb-unix:unix-isatty file-descriptor)))
-         (and result (plusp result)))))
+  (platform-interactive-descriptor-p *platform* file-descriptor))
 
 (-> api-key--hidden-input-mode (stream (option integer)) (option cons))
 (defun api-key--hidden-input-mode (input configured-descriptor)
@@ -220,12 +218,8 @@
     (when (and descriptor
                (api-key--interactive-file-descriptor-p descriptor))
       (handler-case
-          (let ((saved-mode (sb-posix:tcgetattr descriptor))
-                (hidden-mode (sb-posix:tcgetattr descriptor)))
-            (setf (sb-posix:termios-lflag hidden-mode)
-                  (logandc2 (sb-posix:termios-lflag hidden-mode) sb-posix:echo))
-            (sb-posix:tcsetattr descriptor sb-posix:tcsanow hidden-mode)
-            (cons descriptor saved-mode))
+          (cons descriptor
+                (platform-disable-input-echo *platform* descriptor))
         (error ()
           (error 'authentication-error
                  :message
@@ -234,9 +228,7 @@
 (-> api-key--restore-input-mode (cons) null)
 (defun api-key--restore-input-mode (saved-mode)
   "Restore one terminal mode returned by API-KEY--HIDDEN-INPUT-MODE."
-  (sb-posix:tcsetattr (first saved-mode)
-                      sb-posix:tcsanow
-                      (rest saved-mode))
+  (platform-restore-input-echo *platform* (first saved-mode) (rest saved-mode))
   nil)
 
 (-> api-key--write-prompt-span (stream terminal-style string) null)

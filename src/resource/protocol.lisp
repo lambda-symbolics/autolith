@@ -267,11 +267,15 @@
     ((simple-array (unsigned-byte 8) (*)) list)
     non-empty-string)
 (defun resource-readable-snapshot-digest (key snapshot)
-  "Return a keyed digest for readable exact SNAPSHOT structure."
+  "Return a keyed digest for the printed exact SNAPSHOT structure.
+
+Strings print the same whatever their element type: SBCL's readable syntax
+sets base strings apart, and Windows namestrings and environment values are
+often base strings while the same text built elsewhere is not."
   (resource-snapshot-digest
    key
    (with-standard-io-syntax
-     (let ((*print-readably* t))
+     (let ((*print-readably* nil))
        (prin1-to-string snapshot)))))
 
 (-> resource-capabilities (resource t) list)

@@ -372,12 +372,8 @@ configuration can be created before executable user initialization loads."
 
 (-> configuration--default-config-root () pathname)
 (defun configuration--default-config-root ()
-  "Return Autolith's default XDG configuration directory."
-  (merge-pathnames
-   "autolith/"
-   (environment-directory "XDG_CONFIG_HOME"
-                          (merge-pathnames ".config/"
-                                           (user-homedir-pathname)))))
+  "Return Autolith's default configuration directory for this host."
+  (platform-application-root *platform* ':config))
 
 (-> configuration--default-grok-bootstrap-path () pathname)
 (defun configuration--default-grok-bootstrap-path ()
@@ -723,18 +719,10 @@ and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
 Provider-specific validation can be deferred until executable user
 initialization registers the selected model."
   (let* ((home (user-homedir-pathname))
-         (config-home (environment-directory
-                       "XDG_CONFIG_HOME"
-                       (merge-pathnames ".config/" home)))
-         (data-home (environment-directory
-                     "XDG_DATA_HOME"
-                     (merge-pathnames ".local/share/" home)))
-         (state-home (environment-directory
-                      "XDG_STATE_HOME"
-                      (merge-pathnames ".local/state/" home)))
-         (cache-home (environment-directory
-                      "XDG_CACHE_HOME"
-                      (merge-pathnames ".cache/" home)))
+         (config-root (platform-application-root *platform* ':config))
+         (data-root (platform-application-root *platform* ':data))
+         (state-root (platform-application-root *platform* ':state))
+         (cache-root (platform-application-root *platform* ':cache))
          (codex-home (environment-directory
                       "CODEX_HOME"
                       (merge-pathnames ".codex/" home)))
@@ -758,9 +746,13 @@ initialization registers the selected model."
          (selected-management-transport
            (or management-repl-transport
                (let ((value (uiop:getenv "AUTOLITH_MANAGEMENT_REPL_TRANSPORT")))
-                 (if (non-empty-string-p value)
-                     (intern (string-upcase value) '#:keyword)
-                     ':unix))))
+                 (cond
+                   ((non-empty-string-p value)
+                    (intern (string-upcase value) '#:keyword))
+                   ((platform-supports-p *platform* ':local-sockets)
+                    ':unix)
+                   (t
+                    ':tcp)))))
          (selected-management-address
            (or management-repl-tcp-address
                (uiop:getenv "AUTOLITH_MANAGEMENT_REPL_TCP_ADDRESS")
@@ -790,6 +782,10 @@ initialization registers the selected model."
     (unless (member selected-management-transport '(:unix :tcp))
       (error 'configuration-error
              :message "AUTOLITH_MANAGEMENT_REPL_TRANSPORT must be unix or tcp."))
+    (when (and (eq selected-management-transport ':unix)
+               (not (platform-supports-p *platform* ':local-sockets)))
+      (error 'configuration-error
+             :message "AUTOLITH_MANAGEMENT_REPL_TRANSPORT=unix needs filesystem sockets, which this platform lacks; use tcp."))
     (let ((maximum-frame-size
             (or management-repl-maximum-frame-size
                 (environment-positive-integer
@@ -807,10 +803,10 @@ initialization registers the selected model."
                    :working-directory
                    (uiop:ensure-directory-pathname
                     (or working-directory (uiop:getcwd)))
-                   :config-root (merge-pathnames "autolith/" config-home)
-                   :data-root (merge-pathnames "autolith/" data-home)
-                   :state-root (merge-pathnames "autolith/" state-home)
-                   :cache-root (merge-pathnames "autolith/" cache-home)
+                   :config-root config-root
+                   :data-root data-root
+                   :state-root state-root
+                   :cache-root cache-root
                    :codex-auth-path (merge-pathnames "auth.json" codex-home)
                    :grok-bootstrap-auth-path
                    (configuration--default-grok-bootstrap-path)
@@ -828,9 +824,8 @@ initialization registers the selected model."
                                  "AUTOLITH_MANAGEMENT_REPL_UNIX_SOCKET")))
                           (if (non-empty-string-p value)
                               (pathname value)
-                              (merge-pathnames
-                               "management/repl.sock"
-                               (merge-pathnames "autolith/" state-home))))))
+                              (merge-pathnames "management/repl.sock"
+                                               state-root)))))
                    :management-repl-tcp-address selected-management-address
                    :management-repl-tcp-port
                    (or management-repl-tcp-port
@@ -844,9 +839,8 @@ initialization registers the selected model."
                                  "AUTOLITH_MANAGEMENT_REPL_TOKEN_FILE")))
                           (if (non-empty-string-p value)
                               (pathname value)
-                              (merge-pathnames
-                               "management-repl.token"
-                               (merge-pathnames "autolith/" config-home))))))
+                              (merge-pathnames "management-repl.token"
+                                               config-root)))))
                    :management-repl-evaluation-timeout
                    (or management-repl-evaluation-timeout
                        (environment-positive-integer
@@ -1008,7 +1002,8 @@ reasoning effort only when that effort is supported by the selected model."
     (handler-case
         (let* ((candidate
                  (uiop:ensure-pathname
-                  (configuration--expanded-working-directory location)
+                  (platform-pathname
+                   (configuration--expanded-working-directory location))
                   :defaults previous
                   :ensure-absolute t
                   :ensure-directory t
@@ -1022,7 +1017,7 @@ reasoning effort only when that effort is supported by the selected model."
                    :previous-directory previous
                    :stage ':validation
                    :cause nil))
-          (uiop:ensure-directory-pathname (truename directory)))
+          (uiop:ensure-directory-pathname (platform-truename *platform* directory)))
       (working-directory-error (condition)
         (error condition))
       (error (condition)
@@ -1085,7 +1080,7 @@ reasoning effort only when that effort is supported by the selected model."
     (multiple-value-bind (pathname created-p)
         (ensure-directories-exist directory)
       (when created-p
-        (sb-posix:chmod (namestring pathname) #o700))))
+        (platform-make-private *platform* pathname))))
   configuration)
 
 (-> configuration-conversation-root (configuration) pathname)
@@ -1290,20 +1285,6 @@ reasoning effort only when that effort is supported by the selected model."
                    (get-universal-time)
                    (random (ash 1 64)))))
     (handler-case
-        (cond
-          #+linux
-          (t
-           (with-open-file (stream #P"/proc/sys/kernel/random/uuid"
-                                   :direction ':input
-                                   :external-format ':utf-8)
-             (string-trim '(#\Space #\Tab #\Newline #\Return)
-                          (read-line stream))))
-          #+(and (not linux) (or darwin macos macosx bsd))
-          (t
-           (string-trim
-            '(#\Space #\Tab #\Newline #\Return)
-            (uiop:run-program '("/usr/bin/uuidgen") :output :string)))
-          (t
-           (fallback)))
+        (platform-unique-identifier *platform*)
       (error ()
         (fallback)))))

@@ -418,7 +418,14 @@ dropped and inherited worker descriptors detached before the image is saved."
     (configuration t &key (:tool-registry (option tool-registry)))
     checkpoint-backend)
 (defun checkpoint-backend-create (configuration worker &key tool-registry)
-  "Return the checkpoint backend supported by this runtime."
+  "Return the checkpoint backend supported by this runtime.
+
+Checkpoints save a forked copy of this process, so hosts without a forked
+image saver withhold them here, before any generation state is touched."
+  (unless (platform-supports-p *platform* ':forked-image-saver)
+    (error 'platform-capability-unavailable
+           :capability ':forked-image-saver
+           :message "This host cannot fork a checkpoint saver, so checkpoints and rollback are withheld."))
   (let ((quiesced-runtime-tools nil))
     (with-generation-errors
       (make-checkpoint-backend

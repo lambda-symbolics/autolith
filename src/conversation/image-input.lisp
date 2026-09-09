@@ -315,7 +315,7 @@ follow arbitrarily large metadata segments; every other supported
 format is identified from the leading bytes alone."
   (let ((absolute
           (handler-case
-              (truename pathname)
+              (platform-truename *platform* pathname)
             (error (condition)
               (image-input--error
                pathname ':recognition
@@ -471,7 +471,7 @@ format is identified from the leading bytes alone."
                     artifact-root))
            (temporary (image-input--temporary-pathname target identifier)))
       (ensure-directories-exist target)
-      (sb-posix:chmod (namestring artifact-root) #o700)
+      (platform-make-private *platform* artifact-root)
       (unwind-protect
            (handler-case
                (progn
@@ -490,7 +490,7 @@ format is identified from the leading bytes alone."
                        (write-png-file temporary
                                        (image-input--8-bit-image resized))))
                  (uiop:rename-file-overwriting-target temporary target)
-                 (sb-posix:chmod (namestring target) #o400))
+                 (platform-make-private *platform* target :read-only-p t))
              (image-input-error (condition)
                (error condition))
              (error (condition)
@@ -513,7 +513,7 @@ format is identified from the leading bytes alone."
   "Validate and persist SOURCE beneath private ARTIFACT-ROOT."
   (let ((absolute
           (handler-case
-              (truename source)
+              (platform-truename *platform* source)
             (error (condition)
               (image-input--error
                source ':recognition
@@ -535,12 +535,12 @@ format is identified from the leading bytes alone."
                           artifact-root))
                  (temporary (image-input--temporary-pathname target identifier)))
             (ensure-directories-exist target)
-            (sb-posix:chmod (namestring artifact-root) #o700)
+            (platform-make-private *platform* artifact-root)
             (unwind-protect
                  (progn
                    (uiop:copy-file absolute temporary)
                    (uiop:rename-file-overwriting-target temporary target)
-                   (sb-posix:chmod (namestring target) #o400))
+                   (platform-make-private *platform* target :read-only-p t))
               (when (probe-file temporary)
                 (delete-file temporary)))
             (make-instance 'image-attachment
@@ -593,11 +593,11 @@ format is identified from the leading bytes alone."
                    (url-decode (subseq token (length "file://")))
                    token))
              (pathname
-               (uiop:ensure-pathname decoded
+               (uiop:ensure-pathname (platform-pathname decoded)
                                      :defaults (uiop:getcwd)
                                      :ensure-absolute t
                                      :want-non-wild t)))
-        (and (uiop:file-exists-p pathname) (truename pathname))))))
+        (and (uiop:file-exists-p pathname) (platform-truename *platform* pathname))))))
 
 (-> image-input-recognize-pasted-path (string) (option pathname))
 (defun image-input-recognize-pasted-path (text)
@@ -615,7 +615,7 @@ format is identified from the leading bytes alone."
   "Return LOCATION as an absolute supported image pathname, or signal."
   (let ((pathname
           (handler-case
-              (uiop:ensure-pathname location
+              (uiop:ensure-pathname (platform-pathname location)
                                     :defaults (uiop:getcwd)
                                     :ensure-absolute t
                                     :want-non-wild t)
@@ -630,7 +630,7 @@ format is identified from the leading bytes alone."
         (image-input--inspect pathname)
       (declare (ignore format))
       (if (and (plusp width) (plusp height))
-          (truename pathname)
+          (platform-truename *platform* pathname)
           (image-input--error
            pathname ':recognition
            (format nil "Image ~A has no valid pixel dimensions." pathname))))))

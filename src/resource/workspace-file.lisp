@@ -182,11 +182,7 @@
          (canonical-path (workspace-tool--canonical-path path))
           (identifier
             (if (uiop:subpathp canonical-path working-directory)
-                (let ((relative
-                        (uiop:native-namestring
-                         (uiop:enough-pathname
-                          canonical-path working-directory))))
-                  (if (zerop (length relative)) "." relative))
+                (workspace-tool--relative-identifier canonical-path working-directory)
                 (uiop:native-namestring canonical-path))))
     (format nil "workspace:~A"
             (workspace-file--encode-identifier identifier))))
@@ -219,37 +215,24 @@
     (member :file :directory :missing :other))
 (defun workspace-file--path-kind (path)
   "Return the exact filesystem kind currently present at PATH."
-  (labels ((mode->kind (mode)
-             "Return the resource kind represented by POSIX MODE."
-             (cond
-               ((sb-posix:s-isreg mode)
-                ':file)
-               ((sb-posix:s-isdir mode)
-                ':directory)
-               (t
-                ':other)))
-
-           (inspection-error (condition)
-             "Signal a model-facing failure for an unexpected inspection CONDITION."
-             (error 'tool-error
-                    :message (format nil "Could not inspect workspace resource ~A: ~A"
-                                     path condition)
-                    :tool-name "resource.read")))
-    (handler-case
-        (mode->kind
-          (sb-posix:stat-mode
-           (sb-posix:stat (uiop:native-namestring path))))
-      (sb-posix:syscall-error (condition)
-        (if (= (sb-posix:syscall-errno condition) sb-posix:enoent)
-            (handler-case
-                (progn
-                  (sb-posix:lstat (uiop:native-namestring path))
-                  ':other)
-              (sb-posix:syscall-error (link-condition)
-                (if (= (sb-posix:syscall-errno link-condition) sb-posix:enoent)
-                    ':missing
-                    (inspection-error link-condition))))
-            (inspection-error condition))))))
+  (handler-case
+      (let ((status (platform-path-status *platform* path :follow-links-p t)))
+        (cond
+          ((null status)
+           (if (platform-path-status *platform* path)
+               ':other
+               ':missing))
+          ((eq (platform-file-status-kind status) ':file)
+           ':file)
+          ((eq (platform-file-status-kind status) ':directory)
+           ':directory)
+          (t
+           ':other)))
+    (platform-error (condition)
+      (error 'tool-error
+             :message (format nil "Could not inspect workspace resource ~A: ~A"
+                              path condition)
+             :tool-name "resource.read"))))
 
 (-> workspace-file--read-content
     (pathname &optional (option tool-context))
@@ -272,68 +255,48 @@
 
 Return NIL when NAME disappears during enumeration."
   (handler-case
-      (let* ((metadata
-               (sb-posix:lstat
+      (let ((metadata
+              (platform-path-status
+               *platform*
+               (uiop:parse-native-namestring
                 (concatenate 'string
-                             (uiop:native-namestring directory) name)))
-             (mode (sb-posix:stat-mode metadata)))
-        (cond
-          ((sb-posix:s-isdir mode)
-           (format nil "d           ~A/" name))
-          ((sb-posix:s-isreg mode)
-           (format nil "f ~9D  ~A" (sb-posix:stat-size metadata) name))
-          ((sb-posix:s-islnk mode)
-           (format nil "l ~9D  ~A" (sb-posix:stat-size metadata) name))
-          (t
-           (format nil "o           ~A" name))))
-    (sb-posix:syscall-error (condition)
-      (if (= (sb-posix:syscall-errno condition) sb-posix:enoent)
-          nil
-          (error 'tool-error
-                 :message (format nil "Could not inspect directory entry ~A beneath ~A: ~A"
-                                  name directory condition)
-                 :tool-name "resource.read")))))
+                             (uiop:native-namestring directory) name)))))
+        (and metadata
+             (ecase (platform-file-status-kind metadata)
+               (:directory
+                (format nil "d           ~A/" name))
+               (:file
+                (format nil "f ~9D  ~A" (platform-file-status-size metadata) name))
+               (:symbolic-link
+                (format nil "l ~9D  ~A" (platform-file-status-size metadata) name))
+               ((:socket :other)
+                (format nil "o           ~A" name)))))
+    (platform-error (condition)
+      (error 'tool-error
+             :message (format nil "Could not inspect directory entry ~A beneath ~A: ~A"
+                              name directory condition)
+             :tool-name "resource.read"))))
 
 (-> workspace-file--directory-content (pathname) string)
 (defun workspace-file--directory-content (path)
   "Return a bounded sorted directory listing without opening its entries."
-  (let ((handle nil)
-        (entries nil)
-        (entry-count 0)
+  (let ((entries nil)
         (truncated-p nil))
-    (labels ((next-name ()
-               "Return the next non-dot entry name from HANDLE."
-               (loop for entry = (sb-posix:readdir handle)
-                     until (sb-alien:null-alien entry)
-                     for name = (sb-posix:dirent-name entry)
-                     unless (member name '("." "..") :test #'string=)
-                       return name)))
-      (handler-case
-          (unwind-protect
-               (progn
-                 (setf handle
-                       (sb-posix:opendir (uiop:native-namestring path)))
-                 (loop for name = (next-name)
-                       while name
-                       do (if (>= entry-count
-                                  *workspace-file-resource-maximum-directory-entries*)
-                              (progn
-                                (setf truncated-p t)
-                                (return))
-                              (progn
-                                (incf entry-count)
-                                (let ((row
-                                        (workspace-file--directory-entry-row
-                                         path name)))
-                                  (when row
-                                    (push (list name row) entries)))))))
-            (when handle
-              (sb-posix:closedir handle)))
-        (sb-posix:syscall-error (condition)
-          (error 'tool-error
-                 :message (format nil "Could not list workspace directory ~A: ~A"
-                                  path condition)
-                 :tool-name "resource.read"))))
+    (multiple-value-bind (names more-p)
+        (handler-case
+            (platform-list-directory
+             *platform* path
+             :limit *workspace-file-resource-maximum-directory-entries*)
+          (platform-error (condition)
+            (error 'tool-error
+                   :message (format nil "Could not list workspace directory ~A: ~A"
+                                    path condition)
+                   :tool-name "resource.read")))
+      (setf truncated-p more-p)
+      (dolist (name names)
+        (let ((row (workspace-file--directory-entry-row path name)))
+          (when row
+            (push (list name row) entries)))))
     (setf entries
           (sort entries
                 (lambda (left right)
@@ -859,10 +822,13 @@ Return NIL when NAME disappears during enumeration."
 
 (-> workspace-file--temporary-path (pathname) pathname)
 (defun workspace-file--temporary-path (path)
-  "Return a fresh same-directory temporary pathname for PATH."
+  "Return a fresh same-directory temporary pathname for PATH.
+
+The file name alone seeds the temporary name: a Windows device left in place
+would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
   (let ((native-file
           (uiop:native-namestring
-           (make-pathname :directory nil :defaults path))))
+           (make-pathname :host nil :device nil :directory nil :defaults path))))
     (merge-pathnames
      (uiop:parse-native-namestring
       (format nil ".~A.autolith-resource-~A.tmp"
@@ -886,16 +852,15 @@ Return NIL when NAME disappears during enumeration."
 (-> workspace-file--rename-overwriting-target (pathname pathname) null)
 (defun workspace-file--rename-overwriting-target (source target)
   "Atomically replace exact TARGET with SOURCE without pathname defaulting."
-  (sb-posix:rename (uiop:native-namestring source)
-                   (uiop:native-namestring target))
+  (platform-replace-file *platform* source target)
   nil)
 
 (-> workspace-file--link-new-target (pathname pathname) null)
 (defun workspace-file--link-new-target (source target)
   "Atomically publish SOURCE as absent TARGET without overwriting a race."
-  (sb-posix:link (uiop:native-namestring source)
-                 (uiop:native-namestring target))
-  (delete-file source)
+  (platform-publish-new-file *platform* source target)
+  (when (probe-file source)
+    (delete-file source))
   nil)
 
 (defparameter *workspace-file-resource-publish-function*
@@ -919,11 +884,7 @@ Return NIL when NAME disappears during enumeration."
     (write-sequence octets stream)
     (finish-output stream))
   (ignore-errors
-    (sb-posix:chmod (uiop:native-namestring temporary)
-                    (logand #o7777
-                            (sb-posix:stat-mode
-                             (sb-posix:stat
-                              (uiop:native-namestring target))))))
+    (platform-copy-file-permissions *platform* target temporary))
   nil)
 
 (-> workspace-file--same-observation-p
@@ -978,10 +939,10 @@ the final check-to-rename window. Missing-file publication rejects that race."
                       *workspace-file-resource-create-function*
                       *workspace-file-resource-publish-function*)
                   temporary path)
-               (sb-posix:syscall-error (condition)
+               (platform-error (condition)
                  (if (and (eq (workspace-file-observation-kind base-observation)
                               ':missing)
-                          (= (sb-posix:syscall-errno condition) sb-posix:eexist))
+                          (eq (platform-error-reason condition) ':exists))
                      (workspace-file--signal-stale resource base-observation)
                      (error condition))))
              (let ((published (workspace-file--observe-path resource context)))

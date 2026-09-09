@@ -122,7 +122,7 @@
   "Return true when RECORD exactly matches SOURCE-ROOT and this runtime."
   (handler-case
       (let* ((source-root (uiop:ensure-directory-pathname
-                           (truename source-root)))
+                           (platform-truename *platform* source-root)))
              (source-files (and (active-image-build-record-p record)
                                 (getf (rest record) :source-files))))
         (and source-files
@@ -216,7 +216,7 @@
                     :stage ':entry
                     :pathname nil))
             (t
-             (sb-posix:setenv "AUTOLITH_SOURCE_ROOT" (namestring source-root) 1)
+             (platform-setenv "AUTOLITH_SOURCE_ROOT" (namestring source-root))
              (restart-case
                  (main (rest arguments))
                (abort ()
@@ -248,8 +248,49 @@
          :purify nil
          :compression nil))
     (error ()
-      (sb-posix:_exit 1)))
+      (sb-ext:exit :code 1 :abort t)))
   nil)
+
+(-> active-image-save (pathname pathname) null)
+(defun active-image-save (source-root pathname)
+  "Save this process as the preloaded active image of SOURCE-ROOT at PATHNAME.
+
+The build record is computed here, so it names exactly the source this process
+loaded; the process exits inside the save. Hosts without fork build their image
+this way, from a fresh process that script/build-active.lisp starts."
+  (active-image--save-child
+   pathname
+   (active-image-build-record-create
+    (uiop:ensure-directory-pathname (platform-truename *platform* source-root))))
+  nil)
+
+(-> active-image--save-in-fresh-process (pathname pathname) boolean)
+(defun active-image--save-in-fresh-process (source-root temporary)
+  "Save the active image at TEMPORARY from a fresh SBCL that loads SOURCE-ROOT.
+
+A host without fork cannot hand this heap to a child, so a new process of the
+same runtime loads the system through script/build-active.lisp and saves
+itself. Return true when it exited successfully; the caller probes the core
+against its own build record."
+  (let ((script (merge-pathnames "script/build-active.lisp" source-root)))
+    (handler-case
+        (zerop
+         (nth-value 2
+                    (uiop:run-program
+                     (list (uiop:native-namestring sb-ext:*runtime-pathname*)
+                           "--noinform"
+                           "--script" (uiop:native-namestring script)
+                           "--child" (uiop:native-namestring temporary))
+                     :input nil
+                     :output *standard-output*
+                     :error-output *error-output*
+                     :ignore-error-status t)))
+      (error (condition)
+        (error 'active-image-build-error
+               :message (format nil "Could not run the active-image saver: ~A"
+                                condition)
+               :stage ':save
+               :pathname temporary)))))
 
 (-> active-image--probe-core (pathname pathname list) null)
 (defun active-image--probe-core (core-pathname source-root build-record)
@@ -294,7 +335,7 @@
 (-> active-image-install (pathname pathname) pathname)
 (defun active-image-install (source-root core-pathname)
   "Build, validate, and atomically install a preloaded active image."
-  (setf source-root (uiop:ensure-directory-pathname (truename source-root))
+  (setf source-root (uiop:ensure-directory-pathname (platform-truename *platform* source-root))
         core-pathname (pathname core-pathname))
   (let* ((directory (uiop:pathname-directory-pathname core-pathname))
          (temporary
@@ -303,8 +344,7 @@
                     (sb-posix:getpid))
             directory))
          (manifest (merge-pathnames "manifest.sexp" directory))
-         (identity-before (active-image-build-record-create source-root))
-         (child-pid nil))
+         (identity-before (active-image-build-record-create source-root)))
     (ensure-directories-exist core-pathname)
     (when (probe-file temporary)
       (delete-file temporary))
@@ -316,64 +356,58 @@
     (finish-output *standard-output*)
     (finish-output *error-output*)
     (unwind-protect
-         (progn
-           (setf child-pid
-                 (handler-case
-                     (sb-posix:fork)
-                   (error (condition)
-                     (error 'active-image-build-error
-                            :message (format nil
-                                             "Could not fork the active-image saver: ~A"
-                                             condition)
-                            :stage ':fork
-                            :pathname temporary))))
-           (if (zerop child-pid)
-               (active-image--save-child temporary identity-before)
-               (multiple-value-bind (waited-pid status)
-                   (handler-case
-                       (sb-posix:waitpid child-pid 0)
-                     (error (condition)
-                       (error 'active-image-build-error
-                              :message (format nil
-                                               "Could not wait for the active-image saver: ~A"
-                                               condition)
-                              :stage ':save
-                              :pathname temporary)))
-                 (unless (and (= waited-pid child-pid)
-                              (sb-posix:wifexited status)
-                              (zerop (sb-posix:wexitstatus status))
-                              (probe-file temporary))
-                   (error 'active-image-build-error
-                          :message "The active-image saver child failed."
-                          :stage ':save
-                          :pathname temporary))
-                 (active-image--probe-core temporary
-                                           source-root
-                                           identity-before)
-                 (let ((identity-after
-                         (active-image-build-record-create source-root)))
-                   (unless (equal identity-before identity-after)
-                     (error 'active-image-build-error
-                            :message "Active-image inputs changed during the build."
-                            :stage ':source
-                            :pathname source-root)))
-                 (handler-case
-                     (progn
-                       (uiop:rename-file-overwriting-target temporary
-                                                            core-pathname)
-                       (sb-posix:chmod (namestring core-pathname) #o444)
-                       (active-image--write-manifest
-                        manifest
-                        (active-image-manifest-form core-pathname
-                                                    identity-before)))
-                   (error (condition)
-                     (error 'active-image-build-error
-                            :message (format nil
-                                             "Could not publish the active image: ~A"
-                                             condition)
-                            :stage ':publish
-                            :pathname core-pathname))))))
-      (unless (and child-pid (zerop child-pid))
-        (when (probe-file temporary)
-          (delete-file temporary))))
+         (let ((saved-p
+                 (if (platform-supports-p *platform* ':forked-image-saver)
+                     (handler-case
+                         (platform-run-image-saver
+                          *platform*
+                          (lambda ()
+                            (active-image--save-child temporary identity-before)))
+                       (platform-error (condition)
+                         (if (eq (platform-error-operation condition) ':fork)
+                             (error 'active-image-build-error
+                                    :message (format nil
+                                                     "Could not fork the active-image saver: ~A"
+                                                     condition)
+                                    :stage ':fork
+                                    :pathname temporary)
+                             (error 'active-image-build-error
+                                    :message (format nil
+                                                     "Could not wait for the active-image saver: ~A"
+                                                     condition)
+                                    :stage ':save
+                                    :pathname temporary))))
+                     (active-image--save-in-fresh-process source-root temporary))))
+           (unless (and saved-p (probe-file temporary))
+             (error 'active-image-build-error
+                    :message "The active-image saver child failed."
+                    :stage ':save
+                    :pathname temporary))
+           (active-image--probe-core temporary
+                                     source-root
+                                     identity-before)
+           (let ((identity-after
+                   (active-image-build-record-create source-root)))
+             (unless (equal identity-before identity-after)
+               (error 'active-image-build-error
+                      :message "Active-image inputs changed during the build."
+                      :stage ':source
+                      :pathname source-root)))
+           (handler-case
+               (progn
+                 (platform-replace-file *platform* temporary core-pathname)
+                 (platform-make-read-only *platform* core-pathname)
+                 (active-image--write-manifest
+                  manifest
+                  (active-image-manifest-form core-pathname
+                                              identity-before)))
+             (error (condition)
+               (error 'active-image-build-error
+                      :message (format nil
+                                       "Could not publish the active image: ~A"
+                                       condition)
+                      :stage ':publish
+                      :pathname core-pathname))))
+      (when (probe-file temporary)
+        (delete-file temporary)))
     core-pathname))

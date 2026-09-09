@@ -46,7 +46,7 @@
     (handler-case
         (let ((directory
                 (uiop:directory-exists-p
-                 (uiop:ensure-pathname expanded
+                 (uiop:ensure-pathname (platform-pathname expanded)
                                        :ensure-directory t
                                        :want-non-wild t))))
           (unless directory
@@ -54,7 +54,7 @@
              (format nil "Trusted directory ~S does not exist." value)
              :pathname manifest-pathname
              :field ':directories))
-          (uiop:ensure-directory-pathname (truename directory)))
+          (uiop:ensure-directory-pathname (platform-truename *platform* directory)))
       (mcp-configuration-error (condition)
         (error condition))
       (serious-condition (cause)
@@ -125,7 +125,7 @@
 Anchors are ordered from the outermost directory to the nearest directory."
   (let* ((workspace
            (uiop:ensure-directory-pathname
-            (truename (configuration-working-directory configuration))))
+            (platform-truename *platform* (configuration-working-directory configuration))))
          (active
            (remove-if-not
             (lambda (directory)

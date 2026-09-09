@@ -216,7 +216,8 @@
 (defun memory-resource--workspace-identity (context)
   "Return CONTEXT's canonical current working-directory identity."
   (namestring
-   (truename
+   (platform-truename
+    *platform*
     (configuration-working-directory
      (tool-context-configuration context)))))
 

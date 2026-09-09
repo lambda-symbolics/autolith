@@ -17,7 +17,7 @@
   "Return DIRECTORY as a canonical absolute directory namestring."
   (namestring
    (uiop:ensure-directory-pathname
-    (truename (uiop:ensure-directory-pathname directory)))))
+    (platform-truename *platform* (uiop:ensure-directory-pathname directory)))))
 
 (-> workspace-directory-identifier ((or pathname string)) string)
 (defun workspace-directory-identifier (directory)

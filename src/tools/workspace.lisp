@@ -65,24 +65,21 @@ or filesystem failures as absence."
   (labels ((resolve-existing (candidate)
              "Return CANDIDATE's truename and whether it is absent."
              (handler-case
-                 (values (truename candidate) nil)
-               (file-error (condition)
+                 (values (platform-truename *platform* candidate) nil)
+               (platform-error (condition)
                  (handler-case
-                     (progn
-                      (sb-posix:lstat (uiop:native-namestring candidate))
-                       (error 'tool-error
-                              :message (format nil "Could not resolve workspace path ~A: ~A"
-                                               candidate condition)
-                              :tool-name "resource"))
-                   (sb-posix:syscall-error (inspection-condition)
-                     (if (= (sb-posix:syscall-errno inspection-condition)
-                            sb-posix:enoent)
-                         (values nil t)
+                     (if (platform-path-status *platform* candidate)
                          (error 'tool-error
-                                :message
-                                (format nil "Could not inspect workspace path ~A: ~A"
-                                        candidate inspection-condition)
-                                :tool-name "resource")))))))
+                                :message (format nil "Could not resolve workspace path ~A: ~A"
+                                                 candidate condition)
+                                :tool-name "resource")
+                         (values nil t))
+                   (platform-error (inspection-condition)
+                     (error 'tool-error
+                            :message
+                            (format nil "Could not inspect workspace path ~A: ~A"
+                                    candidate inspection-condition)
+                            :tool-name "resource"))))))
 
            (canonical-directory (directory)
              "Return DIRECTORY with every existing ancestor resolved."
@@ -118,6 +115,22 @@ or filesystem failures as absence."
                           :type (pathname-type path)
                           :version (pathname-version path))
            (canonical-directory (uiop:pathname-directory-pathname path)))))))
+
+(-> workspace-tool--relative-identifier (pathname pathname) string)
+(defun workspace-tool--relative-identifier (path root)
+  "Return PATH below directory ROOT as a slash-separated identifier, or \".\" for ROOT.
+
+The components come from the parsed pathname, so the identifier reads the same
+on every host: names keep their literal characters, a directory keeps its
+trailing slash, and the separator is a slash whatever the host writes natively."
+  (let* ((relative (uiop:enough-pathname path root))
+         (directories (rest (pathname-directory relative)))
+         (file (uiop:native-namestring
+                (make-pathname :host nil :device nil :directory nil
+                               :defaults relative))))
+    (if (and (null directories) (string= file ""))
+        "."
+        (format nil "~{~A/~}~A" directories file))))
 
 (-> workspace-tool--read-path-allowed-p (pathname list) boolean)
 (defun workspace-tool--read-path-allowed-p (path roots)
@@ -232,15 +245,17 @@ existing symlinks and the nearest existing parent before checking the boundary."
                     (let ((restart (find-restart 'use-value condition)))
                       (when restart
                         (invoke-restart restart (code-char #xFFFD)))))))
-             (run-sandboxed
-              "/bin/sh"
-              (list "-c" command)
-              :policy policy
+             (destructuring-bind (program &rest arguments)
+                 (platform-shell-command-line *platform* command)
+               (run-sandboxed
+                program
+                arguments
+                :policy policy
               :working-directory directory
               :timeout timeout
-              :merge-output-p t
-              :output-limit output-limit
-              :error-output-limit output-limit)))
+                :merge-output-p t
+                :output-limit output-limit
+                :error-output-limit output-limit))))
          (output (sandbox-result-output result))
          (presented-output
            (if (sandbox-result-output-truncated-p result)

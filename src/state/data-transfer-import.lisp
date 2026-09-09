@@ -237,7 +237,7 @@
       (setf current (uiop:pathname-parent-directory-pathname current)))
     (dolist (directory created)
       (ensure-directories-exist directory)
-      (sb-posix:chmod (uiop:native-namestring directory) #o700))
+      (platform-make-private *platform* directory))
     created))
 
 (-> data-transfer--publish-writes (list) integer)

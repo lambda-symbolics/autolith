@@ -518,12 +518,16 @@ HEADER-P renders field labels rather than status values."
          (socket nil)
          (socket-stream nil)
          (terminal nil)
-         (signal-installed-p nil))
+         (resize-watch nil))
     (unwind-protect
         (progn
          (multiple-value-bind (rows columns)
              (terminal-current-size)
-           (setf terminal (stream-terminal-create :rows rows :columns columns)))
+           (setf terminal
+                 (stream-terminal-create
+                  :rows rows
+                  :columns columns
+                  :input-file-descriptor (terminal-standard-input-file-descriptor))))
          (unless (terminal--terminal-mode-or-nil terminal)
            (error 'localgroup-error :message
                   "localgroup attach requires an interactive terminal." :operation
@@ -568,13 +572,14 @@ HEADER-P renders field labels rather than status values."
                     :operation ':attach :session-id
                     (localgroup--record-session-id record)))))
          (terminal-start terminal)
-         (sb-sys:enable-interrupt sb-unix:sigwinch
-                                  (lambda (signal code context)
-                                    (declare (ignore signal code context))
-                                    (setf *terminal-resize-pending-p* t)))
-         (setf signal-installed-p t)
+         (setf resize-watch
+               (platform-watch-terminal-resize
+                *platform*
+                (lambda ()
+                  (setf *terminal-resize-pending-p* t))))
          (localgroup--attach-terminal-loop socket-stream terminal mode :socket socket))
-      (when signal-installed-p (sb-sys:enable-interrupt sb-unix:sigwinch :default))
+      (when resize-watch
+        (platform-unwatch-terminal-resize *platform* resize-watch))
       (when terminal (ignore-errors (terminal-stop terminal)))
       (when socket-stream (ignore-errors (close socket-stream)))
       (when (and socket (null socket-stream))

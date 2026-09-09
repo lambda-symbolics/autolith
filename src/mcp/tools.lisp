@@ -451,7 +451,7 @@
            (if (eq configured :workspace)
                workspace
                (uiop:ensure-pathname
-                configured
+                (uiop:ensure-directory-pathname (platform-pathname configured))
                 :defaults workspace
                 :ensure-absolute t
                 :ensure-directory t
@@ -462,7 +462,7 @@
        server-configuration
        candidate
        (format nil "MCP stdio directory ~A does not exist." candidate)))
-    (uiop:ensure-directory-pathname (truename candidate))))
+    (uiop:ensure-directory-pathname (platform-truename *platform* candidate))))
 
 (-> mcp-transport-configuration--materialize
     (mcp-transport-configuration mcp-server-configuration configuration
@@ -1502,7 +1502,7 @@ retained value is credential-redacted or projected."
            (prepared nil)
            (attachment nil))
       (ensure-directories-exist temporary)
-      (sb-posix:chmod (namestring root) #o700)
+      (platform-make-private *platform* root)
       (unwind-protect
            (handler-case
                (let ((bytes (base64-string-to-usb8-array encoded)))

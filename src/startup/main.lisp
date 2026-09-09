@@ -317,6 +317,7 @@
   (let* ((ui (application-ui application))
          (worker (application-worker application))
          (input-controller nil)
+         (resize-watch nil)
          (tool-runtimes-closed-p nil)
          (worker-stopped-p nil)
          (recovery-startup-p (application-recovery-startup-p application))
@@ -354,11 +355,11 @@
                       input-controller #'close-runtime-resources)
                      (setf input-controller nil))
                    (close-runtime-resources))))
-      (sb-sys:enable-interrupt
-       sb-unix:sigwinch
-       (lambda (signal code context)
-         (declare (ignore signal code context))
-         (setf *terminal-resize-pending-p* t)))
+      (setf resize-watch
+            (platform-watch-terminal-resize
+             *platform*
+             (lambda ()
+               (setf *terminal-resize-pending-p* t))))
       (unwind-protect
            (with-terminal-ui (active-ui ui)
              (declare (ignore active-ui))
@@ -472,7 +473,7 @@
                               ':interrupt)
                       (application--present-resume-instruction application)))
                (finish-shutdown)))
-        (sb-sys:enable-interrupt sb-unix:sigwinch :default)
+        (platform-unwatch-terminal-resize *platform* resize-watch)
         (finish-shutdown))))
   nil)
 
@@ -792,8 +793,8 @@ dependencies."
 A client-first start keeps this terminal a thin relay whose detach is
 immediate and never interrupts session work, so resumes and crash recovery
 take it too. Replacements, authentication, startup images, crash simulation,
-non-interactive terminals, and AUTOLITH_SESSION_STYLE=direct keep the direct
-path."
+non-interactive terminals, hosts without detached sessions, and
+AUTOLITH_SESSION_STYLE=direct keep the direct path."
   (declare (ignore resume-requested-p resume-id
                    recovery-conversation-id recovery-diagnosis))
   (and (null handoff-record)
@@ -802,6 +803,7 @@ path."
        (not simulate-crash-p)
        (not (string= (or (uiop:getenv "AUTOLITH_SESSION_STYLE") "")
                      "direct"))
+       (platform-supports-p *platform* ':detached-sessions)
        (not (null (interactive-stream-p *standard-input*)))))
 
 (-> main--spawn-client-session
