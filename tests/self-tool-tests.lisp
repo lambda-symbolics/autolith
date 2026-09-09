@@ -1956,9 +1956,168 @@
         (when symbol
           (fmakunbound symbol)
           (unintern symbol '#:autolith)))))
+  (let ((*image-replay-skipped-definitions* nil))
+    (test-assert
+     (null (self-replay-definition
+            "AUTOLITH"
+            "(defparameter #:uninterned-replay-target (error \"must not install\"))"
+            :home-package nil))
+     "an uninterned target is skipped even with explicit ownership metadata")
+    (test-assert *image-replay-skipped-definitions*
+                 "an uninterned target reports its missing replay identity"))
   (test-assert
    (not (definition-foreign-home-p
          (list 'defmethod 'print-object nil)
          (find-package '#:autolith)))
    "methods on foreign generics stay replayable")
+  nil)
+
+
+(-> test-self--foreign-definition (keyword symbol keyword) list)
+(defun test-self--foreign-definition (kind symbol value)
+  "Build a fixture definition of KIND under foreign SYMBOL returning VALUE."
+  (ecase kind
+    (:function
+     `(defun ,symbol () ',value))
+    (:setf
+     `(defun (setf ,symbol) (value object)
+        (declare (ignore value object)) ',value))
+    (:variable
+     `(defparameter ,symbol ',value))
+    (:method
+     `(defmethod ,symbol ((object t)) (declare (ignore object)) ',value))))
+
+(-> test-self-foreign-definition-lifecycle () null)
+(defun test-self-foreign-definition-lifecycle ()
+  "Test foreign definitions across installation, discard, replay and failure."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (package (find-package '#:sb-ext))
+         (*image-state-initialized-p* nil)
+         (*active-image-commit-identifier* nil)
+         (*active-image-history-commit* nil)
+         (*active-image-lineage-identifier* nil)
+         (*exploratory-definitions* (make-hash-table :test #'equal))
+         (*exploratory-undo-actions* (make-hash-table :test #'equal))
+         (*image-replay-skipped-definitions* nil))
+    (unwind-protect
+         (progn
+           (image-state-load configuration)
+           (dolist (kind '(:function :setf :variable :method))
+             (let* ((symbol
+                      (self-call-with-package-unlocked
+                       package
+                       (lambda ()
+                         (intern (format nil "AUTOLITH-FOREIGN-~A" (make-identifier))
+                                 package))))
+                    (baseline (test-self--foreign-definition kind symbol ':original))
+                    (replacement (test-self--foreign-definition kind symbol ':replacement))
+                    (source (write-to-string replacement :readably t))
+                    (script (merge-pathnames "foreign-replay.lisp" root)))
+               (flet ((observe ()
+                        (ecase kind
+                          (:function
+                           (funcall symbol))
+                          (:setf
+                           (funcall (fdefinition (list 'setf symbol)) nil nil))
+                          (:variable
+                           (symbol-value symbol))
+                          (:method
+                           (funcall symbol nil)))))
+                 (unwind-protect
+                      (progn
+                        (self-call-with-package-unlocked package (lambda () (eval baseline)))
+                        (self-install-definition configuration source)
+                        (test-assert (eq (observe) ':replacement)
+                                     "a foreign target is replaced from the Autolith reader package")
+                        (test-assert (sb-ext:package-locked-p package)
+                                     "installation restores the foreign package lock")
+                        (let* ((record (first (image-commit-effective-pending-records configuration)))
+                               (entry (image-commit--record->entry record)))
+                          (test-assert (equal (getf entry :home-package) "SB-EXT")
+                                       "replay entries retain the mutation's actual owner")
+                          (image-commit-write-script script :identifier "foreign-replay"
+                                                     :title "Replay foreign definition"
+                                                     :entries (list entry)))
+                        (self-discard-mutation configuration nil)
+                        (test-assert (eq (observe) ':original)
+                                     "discard restores a locked foreign target")
+                        (load script)
+                        (test-assert (eq (observe) ':replacement)
+                                     "the rendered script reinstalls the intentional foreign definition")
+                        (test-assert (null *image-replay-skipped-definitions*)
+                                     "intentional foreign replacements are not skipped")
+                        (test-assert (sb-ext:package-locked-p package)
+                                     "discard and replay restore the foreign package lock")
+                        (unless (eq kind ':method)
+                          (let ((*image-replay-skipped-definitions* nil))
+                            (self-replay-definition
+                             "AUTOLITH"
+                             (write-to-string (test-self--foreign-definition kind symbol ':wrong))
+                             :home-package "AUTOLITH")
+                            (test-assert (and *image-replay-skipped-definitions*
+                                              (eq (observe) ':replacement))
+                                         "recorded ownership changes skip stale replacements")))
+                        (when (eq kind ':method)
+                          (let* ((*image-commit-replay-probe-function*
+                                   (lambda (checked-configuration pathname identifier)
+                                     (declare (ignore checked-configuration identifier))
+                                     (load pathname)
+                                     nil))
+                                 (context (make-instance 'tool-context :configuration configuration))
+                                 (tool (tool-registry-find (make-default-tool-registry)
+                                                           "self" "persist-definition"))
+                                 (result
+                                   (tool-execute
+                                    tool context
+                                    (json-object
+                                     "definition"
+                                     (write-to-string
+                                      (test-self--foreign-definition kind symbol ':persisted))))))
+                            (test-assert (and (tool-result-success-p result)
+                                              (eq (observe) ':persisted))
+                                         "direct persistence installs and replays foreign methods")
+                            (let* ((commit (image-commit-current configuration))
+                                   (entry (first (image-commit-base-entries configuration))))
+                              (test-assert (equal "SB-EXT" (getf entry :home-package))
+                                           "direct persistence records the foreign target owner")
+                              (self-call-with-package-unlocked package (lambda () (eval baseline)))
+                              (load (image-commit-script-pathname commit))
+                              (test-assert (and (eq (observe) ':persisted)
+                                                (sb-ext:package-locked-p package))
+                                           "the selected private script restores the foreign method and lock"))))
+                        (when (eq kind ':variable)
+                          (test-assert
+                           (handler-case
+                               (progn
+                                 (self-install-definition
+                                  configuration
+                                  (format nil "(defparameter ~S (error ~S))"
+                                          symbol "expected foreign installation failure"))
+                                 nil)
+                             (error () t))
+                           "failed foreign installation propagates its condition")
+                          (test-assert (and (eq (observe) ':replacement)
+                                            (sb-ext:package-locked-p package))
+                                       "failed installation restores value and lock")
+                          (let* ((context (make-instance 'tool-context :configuration configuration))
+                                 (tool (tool-registry-find (make-default-tool-registry) "self" "set")))
+                            (tool-execute tool context
+                                          (json-object "symbol" (write-to-string symbol)
+                                                       "value" ":set"))
+                            (test-assert (eq (observe) ':set) "self.set accepts foreign variables")
+                            (self-discard-mutation configuration nil)
+                            (test-assert (eq (observe) ':replacement)
+                                         "self.set discard restores foreign variables"))))
+                   (self-call-with-package-unlocked
+                    package
+                    (lambda ()
+                      (when (fboundp symbol)
+                        (fmakunbound symbol))
+                      (when (fboundp (list 'setf symbol))
+                        (fmakunbound (list 'setf symbol)))
+                      (when (boundp symbol)
+                        (makunbound symbol))
+                      (unintern symbol package))))))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

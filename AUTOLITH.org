@@ -18,6 +18,29 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Intentional foreign definitions
+
+- Problem: The replay ownership guard treated intentional foreign definitions as
+  stale Autolith definitions moved into libraries. Installation and undo unlocked
+  the reader package but not a separately qualified target's package.
+- Behavior: Journal each new definition's owning package and preserve it through
+  replay entries and direct persistence. Unlock the reader and target packages
+  around installation and undo, restoring both locks. Preserve stale-owner skips
+  for historical definitions and skip uninterned replacement targets.
+- Scope and location: tracked =src/self/tools.lisp=,
+  =src/state/image-commits.lisp= and =src/state/durable-mutations.lisp=. The live
+  definitions are retained through private image commit
+  =fcc8b2e8-d411-4a1d-9886-d12d2d86c00d=, private Git
+  =e05ecdef33b8ffc51e141e83ca12134b3c34950f=. Tracked type declarations were
+  refreshed with the live definitions.
+- Verification: focused lifecycle cases cover foreign functions, SETF functions,
+  globals and methods, including discard, failure restoration, direct persistence
+  and rendered replay. Active-image exercises verified foreign installation,
+  discard, ownership checks, lock restoration and uninterned-target skips. Every
+  private definition publication passed its clean-process replay probe.
+- Removal condition: the installed runtime includes these tracked definitions,
+  making the private overrides redundant.
+
 ** Independent page-retrieval namespace
 
 - Problem: The page-retrieval implementation and prompt used =web_extra.gist=,

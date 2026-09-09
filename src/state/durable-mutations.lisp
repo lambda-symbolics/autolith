@@ -399,6 +399,7 @@ Historical journals may name tracked src/ files or retired overlay paths."
                :tool-name "self.persist-definition"
                :pathname (configuration-image-commit-root configuration)))
       (let* ((target (definition-key definition))
+             (home-package (definition-home-package-name definition))
              (commit-identifier (make-identifier))
              (commit-directory
                (image-commit--directory configuration commit-identifier))
@@ -445,6 +446,8 @@ Historical journals may name tracked src/ files or retired overlay paths."
                        (list (list :kind ':definition
                                    :id (durable-mutation-identifier mutation)
                                    :target target
+                                   :package "AUTOLITH"
+                                   :home-package home-package
                                    :source definition-source))
                        :identifier commit-identifier)))
                 (setf published-p t)

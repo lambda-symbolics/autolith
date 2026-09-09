@@ -323,21 +323,34 @@ protocol."
       (second name)
       name))
 
-(-> definition-foreign-home-p (list package) boolean)
-(defun definition-foreign-home-p (definition package)
-  "Return true when DEFINITION would clobber a definition owned elsewhere.
+(-> definition-home-package-name (list) (option string))
+(defun definition-home-package-name (definition)
+  "Return the home package name of DEFINITION's target symbol, if interned."
+  (let ((home (symbol-package (definition-name-symbol (second definition)))))
+    (when home
+      (package-name home))))
 
-A mutation journals its name in the package it was made in. When that
-symbol is later merely imported, because the tracked system moved the
-definition into a library, replaying the whole definition would
-overwrite the library's current definition with a stale copy whose
-signature may no longer match its callers. Methods stay replayable: a
-defmethod extends a generic function instead of replacing its owner's
-definition."
+(-> self-call-with-definition-unlocked (list package function) t)
+(defun self-call-with-definition-unlocked (definition package thunk)
+  "Call THUNK with the reader and target packages unlocked, restoring both locks."
+  (let ((home (symbol-package (definition-name-symbol (second definition)))))
+    (self-call-with-package-unlocked
+     package
+     (lambda ()
+       (if (and home (not (eq home package)))
+           (self-call-with-package-unlocked home thunk)
+           (funcall thunk))))))
+
+(-> definition-foreign-home-p
+    (list package &key (:home-package (option string))) boolean)
+(defun definition-foreign-home-p
+    (definition package &key (home-package (package-name package)))
+  "Return true when DEFINITION's recorded owner is missing or has changed.
+Legacy records assume the reader PACKAGE was the owner. Methods extend their
+generic function and are not skipped merely because its ownership changed."
   (and (not (eq (first definition) 'defmethod))
-       (not (eq (symbol-package (definition-name-symbol
-                                 (second definition)))
-                package))))
+       (or (null home-package)
+           (not (equal (definition-home-package-name definition) home-package)))))
 
 (-> method-specializers (list) list)
 (defun method-specializers (specialized-lambda-list)
@@ -595,7 +608,7 @@ definition."
     (multiple-value-bind (cached-source cached-source-p)
         (gethash target *exploratory-definitions*)
       (lambda ()
-        (funcall binding-undo)
+        (self-call-with-definition-unlocked definition package binding-undo)
         (if cached-source-p
             (setf (gethash target *exploratory-definitions*) cached-source)
             (remhash target *exploratory-definitions*))
@@ -621,8 +634,8 @@ definition."
 (defun self--install-definition
     (definition source &key (package (find-package '#:autolith)))
   "Compile and install parsed DEFINITION in PACKAGE, retaining complete SOURCE."
-  (self-call-with-package-unlocked
-   package
+  (self-call-with-definition-unlocked
+   definition package
    (lambda ()
      (let* ((*package* package)
             (result (eval definition)))
@@ -630,14 +643,14 @@ definition."
              source)
        result))))
 
-(-> self-replay-definition (string string) t)
-(defun self-replay-definition (package-name source)
-  "Read and install persisted SOURCE in PACKAGE-NAME during image reconstruction.
-
-A definition whose name symbol is no longer home in PACKAGE-NAME is
-skipped and reported instead of installed: ownership moved to another
-system since the mutation was journaled, and the stale copy would
-clobber the current definition."
+(-> self-replay-definition
+    (string string &key (:home-package (option string))) t)
+(defun self-replay-definition
+    (package-name source &key (home-package package-name))
+  "Read and install persisted SOURCE in PACKAGE-NAME during reconstruction.
+HOME-PACKAGE records the target's owner when the mutation was made. Intentional
+foreign definitions replay; stale definitions whose ownership moved are skipped.
+Legacy two-argument records assume their reader package owned the target."
   (let* ((package (self-resolve-package package-name))
          (definition
            (self-read-form source :read-eval nil :package package)))
@@ -646,16 +659,18 @@ clobber the current definition."
              :message "A private image commit contains an invalid definition."
              :tool-name "self.commit"
              :pathname nil))
-    (if (definition-foreign-home-p definition package)
+    (if (definition-foreign-home-p definition package :home-package home-package)
         (let ((home (symbol-package (definition-name-symbol
                                      (second definition)))))
           (push (format nil
-                        "The persisted ~(~A~) of ~(~A~) was skipped: the definition now belongs to ~A, so the stale mutation would clobber it. Discard it with self.discard."
+                        "The persisted ~(~A~) of ~(~A~) was skipped: ~A"
                         (first definition)
                         (definition-name-symbol (second definition))
                         (if home
-                            (package-name home)
-                            "an uninterned symbol"))
+                            (format nil "its owner changed from ~A to ~A. Reapply the definition to authorize its new owner."
+                                    (or home-package "an uninterned symbol")
+                                    (package-name home))
+                            "an uninterned target has no stable replay identity."))
                 *image-replay-skipped-definitions*)
           nil)
         (self--install-definition definition source :package package))))
@@ -705,6 +720,7 @@ clobber the current definition."
       (tuning-experiment-assert-mutation-installable configuration
                                                        "self.redefine")
       (let ((identifier (make-identifier))
+            (home-package (definition-home-package-name definition))
             (key (definition-key definition))
             (previous (self-previous-definition configuration definition))
             (undo-action nil))
@@ -721,6 +737,7 @@ clobber the current definition."
                :lineage *active-image-lineage-identifier*
                :target key
                :package package-name
+               :home-package home-package
                :previous previous
                :proposed source
                :result ':pending))
@@ -736,6 +753,7 @@ clobber the current definition."
                      :lineage *active-image-lineage-identifier*
                      :target key
                      :package package-name
+                     :home-package home-package
                      :previous previous
                      :proposed source
                      :result ':installed))
@@ -758,6 +776,7 @@ clobber the current definition."
                      :lineage *active-image-lineage-identifier*
                      :target key
                      :package package-name
+                     :home-package home-package
                      :previous previous
                      :proposed source
                      :result ':failed

@@ -644,12 +644,17 @@
 (-> image-commit--record->entry (list) list)
 (defun image-commit--record->entry (record)
   "Convert one installed mutation journal RECORD to a replay entry."
-  (let ((properties (rest record)))
-    (list :kind (getf properties :kind)
-          :id (getf properties :id)
-          :target (getf properties :target)
-          :package (or (getf properties :package) "AUTOLITH")
-          :source (getf properties :proposed))))
+  (let* ((properties (rest record))
+         (entry (list :kind (getf properties :kind)
+                      :id (getf properties :id)
+                      :target (getf properties :target)
+                      :package (or (getf properties :package) "AUTOLITH")
+                      :source (getf properties :proposed))))
+    (multiple-value-bind (present home-package)
+        (get-properties properties '(:home-package))
+      (when present
+        (setf (getf entry :home-package) home-package)))
+    entry))
 
 (-> image-commit--merge-entries (list list) list)
 (defun image-commit--merge-entries (base additions)
@@ -685,10 +690,14 @@
    (format nil "Mutation ~A: ~A" (getf entry :id) (getf entry :target)))
   (case (getf entry :kind)
     (:definition
-     (format stream
-             "(self-replay-definition ~S ~S)~%"
-             (or (getf entry :package) "AUTOLITH")
-             (getf entry :source)))
+     (let ((package-name (or (getf entry :package) "AUTOLITH")))
+       (format stream "(self-replay-definition ~S ~S"
+               package-name (getf entry :source))
+       (multiple-value-bind (present home-package)
+           (get-properties entry '(:home-package))
+         (when (and present (not (equal home-package package-name)))
+           (format stream " :home-package ~S" home-package)))
+       (write-line ")" stream)))
     (:set
      (format stream
              "(setf (symbol-value (quote ~A))~%~6T~A)~%"

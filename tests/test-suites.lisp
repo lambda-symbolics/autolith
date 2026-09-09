@@ -284,6 +284,7 @@
 (define-test-suite self-tool
   test-self-definition-reader-boundary
   test-self-replay-foreign-home
+  test-self-foreign-definition-lifecycle
   test-mutation-journal-tail-repair
   test-self-tools
   test-self-definition-installation-rollback

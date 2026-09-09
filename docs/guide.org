@@ -609,6 +609,19 @@ independently.
 - =:static-options= replaces =:argument= for one finite positional parameter.
   It derives the help hint and both slash and parenthesized completions.
 
+** Live definitions
+
+Use =self.redefine= to replace loaded Lisp definitions, including functions and
+methods outside the Autolith package. Qualify the target symbol in the source,
+or supply the =package= argument to select its reader package. Use qualified
+symbols with =self.set= for foreign global bindings.
+
+Installation, discard and replay temporarily unlock the reader and target
+packages, then restore their locks. New definition records include the target's
+owning package separately from the reader package. Replay skips stale definitions
+whose ownership moved to another library. Reapply an old skipped definition to
+record an intentional replacement under its current owner.
+
 ** Child roles
 
 Roles load from these directories. First match wins:
