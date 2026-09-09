@@ -10,6 +10,7 @@ ql nyaml 2026-01-01
 ql opticl 2022-02-20
 ql quri 2026-01-01
 ql serapeum 2026-01-01
+ql winhttp 2026-01-01
 ql yason 2026-01-01
 
 git fetch-gist https://github.com/lambda-symbolics/fetch-gist.git :ref f4d876b8592b7182dd0400cb178ca36c0c6247c5

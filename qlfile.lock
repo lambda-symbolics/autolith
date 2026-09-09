@@ -50,6 +50,10 @@
  (:class qlot/source/ql:source-ql
   :initargs (:%version "2026-01-01")
   :version "ql-2026-01-01"))
+("winhttp" .
+ (:class qlot/source/ql:source-ql
+  :initargs (:%version "2026-01-01")
+  :version "ql-2024-10-12"))
 ("yason" .
  (:class qlot/source/ql:source-ql
   :initargs (:%version "2026-01-01")
