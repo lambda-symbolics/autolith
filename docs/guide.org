@@ -178,7 +178,9 @@ Parenthetical commands are canonical. Slash-command syntax is syntactic sugar
 for the same Lisp calls: arguments are whitespace-delimited strings, with
 double quotes around strings containing whitespace. For example,
 =/cwd "/tmp/work tree"= is equivalent to =(cwd "/tmp/work tree")=. Commands
-with finite static options offer those values as interactive completions.
+with finite static options appear in the completion menu as one bracketed row,
+such as =/compact [on|off]=. Type the command name and a space to list the
+individual options in either syntax.
 
 Use =//= to send a message beginning with a literal slash.
 

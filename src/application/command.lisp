@@ -1056,7 +1056,10 @@ change to the next safe boundary and make :INSPECT wait for the idle queue."
 
 (-> application-command-option-completion-entries () list)
 (defun application-command-option-completion-entries ()
-  "Return slash completion entries for every command's finite options."
+  "Return slash completion entries for every command's finite options.
+
+Each entry names its command as :PRIMARY, so the options appear only after the
+typed text passes the command name."
   (loop for command in (application-command-list)
         append
         (loop for option in (application-command-static-options command)
@@ -1067,7 +1070,8 @@ change to the next safe boundary and make :INSPECT wait for the idle queue."
                             (application-command--slash-option-token option))
                     :argument nil
                     :description
-                    (copy-seq (application-command-description command))))))
+                    (copy-seq (application-command-description command))
+                    :primary (copy-seq (application-command-name command))))))
 
 
 ;;;; -- Defining Form --

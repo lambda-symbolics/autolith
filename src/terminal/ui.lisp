@@ -66,7 +66,10 @@
 
 (-> terminal-completion-p (t) boolean)
 (defun terminal-completion-p (value)
-  "Return true when VALUE describes one interactive completion entry."
+  "Return true when VALUE describes one interactive completion entry.
+
+An optional :PRIMARY names the entry that stands in for this one: the entry is
+offered only while the typed prefix no longer matches its primary."
   (let ((description (and (listp value) (getf value :description)))
         (description-spans (and (listp value)
                                 (getf value :description-spans))))
@@ -74,6 +77,7 @@
          (non-empty-string-p (getf value :name))
          (typep (getf value :argument) '(option string))
          (typep (getf value :value) '(option string))
+         (typep (getf value :primary) '(option string))
          (stringp description)
          (or (null description-spans)
              (and (terminal-styled-text-p description-spans)
@@ -536,19 +540,35 @@ the draft is exact."
        (or (char= (char text 0) #\/)
            (not (find #\) text)))))
 
+(-> terminal-ui--shadowed-completions (list) list)
+(defun terminal-ui--shadowed-completions (matches)
+  "Return MATCHES without entries whose :PRIMARY entry is itself among MATCHES."
+  (let ((names (mapcar (lambda (entry) (getf entry :name)) matches)))
+    (remove-if (lambda (entry)
+                 (let ((primary (getf entry :primary)))
+                   (and primary
+                        (not (null (member primary names
+                                           :test #'string-equal))))))
+               matches)))
+
 (-> terminal-ui--matching-completions (terminal-ui) list)
 (defun terminal-ui--matching-completions (ui)
-  "Return registered operation completions extending the current name prefix."
+  "Return registered operation completions extending the current name prefix.
+
+Entries stay hidden behind their :PRIMARY entry while that entry still matches,
+so finite options and aliases appear once the typed text passes the canonical
+name."
   (let ((text (line-editor-text (terminal-ui-editor ui)))
         (completions (terminal-ui--current-completions ui)))
     (if (and (terminal-interactive-p (terminal-ui-terminal ui))
              completions
              (terminal-ui--operation-completion-prefix-p text))
-        (remove-if-not
-         (lambda (entry)
-           (uiop:string-prefix-p (string-downcase text)
-                                 (string-downcase (getf entry :name))))
-         completions)
+        (terminal-ui--shadowed-completions
+         (remove-if-not
+          (lambda (entry)
+            (uiop:string-prefix-p (string-downcase text)
+                                  (string-downcase (getf entry :name))))
+          completions))
         nil)))
 
 (-> terminal-ui--reconcile-completions (terminal-ui) list)

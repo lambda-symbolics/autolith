@@ -1736,11 +1736,17 @@
   (let* ((terminal (make-instance 'recording-terminal :columns 72))
           (completions
             '((:name "/help" :argument nil :description "show this reference")
-              (:name "/ste on" :argument nil :description "enable STE")
-              (:name "/ste off" :argument nil :description "disable STE")
+              (:name "/ste" :argument "[on|off]" :description "toggle STE")
+              (:name "/ste on" :argument nil :description "enable STE"
+               :primary "/ste")
+              (:name "/ste off" :argument nil :description "disable STE"
+               :primary "/ste")
               (:name "(help)" :argument nil :description "show this reference")
-              (:name "(ste \"on\")" :argument nil :description "enable STE")
-              (:name "(ste \"off\")" :argument nil :description "disable STE")
+              (:name "(ste" :argument "[on|off])" :description "toggle STE")
+              (:name "(ste \"on\")" :argument nil :description "enable STE"
+               :primary "(ste")
+              (:name "(ste \"off\")" :argument nil :description "disable STE"
+               :primary "(ste")
               (:name "(resource.read" :argument ":uri URI)"
                :description "read one resource")))
          (ui (terminal-ui-create :terminal terminal :completions completions)))
@@ -1770,18 +1776,34 @@
         (terminal-ui-set-input active-ui "(resource.read :uri")
         (test-assert (null (terminal-ui--matching-completions active-ui))
                      "operation completion stops after the function name")
-        (terminal-ui-set-input active-ui "/ste ")
-        (test-assert
-         (equal (mapcar (lambda (entry) (getf entry :name))
-                        (terminal-ui--matching-completions active-ui))
-                '("/ste on" "/ste off"))
-         "slash argument prefixes offer finite command options")
-        (terminal-ui-set-input active-ui "(ste ")
-        (test-assert
-         (equal (mapcar (lambda (entry) (getf entry :name))
-                        (terminal-ui--matching-completions active-ui))
-                '("(ste \"on\")" "(ste \"off\")"))
-         "Lisp argument prefixes offer the same finite command options"))))
+        (flet ((matching-names ()
+                 "Return the names of the completions matching the input."
+                 (mapcar (lambda (entry) (getf entry :name))
+                         (terminal-ui--matching-completions active-ui))))
+          (terminal-ui-set-input active-ui "/s")
+          (test-assert
+           (equal (matching-names) '("/ste"))
+           "a command prefix offers one bracketed row instead of every option")
+          (terminal-ui-set-input active-ui "/ste")
+          (test-assert
+           (equal (matching-names) '("/ste"))
+           "the complete command name still hides its option rows")
+          (terminal-ui-set-input active-ui "/ste ")
+          (test-assert
+           (equal (matching-names) '("/ste on" "/ste off"))
+           "slash argument prefixes offer finite command options")
+          (terminal-ui-set-input active-ui "/ste of")
+          (test-assert
+           (equal (matching-names) '("/ste off"))
+           "a partial option narrows the revealed option rows")
+          (terminal-ui-set-input active-ui "(s")
+          (test-assert
+           (equal (matching-names) '("(ste"))
+           "a Lisp prefix offers one canonical row instead of every option")
+          (terminal-ui-set-input active-ui "(ste ")
+          (test-assert
+           (equal (matching-names) '("(ste \"on\")" "(ste \"off\")"))
+           "Lisp argument prefixes offer the same finite command options")))))
   nil)
 
 

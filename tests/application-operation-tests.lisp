@@ -619,6 +619,18 @@
                (and (member "(ste \"on\")" entry-names :test #'string=)
                     (member "(ste \"off\")" entry-names :test #'string=))
                "Lisp completion offers every finite command option")
+              (flet ((primary-of (name)
+                       "Return the :PRIMARY of the completion entry named NAME."
+                       (getf (find name entries
+                                   :key (lambda (entry) (getf entry :name))
+                                   :test #'string=)
+                             :primary)))
+                (test-assert
+                 (and (equal (primary-of "/ste on") "/ste")
+                      (equal (primary-of "(ste \"off\")") "(ste")
+                      (null (primary-of "/ste"))
+                      (null (primary-of "(help)")))
+                 "finite option entries stay behind their canonical command rows"))
              (test-assert (member "(update)" entry-names :test #'string=)
                           "completion offers the explicit release update operation")
              (test-assert (member "(eval-now" entry-names :test #'string=)

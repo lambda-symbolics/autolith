@@ -542,16 +542,23 @@ local-user override."
 
 (-> application-operation--command-option-completion-entries () list)
 (defun application-operation--command-option-completion-entries ()
-  "Return canonical Lisp completion entries for finite command options."
+  "Return canonical Lisp completion entries for finite command options.
+
+Each entry names the command's canonical Lisp entry as :PRIMARY, so the
+options appear only after the typed text passes the function name."
   (loop for command in (application-command-list)
         for name = (application-operation--command-name command)
+        for primary = (if (application-command-argument command)
+                          (format nil "(~A" name)
+                          (format nil "(~A)" name))
         append
         (loop for option in (application-command-static-options command)
               collect
               (list :name (format nil "(~A ~S)" name option)
                     :argument nil
                     :description
-                    (copy-seq (application-command-description command))))))
+                    (copy-seq (application-command-description command))
+                    :primary primary))))
 
 (-> application-operation-completion-entries (application) list)
 (defun application-operation-completion-entries (application)
