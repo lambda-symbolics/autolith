@@ -41,8 +41,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "cl-llm-provider-api";
-      rev = "259e13553f4365eaf6d40370654b7055560d6508";
-      hash = "sha256-hwZdEgLc4uUvJSRsQTAKTXqtZILOpj6WENLUxb/r6gs=";
+      rev = "fd05933ce7950a1b0a2ccbc1c61228d3e633867a";
+      hash = "sha256-TbiaUWXBvTnF++fRnMUW6cU4b/JrmIteL4/MBjk8Sqk=";
     };
     lispLibs = with pkgs.sbclPackages; [
       babel
@@ -96,8 +96,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "image-daemon";
-      rev = "9941c1c3673cf6159d73127c67efb488b31f9856";
-      hash = "sha256-oSQqdayMbSTRj7IrzO6hHHNfoCpPZPW7d9NWnOT+PTs=";
+      rev = "dbd7644f5811b5c29f05818cd20e88746743d009";
+      hash = "sha256-F1OfaVfit9MKv5yxrvKaISh1hmckUceCJVRlK1uAoqI=";
     };
     systems = [ "image-daemon" "image-daemon/runtime" ];
     lispLibs = [
@@ -105,6 +105,7 @@ let
       pkgs.sbclPackages.ironclad
       pkgs.sbclPackages.bordeaux-threads
       pkgs.sbclPackages.serapeum
+      lsCompat
       lsFlock
       sexpStore
       structlisp
@@ -117,8 +118,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "ls-compat";
-      rev = "84ca8b1f3be29817f5aff93ac2b341347fd287fb";
-      hash = "sha256-D5aCdrpX8nzAcAZ6LLv+GbjYfZUoQVE4Ei77V/SGUb8=";
+      rev = "24fbc85ec31f3a8f8d2d165a2997e18a21427738";
+      hash = "sha256-KddEtJYKr6YCWAOKK+NiVz1y+SzjidExCUpRQXi9z90=";
     };
     systems = [ "ls-compat" "ls-compat/posix" ];
     lispLibs = with pkgs.sbclPackages; [
@@ -133,8 +134,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "ls-flock";
-      rev = "ff7a6abbc53f069c13d9649232ade062409c12da";
-      hash = "sha256-vzTiH1dlDTVWpfcTphdMRU4vziDsa1YuWYHdoiuU6P0=";
+      rev = "0e3e0ada0f5b693cb3f32f46aefbb8dbebcc20f2";
+      hash = "sha256-fYzB1uM4jHm5HmNkwkQ6sLTc/V78e+X0mlGZDrKTmcI=";
     };
     lispLibs = with pkgs.sbclPackages; [
       bordeaux-threads
@@ -147,11 +148,12 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "cl-skills";
-      rev = "ef20ce4bde2eb1d8f483a063788256aad06d0968";
-      hash = "sha256-Y4+uUmaQ9tY/J8hf/R3wUS8UJHhwXkQm29oUmk8GcNU=";
+      rev = "3c219ae44379a1891bbd8f374692763cae9215f8";
+      hash = "sha256-hkZQfv/V3cI1+3PwiIVi+kBo8c+V9rzzEQfjN8RGCow=";
     };
     lispLibs = [
       pkgs.sbclPackages.ironclad
+      lsCompat
       nyaml
       pkgs.sbclPackages.serapeum
       sexpConfig
@@ -164,8 +166,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "clinedi";
-      rev = "3b7365eeabecd2fc571bde07e26a123f570e69cb";
-      hash = "sha256-/bQi82/OCZaN91NPYcWuNcTaNq2wN0YmIWcwgoGdCSM=";
+      rev = "6554bac55885b07de61c106dc550189c9e2a2d00";
+      hash = "sha256-0nx4kRpmNnrk0pfnREjrs0wXGBDTThQZOp8lxpes5nc=";
     };
     systems = [ "clinedi" "clinedi/posix" ];
     lispLibs = [ clColorist ];
@@ -177,8 +179,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "mcparen";
-      rev = "c990e32d92e59675dc6f2295c94207905dab8b3d";
-      hash = "sha256-dWfgVv0oCJG22g5ixTpbcoObxoy0GgKkrD+4MXJhIFc=";
+      rev = "482f87cf0803c4583579eb12c58f0c1078199c94";
+      hash = "sha256-jTYhAsVkgD5xDt0VDdLtnUlKutks4rqN6Od5RkLU6wA=";
     };
     systems = [ "mcparen" "mcparen/managed" ];
     lispLibs = [ lsCompat ] ++ (with pkgs.sbclPackages; [
@@ -191,10 +193,10 @@ let
   };
 
   colorlispSource = pkgs.fetchFromGitHub {
-    owner = "luciusmagn";
+    owner = "lambda-symbolics";
     repo = "colorlisp";
-    rev = "05a3313d52e2a2c643219a750dd5045df56c1cd7";
-    hash = "sha256-P8zoiBaNyZpR9QDJOi3wF/D3BWy3GaPOlz/LPBd4Tyc=";
+    rev = "2654ae0fa34aee42cff401693b5a80a86f0942c4";
+    hash = "sha256-VE8H0FSmCPPqEwijwoKf6yRerm0Kye0irrva/8wnXe4=";
   };
 
   colorlispNativeLibrary = pkgs.stdenv.mkDerivation {
@@ -271,14 +273,14 @@ let
     pname = "parenchek";
     version = "0.1.0";
     src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
+      owner = "lambda-symbolics";
       repo = "parenchek";
-      rev = "a7dc0a7e2c6250056c294ab39d5d2872dba71592";
-      hash = "sha256-3qBzFYCreWV12EZ3WnzQ3wZM7449O2fR2km1TEeOvtY=";
+      rev = "7f26ccf19131f15584ef4a01cfa3cc6bf54403b9";
+      hash = "sha256-xGNNJgzSuWwTe9u1PuU2cD+W16CL6ZMDsNNhEjsec30=";
     };
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = [ lsCompat ] ++ (with pkgs.sbclPackages; [
       serapeum
-    ];
+    ]);
   };
 
   orgTemplater = pkgs.sbcl.buildASDFSystem {
@@ -324,8 +326,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "sexp-store";
-      rev = "6d8ec5dfc85c187e1ee2f49f2ae44526e5ac0a5f";
-      hash = "sha256-wEuUE8xJqtfRwHewkMyH4htjGNzbeh79ghClHPwEkLw=";
+      rev = "778ce8021071bb8ba4066eff9eb822499b8a48ec";
+      hash = "sha256-OXkSce5PnGWWI+cNPMqQE1aLX3YKxKyaGpKUbQ4+wJM=";
     };
     lispLibs = [ lsCompat lsFlock ];
   };
@@ -336,13 +338,12 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "sbcl-workers";
-      rev = "85bbab4a4c97a7f345ddfa6f15fa187211c96ac7";
-      hash = "sha256-9v8eXI+o7FMpILgp78kOhFe6rJYMdo9pk/aJekrG74I=";
+      rev = "0d952fde19494349f1bd9b7d6b167aaf83262c35";
+      hash = "sha256-i4RvHrv0t/K3qJzWrwRNFz29VxGx3RTA+iXIntNvU6s=";
     };
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = [ lsCompat sexpStore ] ++ (with pkgs.sbclPackages; [
       bordeaux-threads
-      sexpStore
-    ];
+    ]);
   };
 
   idsmall = pkgs.sbcl.buildASDFSystem {
@@ -372,10 +373,10 @@ let
     pname = "sbcl-generations";
     version = "0.1.0";
     src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
+      owner = "lambda-symbolics";
       repo = "sbcl-generations";
-      rev = "e65e27e9ac969c5a83c3f9c2318ae4237856d53f";
-      hash = "sha256-cPWQDgAxpwR23lMCSc/bhPzCrQqOTfcpwplcObb3RLs=";
+      rev = "29de8778188c5dbb536685afafdcef3839706e43";
+      hash = "sha256-Zb34bRF5jhwQMn8QT9WfkRnb82ugASidJE5uYEaJbYA=";
     };
     lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
   };
@@ -395,8 +396,8 @@ let
   clExecSandboxSource = pkgs.fetchFromGitHub {
     owner = "lambda-symbolics";
     repo = "cl-exec-sandbox";
-    rev = "00a6e7979a516b84717b0f93b5a1d06770059aa0";
-    hash = "sha256-wZ0QEySCdnCImvrWaU/ObGAPUrMnXromvWZVXt4gG1U=";
+    rev = "8c9f0c83ede8dd29163a4f93f4332368f2292ece";
+    hash = "sha256-OJPFn9CWWDEqtbIQsa8pUmo3sxxR/BLLMB3cHQKcr84=";
   };
 
   clExecSandbox = pkgs.sbcl.buildASDFSystem {
@@ -499,6 +500,7 @@ let
       clSkills
       idsmall
       imageDaemon
+      lsCompat
       lsFlock
       mcparen
       sbclGenerations
