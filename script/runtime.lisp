@@ -119,6 +119,22 @@
        (runtime-version-file-matches-p (merge-pathnames "version.lisp-expr" managed-source)
                                        version)))
 
+(defun runtime-configured-source (version)
+  "Return the explicit matching SBCL source directory, or NIL."
+  (let ((configured (uiop:getenv "AUTOLITH_SBCL_SOURCE_ROOT")))
+    (when (and configured (plusp (length configured)))
+      (let ((directory (uiop:ensure-directory-pathname
+                        (uiop:parse-native-namestring configured))))
+        (unless (and (uiop:absolute-pathname-p directory)
+                     (uiop:directory-exists-p directory)
+                     (runtime-version-file-matches-p
+                      (merge-pathnames "version.lisp-expr" directory)
+                      version))
+          (runtime-fail
+           "AUTOLITH_SBCL_SOURCE_ROOT does not contain matching SBCL ~A source."
+           version))
+        directory))))
+
 (defun runtime-set-tree-writable (directory writable-p)
   "Make every file below DIRECTORY writable, or read-only when WRITABLE-P is false."
   (uiop:run-program
@@ -258,10 +274,14 @@
                     "~&SBCL ~A has no tracked source archive; implementation source stays unavailable to Lisp workers until the release pinned in sbcl.version is used.~%"
                     version)))
       (autolith-script-setenv "AUTOLITH_SBCL" runtime-command)
-      (if (runtime-source-available-p managed-source identity-pathname version expected-sha256)
-          (autolith-script-setenv "AUTOLITH_SBCL_SOURCE_ROOT"
-                                  (uiop:native-namestring managed-source))
-          (autolith-script-unsetenv "AUTOLITH_SBCL_SOURCE_ROOT")))
+      (let ((source (or (runtime-configured-source version)
+                        (and (runtime-source-available-p
+                              managed-source identity-pathname version expected-sha256)
+                             managed-source))))
+        (if source
+            (autolith-script-setenv "AUTOLITH_SBCL_SOURCE_ROOT"
+                                    (uiop:native-namestring source))
+            (autolith-script-unsetenv "AUTOLITH_SBCL_SOURCE_ROOT"))))
     ;; The entry point sees only its own arguments, as it would under --script.
     (setf sb-ext:*posix-argv* (cons (first sb-ext:*posix-argv*) script-arguments))
     (load (truename script))))

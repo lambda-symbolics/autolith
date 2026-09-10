@@ -1,0 +1,11 @@
+(require :asdf)
+(let ((setup (merge-pathnames "quicklisp/setup.lisp" (user-homedir-pathname))))
+  (unless (probe-file setup)
+    (let ((installer (merge-pathnames "quicklisp.lisp" (uiop:temporary-directory))))
+      (uiop:run-program (list "curl.exe" "--fail" "--location" "--show-error" "--retry" "3"
+                              "--output" (uiop:native-namestring installer)
+                              "https://beta.quicklisp.org/quicklisp.lisp")
+      (load installer)
+      (funcall (find-symbol "INSTALL" "QUICKLISP-QUICKSTART")
+               :path (merge-pathnames "quicklisp/" (user-homedir-pathname))))))
+)

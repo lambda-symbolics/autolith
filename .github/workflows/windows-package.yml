@@ -1,0 +1,54 @@
+name: Windows package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "src/**"
+      - "script/**"
+      - "bin/**"
+      - "native/**"
+      - "qlfile*"
+      - "autolith.asd"
+      - "sbcl.version"
+      - "sbcl-*-releases.sha256"
+      - ".github/workflows/windows-package.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  package-windows-x86_64:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          choco install llvm cmake make --yes --no-progress
+          if (-not (Get-Command cargo.exe -ErrorAction SilentlyContinue)) {
+            Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile "$env:RUNNER_TEMP\rustup-init.exe"
+            & "$env:RUNNER_TEMP\rustup-init.exe" -y --profile minimal --default-toolchain 1.97.1
+            "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
+      - name: Bootstrap and check
+        shell: pwsh
+        run: |
+          script\bootstrap.ps1
+          script\check.ps1 --jobs 4
+      - name: Package Windows release
+        shell: pwsh
+        run: |
+          $tag = "v0.50.0-dev.$env:GITHUB_RUN_NUMBER"
+          script\package-windows-release.ps1 -OutputDirectory dist -Tag $tag
+          script\validate-windows-release-artifact.ps1 -Archive (Get-ChildItem dist\*.zip).FullName
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autolith-windows-${{ github.sha }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14

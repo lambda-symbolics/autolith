@@ -373,3 +373,41 @@ jobs:
             dist/autolith-"$GITHUB_REF_NAME"-x86_64-openbsd.tar.gz \
             dist/autolith-"$GITHUB_REF_NAME"-x86_64-openbsd.tar.gz.sha256 \
             --clobber
+
+  package-windows-x86_64:
+    name: Package Windows x86-64
+    needs: publish-metadata
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          choco install llvm cmake make --yes --no-progress
+          if (-not (Get-Command cargo.exe -ErrorAction SilentlyContinue)) {
+            Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile "$env:RUNNER_TEMP\rustup-init.exe"
+            & "$env:RUNNER_TEMP\rustup-init.exe" -y --profile minimal --default-toolchain 1.97.1
+            "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
+
+      - name: Bootstrap and check
+        shell: pwsh
+        run: |
+          script\bootstrap.ps1
+          script\check.ps1 --jobs 4
+
+      - name: Package Windows release
+        shell: pwsh
+        run: script\package-windows-release.ps1 -OutputDirectory dist -Tag $env:GITHUB_REF_NAME
+
+      - name: Validate Windows release
+        shell: pwsh
+        run: script\validate-windows-release-artifact.ps1 -Archive (Get-ChildItem dist\*.zip).FullName
+
+      - name: Upload Windows release artifacts
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload $env:GITHUB_REF_NAME dist/*.zip dist/*.zip.sha256 --clobber

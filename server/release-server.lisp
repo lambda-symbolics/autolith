@@ -189,13 +189,15 @@
   '("x86_64-linux" "aarch64-linux"
     "x86_64-linux-musl" "aarch64-linux-musl"
     "x86_64-darwin" "arm64-darwin" "x86_64-freebsd" "x86_64-netbsd"
-    "x86_64-openbsd")
+    "x86_64-openbsd" "x86_64-windows")
   "Canonical platform identifiers published as binary release archives.")
 
 (-> release-server--archive-name (string &optional string) string)
 (defun release-server--archive-name (tag &optional (platform "x86_64-linux"))
   "Return the archive name belonging to TAG and PLATFORM."
-  (format nil "autolith-~A-~A.tar.gz" tag platform))
+  (format nil "autolith-~A-~A.~A"
+          tag platform
+          (if (string= platform "x86_64-windows") "zip" "tar.gz")))
 
 (-> release-server--artifact-name-p (string string) boolean)
 (defun release-server--artifact-name-p (tag name)
@@ -306,14 +308,18 @@
                      (merge-pathnames
                       name
                       (release-server--release-directory configuration tag))))
-             (release-server--response
-              200
-              (if (uiop:string-suffix-p name ".sha256")
-                  "text/plain; charset=utf-8"
-                  "application/gzip")
-              (merge-pathnames
-               name
-               (release-server--release-directory configuration tag))
+              (release-server--response
+               200
+               (cond
+                 ((uiop:string-suffix-p name ".sha256")
+                  "text/plain; charset=utf-8")
+                 ((uiop:string-suffix-p name ".zip")
+                  "application/zip")
+                 (t
+                  "application/gzip"))
+               (merge-pathnames
+                name
+                (release-server--release-directory configuration tag))
               :headers
               (list (cons "Cache-Control"
                           "public, max-age=31536000, immutable")))
@@ -368,6 +374,18 @@
              (release-server--response
               200
               "text/x-shellscript; charset=utf-8"
+              installer
+              :headers (list (cons "Cache-Control" "no-cache")))
+             (release-server--not-found))))
+      ((string= path "/autolith.ps1")
+       (let ((installer
+               (merge-pathnames
+                "script/install.ps1"
+                (release-server-configuration-source-root configuration))))
+         (if (uiop:file-exists-p installer)
+             (release-server--response
+              200
+              "text/plain; charset=utf-8"
               installer
               :headers (list (cons "Cache-Control" "no-cache")))
              (release-server--not-found))))
