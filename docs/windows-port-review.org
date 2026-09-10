@@ -128,6 +128,19 @@ revisions inspected, and what was verified where.
   =tests/test-support.lisp=. Checks a host cannot run are recorded as FiveAM
   skips, never as passes. The release server and release scripts are
   POSIX-only and are not built on Windows.
+- Qlot on Windows. =script\bootstrap.ps1= checks out the pinned Qlot into
+  Quicklisp's =local-projects= and guards only the forms Windows SBCL cannot
+  read: =create-symlink= copies the tree, the cache lock is a no-op, and the
+  cache is never marked read-only. =script/qlot-install.lisp= then makes the
+  Quicklisp client skip tar entries whose names hold =<>:"|?*=, which Windows
+  rejects; nyaml's test fixtures carry such names and otherwise abort the
+  whole release. The skipped files are never loaded.
+- Continuous integration. =.github/workflows/windows-package.yml= builds a
+  =v0.50.0-dev.N= Windows archive from every master push and uploads it as
+  a workflow artifact, smoke-tests the packaged launcher under a fresh data
+  root, and runs the check last. Failing steps publish their output through
+  =script/ci-report-failure.ps1= as check annotations, which the public API
+  and the run summary page show while job logs need authentication.
 
 * Upstream references
 
