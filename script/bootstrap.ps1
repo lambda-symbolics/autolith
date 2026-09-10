@@ -24,14 +24,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $qlotRoot '.git'))) {
 & git -C $qlotRoot fetch --quiet origin 0929984f5037891b4b0eba6ef2aa1f200d57a9fb
 & git -C $qlotRoot checkout --quiet --detach 0929984f5037891b4b0eba6ef2aa1f200d57a9fb
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Qlot checkout failed.' }
-$qlotCache = Join-Path $qlotRoot 'src\cache.lisp'
-$qlotSource = Get-Content -Raw -LiteralPath $qlotCache
-$old = "        #+sbcl`n        (sb-posix:symlink target-str link-str)`n        #-sbcl"
-$new = "        #+(and sbcl (not win32))`n        (sb-posix:symlink target-str link-str)`n        #+win32`n        (copy-directory-tree target link)`n        #-sbcl"
-if ($qlotSource.Contains($old)) {
-  Set-Content -NoNewline -LiteralPath $qlotCache -Value ($qlotSource.Replace($old, $new))
-} elseif (-not $qlotSource.Contains('#+(and sbcl (not win32))')) {
-  throw 'The pinned Qlot source has an unexpected symlink implementation.'
+foreach ($relative in 'src\cache.lisp','src\main.lisp','src\install.lisp') {
+  $pathname = Join-Path $qlotRoot $relative
+  $source = Get-Content -Raw -LiteralPath $pathname
+  $patched = $source.Replace('#+sbcl', '#+(and sbcl (not win32))').Replace('#-sbcl', '#-(or sbcl win32)')
+  if ($patched -eq $source -and -not $source.Contains('#+(and sbcl (not win32))')) {
+    throw "The pinned Qlot source $relative has no SBCL host guards."
+  }
+  Set-Content -NoNewline -LiteralPath $pathname -Value $patched
 }
 
 & $runtime --install --script (Join-Path $sourceRoot 'script\bootstrap.lisp') @args
