@@ -94,5 +94,10 @@ Edit-QlotSource 'local-init\qlot-30-cache.lisp' @(
      New = "  #-(or (and sbcl (not win32)) ccl)`n  (declare (ignore stream)))" }
 )
 
+# Qlot's release cache moves directories between volumes with rename, which
+# Windows refuses, and would otherwise link every project source into the
+# cache. Materializing dependencies straight into .qlot needs neither.
+$env:QLOT_NO_CACHE = '1'
+
 & $runtime --install --script (Join-Path $sourceRoot 'script\bootstrap.lisp') @args
 exit $LASTEXITCODE
