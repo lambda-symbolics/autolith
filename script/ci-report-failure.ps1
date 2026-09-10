@@ -18,7 +18,7 @@ Set-StrictMode -Version Latest
 
 $chunkCharacters = 3000
 $tailCharacters = 15000
-$framePattern = '^\s*\d+: \('
+$framePattern = '^\s*(│\s*)?\d+: \('
 $errorStartPattern = '(?i)unhandled|debugger invoked|BUILD FAILED|^error|failed with status|installation failed|setup failed'
 $highlightPattern = '(?i)error|fail|unhandled|debugger|warning|not found|denied|missing|unbound|undefined'
 
