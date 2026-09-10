@@ -18,12 +18,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: windows-package-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   package-windows-x86_64:
     runs-on: windows-2025
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
+
       - name: Install build dependencies
         shell: pwsh
         run: |
@@ -33,17 +38,34 @@ jobs:
             & "$env:RUNNER_TEMP\rustup-init.exe" -y --profile minimal --default-toolchain 1.97.1
             "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           }
-      - name: Bootstrap and check
+
+      # Failing steps publish their output through check annotations, which the
+      # public API serves while job logs need authentication.
+      - name: Bootstrap
+        id: bootstrap
         shell: pwsh
         run: |
-          script\bootstrap.ps1
-          script\check.ps1 --jobs 4
+          $log = Join-Path $env:RUNNER_TEMP 'bootstrap.log'
+          $status = 0
+          try {
+            & script\bootstrap.ps1 2>&1 | Tee-Object -FilePath $log
+            if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
+          } catch {
+            $_ | Out-String | Tee-Object -FilePath $log -Append
+            $status = 1
+          }
+          if ($status -ne 0) {
+            script\ci-report-failure.ps1 -Title 'Windows bootstrap failed' -Log $log -Status $status
+            exit $status
+          }
+
       - name: Package Windows release
         shell: pwsh
         run: |
           $tag = "v0.50.0-dev.$env:GITHUB_RUN_NUMBER"
           script\package-windows-release.ps1 -OutputDirectory dist -Tag $tag
           script\validate-windows-release-artifact.ps1 -Archive (Get-ChildItem dist\*.zip).FullName
+
       - uses: actions/upload-artifact@v4
         with:
           name: autolith-windows-${{ github.sha }}
@@ -52,3 +74,46 @@ jobs:
             dist/*.zip.sha256
           if-no-files-found: error
           retention-days: 14
+
+      # The packaged launcher builds its images under a fresh per-user data
+      # root, as a first run on a user's machine does.
+      - name: Smoke-test the packaged launcher
+        shell: pwsh
+        run: |
+          $archive = (Get-ChildItem dist\*.zip).FullName
+          $stage = Join-Path $env:RUNNER_TEMP 'release-smoke'
+          Expand-Archive -LiteralPath $archive -DestinationPath $stage
+          $release = Join-Path $stage ([IO.Path]::GetFileNameWithoutExtension($archive))
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'release-smoke-home'
+          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
+          $log = Join-Path $env:RUNNER_TEMP 'smoke.log'
+          $status = 0
+          try {
+            & (Join-Path $release 'bin\autolith.cmd') --version 2>&1 | Tee-Object -FilePath $log
+            if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
+          } catch {
+            $_ | Out-String | Tee-Object -FilePath $log -Append
+            $status = 1
+          }
+          if ($status -ne 0) {
+            script\ci-report-failure.ps1 -Title 'Windows release smoke test failed' -Log $log -Status $status
+            exit $status
+          }
+
+      - name: Check
+        if: ${{ !cancelled() && steps.bootstrap.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'check.log'
+          $status = 0
+          try {
+            & script\check.ps1 --jobs 4 2>&1 | Tee-Object -FilePath $log
+            if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
+          } catch {
+            $_ | Out-String | Tee-Object -FilePath $log -Append
+            $status = 1
+          }
+          if ($status -ne 0) {
+            script\ci-report-failure.ps1 -Title 'Windows check failed' -Log $log -Status $status
+            exit $status
+          }
