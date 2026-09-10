@@ -12,6 +12,24 @@ executable Lisp.
 Record project-specific tools, workflows, and recurring friction only when they
 matter to future work.
 
+** Repository checks inside recovery sessions
+
+- Problem: In a recovery session, the agent terminal environment carries
+  AUTOLITH_RECOVERED, AUTOLITH_CRASH_POINTER, and
+  AUTOLITH_RECOVERY_SESSION_POINTER. Application construction reads these
+  variables, so the application suite cases
+  =test-recovery-application-construction= and =test-conversation-picker=
+  fail when the values are set and pass when they are unset.
+- Behavior: Run repository checks with the variables unset, for example
+  =env -u AUTOLITH_RECOVERED -u AUTOLITH_CRASH_POINTER -u
+  AUTOLITH_RECOVERY_SESSION_POINTER ./script/check=. This is a workflow
+  note. The tracked code does not change.
+- Verification: With the variables unset, =./script/check= passed with 489
+  cases, 6,208 checks, and 0 failed cases, and the recovery checks passed
+  on 2026-09-10.
+- Removal: Remove this note when the application suite isolates these
+  variables or recovery sessions stop exporting them.
+
 * Active adaptations
 
 For each adaptation, record its problem, behavior, scope and location,
