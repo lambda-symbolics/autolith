@@ -71,6 +71,28 @@ Edit-QlotSource 'src\cache.lisp' @(
      Old = "  #-(or sbcl ccl ecl)`n  (declare (ignore stream)))"
      New = "  #-(or (and sbcl (not win32)) ccl ecl)`n  (declare (ignore stream)))" }
 )
+# Qlot copies this file into every project's .qlot\local-init, so its own
+# copy of the cache code needs the same guards.
+Edit-QlotSource 'local-init\qlot-30-cache.lisp' @(
+  @{ Name = 'symlink'
+     Old = "        #+sbcl`n        (sb-posix:symlink target-str link-str)`n        #-sbcl`n"
+     New = "        #+(and sbcl (not win32))`n        (sb-posix:symlink target-str link-str)`n        #+(and sbcl win32)`n        (copy-directory-tree target link)`n        #-sbcl`n" },
+  @{ Name = 'read-only'
+     Old = "(defun make-directory-read-only (path)`n  #+sbcl`n"
+     New = "(defun make-directory-read-only (path)`n  #+(and sbcl (not win32))`n" },
+  @{ Name = 'acquire-lock'
+     Old = "(defun acquire-lock (stream mode)`n  #+sbcl`n"
+     New = "(defun acquire-lock (stream mode)`n  #+(and sbcl (not win32))`n" },
+  @{ Name = 'acquire-lock fallback'
+     Old = "  #-(or sbcl ccl)`n  (declare (ignore stream mode)))"
+     New = "  #-(or (and sbcl (not win32)) ccl)`n  (declare (ignore stream mode)))" },
+  @{ Name = 'release-lock'
+     Old = "(defun release-lock (stream)`n  #+sbcl`n"
+     New = "(defun release-lock (stream)`n  #+(and sbcl (not win32))`n" },
+  @{ Name = 'release-lock fallback'
+     Old = "  #-(or sbcl ccl)`n  (declare (ignore stream)))"
+     New = "  #-(or (and sbcl (not win32)) ccl)`n  (declare (ignore stream)))" }
+)
 
 & $runtime --install --script (Join-Path $sourceRoot 'script\bootstrap.lisp') @args
 exit $LASTEXITCODE
