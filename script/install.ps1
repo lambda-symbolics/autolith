@@ -1,13 +1,14 @@
 param([string]$Version,[string]$ReleaseBaseUrl=$(if($env:AUTOLITH_RELEASE_BASE_URL){$env:AUTOLITH_RELEASE_BASE_URL}else{'https://sh.lambda-symbolics.com/releases'}),[string]$ArchiveUrl,[string]$ChecksumUrl,[string]$InstallRoot,[string]$BinDirectory,[switch]$WithoutCommandLink)
 $ErrorActionPreference='Stop'; Set-StrictMode -Version Latest
 function Fail([string]$m){throw "Autolith installation failed: $m"}
+function Fetch([string]$source,[string]$destination){if(Test-Path -LiteralPath $source -PathType Leaf){Copy-Item -LiteralPath $source -Destination $destination}else{Invoke-WebRequest -UseBasicParsing $source -OutFile $destination}}
 if(-not $env:LOCALAPPDATA){Fail 'LOCALAPPDATA is not set.'}
 if(-not $Version){$r=[Net.WebRequest]::Create("$ReleaseBaseUrl/latest").GetResponse();try{$Version=$r.ResponseUri.Segments[-1].Trim('/')}finally{$r.Dispose()}}
 if($Version -notmatch '^v?\d+\.\d+\.\d+(?:-dev\.\d+)?$'){Fail 'version is malformed.'};if(-not $Version.StartsWith('v')){$Version="v$Version"}
 $p='x86_64-windows';$name="autolith-$Version-$p";if(-not $ArchiveUrl){$ArchiveUrl="$ReleaseBaseUrl/$Version/$name.zip"};if(-not $ChecksumUrl){$ChecksumUrl="$ArchiveUrl.sha256"}
 if(-not $InstallRoot){$InstallRoot=Join-Path $env:LOCALAPPDATA 'autolith\installation'};if(-not $BinDirectory){$BinDirectory=Join-Path $env:LOCALAPPDATA 'autolith\bin'}
 $releases=Join-Path $InstallRoot 'releases';New-Item -ItemType Directory -Force -Path $releases|Out-Null;$temp=Join-Path $releases ".install.$PID"
-try{New-Item -ItemType Directory -Force $temp|Out-Null;$zip=Join-Path $temp "$name.zip";$sum="$zip.sha256";Invoke-WebRequest -UseBasicParsing $ArchiveUrl -OutFile $zip;Invoke-WebRequest -UseBasicParsing $ChecksumUrl -OutFile $sum
+try{New-Item -ItemType Directory -Force $temp|Out-Null;$zip=Join-Path $temp "$name.zip";$sum="$zip.sha256";Fetch $ArchiveUrl $zip;Fetch $ChecksumUrl $sum
  $line=@(Get-Content $sum|Where-Object{$_.Trim()});if($line.Count-ne 1-or $line[0]-notmatch '^([0-9A-Fa-f]{64})\s+\*?([^\\/]+)$'-or $Matches[2]-ne "$name.zip"){Fail 'checksum record is malformed.'};if((Get-FileHash $zip -Algorithm SHA256).Hash-ne $Matches[1]){Fail 'archive checksum is wrong.'}
  Expand-Archive $zip $temp;$src=Join-Path $temp $name;if(-not(Test-Path(Join-Path $src 'bin\autolith.cmd'))-or-not((Get-Content(Join-Path $src 'RELEASE'))-contains "platform=$p")){Fail 'archive layout is invalid.'}
  $target=Join-Path $releases "$Version-$p";if(Test-Path $target){Remove-Item -Recurse -Force $target};Move-Item $src $target;$next=Join-Path $InstallRoot ".current.$PID";Set-Content -Encoding ascii -NoNewline $next $target;Move-Item -Force $next (Join-Path $InstallRoot 'current')
