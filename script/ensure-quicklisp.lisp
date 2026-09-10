@@ -15,3 +15,4 @@
                       :path (merge-pathnames "quicklisp/" (user-homedir-pathname))))
         (when (probe-file installer)
           (delete-file installer))))))
+)
