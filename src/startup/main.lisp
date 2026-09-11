@@ -744,6 +744,12 @@ dependencies."
                 (ignore-errors (localgroup-query-record record ':kill))
                 (error condition))))
           (return-from main--start-session nil))))
+    ;; ACP mode serves an editor directly over stdio and never touches the
+    ;; terminal UI, so it branches before every interactive start path.
+    (when (getopt* command ':acp)
+      (acp-serve :configuration configuration)
+      (return-from main--start-session nil))
+
     (let ((*localgroup-startup-record* handoff-record))
       (setf *active-application*
             (main--connect-application
@@ -871,6 +877,11 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
                          ("sandbox" . :sandboxed)
                          ("full" . :full-access))
                 :description "initial command authorization mode")
+     (make-option ':flag
+                  :long-name "acp"
+                  :key ':acp
+                  :persistent t
+                  :description "serve the Agent Client Protocol over stdio instead of the terminal")
    (make-option ':list
                 :short-name #\i
                 :long-name "image"
