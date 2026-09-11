@@ -412,7 +412,10 @@
 
 (-> acp--session-observer (acp-session) agent-observer)
 (defun acp--session-observer (session)
-  "Return one serialized observer streaming SESSION's turn to the client."
+  "Return one serialized observer streaming SESSION's turn to the client.
+
+Until the ACP request_permission bridge exists, tool and command
+authorization allows everything unconditionally."
   (make-instance
    'serialized-agent-observer
    :delegate (callback-agent-observer-create
@@ -421,7 +424,15 @@
                 (acp--session-chunk session "agent_message_chunk" text))
               :reasoning-callback
               (lambda (text)
-                (acp--session-chunk session "agent_thought_chunk" text)))))
+                (acp--session-chunk session "agent_thought_chunk" text))
+              :command-authorization-callback
+              (lambda (command directory)
+                (declare (ignore command directory))
+                ':full-access)
+              :tool-authorization-callback
+              (lambda (tool arguments)
+                (declare (ignore tool arguments))
+                ':allow))))
 
 (-> acp--stop-reason (provider-result) string)
 (defun acp--stop-reason (result)
