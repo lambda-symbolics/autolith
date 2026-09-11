@@ -413,6 +413,16 @@ Parent cleanup follows process-group termination, including crashes and timeouts
     (asdf:load-system :autolith/tests)
     setup))
 
+(defun check--delete-temporary-root (pathname)
+  "Delete PATHNAME through Autolith's host-specific directory-tree adapter."
+  (let ((platform-symbol (find-symbol "*PLATFORM*" "AUTOLITH"))
+        (delete-symbol (find-symbol "PLATFORM-DELETE-DIRECTORY-TREE" "AUTOLITH")))
+    (funcall (symbol-function delete-symbol)
+             (symbol-value platform-symbol)
+             pathname
+             :validate t
+             :if-does-not-exist ':ignore)))
+
 (defun check-main (arguments source-root)
   "Execute the test CLI and return its exit status."
   (handler-case
@@ -446,8 +456,7 @@ Parent cleanup follows process-group termination, including crashes and timeouts
                        (check--run-recovery :source-root source-root :temporary-root temporary-root
                                             :quicklisp-setup quicklisp-setup :jobs jobs :timeout timeout))
                      (if passed-p 0 1))
-                (uiop:delete-directory-tree temporary-root :validate t
-                                                          :if-does-not-exist ':ignore))))))
+                 (check--delete-temporary-root temporary-root))))))
     (error (condition)
       (format *error-output* "~&Test command failed: ~A~%" condition)
       1)))
