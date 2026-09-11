@@ -12,7 +12,7 @@ try {
   Copy-Item -Recurse -Force -LiteralPath (Join-Path $runtimeRoot 'source') -Destination (Join-Path $release 'libexec\sbcl-source')
   Copy-Item -Force (Join-Path $root 'bin\autolith.cmd') (Join-Path $release 'bin\autolith.cmd'); Copy-Item -Force (Join-Path $root 'bin\autolith-release.ps1') (Join-Path $release 'bin\autolith.ps1')
   $fff = Get-ChildItem -Recurse -File -LiteralPath (Join-Path $data 'native\fff') -Filter '*.dll' | Select-Object -First 1
-  $colorlisp = Get-ChildItem -Recurse -File -LiteralPath (Join-Path $env:LOCALAPPDATA 'autolith\cache\colorlisp') | Where-Object { $_.Name -match 'colorlisp' } | Select-Object -First 1
+  $colorlisp = Get-ChildItem -Recurse -File -LiteralPath (Join-Path $env:USERPROFILE '.cache\colorlisp') | Where-Object { $_.Name -match 'colorlisp' } | Select-Object -First 1
   if (-not $fff -or -not $colorlisp) { throw 'Built FFF or ColorLisp DLL is missing.' }
   Copy-Item -Force -LiteralPath $fff.FullName -Destination (Join-Path $release 'native\fff_c.dll')
   Copy-Item -Force -LiteralPath $colorlisp.FullName -Destination (Join-Path $release 'native\colorlisp.dll')
