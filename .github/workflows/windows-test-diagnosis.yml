@@ -1,0 +1,47 @@
+name: Windows test diagnosis
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  focused-tests:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Reuse the verified Windows runtime
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $artifact = 'autolith-windows-8fc88ab98998d8d44ad3bc7d8a7206f9bb4710c3'
+          gh run download 34593459331 --name $artifact --dir "$env:RUNNER_TEMP\fixture"
+          $archive = (Get-ChildItem "$env:RUNNER_TEMP\fixture\*.zip").FullName
+          Expand-Archive -LiteralPath $archive -DestinationPath "$env:RUNNER_TEMP\release"
+          $release = (Get-ChildItem "$env:RUNNER_TEMP\release" -Directory).FullName
+          Copy-Item -Recurse -Force -LiteralPath (Join-Path $release 'libexec\autolith\.qlot') -Destination .qlot
+          "AUTOLITH_SBCL=$(Join-Path $release 'runtime\sbcl.exe')" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "AUTOLITH_SBCL_SOURCE_ROOT=$(Join-Path $release 'libexec\sbcl-source')" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "AUTOLITH_FFF_LIBRARY=$(Join-Path $release 'native\fff_c.dll')" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "COLORLISP_NATIVE_LIBRARY=$(Join-Path $release 'native\colorlisp.dll')" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "PATH=$(Join-Path $release 'native');$env:PATH" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Run focused failing tests
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'focused-tests.log'
+          & script\check.ps1 `
+            --test test-search-tools `
+            --test test-lisp-execution-jobs `
+            --test test-self-foreign-definition-lifecycle `
+            --test test-local-source-tree-registration `
+            --jobs 1 --timeout 900 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) {
+            script\ci-report-failure.ps1 -Title 'Focused Windows tests failed' -Log $log -Status $LASTEXITCODE
+            exit $LASTEXITCODE
+          }
