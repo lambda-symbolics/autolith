@@ -115,6 +115,40 @@
                   :code *acp-invalid-params-code*
                   :message (autolith-error-message condition))))))))
 
+;;;; -- Initialize --
+
+(-> acp--agent-version () string)
+(defun acp--agent-version ()
+  "Return the running Autolith version."
+  (handler-case
+      (asdf:component-version (asdf:find-system '#:autolith))
+    (error ()
+      "unknown")))
+
+(-> acp--handle-initialize (acp-server json-object) json-object)
+(defun acp--handle-initialize (server params)
+  "Reply to the client's initialize request with Autolith's capabilities."
+  (declare (ignore server))
+  (let ((version (json-get params "protocolVersion")))
+    (unless (integerp version)
+      (error 'acp-method-error
+             :code *acp-invalid-params-code*
+             :message "The initialize protocolVersion field must be an integer."))
+    (json-object
+     "protocolVersion" version
+     "agentCapabilities"
+     (json-object "loadSession" t
+                  "promptCapabilities"
+                  (json-object "image" *json-decoded-false*
+                               "audio" *json-decoded-false*
+                               "embeddedContext" *json-decoded-false*))
+     ;; The authMethods array stays empty until Autolith grows a
+     ;; provider login flow, so clients never send authenticate.
+     "agentInfo"
+     (json-object "name" "Autolith" "title" "Autolith"
+                  "version" (acp--agent-version))
+     "authMethods" (json-array))))
+
 ;;;; -- Session Registry --
 
 (defparameter *acp-session-id-prefix* "sess_"
@@ -337,7 +371,8 @@
 ;;;; -- Method Dispatch --
 
 (defparameter *acp-request-handlers*
-  (list (cons "session/new" #'acp--handle-session-new)
+  (list (cons "initialize" #'acp--handle-initialize)
+        (cons "session/new" #'acp--handle-session-new)
         (cons "session/load" #'acp--handle-session-load))
   "The client-to-agent request handlers by method name.")
 
