@@ -375,12 +375,82 @@
                                   session-id
                                   (autolith-error-message condition))))))))
 
+;;;; -- Prompt Mapping --
+
+(-> acp--resolved-session (acp-server json-object) acp-session)
+(defun acp--resolved-session (server params)
+  "Return the registered session named by PARAMS's sessionId field."
+  (let ((session-id (json-get params "sessionId")))
+    (unless (stringp session-id)
+      (error 'acp-method-error
+             :code *acp-invalid-params-code*
+             :message "The request sessionId field is required."))
+    (or (acp-server-session server session-id)
+        (error 'acp-method-error
+               :code *acp-invalid-params-code*
+               :message (format nil "Session ~A is unknown." session-id)))))
+
+(-> acp--prompt-text (json-object) string)
+(defun acp--prompt-text (params)
+  "Return the text of PARAMS's text content blocks as one string."
+  (let ((blocks (json-get params "prompt")))
+    (unless (vectorp blocks)
+      (error 'acp-method-error
+             :code *acp-invalid-params-code*
+             :message "The session/prompt prompt field must be an array."))
+    (let ((text (make-string-output-stream)))
+      (loop for block across blocks
+            do (unless (and (json-object-p block)
+                            (json-string= (json-get block "type") "text")
+                            (stringp (json-get block "text")))
+                 (error 'acp-method-error
+                        :code *acp-invalid-params-code*
+                        :message "The session/prompt supports text content blocks only."))
+               (write-string (json-get block "text") text)
+               (terpri text))
+      (get-output-stream-string text))))
+
+(-> acp--session-observer (acp-session) agent-observer)
+(defun acp--session-observer (session)
+  "Return one serialized observer streaming SESSION's turn to the client."
+  (make-instance
+   'serialized-agent-observer
+   :delegate (callback-agent-observer-create
+              :text-callback
+              (lambda (text)
+                (acp--session-chunk session "agent_message_chunk" text))
+              :reasoning-callback
+              (lambda (text)
+                (acp--session-chunk session "agent_thought_chunk" text)))))
+
+(-> acp--stop-reason (provider-result) string)
+(defun acp--stop-reason (result)
+  "Return the ACP stopReason for RESULT."
+  (ecase (provider-result-turn-completion result)
+    ((:continue)
+     "end_turn")
+    ((:end :unspecified)
+     "end_turn")))
+
+(-> acp--handle-session-prompt (acp-server json-object) json-object)
+(defun acp--handle-session-prompt (server params)
+  "Run one user turn for SESSION and stream its updates to the client."
+  (let* ((session (acp--resolved-session server params))
+         (text (acp--prompt-text params))
+         (result
+          (agent-run-user-turn
+           (application-agent (acp-session-application session))
+           text
+           :observer (acp--session-observer session))))
+    (json-object "stopReason" (acp--stop-reason result))))
+
 ;;;; -- Method Dispatch --
 
 (defparameter *acp-request-handlers*
   (list (cons "initialize" #'acp--handle-initialize)
         (cons "session/new" #'acp--handle-session-new)
-        (cons "session/load" #'acp--handle-session-load))
+        (cons "session/load" #'acp--handle-session-load)
+        (cons "session/prompt" #'acp--handle-session-prompt))
   "The client-to-agent request handlers by method name.")
 
 (defparameter *acp-notification-handlers*
