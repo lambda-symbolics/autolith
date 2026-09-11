@@ -2119,5 +2119,7 @@
                       (when (boundp symbol)
                         (makunbound symbol))
                       (unintern symbol package))))))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
   nil)
