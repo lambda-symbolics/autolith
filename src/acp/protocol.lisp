@@ -45,6 +45,10 @@
                      (acp-method-error-code condition)
                      (autolith-error-message condition)))))
 
+(defmethod acp-method-error-message ((condition acp-method-error))
+  "Return CONDITION's human-readable failure message."
+  (autolith-error-message condition))
+
 (define-condition acp-remote-error (autolith-error)
   ((code
     :initarg :code
