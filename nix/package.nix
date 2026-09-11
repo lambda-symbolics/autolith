@@ -461,8 +461,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "fetch-gist";
-      rev = "f4d876b8592b7182dd0400cb178ca36c0c6247c5";
-      hash = "sha256-Bz618rseuXOSX3eqBwqyp5vt8vxXRKsPYDQrwAW+Foc=";
+      rev = "0adb33b6801d1218ce6249d2a751b05f88b98c40";
+      hash = "sha256-DqYli/ASTTAr4f1hICUrIcd6btZBWTqzTsH7qOzs4Zg=";
     };
     lispLibs = with pkgs.sbclPackages; [
       dexador
