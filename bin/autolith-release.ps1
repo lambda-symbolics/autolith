@@ -67,14 +67,16 @@ if ($args.Count -gt 0 -and $args[0] -eq '--autolith-release-probe') {
   "version=$($fields.version)"; "tag=$($fields.tag)"; "commit=$($fields.commit)"; "platform=$($fields.platform)"; "source=$sourceRoot"; "runtime=$runtime"; exit 0
 }
 $dataRoot = Join-Path $env:LOCALAPPDATA 'autolith\data'
-$activeCore = Join-Path $dataRoot 'active\autolith-active.core'
-$recoveryCore = Join-Path $dataRoot 'recovery\autolith-recovery.core'
+$userIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$imageRoot = Join-Path $releaseRoot (Join-Path '.autolith-images' $userIdentity)
+$activeCore = Join-Path $imageRoot 'active\autolith-active.core'
+$recoveryCore = Join-Path $imageRoot 'recovery\autolith-recovery.core'
 $marker = Join-Path $dataRoot 'release-images'
 $identity = "$($fields.tag):$($fields.platform)"
 $usable = (Test-Path -LiteralPath $activeCore) -and (Test-Path -LiteralPath $recoveryCore) -and (Test-Path -LiteralPath $marker) -and ((Get-Content -Raw -LiteralPath $marker).Trim() -eq $identity)
 if (-not $usable) {
   [Console]::Error.WriteLine('Building Autolith images for this machine. This happens once per release.')
-  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $activeCore),(Split-Path -Parent $recoveryCore) | Out-Null
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $activeCore),(Split-Path -Parent $recoveryCore),(Split-Path -Parent $marker) | Out-Null
   $activeRuntimeCore = ConvertTo-AutolithSbclCorePath $activeCore
   $recoveryRuntimeCore = ConvertTo-AutolithSbclCorePath $recoveryCore
   & $runtime --script (Join-Path $sourceRoot 'script\build-recovery.lisp') $recoveryRuntimeCore
