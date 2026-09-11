@@ -406,9 +406,9 @@ let
     src = clExecSandboxSource;
   };
 
-  # The native helper wraps Linux bubblewrap, seccomp, and network namespaces.
-  # macOS uses cl-exec-sandbox's built-in Seatbelt backend without a helper.
-  sandboxHelper = if pkgs.stdenv.isLinux then pkgs.stdenv.mkDerivation {
+  # Full-access execution needs the process-group helper on every platform.
+  # Linux sandboxing also needs the bubblewrap and namespace helper.
+  sandboxHelper = pkgs.stdenv.mkDerivation {
     pname = "cl-exec-sandbox-helper";
     version = "0.1.0";
     src = clExecSandboxSource;
@@ -421,11 +421,15 @@ let
     '';
     installPhase = ''
       runHook preInstall
-      install -Dm755 build/cl-exec-sandbox-helper \
-        "$out/libexec/cl-exec-sandbox-helper"
+      install -Dm755 build/cl-exec-sandbox-process-group \
+        "$out/libexec/cl-exec-sandbox-process-group"
+      ${lib.optionalString pkgs.stdenv.isLinux ''
+        install -Dm755 build/cl-exec-sandbox-helper \
+          "$out/libexec/cl-exec-sandbox-helper"
+      ''}
       runHook postInstall
     '';
-  } else null;
+  };
 
   fffLibrary = pkgs.rustPlatform.buildRustPackage {
     pname = "fff-c";
@@ -597,9 +601,9 @@ let
     test -f "$out/src/code/list.lisp"
   '';
 
-  # Sandboxing uses Bubblewrap and the private helper on Linux; other
-  # platforms fall back to the portable unsandboxed path in cl-exec-sandbox.
-  sandboxEnvironment = lib.optionalString pkgs.stdenv.isLinux ''
+  sandboxEnvironment = ''
+    export CL_EXEC_SANDBOX_PROCESS_GROUP_HELPER="${sandboxHelper}/libexec/cl-exec-sandbox-process-group"
+  '' + lib.optionalString pkgs.stdenv.isLinux ''
     export CL_EXEC_SANDBOX_BWRAP="${pkgs.bubblewrap}/bin/bwrap"
     export CL_EXEC_SANDBOX_HELPER="${sandboxHelper}/libexec/cl-exec-sandbox-helper"
   '';
