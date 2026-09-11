@@ -406,8 +406,9 @@ let
     src = clExecSandboxSource;
   };
 
-  # Full-access execution needs the process-group helper on every platform.
-  # Linux sandboxing also needs the bubblewrap and namespace helper.
+  # Full-access execution on Linux and macOS still needs process-group supervision.
+  # Linux also builds the sandbox helper for seccomp and network namespaces;
+  # macOS sandboxing uses the system Seatbelt backend instead.
   sandboxHelper = pkgs.stdenv.mkDerivation {
     pname = "cl-exec-sandbox-helper";
     version = "0.1.0";
@@ -601,6 +602,7 @@ let
     test -f "$out/src/code/list.lisp"
   '';
 
+  # Resolve helpers from the Nix store, not the Lisp system's build directory.
   sandboxEnvironment = ''
     export CL_EXEC_SANDBOX_PROCESS_GROUP_HELPER="${sandboxHelper}/libexec/cl-exec-sandbox-process-group"
   '' + lib.optionalString pkgs.stdenv.isLinux ''
