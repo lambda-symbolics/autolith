@@ -1021,16 +1021,16 @@ Hard links need an NTFS volume; other filesystems report the failure typed."
     (win32-platform pathname list) t)
 (defun win32--delete-directory-tree-with-retries (platform pathname arguments)
   "Delete PATHNAME, retrying transient Windows sharing and access failures."
-  (loop for attempt from 1 to 20
+  (loop for attempt from 1 to 100
         do (handler-case
                (return (apply #'uiop:delete-directory-tree pathname arguments))
              (file-error (condition)
-               (when (= attempt 20)
+               (when (= attempt 100)
                  (error condition))
                (when (uiop:directory-exists-p pathname)
                  (ignore-errors
                    (win32--make-directory-tree-writable platform pathname)))
-               (sleep 0.05)))))
+               (sleep 0.1)))))
 
 (defmethod platform-delete-directory-tree ((platform win32-platform) pathname
                                            &rest arguments
