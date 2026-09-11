@@ -29,6 +29,6 @@ try {
   Copy-Item -Force -LiteralPath $colorlisp.FullName -Destination (Join-Path $release 'native\colorlisp.dll')
   $git=(Get-Command git.exe).Source; $gitRoot=Split-Path -Parent (Split-Path -Parent $git); foreach($dll in 'libcrypto-3-x64.dll','libssl-3-x64.dll'){ $p=Join-Path $gitRoot "mingw64\bin\$dll"; if(-not(Test-Path $p)){throw "$dll is missing."}; Copy-Item -Force $p (Join-Path $release 'native') }
   $commit=(& git -C $root rev-parse HEAD).Trim(); $versionName=($Tag -replace '^v','' -replace '-dev\..*$',''); @("version=$versionName","tag=$Tag","commit=$commit","platform=$platform")|Set-Content -Encoding ascii (Join-Path $release 'RELEASE')
-  $archive=Join-Path $out "$name.zip"; if(Test-Path $archive){Remove-Item -Force $archive}; Compress-Archive -LiteralPath $release -DestinationPath $archive -CompressionLevel Optimal
+  $archive=Join-Path $out "$name.zip"; if(Test-Path $archive){Remove-Item -Force $archive}; & tar.exe -a -cf $archive -C $stage $name; if($LASTEXITCODE){throw 'zip creation failed.'}
   $hash=(Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant(); "$hash *$name.zip"|Set-Content -Encoding ascii "$archive.sha256"; $archive
 } finally { if(Test-Path $stage){Remove-Item -Recurse -Force $stage} }
