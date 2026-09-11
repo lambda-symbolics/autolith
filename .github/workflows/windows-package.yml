@@ -11,6 +11,7 @@ on:
       - "native/**"
       - "qlfile*"
       - "autolith.asd"
+      - "tests/**"
       - "sbcl.version"
       - "sbcl-*-releases.sha256"
       - ".github/workflows/windows-package.yml"
@@ -91,6 +92,24 @@ jobs:
             exit $status
           }
 
+
+      - name: Check
+        if: ${{ !cancelled() && steps.bootstrap.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'check.log'
+          $status = 0
+          try {
+            & script\check.ps1 --jobs 1 --timeout 900 2>&1 | Tee-Object -FilePath $log
+            if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
+          } catch {
+            $_ | Out-String | Tee-Object -FilePath $log -Append
+            $status = 1
+          }
+          if ($status -ne 0) {
+            script\ci-report-failure.ps1 -Title 'Windows check failed' -Log $log -Status $status
+            exit $status
+          }
 
       - uses: actions/upload-artifact@v4
         with:
