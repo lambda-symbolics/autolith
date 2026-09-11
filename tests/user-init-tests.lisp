@@ -179,12 +179,18 @@
                              "(asdf:defsystem #:skipped-system)")
            (write-definition (merge-pathnames "autolith.asd" checkout)
                              "(asdf:defsystem #:autolith :version \"0.0.0\")")
-           (let ((version-before (asdf:component-version
-                                  (asdf:find-system "autolith"))))
-              (test-assert (uiop:pathname-equal
-                            (main--locate-user-tree-system
-                             "fresh-system" (list root))
-                            (merge-pathnames "fresh-system.asd" checkout))
+            (let* ((version-before (asdf:component-version
+                                    (asdf:find-system "autolith")))
+                   (located (main--locate-user-tree-system
+                             "fresh-system" (list root)))
+                   (expected (merge-pathnames "fresh-system.asd" checkout))
+                   (located-status (and located
+                                        (platform-path-status *platform* located)))
+                   (expected-status (platform-path-status *platform* expected)))
+              (test-assert (and located-status
+                                expected-status
+                                (platform-file-status-same-object-p
+                                 located-status expected-status))
                            "user tree lookups find unregistered systems")
              (test-assert (null (main--locate-user-tree-system
                                  "skipped-system" (list root)))

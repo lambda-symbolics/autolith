@@ -994,6 +994,12 @@ Hard links need an NTFS volume; other filesystems report the failure typed."
   "Add the Windows dynamic library extension to BASE-NAME."
   (format nil "~A.dll" base-name))
 
+(-> win32--directory-entry-pathname (win32-platform pathname string) pathname)
+(defun win32--directory-entry-pathname (platform directory name)
+  "Return native child NAME below DIRECTORY without portable pathname reinterpretation."
+  (platform-parse-namestring
+   platform (format nil "~A\\~A" (win32--namestring directory) name)))
+
 (-> win32--make-directory-tree-writable (win32-platform pathname) null)
 (defun win32--make-directory-tree-writable (platform directory)
   "Recursively clear read-only attributes below DIRECTORY, including dot trees."
@@ -1001,7 +1007,7 @@ Hard links need an NTFS volume; other filesystems report the failure typed."
       (platform-list-directory platform directory)
     (declare (ignore more-p))
     (dolist (name names)
-      (let* ((entry (merge-pathnames name directory))
+      (let* ((entry (win32--directory-entry-pathname platform directory name))
              (status (platform-path-status platform entry)))
         (when status
           (when (eq (platform-file-status-kind status) ':directory)
