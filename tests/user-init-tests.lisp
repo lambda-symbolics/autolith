@@ -181,10 +181,11 @@
                              "(asdf:defsystem #:autolith :version \"0.0.0\")")
            (let ((version-before (asdf:component-version
                                   (asdf:find-system "autolith"))))
-             (test-assert (equal (main--locate-user-tree-system
-                                  "fresh-system" (list root))
-                                 (merge-pathnames "fresh-system.asd" checkout))
-                          "user tree lookups find unregistered systems")
+              (test-assert (uiop:pathname-equal
+                            (main--locate-user-tree-system
+                             "fresh-system" (list root))
+                            (merge-pathnames "fresh-system.asd" checkout))
+                           "user tree lookups find unregistered systems")
              (test-assert (null (main--locate-user-tree-system
                                  "skipped-system" (list root)))
                           "user tree lookups skip build directories")

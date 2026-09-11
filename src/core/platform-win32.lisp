@@ -994,31 +994,55 @@ Hard links need an NTFS volume; other filesystems report the failure typed."
   "Add the Windows dynamic library extension to BASE-NAME."
   (format nil "~A.dll" base-name))
 
+(-> win32--make-directory-tree-writable (win32-platform pathname) null)
+(defun win32--make-directory-tree-writable (platform directory)
+  "Recursively clear read-only attributes below DIRECTORY, including dot trees."
+  (multiple-value-bind (names more-p)
+      (platform-list-directory platform directory)
+    (declare (ignore more-p))
+    (dolist (name names)
+      (let* ((entry (merge-pathnames name directory))
+             (status (platform-path-status platform entry)))
+        (when status
+          (when (eq (platform-file-status-kind status) ':directory)
+            (win32--make-directory-tree-writable
+             platform (uiop:ensure-directory-pathname entry)))
+          (win32--clear-read-only-attribute entry)))))
+  (win32--clear-read-only-attribute directory)
+  nil)
+
+(-> win32--delete-directory-tree-with-retries
+    (win32-platform pathname list) t)
+(defun win32--delete-directory-tree-with-retries (platform pathname arguments)
+  "Delete PATHNAME, retrying transient Windows sharing and access failures."
+  (loop for attempt from 1 to 20
+        do (handler-case
+               (return (apply #'uiop:delete-directory-tree pathname arguments))
+             (file-error (condition)
+               (when (= attempt 20)
+                 (error condition))
+               (when (uiop:directory-exists-p pathname)
+                 (ignore-errors
+                   (win32--make-directory-tree-writable platform pathname)))
+               (sleep 0.05)))))
+
 (defmethod platform-delete-directory-tree ((platform win32-platform) pathname
                                            &rest arguments
                                            &key (validate nil validate-p)
                                              if-does-not-exist)
-  "Delete PATHNAME's tree after clearing the read-only attributes Windows refuses.
+  "Delete PATHNAME after recursively clearing attributes Windows refuses.
 
-Git marks its object files read-only, and DeleteFileW refuses such a file
-whatever its directory allows, so every entry is made writable first once
-PATHNAME passes the validation UIOP applies."
-  (declare (ignore platform if-does-not-exist))
+Native enumeration includes dot-prefixed Git trees that UIOP wildcard traversal
+can omit. Bounded retries cover handles released just after a child process exits."
+  (declare (ignore if-does-not-exist))
   (when (and validate-p
              (pathnamep pathname)
              (uiop:directory-pathname-p pathname)
              (not (wild-pathname-p pathname))
              (uiop:call-function validate pathname)
              (uiop:directory-exists-p pathname))
-    (uiop:collect-sub*directories
-     pathname
-     (constantly t)
-     (constantly t)
-     (lambda (directory)
-       (win32--clear-read-only-attribute directory)
-       (map nil #'win32--clear-read-only-attribute
-            (uiop:directory-files directory)))))
-  (apply #'uiop:delete-directory-tree pathname arguments))
+    (win32--make-directory-tree-writable platform pathname))
+  (win32--delete-directory-tree-with-retries platform pathname arguments))
 
 
 ;;;; -- Terminal and Shell --
