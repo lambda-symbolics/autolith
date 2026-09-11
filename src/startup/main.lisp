@@ -714,6 +714,12 @@ dependencies."
       (format *error-output* "~&Autolith: ~A~%"
               (application--command-sandbox-unavailable-message))
       (force-output *error-output*))
+    ;; ACP mode serves an editor directly over stdio and never touches the
+    ;; terminal UI, so it branches before every interactive start path.
+    (when (getopt* command ':acp)
+      (acp-serve :configuration configuration)
+      (return-from main--start-session nil))
+
     (when (main--client-session-p
            :handoff-record handoff-record
            :authenticate-p authenticate-p
@@ -744,11 +750,6 @@ dependencies."
                 (ignore-errors (localgroup-query-record record ':kill))
                 (error condition))))
           (return-from main--start-session nil))))
-    ;; ACP mode serves an editor directly over stdio and never touches the
-    ;; terminal UI, so it branches before every interactive start path.
-    (when (getopt* command ':acp)
-      (acp-serve :configuration configuration)
-      (return-from main--start-session nil))
 
     (let ((*localgroup-startup-record* handoff-record))
       (setf *active-application*
