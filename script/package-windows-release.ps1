@@ -6,6 +6,17 @@ $out=[IO.Path]::GetFullPath((Join-Path $root $OutputDirectory)); $stage=Join-Pat
 try {
   New-Item -ItemType Directory -Force -Path $out,(Join-Path $release 'libexec\autolith'),(Join-Path $release 'bin'),(Join-Path $release 'native')|Out-Null
   $tar=Join-Path $stage 'source.tar'; & git -C $root archive --format=tar --output=$tar HEAD; if($LASTEXITCODE){throw 'git archive failed.'}; & tar.exe -xf $tar -C (Join-Path $release 'libexec\autolith'); if($LASTEXITCODE){throw 'tar extraction failed.'}
+  $packagedSource = Join-Path $release 'libexec\autolith'
+  & git -C $packagedSource init --quiet
+  if ($LASTEXITCODE) { throw 'packaged source Git initialization failed.' }
+  & git -C $packagedSource config core.autocrlf false
+  & git -C $packagedSource config user.name 'Autolith package builder'
+  & git -C $packagedSource config user.email 'package@localhost'
+  & git -C $packagedSource add --all
+  if ($LASTEXITCODE) { throw 'packaged source Git staging failed.' }
+  & git -C $packagedSource commit --quiet -m 'Packaged Autolith source'
+  if ($LASTEXITCODE) { throw 'packaged source Git commit failed.' }
+  Add-Content -LiteralPath (Join-Path $packagedSource '.git\info\exclude') -Value '.qlot/'
   Copy-Item -Recurse -Force -LiteralPath (Join-Path $root '.qlot') -Destination (Join-Path $release 'libexec\autolith\.qlot')
   $version=(Get-Content -Raw (Join-Path $root 'sbcl.version')).Trim(); $data=Join-Path $env:LOCALAPPDATA 'autolith\data'; $runtimeRoot=Join-Path $data "runtimes\$version"
   Copy-Item -Recurse -Force -LiteralPath (Join-Path $runtimeRoot 'installation') -Destination (Join-Path $release 'runtime')
