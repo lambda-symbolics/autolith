@@ -76,7 +76,7 @@ jobs:
           $stage = Join-Path $env:RUNNER_TEMP 'release-smoke'
           Expand-Archive -LiteralPath $archive -DestinationPath $stage
           $release = Join-Path $stage ([IO.Path]::GetFileNameWithoutExtension($archive))
-          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'release-smoke-home'
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'release-smoke-Lukáš-žluťoučký-home'
           New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
           $log = Join-Path $env:RUNNER_TEMP 'smoke.log'
           $status = 0
