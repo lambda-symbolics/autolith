@@ -79,6 +79,13 @@
       *acp-mode-ids*
       (remove ':sandboxed *acp-mode-ids* :key #'first)))
 
+(-> acp--mode-object (list) json-object)
+(defun acp--mode-object (row)
+  "Return the ACP mode object for one *acp-mode-ids* row."
+  (json-object "id" (second row)
+               "name" (third row)
+               "description" (fourth row)))
+
 (-> acp--modes-object (keyword) json-object)
 (defun acp--modes-object (mode)
   "Return the ACP modes object for MODE."
