@@ -15,7 +15,7 @@ try {
                    (sb-alien:extern-alien "GetACP"
                                           (function sb-alien:unsigned-int)))))
   (assert (probe-file sb-ext:*runtime-pathname*))
-  (assert (probe-file sb-impl::*sbcl-homedir-pathname*))
+  (assert (probe-file (sb-int:sbcl-homedir-pathname)))
   (sb-ext:save-lisp-and-die
    (uiop:getenv "AUTOLITH_RUNTIME_TEST_CORE")
    :executable nil
