@@ -1,55 +1,8 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-Add-Type -TypeDefinition @'
-using System;
-using System.ComponentModel;
-using System.Runtime.InteropServices;
-using System.Text;
-
-public static class AutolithWindowsPath
-{
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern uint GetShortPathName(
-        string longPath,
-        StringBuilder shortPath,
-        uint shortPathLength);
-
-    public static string GetShortPath(string path)
-    {
-        var buffer = new StringBuilder(260);
-        var length = GetShortPathName(path, buffer, (uint)buffer.Capacity);
-        if (length == 0)
-            throw new Win32Exception(Marshal.GetLastWin32Error());
-        if (length >= buffer.Capacity)
-        {
-            buffer.Capacity = checked((int)length + 1);
-            length = GetShortPathName(path, buffer, (uint)buffer.Capacity);
-            if (length == 0)
-                throw new Win32Exception(Marshal.GetLastWin32Error());
-        }
-        return buffer.ToString();
-    }
-}
-'@
-
-function ConvertTo-AutolithSbclPath {
-  param([Parameter(Mandatory = $true)][string]$Path)
-  $runtimePath = [AutolithWindowsPath]::GetShortPath($Path)
-  if ($runtimePath -match '[^\x00-\x7F]') {
-    throw "Autolith cannot obtain an ASCII Windows path for SBCL from $Path."
-  }
-  return $runtimePath
-}
-
-function ConvertTo-AutolithSbclCorePath {
-  param([Parameter(Mandatory = $true)][string]$Path)
-  $parent = Split-Path -Parent $Path
-  $leaf = Split-Path -Leaf $Path
-  $shortParent = ConvertTo-AutolithSbclPath $parent
-  return Join-Path $shortParent $leaf
-}
-$releaseRoot = ConvertTo-AutolithSbclPath (Split-Path -Parent $PSScriptRoot)
+# The packaged runtime manifest selects UTF-8 for Windows narrow APIs.
+$releaseRoot = Split-Path -Parent $PSScriptRoot
 $sourceRoot = Join-Path $releaseRoot 'libexec\autolith'
 $runtime = Join-Path $releaseRoot 'runtime\sbcl.exe'
 $runtimeSource = Join-Path $releaseRoot 'libexec\sbcl-source'
@@ -60,12 +13,13 @@ if ($fields.platform -ne 'x86_64-windows') { throw "Autolith release failed: REL
 if (-not (Test-Path -LiteralPath $runtime) -or -not (Test-Path -LiteralPath (Join-Path $runtimeSource 'version.lisp-expr'))) { throw 'Autolith release failed: bundled SBCL runtime or source is missing.' }
 $env:AUTOLITH_SBCL = $runtime
 $env:AUTOLITH_SBCL_SOURCE_ROOT = $runtimeSource
+$env:SBCL_HOME = Join-Path $releaseRoot 'runtime'
 $native = Join-Path $releaseRoot 'native'
 $fff = Get-ChildItem -LiteralPath $native -Filter '*fff*.dll' -File | Select-Object -First 1
 $color = Get-ChildItem -LiteralPath $native -Filter '*colorlisp*.dll' -File | Select-Object -First 1
 if (-not $fff -or -not $color) { throw 'Autolith release failed: bundled native libraries are missing.' }
-$env:AUTOLITH_FFF_LIBRARY = ConvertTo-AutolithSbclPath $fff.FullName
-$env:COLORLISP_NATIVE_LIBRARY = ConvertTo-AutolithSbclPath $color.FullName
+$env:AUTOLITH_FFF_LIBRARY = $fff.FullName
+$env:COLORLISP_NATIVE_LIBRARY = $color.FullName
 $env:PATH = "$native;$env:PATH"
 $env:GIT_OPTIONAL_LOCKS = '0'
 if ($args.Count -gt 0 -and $args[0] -eq '--autolith-release-probe') {
@@ -82,15 +36,13 @@ $usable = (Test-Path -LiteralPath $activeCore) -and (Test-Path -LiteralPath $rec
 if (-not $usable) {
   [Console]::Error.WriteLine('Building Autolith images for this machine. This happens once per release.')
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $activeCore),(Split-Path -Parent $recoveryCore),(Split-Path -Parent $marker) | Out-Null
-  $activeRuntimeCore = ConvertTo-AutolithSbclCorePath $activeCore
-  $recoveryRuntimeCore = ConvertTo-AutolithSbclCorePath $recoveryCore
-  & $runtime --script (Join-Path $sourceRoot 'script\build-recovery.lisp') $recoveryRuntimeCore
+  & $runtime --script (Join-Path $sourceRoot 'script\build-recovery.lisp') $recoveryCore
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  & $runtime --script (Join-Path $sourceRoot 'script\build-active.lisp') $activeRuntimeCore
+  & $runtime --script (Join-Path $sourceRoot 'script\build-active.lisp') $activeCore
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   Set-Content -Encoding ascii -NoNewline -LiteralPath $marker -Value $identity
 }
-$env:AUTOLITH_ACTIVE_CORE = ConvertTo-AutolithSbclCorePath $activeCore
-$env:AUTOLITH_RECOVERY_CORE = ConvertTo-AutolithSbclCorePath $recoveryCore
+$env:AUTOLITH_ACTIVE_CORE = $activeCore
+$env:AUTOLITH_RECOVERY_CORE = $recoveryCore
 & $runtime --script (Join-Path $sourceRoot 'script\runtime.lisp') --script (Join-Path $sourceRoot 'script\launcher.lisp') @args
 exit $LASTEXITCODE

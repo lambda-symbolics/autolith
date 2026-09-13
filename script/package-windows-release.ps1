@@ -20,6 +20,7 @@ try {
   Copy-Item -Recurse -Force -LiteralPath (Join-Path $root '.qlot') -Destination (Join-Path $release 'libexec\autolith\.qlot')
   $version=(Get-Content -Raw (Join-Path $root 'sbcl.version')).Trim(); $data=Join-Path $env:LOCALAPPDATA 'autolith\data'; $runtimeRoot=Join-Path $data "runtimes\$version"
   Copy-Item -Recurse -Force -LiteralPath (Join-Path $runtimeRoot 'installation') -Destination (Join-Path $release 'runtime')
+  & (Join-Path $PSScriptRoot 'prepare-windows-runtime.ps1') -Runtime (Join-Path $release 'runtime\sbcl.exe')
   Copy-Item -Recurse -Force -LiteralPath (Join-Path $runtimeRoot 'source') -Destination (Join-Path $release 'libexec\sbcl-source')
   Copy-Item -Force (Join-Path $root 'bin\autolith.cmd') (Join-Path $release 'bin\autolith.cmd'); Copy-Item -Force (Join-Path $root 'bin\autolith-release.ps1') (Join-Path $release 'bin\autolith.ps1')
   $fff = Get-ChildItem -Recurse -File -LiteralPath (Join-Path $data 'native\fff') -Filter '*.dll' | Select-Object -First 1

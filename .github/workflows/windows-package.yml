@@ -24,7 +24,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  unicode-runtime:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check Unicode runtime startup and core I/O
+        shell: pwsh
+        run: |
+          & bin\autolith-runtime.ps1 --install --version
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime installation failed.' }
+          $version = (Get-Content -Raw sbcl.version).Trim()
+          $installed = Join-Path $env:LOCALAPPDATA "autolith\data\runtimes\$version\installation"
+          $runtime = Join-Path $env:RUNNER_TEMP 'runtime Lukáš-žluťoučký'
+          Copy-Item -Recurse -LiteralPath $installed -Destination $runtime
+          script\prepare-windows-runtime.ps1 -Runtime (Join-Path $runtime 'sbcl.exe')
+          script\check-windows-runtime.ps1 -RuntimeDirectory $runtime
+
   package-windows-x86_64:
+    needs: unicode-runtime
     runs-on: windows-2025
     timeout-minutes: 90
     steps:
@@ -67,8 +85,7 @@ jobs:
           script\package-windows-release.ps1 -OutputDirectory dist -Tag $tag
           script\validate-windows-release-artifact.ps1 -Archive (Get-ChildItem dist\*.zip).FullName
 
-      # The packaged launcher builds its images under a fresh per-user data
-      # root, as a first run on a user's machine does.
+      # Exercise first-run builds with both release and data paths containing Unicode.
       - name: Smoke-test the packaged launcher
         shell: pwsh
         run: |

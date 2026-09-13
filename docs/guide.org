@@ -137,10 +137,15 @@ ln -sfn "$PWD/bin/autolith" ~/.local/bin/autolith
 
 This is assuming you have .local/bin/ in PATH.
 
-** Windows source checkout
+** Windows
 
-Windows x86-64 runs Autolith from a source checkout; there is no packaged
-Windows release yet. Install Git for Windows, Rust with the MSVC toolchain
+For the Windows x86-64 development artifact, extract the archive into a writable
+folder and run =.\bin\autolith.cmd= from PowerShell. Use Windows 10 version 1903
+or newer. The bundled SBCL executable has a UTF-8 process manifest for Unicode
+paths; system-wide locale changes and 8.3 filenames are unnecessary. The first
+launch builds per-user cores under =.autolith-images= beside the release.
+
+To build the source checkout, install Git for Windows, Rust with the MSVC toolchain
 and Cargo, and Quicklisp under =%USERPROFILE%\quicklisp=. Put =clang= on
 =PATH= for the ColorLisp syntax library. An SBCL 2.6.6 or newer on =PATH= is
 used when present; otherwise the bootstrap downloads the official SBCL Windows
@@ -158,8 +163,9 @@ script\check.ps1
 
 =script\check.ps1= takes the same selectors as =./script/check=. Checks that
 need FIFOs, forked children, pseudo-terminals, POSIX file modes, or the POSIX
-shell are recorded as skipped; the release scripts and the release server are
-POSIX-only and are not built.
+shell are recorded as skipped. To package a Windows archive, install the Windows
+SDK (including =mt.exe=) and run =script\package-windows-release.ps1 -Tag VERSION=.
+The POSIX release-server scripts are not built on Windows.
 
 Start a session with =bin\autolith.cmd= or =bin\autolith.ps1=; both take the
 arguments =bin/autolith= takes. Windows Terminal is the primary console;
