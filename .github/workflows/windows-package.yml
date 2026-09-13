@@ -32,7 +32,7 @@ jobs:
       - name: Check Unicode runtime startup and core I/O
         shell: pwsh
         run: |
-          & bin\autolith-runtime.ps1 --install --version
+          & bin\autolith-runtime.ps1 --install --script script/runtime-requirement.lisp
           if ($LASTEXITCODE -ne 0) { throw 'Runtime installation failed.' }
           $version = (Get-Content -Raw sbcl.version).Trim()
           $installed = Join-Path $env:LOCALAPPDATA "autolith\data\runtimes\$version\installation"
