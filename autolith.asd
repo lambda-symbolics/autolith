@@ -230,6 +230,7 @@
                 :components ((:file "test-support")
                              (:file "posix-fixtures" :if-feature (:not :win32))
                              (:file "win32-fixtures" :if-feature :win32)
+                               (:file "acp-tests")
                              (:file "device-authentication-test-support")
                              (:file "stream-tests")
                              (:file "memory-tests")
