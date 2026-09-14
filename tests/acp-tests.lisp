@@ -219,7 +219,7 @@ Use TIMEOUT as the per-line wait bound."
                   "clientCapabilities" (json-object)
                   "clientInfo" (json-object "name" "test" "version" "0")))
     (acp-test--expect-response client 1)
-    (acp-test--request client 2 "session/list" (json-object))
+      (acp-test--request client 2 "session/unknown" (json-object))
     (acp-test--expect-error client 2 *acp-method-not-found-code*)))
 
 (defun test-acp-prompt-unknown-session ()
@@ -239,7 +239,7 @@ Use TIMEOUT as the per-line wait bound."
                                          "text" "hello"))))
     (acp-test--expect-error client 2 *acp-invalid-params-code*)
     ;; Prove the connection is still healthy.
-    (acp-test--request client 3 "session/list" (json-object))
+      (acp-test--request client 3 "session/unknown" (json-object))
     (acp-test--expect-error client 3 *acp-method-not-found-code*)))
 
 (defun test-acp-cancel-notification ()
@@ -264,6 +264,61 @@ Use TIMEOUT as the per-line wait bound."
       (let ((line (acp-test--read-line-timeout client 1)))
         (test-assert (null line)
                      "session/cancel produced no stdout reply line")))))
+(defun test-acp-session-set-mode ()
+  "session/set_mode changes the mode and emits a current_mode_update."
+  (acp-test--with-client (client)
+    (acp-test--request
+     client 1 "initialize"
+     (json-object "protocolVersion" 1
+                  "clientCapabilities" (json-object)
+                  "clientInfo" (json-object "name" "test" "version" "0")))
+    (acp-test--expect-response client 1)
+    (acp-test--request
+     client 2 "session/new"
+     (json-object "cwd" (namestring (uiop:getcwd))
+                  "mcpServers" (json-array)))
+    (let ((session-id (json-get (json-get (acp-test--expect-response client 2) "result")
+                                "sessionId")))
+      (acp-test--request
+       client 3 "session/set_mode"
+       (json-object "sessionId" session-id "modeId" "auto"))
+      (let* ((update (acp-test--expect-message client))
+             (params (json-get update "params"))
+             (update-object (json-get params "update")))
+        (test-assert (string= (json-get update "method") "session/update")
+                     "set_mode emits a session/update notification")
+        (test-assert (string= (json-get update-object "sessionUpdate")
+                              "current_mode_update")
+                     "update is current_mode_update")
+        (test-assert (equal (json-get update-object "currentModeId") "auto")
+                     "currentModeId is auto"))
+      (let ((response (acp-test--expect-response client 3)))
+        (test-assert (hash-table-p (json-get response "result"))
+                     "session/set_mode returns a result")))))
+
+(defun test-acp-session-list ()
+  "session/list returns the active session ids."
+  (acp-test--with-client (client)
+    (acp-test--request
+     client 1 "initialize"
+     (json-object "protocolVersion" 1
+                  "clientCapabilities" (json-object)
+                  "clientInfo" (json-object "name" "test" "version" "0")))
+    (acp-test--expect-response client 1)
+    (acp-test--request
+     client 2 "session/new"
+     (json-object "cwd" (namestring (uiop:getcwd))
+                  "mcpServers" (json-array)))
+    (let ((session-id (json-get (json-get (acp-test--expect-response client 2) "result")
+                                "sessionId")))
+      (acp-test--request client 3 "session/list" (json-object))
+      (let* ((response (acp-test--expect-response client 3))
+             (result (json-get response "result")))
+        (test-assert (vectorp result) "session/list result is an array")
+        (test-assert (= (length result) 1) "session/list returns one session")
+        (test-assert (equal (json-get (aref result 0) "sessionId") session-id)
+                     "session/list contains the new session")))))
+
 
 (defun test-acp-stdout-purity-and-clean-exit ()
   "Every line on stdout parses as JSON-RPC and the agent exits cleanly."
@@ -279,7 +334,7 @@ Use TIMEOUT as the per-line wait bound."
      (json-object "cwd" (namestring (uiop:getcwd))
                   "mcpServers" (json-array)))
     (acp-test--expect-response client 2)
-    (acp-test--request client 3 "session/list" (json-object))
+      (acp-test--request client 3 "session/unknown" (json-object))
     (acp-test--expect-error client 3 *acp-method-not-found-code*)
     ;; Close stdin, drain stdout, and verify exit.
     (close (getf client :input))
