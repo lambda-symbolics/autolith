@@ -29,9 +29,13 @@ try {
     Remove-LocalUser -Name $name
   }
   if (Test-Path -LiteralPath $root) {
-    # Saved cores have owner-only ACLs. Reclaim the disposable account's files.
-    & takeown.exe /F $root /R /D Y | Out-Null
-    & icacls.exe $root /grant '*S-1-5-32-544:(OI)(CI)F' /T /C | Out-Null
+    # Replace protected core ACLs with the disposable root's inherited grants.
+    & takeown.exe /F $root /A /R /D Y | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot reclaim sandbox test files.' }
+    & icacls.exe (Join-Path $root '*') /reset /T /C /L /Q
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot reset sandbox test file permissions.' }
+    & attrib.exe -R (Join-Path $root '*') /S /D /L
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot clear sandbox test file attributes.' }
     Remove-Item -Recurse -Force -LiteralPath $root
   }
 }
