@@ -387,9 +387,9 @@
              (declare (ignore active-ui))
              (unwind-protect
                   (progn
-                    (unless (terminal-ui-fullscreen-p ui)
-                      (application-present application
-                                           (application-banner application)))
+                    (terminal-ui-boot-sequence ui)
+                    (application-present application
+                                         (application-banner application))
                     (let ((update-notice
                             (application--update-notice application)))
                       (when update-notice

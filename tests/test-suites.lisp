@@ -26,6 +26,8 @@
   test-terminal-fullscreen-small-windows
   test-terminal-fullscreen-failure-and-lifecycle
   test-fullscreen-boot-geometry
+  test-fullscreen-boot-sequence
+  test-terminal-fullscreen-relayed-wheel
   test-fullscreen-authentication-lifecycle)
 (define-test-suite stream
   test-bounded-character-reads)

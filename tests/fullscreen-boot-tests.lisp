@@ -63,3 +63,42 @@
         (test-assert (fullscreen-terminal-ui-active-p ui) "session remains usable")
         (test-assert (= 1 (length (fullscreen-terminal-ui-chunks ui))) "authentication presentation is not transcript content"))))
   nil)
+
+
+(-> test-fullscreen-boot-sequence () null)
+(defun test-fullscreen-boot-sequence ()
+  "Keep boot frames visible through refresh, then restore deferred transcript output."
+  (let ((terminal (make-instance 'recording-terminal :columns 80 :rows 24)))
+    (with-terminal-ui (ui (fullscreen-test--ui terminal))
+      (setf (fullscreen-terminal-ui-welcome-tip ui)
+            (list (terminal-span ':hint "operator advice")))
+      (let ((frames nil)
+            (seconds 0))
+        (terminal-ui-boot-sequence
+         ui :wait-function
+         (lambda (duration)
+           (incf seconds duration)
+           (push (copy-seq (fullscreen-terminal-ui-frame ui)) frames)
+           (let* ((frame (first frames))
+                  (tip-row (find-if (lambda (row) (search "operator advice" row)) frame)))
+             (test-assert tip-row "each boot stage displays the tip")
+             (test-assert (= 32 (search "operator advice" (clinedi:ansi-strip tip-row)))
+                          "short tips are centered within the terminal")
+             (terminal-ui-append-finalized ui (length frames) "deferred output")
+             (terminal-ui--paint-live ui)
+             (test-assert (equalp frame (fullscreen-terminal-ui-frame ui))
+                          "ordinary redraw cannot erase a boot stage"))))
+        (test-assert (= 3 (length frames)) "boot advances through three visible stages")
+        (test-assert (> seconds 1) "fast startup still leaves time to see the boot screen")
+        (test-assert (not (equalp (first frames) (second frames))) "boot stages visibly advance")
+        (test-assert (not (terminal-ui-live-output-suspended-p ui)) "ordinary output resumes")
+        (test-assert (search "deferred output" (first (aref (fullscreen-terminal-ui-chunks ui) 0)))
+                     "output accepted during boot is published afterward"))
+      (test-assert
+       (handler-case
+           (terminal-ui-boot-sequence ui :wait-function (lambda (seconds)
+                                                        (declare (ignore seconds))
+                                                        (error "Interrupted boot.")))
+         (simple-error () t)) "boot interruption propagates")
+      (test-assert (not (terminal-ui-live-output-suspended-p ui)) "interrupted boot restores output ownership")))
+  nil)

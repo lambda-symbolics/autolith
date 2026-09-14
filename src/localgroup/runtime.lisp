@@ -394,6 +394,12 @@ forced shutdown does; the conversation stays resumable."
       (terminal-ui-detach ui)))
   nil)
 
+(-> localgroup--terminal-event-p (t) boolean)
+(defun localgroup--terminal-event-p (event)
+  "Accept ordinary relay input and bounded fullscreen wheel events."
+  (not (null (or (image-daemon:daemon-terminal-event-p event)
+                 (typep event '(cons (eql :scroll) (cons (member -1 1) null)))))))
+
 (-> localgroup--serve-attachment
     (localgroup-session sb-bsd-sockets:socket stream list)
     null)
@@ -439,7 +445,8 @@ forced shutdown does; the conversation stays resumable."
                  (return-from localgroup--serve-attachment nil))
                (unless (eq mode ':read-only)
                  (localgroup--note-controller-attached session))
-               (image-daemon:relay-read-attachment terminal attachment))
+               (image-daemon:relay-read-attachment
+                terminal attachment :event-validator #'localgroup--terminal-event-p))
           (let ((controlled-p (image-daemon:relay-detach terminal attachment)))
             (when controlled-p
               (localgroup--detach-live-region application))

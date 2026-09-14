@@ -2380,6 +2380,13 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
   (with-terminal-ui-locked (ui)
     (let ((terminal (terminal-ui-terminal ui)))
       (when (and (terminal-ui-started-p ui)
+                 (terminal-ui-fullscreen-p ui)
+                 (terminal-interactive-p terminal)
+                 (not (fullscreen-terminal-ui-active-p ui)))
+        ;; Re-enter after a detached foreground releases the alternate buffer.
+        (terminal-ui-fullscreen-enter ui)
+        (terminal-ui--paint-live ui))
+      (when (and (terminal-ui-started-p ui)
                  (terminal-interactive-p terminal)
                  (not (terminal-ui-fullscreen-p ui))
                  (eq (terminal-ui-prompt-marker-state ui) ':closed))
