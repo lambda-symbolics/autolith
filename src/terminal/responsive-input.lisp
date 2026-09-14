@@ -2406,17 +2406,24 @@ may execute immediately; other Lisp waits for the idle boundary."
            (application-input-controller--present-scheduled-command controller text))))
     handled-p))
 
-(-> application-input-controller--vault-command-p
+(-> application-input-controller--vault-input-p
     ((or string user-message-input))
     boolean)
-(defun application-input-controller--vault-command-p (input)
-  "Return true when INPUT is one of the recovery-vault control commands."
+(defun application-input-controller--vault-input-p (input)
+  "Return true when INPUT is a recovery-vault control in slash or Lisp form."
   (let ((text (user-message-input-text input)))
-    (not
-     (null
-      (member text
-              '("/vault" "/vault-restore" "/vault-discard")
-              :test #'string=)))))
+    (or (not (null (member text
+                          '("/vault" "/vault-restore" "/vault-discard" "/vault-store")
+                          :test #'string=)))
+        (and (terminal-ui--lisp-draft-p text)
+             (handler-case
+                 (let* ((*package* (find-package '#:autolith))
+                        (form (self-read-form text :read-eval nil)))
+                   (or (application-operation--immediate-vault-form-p form)
+                       (not (null (member form
+                                          '((vault) (vault-restore) (vault-discard) (vault-store))
+                                          :test #'equal)))))
+               (error () nil))))))
 
 (-> application-input-controller--submission-storage-ready-p
     (application-input-controller (or string user-message-input))
@@ -2424,7 +2431,7 @@ may execute immediately; other Lisp waits for the idle boundary."
 (defun application-input-controller--submission-storage-ready-p (controller input)
   "Return true when INPUT may be accepted without replacing preserved state."
   (or (application-input-controller-pending-persistence-enabled-p controller)
-      (application-input-controller--vault-command-p input)
+      (application-input-controller--vault-input-p input)
       (application-input-controller--prompt-storage-ready-p controller)))
 
 (-> application-input-controller--prompt

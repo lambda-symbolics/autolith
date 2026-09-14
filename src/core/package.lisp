@@ -906,6 +906,7 @@
            #:run-tests
            #:unregister-application-command
            #:unregister-context-contributor
+           #:vault-contents
            #:worker-main))
 
 (in-package #:autolith)

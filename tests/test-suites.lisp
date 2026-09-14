@@ -4,6 +4,15 @@
 
 (setf *test-suites* nil)
 
+(define-test-suite vault-edit
+  test-vault-operation-routing
+  test-vault-store-and-edit
+  test-vault-store-active-routing
+  test-vault-store-publication-failures
+  test-vault-store-concurrent-admission
+  test-vault-edit-write-failure
+  test-vault-store-crash-boundaries)
+
 (define-test-suite core
   test-core-defaults
   test-xdg-directory-selection

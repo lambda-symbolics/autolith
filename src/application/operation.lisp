@@ -325,7 +325,11 @@ local-user override."
    (make-instance 'application-local-operation
                   :name "eval-now"
                   :description "Force explicit local Lisp to run during an active turn."
-                  :backend 'eval-now))
+                  :backend 'eval-now)
+   (make-instance 'application-local-operation
+                  :name "vault-contents"
+                  :description "Read or edit the queued input vault."
+                  :backend 'vault-contents))
   "The built-in local forms advertised beside registered commands and tools.")
 
 (-> tool-user-callable-p (tool) boolean)
@@ -831,23 +835,45 @@ options appear only after the typed text passes the function name."
 (defun application-operation-source-active-turn-action (application source)
   "Classify one complete explicit Lisp SOURCE beside APPLICATION's active turn.
 
-Only top-level EVAL-NOW or a registered operation with literal argument forms may
-run immediately. Arbitrary Lisp and computed operation arguments wait for the
-serialized application boundary."
+Only top-level EVAL-NOW, a vault control, or a registered operation with literal
+argument forms may run immediately. Arbitrary Lisp and computed operation arguments
+wait for the serialized application boundary."
   (handler-case
       (let* ((*package* (find-package '#:autolith))
              (form (self-read-form source :read-eval nil)))
-        (unless (and (application-operation--proper-list-p form)
-                     (symbolp (first form)))
-          (return-from application-operation-source-active-turn-action ':hold))
-        (let* ((operation (application-operation-find application (first form)))
-               (arguments (rest form)))
-          (if (and operation
-                   (application-operation-immediate-arguments-p operation arguments))
-              (application-operation-active-turn-action operation arguments)
-              ':hold)))
+        (cond
+          ((application-operation--immediate-vault-form-p form)
+           ':execute)
+          ((and (application-operation--proper-list-p form)
+                (symbolp (first form)))
+           (let* ((operation (application-operation-find application (first form)))
+                  (arguments (rest form)))
+             (if (and operation
+                      (application-operation-immediate-arguments-p operation arguments))
+                 (application-operation-active-turn-action operation arguments)
+                 ':hold)))
+          (t
+           ':hold)))
     (error ()
       ':hold)))
+
+(-> application-operation--vault-place-p (t) boolean)
+(defun application-operation--vault-place-p (form)
+  "Return whether FORM is a VAULT-CONTENTS place with an optional index."
+  (and (application-operation--proper-list-p form)
+       (eq (first form) 'vault-contents)
+       (<= (length (rest form)) 1)))
+
+(-> application-operation--immediate-vault-form-p (t) boolean)
+(defun application-operation--immediate-vault-form-p (form)
+  "Recognize direct vault reads and SETF with exclusively vault places."
+  (or (application-operation--vault-place-p form)
+      (and (application-operation--proper-list-p form)
+           (eq (first form) 'setf)
+           (rest form)
+           (evenp (length (rest form)))
+           (loop for place in (rest form) by #'cddr
+                 always (application-operation--vault-place-p place)))))
 
 
 ;;;; -- Authoritative Dispatch --

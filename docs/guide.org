@@ -272,6 +272,28 @@ restarts. Escape at the ordinary restart picker aborts the failed operation.
 During an active provider turn, Ctrl-C keeps the existing cancellation and
 second-interrupt force-exit behavior.
 
+** Parking and editing queued input
+
+Run =(vault-store)= to move queued work and unconsumed steering into the recovery
+input vault immediately, including during an active turn. Active work continues.
+Use =(vault-contents)= to read the parked entries in restoration order and =setf=
+to replace the whole list or one zero-based entry:
+
+#+BEGIN_SRC lisp
+(vault-store)
+(vault-contents)
+(setf (vault-contents 0) '(:message "Revised task"))
+(setf (vault-contents) '((:message "First task") (:lisp "(+ 1 2)")))
+(vault-restore)
+#+END_SRC
+
+Entries are =(:message INPUT)=, =(:command TEXT)=, or =(:lisp SOURCE)=.
+Direct vault reads and top-level =setf= forms containing only =vault-contents=
+places execute during an active turn. Returned lists are detached snapshots;
+publish edits with =setf=. Use =(setf (vault-contents) nil)= to clear parked input.
+Run =(vault)= for a summary or =(vault-restore)= to prepend parked work to the
+live queue. Slash syntax such as =/vault-store= invokes the same command.
+
 ** Managed resources
 
 =resource.read= observes durable state and returns an opaque revision.

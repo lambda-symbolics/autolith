@@ -520,6 +520,33 @@
      "skipped operation bindings preserve the existing function"))
   nil)
 
+(-> test-vault-operation-routing () null)
+(defun test-vault-operation-routing ()
+  "Test the narrow immediate admission boundary for vault controls."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (unwind-protect
+         (let ((vault-operation (application-operation-find application 'vault-contents)))
+           (test-assert (typep vault-operation 'application-local-operation)
+                        "vault-contents is a registered local operation")
+           (dolist (case
+                     '(("(vault-contents)" :execute)
+                       ("(vault-contents 0)" :execute)
+                       ("(setf (vault-contents) (list (list :message \"x\")))" :execute)
+                       ("(setf (vault-contents 0) (progn \"x\"))" :execute)
+                       ("(setf (other-place) 1)" :hold)
+                       ("(setf (vault-contents) 1 (other-place) 2)" :hold)))
+             (destructuring-bind (source expected) case
+               (test-assert
+                (eq (application-operation-source-active-turn-action
+                     application source)
+                    expected)
+                (format nil "~A has vault active-turn action ~S" source expected)))))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
 (-> run-application-operation-tests () boolean)
 (defun run-application-operation-tests ()
   "Run focused unified command and tool operation tests."
