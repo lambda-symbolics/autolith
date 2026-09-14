@@ -132,18 +132,21 @@ provider request --> semantic events --> agent --> validated tool calls
 
 * Workspace and workers
 
-- Workspace operations use one policy. =cl-exec-sandbox= picks the
-  backend based on operating system:
+- Command execution uses =platform-call-with-command-sandbox= to own policy
+  construction and scope cleanup. =cl-exec-sandbox= selects the backend:
   - Bubblewrap on Linux
   - Seatbelt via =sandbox-exec= on macOS
-  - No backend on Windows, where sandboxed policies are unavailable and
-    commands run through Git for Windows' shell or PowerShell
-- The default policy we select is:
+  - AppContainer, a restricted token, scoped ACLs, and a Job Object on Windows
+- The default policy provides:
   - no network
-  - host read-only
-  - workspace and temp writes,
-  - repository .git metadata is protected
+  - host read-only on POSIX; explicit tool reads and system application access on Windows
+  - workspace and temporary writes
+  - protected repository metadata
   - 60 second default timeout
+- The Windows adapter serializes scope construction through cleanup and sets
+  child-only temporary/cache environment paths. The release launcher selects the
+  bundled native helper outside writable scopes. Commands execute through Git
+  for Windows' shell or PowerShell.
 - Search is one supervised native helper per fff registry.
 - =lisp.*= operations run in named persistent SBCL subprocesses.
 - Worker images never participate in active startup or recovery

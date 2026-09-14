@@ -34,6 +34,12 @@
   (language win32-dword) (buffer (* t)) (size win32-dword) (arguments (* t)))
 (win32--define win32--local-free "LocalFree" (* t) (memory (* t)))
 (win32--define win32--close-handle "CloseHandle" win32-bool (handle win32-handle))
+(win32--define win32--create-mutex "CreateMutexW" win32-handle
+  (security (* t)) (owner win32-bool) (name win32-wide-string))
+(win32--define win32--wait-for-single-object "WaitForSingleObject" win32-dword
+  (handle win32-handle) (milliseconds win32-dword))
+(win32--define win32--release-mutex "ReleaseMutex" win32-bool
+  (handle win32-handle))
 (win32--define win32--create-file "CreateFileW" win32-handle
   (name win32-wide-string) (access win32-dword) (share win32-dword)
   (security (* t)) (disposition win32-dword) (flags win32-dword)
@@ -1156,6 +1162,86 @@ can omit. Bounded retries cover handles released just after a child process exit
     (if shell
         (list (uiop:native-namestring shell) "-c" command)
         (list "powershell.exe" "-NoProfile" "-NonInteractive" "-Command" command))))
+
+(defparameter *win32-sandbox-read-roots* nil
+  "Additional existing directories to expose read-only to sandboxed Windows commands.
+System application directories are available through AppContainer's system access.")
+
+(-> win32--call-with-sandbox-lock (function) t)
+(defun win32--call-with-sandbox-lock (function)
+  "Serialize sandbox scope lifetimes across Autolith processes and threads."
+  (let ((mutex (win32--create-mutex nil 0
+                                   "Global\\AutolithCommandSandbox-v1"))
+        (owned-p nil))
+    (when (zerop mutex)
+      (win32--fail ':command-sandbox-lock nil))
+    (unwind-protect
+         (progn
+           (loop until owned-p
+                 do (sb-sys:without-interrupts
+                      (case (win32--wait-for-single-object mutex 100)
+                        ((0 #x80)
+                         (setf owned-p t))
+                        (#x102
+                         nil)
+                        (otherwise
+                         (win32--fail ':command-sandbox-lock nil)))))
+           (funcall function))
+      (when owned-p
+        (win32--release-mutex mutex))
+      (win32--close-handle mutex))))
+
+(-> win32--sandbox-read-roots (win32-platform pathname) list)
+(defun win32--sandbox-read-roots (platform workspace)
+  "Return configured tool roots outside WORKSPACE and the AppContainer system surface."
+  (let ((system-roots
+          (remove nil (mapcar #'win32--absolute-environment-directory
+                              '("SystemRoot" "ProgramFiles" "ProgramFiles(x86)")))))
+    (remove-duplicates
+     (loop for value in *win32-sandbox-read-roots*
+           for path = (and (or (pathnamep value) (non-empty-string-p value))
+                           (uiop:ensure-directory-pathname
+                             (if (pathnamep value) value
+                                 (uiop:parse-native-namestring value))))
+           when (and path (uiop:absolute-pathname-p path)
+                     (uiop:directory-exists-p path))
+             append
+             (let ((canonical (platform-truename platform path)))
+               (unless (or (uiop:subpathp canonical workspace)
+                           (some (lambda (root) (uiop:subpathp canonical root)) system-roots))
+                 (list canonical))))
+     :test #'equal)))
+
+(-> win32--sandbox-environment (pathname) list)
+(defun win32--sandbox-environment (temporary)
+  "Return a child-only environment with private temporary and user cache locations."
+  (let* ((path (uiop:native-namestring temporary))
+         (names '("TEMP" "TMP" "TMPDIR" "HOME" "USERPROFILE" "APPDATA" "LOCALAPPDATA")))
+    (append
+     (mapcar (lambda (name) (format nil "~A=~A" name path)) names)
+     (remove-if
+      (lambda (binding)
+        (let ((equals (position #\= binding)))
+          (and equals (member (subseq binding 0 equals) names :test #'string-equal))))
+      (sb-ext:posix-environ)))))
+
+(defmethod platform-call-with-command-sandbox ((platform win32-platform) workspace function)
+  "Run FUNCTION with explicit workspace/tool scopes and a private Windows scratch directory."
+  (unless (sandbox-supported-p ':network-isolated)
+    (win32--unavailable ':command-sandbox
+                        "The native Windows sandbox helper is missing; rebuild or reinstall Autolith."))
+  (win32--call-with-sandbox-lock
+   (lambda ()
+     (let ((temporary (platform-make-temporary-directory
+                       platform (uiop:temporary-directory) "autolith-command-")))
+       (unwind-protect
+            (funcall function
+                     (cl-exec-sandbox:appcontainer-sandbox-policy
+                      :workspace-roots (list workspace temporary)
+                      :read-roots (win32--sandbox-read-roots platform workspace))
+                     (win32--sandbox-environment temporary))
+         (platform-delete-directory-tree platform temporary
+                                         :validate t :if-does-not-exist ':ignore))))))
 
 
 ;;;; -- Local Sockets --

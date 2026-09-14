@@ -285,6 +285,7 @@
                              (:file "task-agent-tests")
                              (:file "task-execution-tests")
                              (:file "task-scheduler-tests")
+                             (:file "windows-sandbox-tests" :if-feature :win32)
                              (:file "run-job-tests")
                              (:file "terminal-tests")
                              (:file "localgroup-tests")

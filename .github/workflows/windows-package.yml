@@ -110,6 +110,10 @@ jobs:
           }
 
 
+      - name: Verify packaged sandbox under a standard account
+        shell: pwsh
+        run: script\check-windows-sandbox.ps1 -Archive (Get-ChildItem dist\*.zip).FullName
+
       - name: Check
         if: ${{ !cancelled() && steps.bootstrap.outcome == 'success' }}
         shell: pwsh

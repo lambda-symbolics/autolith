@@ -15,6 +15,15 @@
 (require :sb-posix)
 (load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
 
+#+win32
+(unless (let ((value (uiop:getenv "CL_EXEC_SANDBOX_WINDOWS_HELPER")))
+          (and value (plusp (length value))))
+  (autolith-script-setenv
+   "CL_EXEC_SANDBOX_WINDOWS_HELPER"
+   (uiop:native-namestring
+    (merge-pathnames "native/sandbox/cl-exec-sandbox-windows.exe"
+                     (autolith-application-root ':data)))))
+
 
 ;;;; -- Launcher Options --
 

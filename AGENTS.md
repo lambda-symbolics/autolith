@@ -39,8 +39,9 @@ Host differences live behind the platform protocol in `src/core/platform.lisp`
 with one adapter per host family; `#+win32` appears only in those adapters, in
 `autolith.asd` feature expressions, and in the standalone scripts that run
 before the system loads. Windows withholds, each with a user-visible reason:
-sandboxed command execution, detached sessions and the localgroup handoff,
-fork-based checkpoints and forked image saves, and filesystem sockets. Checks
+detached sessions and the localgroup handoff, fork-based checkpoints and forked
+image saves, and filesystem sockets. Windows commands use the native AppContainer
+helper with explicit workspace, private temporary, and read-only tool scopes. Checks
 that depend on POSIX facilities go through the test fixture protocol in
 `tests/test-support.lisp` and are recorded as skipped where the host lacks
 them. Sources and tests alike change the environment through

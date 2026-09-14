@@ -334,6 +334,20 @@ interrupt context and must do no more than record the event."))
   (:documentation
    "Return the program and arguments that run shell COMMAND on this host."))
 
+(defgeneric platform-call-with-command-sandbox (platform workspace function)
+  (:documentation
+   "Call FUNCTION with a workspace sandbox policy and optional child environment.
+
+Own temporary scopes and serialize overlapping host ACL changes until FUNCTION
+returns or unwinds. FUNCTION accepts POLICY and ENVIRONMENT and must wait for
+its command and descendants before returning."))
+
+(defmethod platform-call-with-command-sandbox ((platform platform) workspace function)
+  "Use the whole-host read-only, workspace-write policy on POSIX backends."
+  (funcall function
+           (workspace-write-sandbox-policy :workspace-roots (list workspace))
+           nil))
+
 
 ;;;; -- Local Sockets --
 

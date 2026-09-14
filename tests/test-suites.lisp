@@ -449,6 +449,13 @@
   test-task-closed-runtime-refresh
   test-task-scheduler)
 
+(when (find-class 'win32-platform nil)
+  (define-test-suite windows-sandbox
+    test-windows-shell-sandbox-available
+    test-windows-shell-sandbox-integration
+    test-windows-shell-sandbox-async
+    test-windows-shell-sandbox-missing-helper-fails-closed))
+
 (define-test-suite terminal
   test-terminal-primary-screen-controls
   test-terminal-nonblocking-lock-interrupt

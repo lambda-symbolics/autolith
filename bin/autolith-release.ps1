@@ -20,6 +20,9 @@ $color = Get-ChildItem -LiteralPath $native -Filter '*colorlisp*.dll' -File | Se
 if (-not $fff -or -not $color) { throw 'Autolith release failed: bundled native libraries are missing.' }
 $env:AUTOLITH_FFF_LIBRARY = $fff.FullName
 $env:COLORLISP_NATIVE_LIBRARY = $color.FullName
+$helper = Join-Path $native 'cl-exec-sandbox-windows.exe'
+if (-not (Test-Path -LiteralPath $helper)) { throw 'Autolith release failed: bundled Windows sandbox helper is missing.' }
+$env:CL_EXEC_SANDBOX_WINDOWS_HELPER = $helper
 $env:PATH = "$native;$env:PATH"
 $env:GIT_OPTIONAL_LOCKS = '0'
 if ($args.Count -gt 0 -and $args[0] -eq '--autolith-release-probe') {

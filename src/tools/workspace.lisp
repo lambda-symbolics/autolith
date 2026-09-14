@@ -233,10 +233,10 @@ existing symlinks and the nearest existing parent before checking the boundary."
 
 
 (-> workspace-tool-run-shell-command
-    (string pathname t (integer 1) (integer 0))
+    (string pathname t (integer 1) (integer 0) &key (:environment list))
     tool-result)
 (defun workspace-tool-run-shell-command
-    (command directory policy timeout output-limit)
+    (command directory policy timeout output-limit &key environment)
   "Run one already authorized shell COMMAND with fully resolved execution policy."
   (let* ((result
            (handler-bind
@@ -251,8 +251,9 @@ existing symlinks and the nearest existing parent before checking the boundary."
                 program
                 arguments
                 :policy policy
-              :working-directory directory
-              :timeout timeout
+                :working-directory directory
+                :environment environment
+                :timeout timeout
                 :merge-output-p t
                 :output-limit output-limit
                 :error-output-limit output-limit))))
@@ -298,18 +299,10 @@ existing symlinks and the nearest existing parent before checking the boundary."
                   (tool-failure (princ-to-string condition)))))))
       (if (eq authorization ':deny)
           (tool-failure "The user denied this command.")
-          (let* ((configuration (tool-context-configuration context))
-                 (policy
-                    (ecase authorization
-                      (:sandboxed
-                       (workspace-tool-path context directory-argument)
-                       (workspace-write-sandbox-policy
-                        :workspace-roots
-                        (list
-                         (configuration-working-directory configuration))))
-                      (:full-access
-                       (external-sandbox-policy))))
-                 (output-limit *shell-maximum-output-characters*))
+          (let ((configuration (tool-context-configuration context))
+                (output-limit *shell-maximum-output-characters*))
+            (when (eq authorization ':sandboxed)
+              (workspace-tool-path context directory-argument))
             (tool-execution-invoke
              (tool-context-execution-runtime context)
              (tool-context-agent context)
@@ -318,7 +311,15 @@ existing symlinks and the nearest existing parent before checking the boundary."
              :summary (format nil "~A in ~A" command directory)
              :operation-function
              (lambda ()
-               (workspace-tool-run-shell-command
-                command directory policy timeout output-limit))
+               (flet ((run (policy environment)
+                        (workspace-tool-run-shell-command
+                         command directory policy timeout output-limit
+                         :environment environment)))
+                 (ecase authorization
+                   (:sandboxed
+                    (platform-call-with-command-sandbox
+                     *platform* (configuration-working-directory configuration) #'run))
+                   (:full-access
+                    (run (external-sandbox-policy) nil)))))
              :async-p async-p
              :parent-call-id (tool-context-call-id context)))))))
