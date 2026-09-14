@@ -49,10 +49,22 @@
 
 (-> terminal-ui--welcome-rows (terminal-ui integer) list)
 (defun terminal-ui--welcome-rows (ui height)
-  "Return the empty session's machine console above its pinned composer."
-  (nth-value 0 (terminal-ui--boot-screen-frame
-                ui :phase ':listener-ready
-                :detail "Type a request. Use (login) to connect a provider." :height height)))
+  "Center the machine console and one stable, wrapped tip above the composer."
+  (let* ((columns (max 1 (terminal-columns (terminal-ui-terminal ui))))
+         (width (min 64 (max 1 (- columns 4))))
+         (left (make-string (floor (- columns width) 2) :initial-element #\Space))
+         (tip (or (fullscreen-terminal-ui-welcome-tip ui)
+                  (setf (fullscreen-terminal-ui-welcome-tip ui)
+                        (application--startup-tip-spans))))
+         (tip-rows (terminal-ui-fullscreen--display-rows ui (list tip) width))
+         (panel (mapcar (lambda (row) (terminal--render-spans (terminal-ui-terminal ui) row))
+                        (terminal-ui--boot-screen-panel
+                         ':listener-ready "Type a request. Use (login) to connect a provider." columns)))
+         (rows (append panel (list "")
+                       (mapcar (lambda (row) (concatenate 'string left row)) tip-rows)))
+         (visible (subseq rows 0 (min (length rows) (max 0 height))))
+         (top (max 0 (floor (- height (length visible)) 2))))
+    (append (make-list top :initial-element "") visible)))
 
 (-> terminal-ui-boot-screen
     (terminal-ui (or string symbol) &optional (option string)) null)

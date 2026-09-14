@@ -130,25 +130,42 @@
          append (application--banner-terminate-row
                  (terminal--clip-spans metadata-row columns)))))
 
-(-> application--startup-command-entry () application-command)
-(defun application--startup-command-entry ()
-  "Return one command entry selected for the startup banner."
-  (let ((commands (application-command-list)))
-    (nth (random (length commands) (make-random-state t))
-         commands)))
+(defparameter *application-startup-tips*
+  '(((:plain "The prompt is a Lisp REPL, you can use it to evaluate arbitrary Common Lisp."))
+    ((:plain "The tools available to the model are callable functions in the prompt, try for instance ")
+     (:code "(search.files :query \"README\")")
+     (:plain " to fuzzy-search workspace file paths with fff."))
+    ((:code "AUTOLITH_WEB_SEARCH")
+     (:plain " selects provider web search: disabled turns it off, cached uses indexed results, and live fetches fresh results where supported."))
+    ((:code "autolith --fullscreen")
+     (:plain " uses a scrollable transcript and bottom-pinned composer. Save the choice for future launches with ")
+     (:code "(preferences-set-fullscreen (application-configuration *active-application*) t)")
+     (:plain "; nil restores the inline default.")))
+  "Startup advice supplementing registered command tips, as styled span specifications.")
 
 (-> application--command-tip-spans
     (application-command)
     terminal-styled-text)
 (defun application--command-tip-spans (entry)
   "Return a startup tip with ENTRY's canonical Lisp call styled as code."
-  (list (terminal-span :plain (format nil "~2%"))
-        (terminal-span :dim "Tip: ")
+  (list (terminal-span ':dim "Tip: ")
         (terminal-span
          :code
          (format nil "(~A)" (application-operation--command-name entry)))
         (terminal-span :plain
                        (format nil " ~A" (application-command-tip entry)))))
+
+(-> application--startup-tip-spans () terminal-styled-text)
+(defun application--startup-tip-spans ()
+  "Choose command or general advice without consuming the saved image's random state."
+  (let* ((commands (application-command-list))
+         (index (random (+ (length commands) (length *application-startup-tips*))
+                        (make-random-state t))))
+    (if (< index (length commands))
+        (application--command-tip-spans (nth index commands))
+        (cons (terminal-span ':dim "Tip: ")
+              (loop for (style text) in (nth (- index (length commands)) *application-startup-tips*)
+                    collect (terminal-span style text))))))
 
 (-> application-banner (application) list)
 (defun application-banner (application)
@@ -178,8 +195,8 @@
        :notice
        (format nil "~%Autolith executes model-generated code with your user ~
                     privileges.~%Sandboxing is no substitute for human oversight")))
-     (application--command-tip-spans
-      (application--startup-command-entry)))))
+     (list (terminal-span ':plain (format nil "~2%")))
+     (application--startup-tip-spans))))
 
 (-> application--update-notice (application) (option list))
 (defun application--update-notice (application)

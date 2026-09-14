@@ -34,6 +34,8 @@
                 :documentation "Width of the last successfully painted frame.")
    (cursor-visible-p :initform t :accessor fullscreen-terminal-ui-cursor-visible-p
                      :type boolean :documentation "Requested composer cursor visibility.")
+   (welcome-tip :initform nil :accessor fullscreen-terminal-ui-welcome-tip
+                :documentation "Startup advice retained across welcome repaints and resize.")
    (welcome-p :initform nil :accessor terminal-ui-fullscreen-welcome-p :type boolean
               :documentation "Whether the empty session shows the machine console panel."))
   (:documentation "An alternate-screen transcript viewport and bottom-pinned composer."))

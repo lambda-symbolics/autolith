@@ -2237,7 +2237,7 @@ are forwarded to TERMINAL-UI-SELECT."
     (:name "/model"
      :argument "[MODEL]"
      :description "pick a registered provider model and reasoning effort"
-     :tip "changes both the model and its reasoning effort."
+     :tip "selects the provider/model used for replies and then its reasoning effort; the choice is saved for future sessions."
      :busy-behavior :apply
      :terminal-behavior :exclusive
      :callable t)
@@ -2279,7 +2279,7 @@ are forwarded to TERMINAL-UI-SELECT."
     (:name "/effort"
      :argument "[LEVEL]"
      :description "pick the reasoning effort"
-     :tip "changes reasoning effort without switching models."
+     :tip "sets the model's reasoning budget without changing models. Higher levels allow more reasoning and can take longer; available levels depend on the model."
      :busy-behavior :apply
      :terminal-behavior :exclusive-without-arguments
      :callable t)
@@ -2301,7 +2301,7 @@ are forwarded to TERMINAL-UI-SELECT."
 (define-application-command application--builtin-fast-command
     (:name "/fast"
      :description "show or change Codex Fast mode"
-     :tip "uses service_tier=priority at 2x plan usage for future Codex requests."
+     :tip "sets Codex Fast mode: (fast \"on\") requests priority service at 2x plan usage; (fast \"off\") requests normal service."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -2313,7 +2313,7 @@ are forwarded to TERMINAL-UI-SELECT."
 (define-application-command application--builtin-trace-command
     (:name "/trace"
      :description "show visible reasoning summaries"
-     :tip "toggles visible reasoning summaries with on or off."
+     :tip "controls visible reasoning summaries: (trace \"on\") shows them, (trace \"off\") hides them. Use (effort) to change the reasoning budget."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -2325,7 +2325,7 @@ are forwarded to TERMINAL-UI-SELECT."
 (define-application-command application--builtin-turn-timestamps-command
     (:name "/timestamps"
      :description "show local timestamps beside user and assistant turns"
-     :tip "toggles dim local timestamps beside user and assistant turns."
+     :tip "controls local-time labels beside user and assistant turns: (timestamps \"on\") shows them, (timestamps \"off\") hides them."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -2337,7 +2337,7 @@ are forwarded to TERMINAL-UI-SELECT."
 (define-application-command application--builtin-simple-technical-english-command
     (:name "/ste"
      :description "use Simple Technical English for replies"
-     :tip "toggles short, direct Simple Technical English replies."
+     :tip "sets reply style: (ste \"on\") requests short, direct Simple Technical English; (ste \"off\") removes that style instruction."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -2349,7 +2349,7 @@ are forwarded to TERMINAL-UI-SELECT."
 (define-application-command application--builtin-session-titles-command
     (:name "/titles"
      :description "allow provider-generated session-title refreshes"
-     :tip "toggles automatic provider-generated session-title refreshes."
+     :tip "controls session naming: (titles \"on\") allows provider-generated title refreshes; (titles \"off\") uses locally derived titles."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -2361,7 +2361,7 @@ are forwarded to TERMINAL-UI-SELECT."
 (define-application-command application--builtin-cache-misses-command
     (:name "/cache-misses"
      :description "notify when a request re-reads uncached context"
-     :tip "reports prompt-cache misses and their likely cause after each affected request."
+     :tip "controls cache diagnostics: (cache-misses \"on\") reports uncached context and likely causes; (cache-misses \"off\") hides these notices."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -2373,7 +2373,7 @@ are forwarded to TERMINAL-UI-SELECT."
 (define-application-command application--builtin-hurry-up-command
     (:name "/hurry-up"
      :description "show or change hurry-up mode"
-     :tip "enables direct execution and admits at most two child agents."
+     :tip "sets execution style: (hurry-up \"on\") favors direct work and limits delegation to two child agents; (hurry-up \"off\") uses normal delegation limits."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -2385,7 +2385,7 @@ are forwarded to TERMINAL-UI-SELECT."
 (define-application-command application--builtin-permissions-command
     (:name "/permissions"
      :description "choose command access for this session"
-     :tip "chooses how shell commands are authorized, including autonomous auto mode."
+     :tip "sets command authorization: ask prompts for approval, auto authorizes autonomously, sandbox confines commands, and full grants session-wide host access."
      :busy-behavior :apply
      :terminal-behavior :exclusive-without-arguments
      :callable t
@@ -2649,7 +2649,7 @@ are forwarded to TERMINAL-UI-SELECT."
 (define-application-command application--builtin-compact-command
     (:name "/compact"
      :description "compact context now; on/off selects tool detail presentation"
-     :tip "compacts context without an argument, waiting until an active turn finishes."
+     :tip "with no argument compacts conversation context. (compact \"on\") collapses tool details; (compact \"off\") shows expanded details."
      :busy-behavior :hold
      :terminal-behavior :shared
      :callable t
