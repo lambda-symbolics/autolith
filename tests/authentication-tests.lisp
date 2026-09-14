@@ -463,7 +463,7 @@
               (let ((*standard-output* (make-string-output-stream)))
                 (main-authenticate configuration "example"))))
            (test-assert
-            (and (= observed-descriptor 0)
+            (and (= observed-descriptor (terminal-standard-input-file-descriptor))
                  (null observed-styled-p))
             "noninteractive command-line auth supplies stdin without terminal styling")
             (test-assert (null observed-method)
