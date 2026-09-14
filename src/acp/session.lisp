@@ -100,6 +100,18 @@
   "Return the starting command permission mode for ACP sessions."
   (or (preferences-permission-mode configuration) ':ask))
 
+(-> acp--mode-from-id (string) (option keyword))
+(defun acp--mode-from-id (mode-id)
+  "Return the permission mode keyword for MODE-ID, or NIL if it is unknown."
+  (first (find mode-id *acp-mode-ids* :key #'second :test #'string=)))
+
+(-> acp--current-mode-update (acp-session) null)
+(defun acp--current-mode-update (session)
+  "Notify SESSION's client that its permission mode changed."
+  (acp--session-update
+   session "current_mode_update"
+   (acp--modes-object (acp-session-mode session))))
+
 ;;;; -- Session Configuration --
 
 (-> acp--session-configuration (acp-server json-object) configuration)
@@ -455,17 +467,96 @@ authorization allows everything unconditionally."
            :observer (acp--session-observer session))))
     (json-object "stopReason" (acp--stop-reason result))))
 
+(-> acp--handle-session-set-mode (acp-server json-object) json-object)
+(defun acp--handle-session-set-mode (server params)
+  "Change SESSION's command permission mode and report the new mode."
+  (let* ((session (acp--resolved-session server params))
+         (mode-id (json-get params "modeId")))
+    (unless (stringp mode-id)
+      (error 'acp-method-error
+             :code *acp-invalid-params-code*
+             :message "The session/set_mode modeId field is required."))
+    (let ((mode (acp--mode-from-id mode-id)))
+      (unless mode
+        (error 'acp-method-error
+               :code *acp-invalid-params-code*
+               :message (format nil "Mode ~A is unknown." mode-id)))
+      (setf (application-permission-mode (acp-session-application session)) mode)
+      (setf (acp-session-mode session) mode)
+      (acp--current-mode-update session)
+      (json-object))))
+
+(-> acp--handle-authenticate (acp-server json-object) json-object)
+(defun acp--handle-authenticate (server params)
+  "Reply to authenticate with an empty result."
+  (declare (ignore server params))
+  (json-object))
+
+(-> acp--handle-logout (acp-server json-object) json-object)
+(defun acp--handle-logout (server params)
+  "Reply to logout with an empty result."
+  (declare (ignore server params))
+  (json-object))
+
+(-> acp-server-unregister (acp-server string) null)
+(defun acp-server-unregister (server session-id)
+  "Remove SESSION-ID from SERVER's session table."
+  (with-lock-held ((acp-server-lock server))
+    (remhash session-id (acp-server-sessions server)))
+  nil)
+
+(-> acp--handle-session-close (acp-server json-object) json-object)
+(defun acp--handle-session-close (server params)
+  "Close SESSION and remove it from the server's table."
+  (let ((session (acp--resolved-session server params)))
+    (acp-server-unregister server (acp-session-identifier session))
+    (json-object)))
+
+(-> acp--handle-session-delete (acp-server json-object) json-object)
+(defun acp--handle-session-delete (server params)
+  "Delete SESSION's durable conversation and remove it from the server."
+  (let* ((session (acp--resolved-session server params))
+         (configuration (application-configuration (acp-session-application session)))
+         (conversation-id (acp--session-conversation-identifier
+                           (acp-session-identifier session))))
+    (conversation-delete configuration conversation-id)
+    (acp-server-unregister server (acp-session-identifier session))
+    (json-object)))
+
+(-> acp--handle-session-list (acp-server json-object) json-value)
+(defun acp--handle-session-list (server params)
+  "Return the active ACP sessions."
+  (declare (ignore params))
+  (apply #'json-array
+         (loop for session-id being the hash-keys of (acp-server-sessions server)
+               collect (json-object "sessionId" session-id))))
+
+(-> acp--handle-session-cancel (acp-server json-object) null)
+(defun acp--handle-session-cancel (server params)
+  "Record the client's request to cancel the running prompt."
+  (declare (ignore server params))
+  ;; Real interruption requires an abort hook in the agent turn; until then
+  ;; the notification is accepted and ignored.
+  (acp--log "session/cancel received; interruption is not yet implemented.")
+  nil)
+
 ;;;; -- Method Dispatch --
 
 (defparameter *acp-request-handlers*
   (list (cons "initialize" #'acp--handle-initialize)
+        (cons "authenticate" #'acp--handle-authenticate)
+        (cons "logout" #'acp--handle-logout)
         (cons "session/new" #'acp--handle-session-new)
         (cons "session/load" #'acp--handle-session-load)
+        (cons "session/list" #'acp--handle-session-list)
+        (cons "session/delete" #'acp--handle-session-delete)
+        (cons "session/close" #'acp--handle-session-close)
+        (cons "session/set_mode" #'acp--handle-session-set-mode)
         (cons "session/prompt" #'acp--handle-session-prompt))
   "The client-to-agent request handlers by method name.")
 
 (defparameter *acp-notification-handlers*
-  nil
+  (list (cons "session/cancel" #'acp--handle-session-cancel))
   "The client-to-agent notification handlers by method name.")
 
 (-> acp--dispatch-request (acp-server string json-object) json-value)

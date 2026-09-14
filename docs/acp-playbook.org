@@ -1,0 +1,167 @@
+#+TITLE: ACP IDE Playbook
+#+STARTUP: content
+
+This playbook records the exact message sequence an ACP client (editor) drives
+and what Autolith answers. It is the contract that the system test in
+=tests/acp-tests.lisp= replays; when the implementation changes, change this
+file and the test in the same commit step.
+
+Protocol facts for v1 stable come from docs/acp-plan.org, the v1 protocol
+documentation at https://agentclientprotocol.com/protocol/v1/, and the release
+=schema.json=.
+
+* Wire discipline
+
+- JSON-RPC 2.0 over stdio, UTF-8, one message per line, no embedded newlines.
+- The agent writes messages only to stdout; logs go to stderr. The client
+  writes messages to the agent's stdin.
+- Stdout purity is part of the contract: every line the agent prints parses as
+  one JSON-RPC message.
+
+* Session start
+
+** 1. The client sends initialize first, always
+
+#+begin_src json
+{"jsonrpc":"2.0","id":1,"method":"initialize",
+ "params":{"protocolVersion":1,
+            "clientCapabilities":{"fs":{"readTextFile":true,
+                                         "writeTextFile":true}},
+            "clientInfo":{"name":"zed","title":"Zed","version":"..."}}}
+#+end_src
+
+#+begin_src json
+{"jsonrpc":"2.0","id":1,"result":
+ {"protocolVersion":1,
+  "agentCapabilities":{"loadSession":true,
+                        "promptCapabilities":{"image":false,"audio":false,
+                                               "embeddedContext":false}},
+  "agentInfo":{"name":"Autolith","title":"Autolith","version":"..."},
+  "authMethods":[]}}
+#+end_src
+
+- The agent echoes the requested =protocolVersion= (integer).
+- =loadSession: true= buys =session/load=; take it back down when replay
+  cannot be supported.
+- =authMethods= empty means the client never sends =authenticate=.
+
+** 2. Optional authenticate
+
+Sent only when =authMethods= is non-empty. Autolith advertises =authMethods:[]=,
+so conforming clients skip this step; =authenticate= then answers =-32601=.
+
+** 3. session/new
+
+#+begin_src json
+{"jsonrpc":"2.0","id":2,"method":"session/new",
+ "params":{"cwd":"/home/lenny/src/autolith","mcpServers":[]}}
+#+end_src
+
+#+begin_src json
+{"jsonrpc":"2.0","id":2,"result":
+ {"sessionId":"sess_<conversation-id>",
+  "modes":{"currentModeId":"ask",
+            "availableModes":[{"id":"ask","name":"Ask",
+                                 "description":"..."}, ...]}}}
+#+end_src
+
+Autolith encodes one conversation id per session; =session/load= takes the
+same value back. Editors may call =session/new= again for a parallel
+conversation. Machine-readable id rules: =id=, =name= required;
+=description= optional.
+
+* Conversation loop
+
+** 4. session/prompt
+
+#+begin_src json
+{"jsonrpc":"2.0","id":3,"method":"session/prompt",
+ "params":{"sessionId":"sess_...",
+            "prompt":[{"type":"text","text":"Fix the build"}]}}
+#+end_src
+
+The reply waits for the turn to finish; streaming happens through
+notifications before the reply:
+
+#+begin_src json
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_...",
+  "update":{"sessionUpdate":"agent_message_chunk",
+             "content":{"type":"text","text":"..."}}}}
+#+end_src
+
+Chunk kinds Autolith emits: =agent_message_chunk= (assistant text),
+=agent_thought_chunk= (visible reasoning), during load replay also
+=user_message_chunk=, =tool_call=, and =tool_call_update=.
+
+Reply: ={"stopReason":"end_turn"}= for =:end= / =:unspecified= results, and
+"cancelled" once interruption exists.
+
+** 5. session/cancel
+
+A notification, no request id, no reply. Editors send it to stop a running
+prompt; the agent must interrupt the running flip even though
+=session/prompt= blocks the request worker.
+
+** 6. session/set_mode
+
+#+begin_src json
+{"jsonrpc":"2.0","id":4,"method":"session/set_mode",
+ "params":{"sessionId":"sess_...","modeId":"auto"}}
+#+end_src
+
+The reply echoes plain success; the agent also emits =current_mode_update=
+through =session/update=.
+
+** session/list, session/close, session/delete
+
+#+begin_src json
+{"jsonrpc":"2.0","id":5,"method":"session/list","params":{}}
+#+end_src
+
+#+begin_src json
+{"jsonrpc":"2.0","id":5,"result":[{"sessionId":"sess_..."}]}
+#+end_src
+
+=session/close= removes the session from the agent's live table.
+=session/delete= also deletes the durable conversation on disk. Both reply
+with an empty result object.
+
+* Agent-initiated requests
+
+An editor must answer these; a missing reply deadlocks the running turn.
+
+- =session/request_permission= asks for a decision when permission rules
+cannot decide locally. Options carry =kind= =allow_once=, =allow_always=,
+=reject_once=, =reject_always=: the reply returns
+={outcome:{outcome:"selected",optionId:...}}=.
+- =fs/read_text_file=, =fs/write_text_file=: sent only when the agent declared
+fs proxy capability, which Autolith deliberately does not in v1 and instead
+runs its own tools through the permission system.
+- =terminal/create= and friends: the same rule, unused in v1.
+
+* Error discipline
+
+* Optional probes
+
+Clients following v1 may probe =set_session_model= and
+=set_session_config_option=. Autolith answers =-32601= for these; editors stay
+usable because they are optional probes.
+
+* Playbook for the system test
+
+The fake client in =tests/acp-tests.lisp= does exactly:
+
+1. Spawn an ACP agent (fresh SBCL loading the tracked system and calling
+   =acp-serve=) with isolated =XDG_CONFIG_HOME=, =XDG_DATA_HOME=,
+   =XDG_STATE_HOME=, and =XDG_CACHE_HOME= under a temporary test root.
+2. Assert every stdout line parses as one JSON-RPC message (stdout purity).
+3. Send =initialize= and assert the echo, the capabilities, the agent info,
+   and =authMethods=.
+4. Send =session/new= with a temporary =cwd= and assert =sessionId= and the
+   modes object.
+5. Send =session/prompt= against an unknown sessionId and assert the =-32602=
+   error reply with a matching request id, then send a follow-up request to
+   prove the connection survived the error.
+6. Send an unknown method and assert =-32601=.
+7. Send a =session/cancel= notification and assert it produces no reply line.
+8. Close stdin, wait for exit, and assert a clean exit.

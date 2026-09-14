@@ -644,11 +644,12 @@
 (define-test-suite acp
   test-acp-initialize-handshake
   test-acp-session-new
+  test-acp-session-set-mode
+  test-acp-session-list
   test-acp-unknown-method
   test-acp-prompt-unknown-session
   test-acp-cancel-notification
   test-acp-stdout-purity-and-clean-exit)
-
 (define-test-suite fixtures
   test-run-temporary-root-cleanup
   test-configuration-fixture-cleanup
