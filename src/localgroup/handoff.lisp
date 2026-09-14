@@ -427,6 +427,8 @@ before any shell is involved."
                    "--permissions" permission-argument)
              (when immutable-p
                (list "--immutable"))
+             (when (configuration-fullscreen-p configuration)
+               (list "--fullscreen"))
              (list "--localgroup-handoff" (namestring handoff-pathname)))))
       (ensure-directories-exist log-pathname)
       (with-open-file (output log-pathname

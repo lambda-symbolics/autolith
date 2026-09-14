@@ -324,6 +324,11 @@
          (recovery-input-storage-ready-p
            (or (not recovery-startup-p)
                (application-recovery-input-vault-import application))))
+    (when (and (configuration-fullscreen-p (application-configuration application))
+               (not (terminal-ui-fullscreen-p ui)))
+      (change-class ui 'fullscreen-terminal-ui))
+    (when (terminal-ui-fullscreen-p ui)
+      (setf (terminal-ui-fullscreen-welcome-p ui) t))
     (labels ((close-runtime-resources ()
                "Close APPLICATION's external runtimes at most once."
                (ignore-errors (localgroup-stop application))
@@ -365,8 +370,9 @@
              (declare (ignore active-ui))
              (unwind-protect
                   (progn
-                    (application-present application
-                                         (application-banner application))
+                    (unless (terminal-ui-fullscreen-p ui)
+                      (application-present application
+                                           (application-banner application)))
                     (let ((update-notice
                             (application--update-notice application)))
                       (when update-notice
@@ -571,15 +577,24 @@ dependencies."
 (defun main-authenticate (configuration selection &optional method)
   "Authenticate a registered provider before the conversation UI starts."
   (configuration-ensure-directories configuration)
-  (let ((provider (main--authentication-provider configuration selection))
-        (*api-key-input-file-descriptor* 0)
-        (*api-key-output-styled-p*
-          (main--authentication-output-styled-p *standard-output*)))
-    (format t "~&~A~%"
-            (provider-authenticate-with-method
-             provider method
-             :stream *standard-output*
-             :open-browser-p t)))
+  (flet ((authenticate ()
+           (let ((provider (main--authentication-provider configuration selection))
+                 (*api-key-input-file-descriptor* (terminal-standard-input-file-descriptor))
+                 (*api-key-output-styled-p*
+                   (main--authentication-output-styled-p *standard-output*)))
+             (format t "~&~A~%"
+                     (provider-authenticate-with-method
+                      provider method :stream *standard-output* :open-browser-p t)))))
+    (if (configuration-fullscreen-p configuration)
+        (multiple-value-bind (rows columns) (terminal-current-size)
+          (with-terminal-ui
+              (ui (terminal-ui-create
+                   :fullscreen-p t
+                   :terminal (stream-terminal-create
+                              :rows rows :columns columns
+                              :input-file-descriptor (terminal-standard-input-file-descriptor))))
+            (application-call-with-authentication-ui ui t #'authenticate)))
+        (authenticate)))
   nil)
 
 (-> main--image-pathnames (list) list)
@@ -644,9 +659,12 @@ dependencies."
          (explicit-permission-mode (getopt* command ':permissions))
          (image-values (getopt* command ':images))
          (configuration
-           (configuration-create
-            :immutable-p immutable-p
-            :defer-provider-validation-p t))
+           (let ((base (configuration-create
+                        :immutable-p immutable-p :defer-provider-validation-p t)))
+             ;; Keep provider validation deferred until executable user init.
+             (reinitialize-instance
+              base :fullscreen-p (or (not (null (getopt* command ':fullscreen)))
+                                     (preferences-fullscreen-p base)))))
          (permission-mode
            (or explicit-permission-mode
                (preferences-permission-mode configuration)
@@ -833,6 +851,11 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
 (defun main--session-options ()
   "Return the persistent session options shared with every sub-command."
   (list
+   (make-option ':flag
+                :long-name "fullscreen"
+                :key ':fullscreen
+                :persistent t
+                :description "use a scrollable alternate-screen UI with a pinned composer")
    (make-option ':flag
                 :long-name "immutable"
                 :key ':immutable

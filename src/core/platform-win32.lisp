@@ -1067,6 +1067,23 @@ can omit. Bounded retries cover handles released just after a child process exit
         nil
         mode)))
 
+(defmethod platform-terminal-enable-fullscreen ((platform win32-platform))
+  "Enable VT output on the Windows console and retain its exact previous mode."
+  (let* ((handle (win32--get-std-handle *win32-standard-output-handle*))
+         (mode (win32--console-mode handle)))
+    (when mode
+      ;; ENABLE_PROCESSED_OUTPUT and ENABLE_VIRTUAL_TERMINAL_PROCESSING.
+      (when (zerop (win32--set-console-mode handle (logior mode #x0001 #x0004)))
+        (win32--fail ':terminal nil))
+      (cons handle mode))))
+
+(defmethod platform-terminal-restore-fullscreen ((platform win32-platform) token)
+  "Restore the original console output mode after leaving the alternate buffer."
+  (when token
+    (when (zerop (win32--set-console-mode (first token) (rest token)))
+      (win32--fail ':terminal nil)))
+  nil)
+
 (defmethod platform-interactive-descriptor-p ((platform win32-platform)
                                               descriptor)
   "Treat DESCRIPTOR as interactive when it is a console handle."

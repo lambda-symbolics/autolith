@@ -27,6 +27,34 @@ Autolith's prompt window can also evuluate lisp forms directly:
 This can be frequently helpful since you can use the exact same tools
 the clanker can, and the same machinery is exposed to you.
 
+* Fullscreen terminal
+
+Autolith uses the ordinary inline terminal presentation by default. Opt into the
+application-owned fullscreen viewport for a session with:
+
+#+BEGIN_SRC sh
+autolith --fullscreen
+#+END_SRC
+
+Save the preference for future launches at the Autolith prompt:
+
+#+BEGIN_SRC lisp
+(preferences-set-fullscreen (application-configuration *active-application*) t)
+#+END_SRC
+
+The fullscreen viewport keeps the transcript scrollable and pins the composer to
+the bottom. Use =PageUp= and =PageDown= for page movement, =Ctrl-Home= and
+=Ctrl-End= for the oldest and newest transcript positions, and the mouse wheel
+for incremental scrolling. The =--fullscreen= command-line option enables it for
+one launch without changing the saved preference.
+Pass =nil= to =preferences-set-fullscreen= to return future launches to inline mode.
+Use =Shift= with the mouse for terminal text selection. Fullscreen history lives
+in the application rather than the terminal emulator's native scrollback.
+
+An empty fullscreen session shows a centered Lisp-machine startup panel above the
+composer. Once the session has transcript content, that content occupies the
+viewport instead.
+
 * Install and update
 
 ** Nix

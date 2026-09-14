@@ -1786,6 +1786,48 @@ are forwarded to TERMINAL-UI-SELECT."
       (terminal-ui--paint-live ui)))
   nil)
 
+(-> application-call-with-authentication-ui (terminal-ui boolean function) t)
+(defun application-call-with-authentication-ui (ui stop-ui-p function)
+  "Call FUNCTION with provider-owned I/O, restoring the console on every exit."
+  (if (and (terminal-ui-fullscreen-p ui)
+           (fullscreen-terminal-ui-active-p ui))
+      (let ((terminal (terminal-ui-terminal ui))
+            (output-mode nil)
+            (transport-stopped-p nil))
+        (unwind-protect
+             (progn
+               (with-terminal-ui-locked (ui)
+                 (setf (terminal-ui-live-output-suspended-p ui) t)
+                 (terminal--write terminal (format nil "~C[?1000l~C[?1006l"
+                                                   #\Escape #\Escape))
+                 (when stop-ui-p
+                   (setf transport-stopped-p t)
+                   (terminal-stop terminal))
+                 (setf output-mode (platform-terminal-enable-fullscreen *platform*))
+                 (terminal-ui-fullscreen-invalidate ui)
+                 (terminal-ui-boot-screen ui ':authenticating "Provider authentication in progress"))
+               (funcall function))
+          (with-terminal-ui-locked (ui)
+            (unwind-protect
+                 (platform-terminal-restore-fullscreen *platform* output-mode)
+              (unwind-protect
+                   (when transport-stopped-p
+                     (terminal-start terminal))
+                (terminal-ui-fullscreen-invalidate ui)
+                (unwind-protect
+                     (terminal--write terminal (format nil "~C[?1000h~C[?1006h"
+                                                       #\Escape #\Escape))
+                  (application--authentication-ui-resume ui)))))))
+      (unwind-protect
+           (progn
+             (if stop-ui-p
+                 (terminal-ui-stop ui)
+                 (application--authentication-ui-suspend ui))
+             (funcall function))
+        (if stop-ui-p
+            (terminal-ui-start ui)
+            (application--authentication-ui-resume ui)))))
+
 (-> terminal-authentication-streams
     (terminal)
     (values stream stream boolean boolean (option integer)))
@@ -1837,24 +1879,18 @@ are forwarded to TERMINAL-UI-SELECT."
     (multiple-value-bind
           (input output stop-ui-p input-echo-disabled-p input-file-descriptor)
         (application--authentication-streams application)
-      (if stop-ui-p
-          (terminal-ui-stop ui)
-          (application--authentication-ui-suspend ui))
-      (unwind-protect
-           (let ((*standard-input* input)
-                 (*standard-output* output)
-                 (*api-key-input-echo-disabled-p* input-echo-disabled-p)
-                 (*api-key-input-file-descriptor* input-file-descriptor)
-                 (*api-key-output-styled-p*
-                   (terminal-styled-p (terminal-ui-terminal ui))))
-              (setf message
-                    (provider-authenticate-with-method
-                     provider method
-                     :stream output
-                     :open-browser-p t)))
-        (if stop-ui-p
-            (terminal-ui-start ui)
-            (application--authentication-ui-resume ui))))
+      (application-call-with-authentication-ui
+       ui stop-ui-p
+       (lambda ()
+         (let ((*standard-input* input)
+               (*standard-output* output)
+               (*api-key-input-echo-disabled-p* input-echo-disabled-p)
+               (*api-key-input-file-descriptor* input-file-descriptor)
+               (*api-key-output-styled-p*
+                 (terminal-styled-p (terminal-ui-terminal ui))))
+           (setf message
+                 (provider-authenticate-with-method
+                  provider method :stream output :open-browser-p t))))))
     (application-present application message))
   nil)
 

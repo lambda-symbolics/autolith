@@ -157,17 +157,21 @@ provider request --> semantic events --> agent --> validated tool calls
 * Terminal
 
 Autolith uses the primary screen and leaves finalized output in normal
-scrollback.
-
-Only a bounded live region is repainted at the bottom.
+scrollback by default. An opt-in fullscreen terminal UI owns the transcript
+viewport in an alternate screen, keeps application scrollback, and pins the
+composer to the bottom. The persistent setting is stored in the global
+preferences record; =--fullscreen= overrides it for one launch.
 
 - Reasoning previews enter scrollback only once finalized
 - Autolith provides semantic styling, candidate policy, terminal mode, and
   emits OSC 133 prompt blocks
 - OSC 133: =A= and =B= precede input, =C= starts execution, =D;STATUS=
   closes execution. This way you can rely on smarter terminals
-- Clinedi owns editor state, input decoding, geometry, and live
-  repainting
+- Clinedi owns editor state, input decoding, geometry, and live repainting
+- The fullscreen viewport owns transcript wrapping, application scrolling,
+  reflow anchors, and bottom-pinned composer geometry
+- =PageUp= and =PageDown= page through fullscreen history; =Ctrl-Home= and
+  =Ctrl-End= jump to its ends, and mouse-wheel events scroll incrementally
 - cl-colorist is used for ANSI capability detection
 - Text is sanitized before styles are added
 - Ctrl-C on an empty prompt exits.

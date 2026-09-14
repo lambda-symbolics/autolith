@@ -85,6 +85,21 @@ autolith
 
 * Some features
 
+** Optional fullscreen terminal
+
+Autolith is inline by default. Start one session in the application-owned
+fullscreen viewport with =autolith --fullscreen=, or save the preference at the
+Autolith prompt for future launches:
+
+#+BEGIN_SRC lisp
+(preferences-set-fullscreen (application-configuration *active-application*) t)
+#+END_SRC
+
+Fullscreen keeps the transcript scrollable and pins the composer at the bottom.
+Use =PageUp=, =PageDown=, =Ctrl-Home=, =Ctrl-End=, or the mouse wheel to move
+through the transcript. An empty session displays a centered Lisp-machine startup
+panel above the composer.
+
 ** The prompt input is the REPL
 
 In Autolith, the message window is just a LISP repl with familiar interactivity,
@@ -212,12 +227,11 @@ For example, if you put your prompt to a file, you can just do:
 You could do templating, too, if you like.
 
 ** Responsive and inobtrusive terminal work
-Autolith is not a fullscreen TUI application and it generally defers to the base 16
-colors your terminal sets, therefore, it should look pretty good no matter what your
-terminal color scheme is, so long as you like it.
+Autolith defaults to inline presentation and generally uses your terminal's base
+16 colors. Use =--fullscreen= for an application-owned transcript viewport.
 
-Autolith also emits prompt markers, so if your terminal can scroll jump between shell prompts,
-it can also scroll between messages to Autolith.
+Inline mode emits prompt markers, so terminals with shell-prompt navigation can
+also jump between messages to Autolith.
 
 The line editor is the fairly powerful [[https://github.com/luciusmagn/clinedi][clinedi]], it should support all the editing niceties
 and shortcuts you are used to.

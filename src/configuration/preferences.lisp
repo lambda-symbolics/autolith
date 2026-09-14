@@ -2,7 +2,7 @@
 
 ;;;; -- Global Preferences --
 
-(defparameter *preferences-version* 6
+(defparameter *preferences-version* 7
   "The readable global preferences file format version.")
 
 (defclass preference-state ()
@@ -63,6 +63,12 @@
     :type boolean
     :documentation
     "Whether the provider may refresh locally derived session titles.")
+   (fullscreen-p
+    :initarg :fullscreen-p
+    :initform nil
+    :reader preference-state-fullscreen-p
+    :type boolean
+    :documentation "Whether interactive sessions use the fullscreen terminal UI.")
    (permission-mode
     :initarg :permission-mode
     :initform nil
@@ -79,30 +85,33 @@
         (list :indicator ':model
               :validate (lambda (value)
                           (or (null value) (non-empty-string-p value)))
-              :required '(2 3 4 5 6))
+              :required '(2 3 4 5 6 7))
         ;; Model-specific effort names may come from executable user
         ;; initialization. Validate them when applying preferences to the
         ;; active model.
         (list :indicator ':reasoning-effort
               :validate (lambda (value)
                           (or (null value) (non-empty-string-p value)))
-              :required '(2 3 4 5 6))
+              :required '(2 3 4 5 6 7))
         (list :indicator ':compact-view-p
               :validate (lambda (value) (typep value 'boolean))
-              :required '(3 4 5 6))
+              :required '(3 4 5 6 7))
         (list :indicator ':turn-timestamps-p
               :validate (lambda (value) (typep value 'boolean)))
         (list :indicator ':cache-miss-notices-p
               :validate (lambda (value) (typep value 'boolean))
-              :required '(6))
+              :required '(6 7))
         (list :indicator ':simple-technical-english-p
               :validate (lambda (value) (typep value 'boolean)))
         (list :indicator ':codex-fast-mode-p
               :validate (lambda (value) (typep value 'boolean))
-              :required '(5 6))
+              :required '(5 6 7))
         (list :indicator ':session-title-generation-p
               :validate (lambda (value) (typep value 'boolean))
-              :required '(4 5 6))
+              :required '(4 5 6 7))
+        (list :indicator ':fullscreen-p
+              :validate (lambda (value) (typep value 'boolean))
+              :required '(7))
         (list :indicator ':permission-mode
               :validate (lambda (value)
                           (member value '(nil :ask :auto) :test #'eq))))
@@ -113,7 +122,7 @@
   "Return true when FORM is one complete supported preferences record."
   (values (record-check form
                         :tag ':preferences
-                        :versions '(1 2 3 4 5 6)
+                        :versions '(1 2 3 4 5 6 7)
                         :fields *preferences-record-fields*)))
 
 (-> preferences--form->state (list) preference-state)
@@ -136,6 +145,7 @@
                      (getf properties :simple-technical-english-p nil)
                      :session-title-generation-p
                      (getf properties :session-title-generation-p t)
+                     :fullscreen-p (getf properties :fullscreen-p nil)
                      :permission-mode
                      (getf properties :permission-mode))))
 
@@ -161,6 +171,8 @@
           (preference-state-simple-technical-english-p preferences)
           :session-title-generation-p
           (preference-state-session-title-generation-p preferences)
+          :fullscreen-p
+          (preference-state-fullscreen-p preferences)
           :permission-mode
           (preference-state-permission-mode preferences)))
 
@@ -284,6 +296,11 @@
   (preference-state-session-title-generation-p
    (preferences-load configuration)))
 
+(-> preferences-fullscreen-p (configuration) boolean)
+(defun preferences-fullscreen-p (configuration)
+  "Return the persisted fullscreen terminal UI setting, defaulting to false."
+  (preference-state-fullscreen-p (preferences-load configuration)))
+
 (-> preferences-permission-mode (configuration) (option (member :ask :auto)))
 (defun preferences-permission-mode (configuration)
   "Return the persisted durable command-permission mode, or NIL when unset."
@@ -356,6 +373,7 @@ model no provider can serve."
      (:cache-miss-notices-p boolean)
      (:simple-technical-english-p boolean)
      (:session-title-generation-p boolean)
+   (:fullscreen-p boolean)
      (:permission-mode (option (member :ask :auto))))
     preference-state)
 (defun preferences--copy
@@ -374,6 +392,8 @@ model no provider can serve."
                     (preference-state-simple-technical-english-p previous))
                    (session-title-generation-p
                     (preference-state-session-title-generation-p previous))
+                     (fullscreen-p
+                      (preference-state-fullscreen-p previous))
                    (permission-mode (preference-state-permission-mode previous)))
   "Return a replacement preference state based on PREVIOUS."
   (make-instance 'preference-state
@@ -386,6 +406,7 @@ model no provider can serve."
                  :cache-miss-notices-p cache-miss-notices-p
                  :simple-technical-english-p simple-technical-english-p
                  :session-title-generation-p session-title-generation-p
+                   :fullscreen-p fullscreen-p
                  :permission-mode permission-mode))
 
 (-> preferences-set-model-selection (configuration) null)
@@ -477,4 +498,14 @@ model no provider can serve."
    configuration
    (preferences--copy (preferences-load configuration)
                       :permission-mode mode))
+  nil)
+
+
+(-> preferences-set-fullscreen (configuration boolean) null)
+(defun preferences-set-fullscreen (configuration enabled-p)
+  "Atomically persist ENABLED-P as the fullscreen terminal UI preference."
+  (preferences--write
+   configuration
+   (preferences--copy (preferences-load configuration)
+                      :fullscreen-p enabled-p))
   nil)

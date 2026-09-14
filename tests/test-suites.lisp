@@ -12,6 +12,12 @@
   test-text-line-splitting
   test-configuration-source-platform-reading)
 
+(define-test-suite fullscreen
+  test-terminal-fullscreen-viewport
+  test-terminal-fullscreen-small-windows
+  test-terminal-fullscreen-failure-and-lifecycle
+  test-fullscreen-boot-geometry
+  test-fullscreen-authentication-lifecycle)
 (define-test-suite stream
   test-bounded-character-reads)
 

@@ -137,15 +137,15 @@ offered only while the typed prefix no longer matches its primary."
 
 (-> terminal-ui-create
     (&key (:terminal terminal) (:editor (option line-editor)) (:prompt string)
-          (:placeholder string) (:completions list)
+          (:placeholder string) (:completions list) (:fullscreen-p boolean)
           (:completion-function (option function))
           (:clock-function function))
     terminal-ui)
 (defun terminal-ui-create
     (&key terminal editor (prompt "> ") (placeholder "") completions
-          completion-function
+          completion-function fullscreen-p
           (clock-function #'terminal-ui--monotonic-seconds))
-  "Create a scrollback-preserving UI for TERMINAL."
+  "Create an inline or opt-in fullscreen UI for interactive TERMINAL."
   (unless (typep terminal 'terminal)
     (error 'terminal-error
            :message "TERMINAL-UI-CREATE requires a terminal instance."
@@ -169,7 +169,9 @@ offered only while the typed prefix no longer matches its primary."
                              (terminal--write terminal text))
            :flush-function (lambda ()
                              (terminal-flush terminal)))))
-    (make-instance 'terminal-ui
+    (make-instance (if fullscreen-p
+                       'fullscreen-terminal-ui
+                       'terminal-ui)
                    :terminal terminal
                    :editor (or editor
                                (line-editor-create
@@ -1947,11 +1949,9 @@ form keeps every speculative Markdown wrap live until the logical line commits."
             (get-output-stream-string display-stream)
             cursor-index)))
 
-(-> terminal-ui--live-content
-    (terminal-ui &optional (option real))
-    (values string string integer))
-(defun terminal-ui--live-content (ui &optional status-now)
-  "Return UI's complete plain and styled live content plus its cursor index."
+(-> terminal-ui--live-prefix-rows (terminal-ui &optional (option real)) list)
+(defun terminal-ui--live-prefix-rows (ui &optional status-now)
+  "Return the live activity and unfinished transcript rows before the composer."
   (let* ((terminal (terminal-ui-terminal ui))
          (row-width (max 1 (terminal-columns terminal)))
          (status-row-p (terminal-ui--status-row-visible-p ui))
@@ -2034,48 +2034,48 @@ form keeps every speculative Markdown wrap live until the logical line commits."
                        terminal tail row-width)))))
     (when rows
       (setf rows (append rows (list nil))))
-    (let ((selector (terminal-ui-selector ui)))
-      (cond
-        (selector
-         (let* ((hint
-                  (or (terminal-ui-selector-hint ui)
-                      "enter selects, esc cancels"))
-                (title-spans
-                  (terminal--clip-spans
-                   (list (terminal-span ':brand "∙ ")
-                         (terminal-span ':plain
-                                        (terminal-ui-selector-title ui))
-                         (terminal-span ':hint (format nil "  ~A" hint)))
-                   row-width)))
-           (let ((cursor-row (length rows)))
-             (setf rows
-                   (append rows
-                           (list title-spans
-                                 nil)
-                           (terminal-ui--choice-rows
-                            selector
-                            row-width)
-                           (list nil)))
-             (terminal-ui--rows-content
-              terminal
-              rows
-              :cursor-row cursor-row
-              :cursor-offset (length (terminal--spans-text title-spans))))))
-        (t
-         (multiple-value-bind (prompt-spans cursor-offset)
-             (terminal-ui--prompt-content ui)
-           (let ((cursor-row (length rows)))
-             (setf rows
-                   (append rows
-                           (list prompt-spans)
-                           (terminal-ui--completion-rows
-                            ui row-width)
-                           (list nil)))
-             (terminal-ui--rows-content
-              terminal
-              rows
-              :cursor-row cursor-row
-              :cursor-offset cursor-offset))))))))
+    rows))
+
+(-> terminal-ui--composer-rows (terminal-ui) (values list integer integer))
+(defun terminal-ui--composer-rows (ui)
+  "Return composer rows, its cursor row, and the character offset within that row."
+  (let* ((terminal (terminal-ui-terminal ui))
+         (row-width (max 1 (terminal-columns terminal)))
+         (selector (terminal-ui-selector ui)))
+    (cond
+      (selector
+       (let* ((hint (or (terminal-ui-selector-hint ui)
+                        "enter selects, esc cancels"))
+              (title-spans
+                (terminal--clip-spans
+                 (list (terminal-span ':brand "∙ ")
+                       (terminal-span ':plain (terminal-ui-selector-title ui))
+                       (terminal-span ':hint (format nil "  ~A" hint)))
+                 row-width)))
+         (values (append (list title-spans nil)
+                         (terminal-ui--choice-rows selector row-width)
+                         (list nil))
+                 0 (length (terminal--spans-text title-spans)))))
+      (t
+       (multiple-value-bind (prompt-spans cursor-offset)
+           (terminal-ui--prompt-content ui)
+         (values (append (list prompt-spans)
+                         (terminal-ui--completion-rows ui row-width)
+                         (list nil))
+                 0 cursor-offset))))))
+
+(-> terminal-ui--live-content
+    (terminal-ui &optional (option real))
+    (values string string integer))
+(defun terminal-ui--live-content (ui &optional status-now)
+  "Return UI's complete plain and styled live content plus its cursor index."
+  (let ((prefix (terminal-ui--live-prefix-rows ui status-now)))
+    (multiple-value-bind (composer cursor-row cursor-offset)
+        (terminal-ui--composer-rows ui)
+      (terminal-ui--rows-content
+       (terminal-ui-terminal ui) (append prefix composer)
+       :cursor-row (+ (length prefix) cursor-row)
+       :cursor-offset cursor-offset))))
 
 (-> terminal-ui--stream-output (terminal list) (values string string))
 (defun terminal-ui--stream-output (terminal rows)
@@ -2174,8 +2174,8 @@ removes it."
                       (:appended-text string)
                       (:appended-display string))
     null)
-(defun terminal-ui--present-live
-    (ui &key status-now (appended-text "") (appended-display ""))
+(defmethod terminal-ui--present-live
+    ((ui terminal-ui) &key status-now (appended-text "") (appended-display ""))
   "Present UI live content, atomically preceding it with appended scrollback."
   (if (terminal-ui-live-output-suspended-p ui)
       (terminal-ui--defer-live-append ui appended-text appended-display)
@@ -2381,6 +2381,7 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
     (let ((terminal (terminal-ui-terminal ui)))
       (when (and (terminal-ui-started-p ui)
                  (terminal-interactive-p terminal)
+                 (not (terminal-ui-fullscreen-p ui))
                  (eq (terminal-ui-prompt-marker-state ui) ':closed))
         (live-region-suspend (terminal-ui-live-region ui))
         (terminal-write-prompt-marker terminal ':prompt-start)
@@ -2420,11 +2421,13 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
 
 (-> terminal-ui-start (terminal-ui) terminal-ui)
 (defun terminal-ui-start (ui)
-  "Start UI on the primary screen and render its bounded live region."
+  "Start UI's transport and selected presentation mode."
   (with-terminal-ui-locked (ui)
     (unless (terminal-ui-started-p ui)
       (terminal-start (terminal-ui-terminal ui))
       (setf (terminal-ui-started-p ui) t)
+      (when (terminal-ui-fullscreen-p ui)
+        (terminal-ui-fullscreen-enter ui))
       (terminal-ui--paint-live ui)))
   ui)
 
@@ -2433,7 +2436,9 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
   "Retract UI's live region after its terminal loses interactive ownership."
   (with-terminal-ui-locked (ui)
     (when (terminal-ui-started-p ui)
-      (live-region-suspend (terminal-ui-live-region ui))))
+      (if (terminal-ui-fullscreen-p ui)
+          (terminal-ui-fullscreen-leave ui)
+          (live-region-suspend (terminal-ui-live-region ui)))))
   ui)
 
 (-> terminal-ui-stop (terminal-ui) terminal-ui)
@@ -2445,13 +2450,17 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
            (when (eq (terminal-ui-prompt-marker-state ui) ':executing)
              (terminal-write-prompt-marker
               (terminal-ui-terminal ui) ':command-finished 1))
-           (live-region-dismiss (terminal-ui-live-region ui)))
+           (unless (terminal-ui-fullscreen-p ui)
+             (live-region-dismiss (terminal-ui-live-region ui))))
        (setf (terminal-ui-started-p ui) nil
              (terminal-ui-prompt-marker-state ui) ':closed
              (terminal-ui-notice ui) nil
              (terminal-ui-notice-deadline ui) nil
              (terminal-ui-live-output-suspended-p ui) nil)
-       (terminal-stop (terminal-ui-terminal ui))))
+     (unwind-protect
+          (when (terminal-ui-fullscreen-p ui)
+            (terminal-ui-fullscreen-leave ui))
+       (terminal-stop (terminal-ui-terminal ui)))))
   ui)
 
 (defmacro with-terminal-ui ((variable ui-form) &body body)
@@ -2474,6 +2483,17 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
       (setf (gethash identifier (terminal-ui-finalized-identifiers ui)) t)
       t)))
 
+(defmethod terminal-ui--append-output ((ui terminal-ui) text display)
+  "Append output to native scrollback, deferring it during direct terminal I/O."
+  (if (terminal-interactive-p (terminal-ui-terminal ui))
+      (if (terminal-ui-live-output-suspended-p ui)
+          (terminal-ui--defer-live-append ui text display)
+          (live-region-append (terminal-ui-live-region ui) text :display display))
+      (progn
+        (terminal--write-safe-text (terminal-ui-terminal ui) display)
+        (terminal-flush (terminal-ui-terminal ui))))
+  nil)
+
 (-> terminal-ui-append-finalized (terminal-ui t (or string list)) boolean)
 (defun terminal-ui-append-finalized (ui identifier entry)
   "Append finalized transcript ENTRY once for IDENTIFIER and return true when emitted."
@@ -2484,15 +2504,7 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
       (handler-case
           (multiple-value-bind (text display)
               (terminal-ui--finalized-content ui entry)
-            (if (terminal-interactive-p (terminal-ui-terminal ui))
-                (if (terminal-ui-live-output-suspended-p ui)
-                    (terminal-ui--defer-live-append ui text display)
-                    (live-region-append (terminal-ui-live-region ui)
-                                        text
-                                        :display display))
-                (progn
-                  (terminal--write-safe-text (terminal-ui-terminal ui) display)
-                  (terminal-flush (terminal-ui-terminal ui))))
+            (terminal-ui--append-output ui text display)
             (setf (gethash identifier
                            (terminal-ui-finalized-identifiers ui))
                   t))
@@ -2527,17 +2539,7 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
                 (display (get-output-stream-string display-stream)))
             (handler-case
                 (progn
-                  (if (terminal-interactive-p (terminal-ui-terminal ui))
-                      (if (terminal-ui-live-output-suspended-p ui)
-                          (terminal-ui--defer-live-append ui text display)
-                          (live-region-append (terminal-ui-live-region ui)
-                                              text
-                                              :display display))
-                      (progn
-                        (terminal--write-safe-text
-                         (terminal-ui-terminal ui)
-                         display)
-                        (terminal-flush (terminal-ui-terminal ui))))
+                  (terminal-ui--append-output ui text display)
                   (dolist (entry pending)
                     (setf (gethash
                            (first entry)
@@ -2966,8 +2968,12 @@ thread."
 (defun terminal-ui-set-cursor-visible (ui visible-p)
   "Set whether UI leaves its input cursor visible between terminal updates."
   (with-terminal-ui-locked (ui)
-    (when (terminal-interactive-p (terminal-ui-terminal ui))
-      (live-region-set-cursor-visible (terminal-ui-live-region ui) visible-p)))
+    (if (terminal-ui-fullscreen-p ui)
+        (progn
+          (setf (fullscreen-terminal-ui-cursor-visible-p ui) visible-p)
+          (terminal-ui--paint-live ui))
+        (when (terminal-interactive-p (terminal-ui-terminal ui))
+          (live-region-set-cursor-visible (terminal-ui-live-region ui) visible-p))))
   ui)
 
 (-> terminal-ui-resize
@@ -3072,6 +3078,9 @@ thread."
     (ui event &key queue-completion-p queue-editing-p)
   "Apply EVENT to UI's suggestions or editor and return its action and payload."
   (with-terminal-ui-locked (ui)
+    (when (and (terminal-ui-fullscreen-p ui)
+               (terminal-ui-fullscreen-handle-event ui event))
+      (return-from terminal-ui-process-event (values ':changed nil)))
     (let* ((editor (terminal-ui-editor ui))
            ;; The editor installs a fresh string on every text change, so
            ;; holding the reference preserves the pre-event content.

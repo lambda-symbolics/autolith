@@ -472,17 +472,20 @@ HEADER-P renders field labels rather than status values."
   nil)
 
 (defun localgroup--attach-terminal-loop (socket-stream terminal mode &key socket)
-  "Run the generic attachment loop with Autolith terminal callbacks."
-  (image-daemon:daemon-attach-client-run socket-stream :mode mode :input-ready-function
-   (lambda () (terminal-input-ready-p terminal)) :read-event-function
-   (lambda () (terminal-read-event terminal)) :resize-function
-   (lambda ()
-     (when *terminal-resize-pending-p*
-       (setf *terminal-resize-pending-p* nil)
-       (multiple-value-bind (rows columns)
-           (terminal-current-size)
-         (list :rows rows :columns columns :styled-p (terminal-environment-styling-p)))))
-   :socket socket))
+  "Run the attachment loop, restoring client screen ownership even after connection loss."
+  (let ((output (make-instance 'fullscreen-output-stream :output *standard-output*)))
+    (unwind-protect
+         (image-daemon:daemon-attach-client-run
+          socket-stream :mode mode :socket socket :output-stream output
+          :input-ready-function (lambda () (terminal-input-ready-p terminal))
+          :read-event-function (lambda () (terminal-read-event terminal))
+          :resize-function
+          (lambda ()
+            (when *terminal-resize-pending-p*
+              (setf *terminal-resize-pending-p* nil)
+              (multiple-value-bind (rows columns) (terminal-current-size)
+                (list :rows rows :columns columns :styled-p (terminal-environment-styling-p))))))
+      (fullscreen-output-stream-restore output))))
 
 (-> localgroup--wait-for-handoff-entry
     (configuration string string integer)

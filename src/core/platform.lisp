@@ -319,6 +319,21 @@ operation :TERMINAL when DESCRIPTOR's mode cannot be changed."))
   (:documentation
    "Restore terminal DESCRIPTOR to STATE returned by PLATFORM-DISABLE-INPUT-ECHO."))
 
+(defgeneric platform-terminal-enable-fullscreen (platform)
+  (:documentation "Enable native VT output and return an opaque restoration token."))
+
+(defgeneric platform-terminal-restore-fullscreen (platform token)
+  (:documentation "Restore the native output mode captured before fullscreen entry."))
+
+(defmethod platform-terminal-enable-fullscreen ((platform platform))
+  "Use the terminal emulator's existing VT output support."
+  nil)
+
+(defmethod platform-terminal-restore-fullscreen ((platform platform) token)
+  "No native output mode changes are needed on this host."
+  (declare (ignore token))
+  nil)
+
 (defgeneric platform-watch-terminal-resize (platform function)
   (:documentation
    "Call FUNCTION with no arguments whenever the controlling terminal changes size.

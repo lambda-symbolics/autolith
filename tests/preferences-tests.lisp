@@ -51,9 +51,24 @@
          (test-assert
           (null (preference-state-permission-mode preferences))
           "missing preferences have no saved command-permission mode")
+           (test-assert
+            (not (preference-state-fullscreen-p preferences))
+            "missing preferences default fullscreen mode to disabled")
          (test-assert
           (eq preferences (preferences-load configuration))
           "unchanged missing preferences reuse their validated state"))
+        (test-assert
+         (not (preferences-fullscreen-p configuration))
+         "the configuration fullscreen preference defaults to disabled")
+        (preferences-set-fullscreen configuration t)
+        (test-assert
+         (preferences-fullscreen-p configuration)
+         "fullscreen preference persists enabled")
+        (test-assert
+         (configuration-fullscreen-p
+          (configuration-with-fullscreen configuration t))
+         "configuration cloning carries fullscreen selection")
+        (preferences-set-fullscreen configuration nil)
        (preferences-tests--without-model-environment
         (lambda ()
           (platform-setenv "AUTOLITH_CODEX_FAST_MODE" "on")
@@ -113,8 +128,8 @@
              (snapshot-read pathname)
            (test-assert sole-form-p
                         "normalizing preferences preserves one form")
-           (test-assert (= (getf (rest form) :version) 6)
-                        "version three preferences migrate to version six")
+             (test-assert (= (getf (rest form) :version) 7)
+                          "version three preferences migrate to version seven")
            (test-assert
             (not (getf (rest form) :compact-view-p))
             "normalizing preferences preserves compact presentation")
@@ -175,9 +190,52 @@
              (snapshot-read pathname)
            (test-assert sole-form-p
                         "version four preferences remain one form")
-           (test-assert
-            (= (getf (rest form) :version) 6)
-            "version four preferences migrate to version six")))
+             (test-assert
+              (= (getf (rest form) :version) 7)
+              "version four preferences migrate to version seven")
+        (snapshot-write
+         pathname
+         '(:preferences
+           :version 7
+           :model "gpt-5.6-sol"
+           :reasoning-effort "ultra"
+           :codex-fast-mode-p nil
+           :reasoning-traces-p nil
+           :compact-view-p t
+           :turn-timestamps-p nil
+           :cache-miss-notices-p nil
+           :simple-technical-english-p nil
+           :session-title-generation-p t
+           :permission-mode nil))
+       (let ((missing-v7 (preferences-load configuration)))
+         (test-assert
+          (null (preference-state-fullscreen-p missing-v7))
+          "version seven records missing fullscreen are rejected and default safely"))
+       (snapshot-write
+        pathname
+        '(:preferences
+          :version 6
+          :model "gpt-5.6-sol"
+          :reasoning-effort "ultra"
+          :codex-fast-mode-p nil
+          :reasoning-traces-p nil
+          :compact-view-p t
+          :turn-timestamps-p nil
+          :cache-miss-notices-p nil
+          :simple-technical-english-p nil
+          :session-title-generation-p t
+          :permission-mode nil))
+       (let ((version-six (preferences-load configuration)))
+         (test-assert
+          (null (preference-state-fullscreen-p version-six))
+          "version six records migrate with fullscreen disabled")
+         (preferences-set-fullscreen configuration t)
+         (multiple-value-bind (form sole-form-p)
+             (snapshot-read pathname)
+           (test-assert sole-form-p
+                        "version six migration preserves one form")
+           (test-assert (= (getf (rest form) :version) 7)
+                        "version six preferences migrate to version seven"))))
       (with-open-file (stream pathname
                               :direction ':output
                               :if-exists ':supersede
@@ -390,4 +448,4 @@
         (test-assert (equal (preferences-load-warning-pathname warning)
                             pathname)
                      "preference warnings identify the malformed file"))))
-  nil)
+  nil))

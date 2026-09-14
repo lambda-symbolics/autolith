@@ -384,3 +384,19 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
                      (terminal--prompt-marker-sequence marker status))
     (terminal-flush terminal)
     t))
+
+
+;;;; -- Presentation Modes --
+
+(defgeneric terminal-ui-fullscreen-p (ui)
+  (:documentation "Return true when UI owns an application-scrolled fullscreen layout."))
+
+(defmethod terminal-ui-fullscreen-p ((ui terminal-ui))
+  "Use native scrollback for the ordinary terminal UI."
+  nil)
+
+(defgeneric terminal-ui--present-live (ui &key status-now appended-text appended-display)
+  (:documentation "Present live content and any newly committed transcript text in UI's mode."))
+
+(defgeneric terminal-ui--append-output (ui text display)
+  (:documentation "Append plain TEXT and trusted styled DISPLAY to UI's transcript."))

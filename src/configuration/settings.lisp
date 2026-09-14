@@ -456,6 +456,12 @@ configuration can be created before executable user initialization loads."
     :reader configuration-codex-fast-mode-p
     :type boolean
     :documentation "Whether Codex requests opt in to Fast mode.")
+    (fullscreen-p
+     :initarg :fullscreen-p
+     :initform nil
+     :reader configuration-fullscreen-p
+     :type boolean
+     :documentation "Whether the interactive terminal uses fullscreen mode.")
    (immutable-p
     :initarg :immutable-p
     :initform nil
@@ -687,6 +693,7 @@ and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
           (:model (option string))
           (:reasoning-effort (option string))
           (:codex-fast-mode-p boolean)
+            (:fullscreen-p boolean)
           (:immutable-p boolean)
           (:defer-provider-validation-p boolean)
           (:management-repl-enabled-p boolean)
@@ -706,6 +713,7 @@ and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
 (defun configuration-create
     (&key source-root working-directory model reasoning-effort
       (codex-fast-mode-p nil codex-fast-mode-p-supplied-p)
+      (fullscreen-p nil)
       immutable-p defer-provider-validation-p
       (management-repl-enabled-p nil management-repl-enabled-p-supplied-p)
       management-repl-transport management-repl-unix-socket-path
@@ -813,6 +821,7 @@ initialization registers the selected model."
                    :model selected-model
                    :reasoning-effort selected-effort
                    :codex-fast-mode-p selected-codex-fast-mode-p
+                     :fullscreen-p fullscreen-p
                    :immutable-p immutable-p
                    :management-repl-enabled-p selected-management-enabled-p
                    :management-repl-transport selected-management-transport
@@ -912,6 +921,7 @@ initialization registers the selected model."
     (configuration &key (:working-directory (option pathname))
                    (:model (option string))
                    (:reasoning-effort (option string))
+                     (:fullscreen-p boolean)
                    (:codex-fast-mode-p boolean)
                    (:immutable-p boolean)
                    (:web-search-mode (option string)))
@@ -921,6 +931,7 @@ initialization registers the selected model."
      &key working-directory model
        (reasoning-effort nil reasoning-effort-supplied-p)
        (codex-fast-mode-p nil codex-fast-mode-p-supplied-p)
+        (fullscreen-p nil fullscreen-p-supplied-p)
        (immutable-p nil immutable-p-supplied-p)
        (web-search-mode nil web-search-mode-supplied-p))
   "Copy CONFIGURATION, replacing only supplied workspace or model choices.
@@ -960,6 +971,9 @@ reasoning effort only when that effort is supported by the selected model."
            (if codex-fast-mode-p-supplied-p
                codex-fast-mode-p
                (configuration-codex-fast-mode-p configuration))
+             :fullscreen-p (if fullscreen-p-supplied-p
+                               fullscreen-p
+                               (configuration-fullscreen-p configuration))
            :immutable-p (if immutable-p-supplied-p
                             immutable-p
                             (configuration-immutable-p configuration))
@@ -1059,6 +1073,12 @@ reasoning effort only when that effort is supported by the selected model."
 (defun configuration-with-codex-fast-mode (configuration enabled-p)
   "Copy CONFIGURATION with Codex Fast mode set to ENABLED-P."
   (configuration--clone configuration :codex-fast-mode-p enabled-p))
+
+
+(-> configuration-with-fullscreen (configuration boolean) configuration)
+(defun configuration-with-fullscreen (configuration enabled-p)
+  "Copy CONFIGURATION with fullscreen terminal UI selection ENABLED-P."
+  (configuration--clone configuration :fullscreen-p enabled-p))
 
 (-> configuration-with-model (configuration string) configuration)
 (defun configuration-with-model (configuration model)
