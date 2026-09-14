@@ -325,7 +325,7 @@
    (list
     'shell-run-tool
     "shell" "run"
-    "Run one external command line in the workspace, optionally as an inspectable job, and return its exit code and combined output."
+    "Run one external command line in the workspace, optionally as an inspectable job, and return its exit code and combined output. Use PowerShell syntax on Windows and POSIX shell syntax elsewhere."
     (tool-object-schema
      (json-object
       "command" (tool-string-property "The shell command line to execute.")

@@ -112,10 +112,22 @@ jobs:
 
       - name: Verify packaged sandbox under a standard account
         shell: pwsh
-        run: script\check-windows-sandbox.ps1 -Archive (Get-ChildItem dist\*.zip).FullName
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'sandbox.log'
+          $status = 0
+          try {
+            & script\check-windows-sandbox.ps1 -Archive (Get-ChildItem dist\*.zip).FullName 2>&1 | Tee-Object -FilePath $log
+            if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
+          } catch {
+            $_ | Out-String | Tee-Object -FilePath $log -Append
+            $status = 1
+          }
+          if ($status -ne 0) {
+            script\ci-report-failure.ps1 -Title 'Packaged Windows sandbox failed' -Log $log -Status $status
+            exit $status
+          }
 
       - name: Check
-        if: ${{ !cancelled() && steps.bootstrap.outcome == 'success' }}
         shell: pwsh
         run: |
           $log = Join-Path $env:RUNNER_TEMP 'check.log'

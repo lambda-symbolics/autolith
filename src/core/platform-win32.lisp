@@ -1141,27 +1141,9 @@ can omit. Bounded retries cover handles released just after a child process exit
       (join-thread thread)))
   nil)
 
-(-> win32--git-shell () (option pathname))
-(defun win32--git-shell ()
-  "Return Git for Windows' POSIX shell when it is installed, or NIL."
-  (let ((program-files (or (uiop:getenv "ProgramFiles") "C:\\Program Files")))
-    (loop for candidate in (list (merge-pathnames "Git/usr/bin/sh.exe"
-                                                  (uiop:ensure-directory-pathname
-                                                   (uiop:parse-native-namestring
-                                                    program-files)))
-                                 (merge-pathnames "Git/bin/sh.exe"
-                                                  (uiop:ensure-directory-pathname
-                                                   (uiop:parse-native-namestring
-                                                    program-files))))
-          when (uiop:file-exists-p candidate)
-            return candidate)))
-
 (defmethod platform-shell-command-line ((platform win32-platform) command)
-  "Run COMMAND through Git for Windows' shell, or PowerShell without it."
-  (let ((shell (win32--git-shell)))
-    (if shell
-        (list (uiop:native-namestring shell) "-c" command)
-        (list "powershell.exe" "-NoProfile" "-NonInteractive" "-Command" command))))
+  "Run COMMAND through native PowerShell in both sandboxed and full-access modes."
+  (list "powershell.exe" "-NoProfile" "-NonInteractive" "-Command" command))
 
 (defparameter *win32-sandbox-read-roots* nil
   "Additional existing directories to expose read-only to sandboxed Windows commands.

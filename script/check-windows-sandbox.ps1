@@ -28,5 +28,10 @@ try {
     Get-CimInstance Win32_UserProfile | Where-Object SID -eq $user.SID.Value | Remove-CimInstance
     Remove-LocalUser -Name $name
   }
-  if (Test-Path -LiteralPath $root) { Remove-Item -Recurse -Force -LiteralPath $root }
+  if (Test-Path -LiteralPath $root) {
+    # Saved cores have owner-only ACLs. Reclaim the disposable account's files.
+    & takeown.exe /F $root /R /D Y | Out-Null
+    & icacls.exe $root /grant '*S-1-5-32-544:(OI)(CI)F' /T /C | Out-Null
+    Remove-Item -Recurse -Force -LiteralPath $root
+  }
 }

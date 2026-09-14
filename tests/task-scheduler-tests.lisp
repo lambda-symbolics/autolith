@@ -1732,7 +1732,9 @@ exactly that race."
                     (authorizations-before authorization-count)
                     (result
                       (run-shell context
-                                 "command" "printf fast-shell")))
+                                 "command" (test-fixture-shell-command
+                                            *platform* "printf fast-shell"
+                                            "[Console]::Write('fast-shell')"))))
                (test-assert
                 (and (tool-result-success-p result)
                      (not (typep result 'task-tool-result))
@@ -1747,9 +1749,11 @@ exactly that race."
                       (run-shell
                        context
                        "command"
-                       (format nil "sleep 1; printf once >> ~A"
-                               (uiop:escape-shell-token
-                                (namestring slow-path)))))
+                       (format nil
+                               (test-fixture-shell-command
+                                *platform* "sleep 1; printf once >> ~A"
+                                "Start-Sleep 1; [IO.File]::AppendAllText(~A,'once')")
+                               (test-fixture-shell-quote *platform* (namestring slow-path)))))
                     (details (tool-result-details result))
                     (job (handoff-job result))
                     (identifier (and job (session-job-identifier job))))
@@ -1768,7 +1772,7 @@ exactly that race."
                   (and (null (tool-execution-job-description job))
                        (string= (getf activity :description) summary)
                        (<= (length summary) *tool-execution-summary-limit*)
-                       (search "sleep 1" summary))
+                       (search "sleep 1" (string-downcase summary)))
                   "an omitted description uses the retained bounded job summary"))
                (let* ((wait-result
                         (tool-execute
@@ -1792,11 +1796,11 @@ exactly that race."
                        context
                        "command"
                        (format nil
-                               "printf started > ~A; sleep 1; printf finished > ~A"
-                               (uiop:escape-shell-token
-                                (namestring started-path))
-                               (uiop:escape-shell-token
-                                (namestring finished-path)))
+                               (test-fixture-shell-command
+                                *platform* "printf started > ~A; sleep 1; printf finished > ~A"
+                                "[IO.File]::WriteAllText(~A,'started'); Start-Sleep 1; [IO.File]::WriteAllText(~A,'finished')")
+                               (test-fixture-shell-quote *platform* (namestring started-path))
+                               (test-fixture-shell-quote *platform* (namestring finished-path)))
                        "async" t))
                     (details (tool-result-details result))
                     (job (handoff-job result))
@@ -1846,7 +1850,9 @@ exactly that race."
              (let* ((result
                       (let ((*shell-maximum-output-characters* 5))
                         (run-shell context
-                                   "command" "printf 123456789"
+                                   "command" (test-fixture-shell-command
+                                              *platform* "printf 123456789"
+                                              "[Console]::Write('123456789')")
                                    "async" t)))
                     (job (handoff-job result)))
                (multiple-value-bind (snapshot terminal-p)

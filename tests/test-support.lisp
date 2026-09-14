@@ -285,6 +285,21 @@ the POSIX platform adapter and the SB-POSIX symbols it reads exist."
   (:documentation
    "Return true when PLATFORM provides FIXTURE, a TEST-FIXTURE-KIND."))
 
+(defgeneric test-fixture-shell-command (platform posix powershell)
+  (:documentation "Select the host shell's spelling of one test command."))
+
+(defmethod test-fixture-shell-command ((platform platform) posix powershell)
+  "Use the POSIX command on the default test platform."
+  (declare (ignore powershell))
+  posix)
+
+(defgeneric test-fixture-shell-quote (platform text)
+  (:documentation "Quote TEXT as one literal in the host shell."))
+
+(defmethod test-fixture-shell-quote ((platform platform) text)
+  "Quote a literal for the POSIX test shell."
+  (uiop:escape-shell-token text))
+
 (-> test-withheld (keyword string) null)
 (defun test-withheld (facility description)
   "Record the checks DESCRIPTION names as skipped for want of FACILITY.

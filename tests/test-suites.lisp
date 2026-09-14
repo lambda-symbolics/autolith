@@ -454,6 +454,7 @@
     test-windows-shell-sandbox-available
     test-windows-shell-sandbox-integration
     test-windows-shell-sandbox-async
+    test-windows-shell-sandbox-network
     test-windows-shell-sandbox-missing-helper-fails-closed))
 
 (define-test-suite terminal

@@ -741,8 +741,9 @@ Primary shell and Lisp executions and child agents appear as live rows with
 spinners and elapsed time. The command and agent strips share a viewport bound,
 and provider activity remains visible below them. =shell.run= accepts an optional
 short =:description= for its row label; otherwise it derives one from the command.
-Commands run through =/bin/sh -c=; on Windows they run through Git for
-Windows' =sh.exe= when it is installed and through PowerShell otherwise.
+Use POSIX shell syntax for commands on POSIX hosts and PowerShell syntax on
+Windows. Both Windows authorization modes use native PowerShell; MSYS/Git Bash
+requires a shared object namespace that AppContainer does not permit.
 Windows sandboxed commands execute serially while temporary filesystem ACLs
 are installed. Their writable temporary directory is removed after completion
 or cancellation. Add existing read-only tool directories through

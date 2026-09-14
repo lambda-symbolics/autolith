@@ -9,6 +9,20 @@
 ;;; and the POSIX shell do not exist here, so the checks that need them are
 ;;; recorded as skipped.
 
+(defmethod test-fixture-shell-command ((platform win32-platform) posix powershell)
+  "Use native PowerShell for Windows command tests."
+  (declare (ignore posix))
+  powershell)
+
+(defmethod test-fixture-shell-quote ((platform win32-platform) text)
+  "Quote a PowerShell single-quoted literal, doubling embedded apostrophes."
+  (with-output-to-string (stream)
+    (write-char #\' stream)
+    (loop for character across text
+          do (write-char character stream)
+             (when (char= character #\') (write-char character stream)))
+    (write-char #\' stream)))
+
 (win32--define win32-fixture--create-symbolic-link "CreateSymbolicLinkW"
   (sb-alien:unsigned 8)
   (link win32-wide-string) (target win32-wide-string) (flags win32-dword))

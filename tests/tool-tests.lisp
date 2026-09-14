@@ -690,7 +690,9 @@
                 (search "1x1, image/png" (tool-result-content result))
                 "fs.view-image reports the prepared image metadata"))
              (let ((result (run "shell" "run"
-                                "command" "echo autolith-shell-works && exit 3")))
+                               "command" (test-fixture-shell-command
+                                          *platform* "echo autolith-shell-works && exit 3"
+                                          "Write-Output autolith-shell-works; exit 3"))))
                (test-assert (tool-result-success-p result)
                             "shell.run reports command completion")
                (test-assert (search "exit 3" (tool-result-content result))
@@ -705,7 +707,9 @@
               "shell.run accepts requested timeouts above ten minutes")
              (let* ((result
                       (run "shell" "run"
-                           "command" "printf '\\374\\022\\023\\265\\n'"))
+                           "command" (test-fixture-shell-command
+                                      *platform* "printf '\\374\\022\\023\\265\\n'"
+                                      "$s=[Console]::OpenStandardOutput(); $s.Write([byte[]](252,18,19,181,10),0,5); $s.Flush()")))
                     (content (tool-result-content result)))
                (test-assert (tool-result-success-p result)
                             "shell.run completes after invalid UTF-8 output")
@@ -714,7 +718,9 @@
                 "shell.run replaces invalid output bytes without losing status"))
              (let* ((*shell-maximum-output-characters* 5)
                     (result (run "shell" "run"
-                                 "command" "printf 123456789"))
+                                 "command" (test-fixture-shell-command
+                                            *platform* "printf 123456789"
+                                            "[Console]::Write('123456789')")))
                     (content (tool-result-content result)))
                (test-assert (tool-result-success-p result)
                             "shell.run completes when output is truncated")
@@ -768,11 +774,11 @@
                                    (json-object
                                     "command"
                                     (format nil
-                                            "printf ok > ~A; printf blocked > ~A"
-                                            (uiop:escape-shell-token
-                                             (namestring inside))
-                                            (uiop:escape-shell-token
-                                             (namestring outside))))))
+                                            (test-fixture-shell-command
+                                             *platform* "printf ok > ~A; printf blocked > ~A"
+                                             "[IO.File]::WriteAllText(~A,'ok'); [IO.File]::WriteAllText(~A,'blocked')")
+                                            (test-fixture-shell-quote *platform* (namestring inside))
+                                            (test-fixture-shell-quote *platform* (namestring outside))))))
                                  (make-instance
                                   'tool-context
                                   :configuration sandbox-configuration
