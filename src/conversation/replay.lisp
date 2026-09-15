@@ -105,7 +105,13 @@
            :condition-type (getf (rest record) :condition-type)
            :message (getf (rest record) :message)
            :request-number (getf (rest record) :request-number)))
-    ((:provider :native-compaction)
+    (:async-lisp-event
+     (list ':message
+           :seq (getf (rest record) :seq)
+           :time (getf (rest record) :time)
+           :role ':user :automatic-p t
+           :content (conversation-async-lisp--message record)))
+    ((:async-lisp-delivered :provider :native-compaction)
      nil)
     (otherwise
      (copy-tree record))))

@@ -398,29 +398,45 @@ emergency terminal input responsive while another thread owns presentation."
   (and (plusp (length text))
        (char= #\( (char text 0))))
 
-(-> terminal-ui--prompt-spans (string boolean) (values string list))
-(defun terminal-ui--prompt-spans (prompt lisp-draft-p)
+(-> terminal-ui--async-lisp-prefix-length (string) (option (integer 2)))
+(defun terminal-ui--async-lisp-prefix-length (text)
+  "Return the length of TEXT's async Lisp prefix, or NIL when absent."
+  (when (and (> (length text) 1)
+             (char= #\? (char text 0))
+             (find (char text 1) '(#\Space #\Tab #\Newline #\Return #\Page)))
+    (or (position-if-not
+         (lambda (character)
+           (find character '(#\Space #\Tab #\Newline #\Return #\Page)))
+         text :start 1)
+        (length text))))
+
+(-> terminal-ui--async-lisp-draft-p (string) boolean)
+(defun terminal-ui--async-lisp-draft-p (text)
+  "Return true when TEXT begins with a question-mark Lisp draft prefix."
+  (not (null (terminal-ui--async-lisp-prefix-length text))))
+
+(-> terminal-ui--prompt-spans (string boolean boolean) (values string list))
+(defun terminal-ui--prompt-spans (prompt lisp-draft-p async-lisp-draft-p)
   "Return PROMPT's visible text and styled spans for the current input mode."
-  (if lisp-draft-p
-      (let ((marker
-              (position-if-not
-               (lambda (character)
-                 (find character '(#\Space #\Tab #\Newline #\Return #\Page)))
-               prompt
-               :from-end t)))
+  (if (or lisp-draft-p async-lisp-draft-p)
+      (let* ((glyph (if async-lisp-draft-p "?" "*"))
+             (marker
+               (position-if-not
+                (lambda (character)
+                  (find character '(#\Space #\Tab #\Newline #\Return #\Page)))
+                prompt :from-end t)))
         (if marker
             (let ((text (copy-seq prompt)))
-              (setf (char text marker) #\*)
-              (values
-               text
-               (append
-                (when (plusp marker)
-                  (list (terminal-span ':brand (subseq text 0 marker))))
-                (list (terminal-span ':lisp-prompt "*"))
-                (when (< (1+ marker) (length text))
-                  (list (terminal-span ':brand (subseq text (1+ marker))))))))
-            (values "* "
-                    (list (terminal-span ':lisp-prompt "*")
+              (setf (char text marker) (char glyph 0))
+              (values text
+                      (append
+                       (when (plusp marker)
+                         (list (terminal-span ':brand (subseq text 0 marker))))
+                       (list (terminal-span ':lisp-prompt glyph))
+                       (when (< (1+ marker) (length text))
+                         (list (terminal-span ':brand (subseq text (1+ marker))))))))
+            (values (concatenate 'string glyph " ")
+                    (list (terminal-span ':lisp-prompt glyph)
                           (terminal-span ':brand " ")))))
       (values prompt (list (terminal-span ':brand prompt)))))
 
@@ -434,83 +450,85 @@ The rendered row is memoized on its exact inputs, because most repaints
 run while the draft, cursor, and terminal width are unchanged. The editor
 installs a fresh string on every text change, so identity comparison on
 the draft is exact."
-  (let* ((editor       (terminal-ui-editor ui))
-         (raw-content  (line-editor-text editor))
+  (let* ((editor (terminal-ui-editor ui))
+         (raw-content (line-editor-text editor))
+         (explicit-lisp-p (terminal-ui-lisp-input-p ui))
+         (async-prefix-length
+           (and (not explicit-lisp-p)
+                (terminal-ui--async-lisp-prefix-length raw-content)))
+         (async-lisp-draft-p (not (null async-prefix-length)))
          (lisp-draft-p
-           (not (null (or (terminal-ui-lisp-input-p ui)
+           (not (null (or explicit-lisp-p
                           (terminal-ui--lisp-draft-p raw-content)))))
-         (key
-           (list raw-content
-                 (line-editor-cursor editor)
-                 (terminal-columns (terminal-ui-terminal ui))
-                 lisp-draft-p
-                 (terminal-ui-prompt ui)
-                 (terminal-ui-placeholder ui)
-                 *terminal-style-table*
-                 *terminal-style-reset*))
-         (cache        (terminal-ui-prompt-render-cache ui)))
+         (key (list raw-content (line-editor-cursor editor)
+                    (terminal-columns (terminal-ui-terminal ui))
+                    lisp-draft-p async-lisp-draft-p
+                    (terminal-ui-prompt ui) (terminal-ui-placeholder ui)
+                    *terminal-style-table* *terminal-style-reset*))
+         (cache (terminal-ui-prompt-render-cache ui)))
     (if (and cache (every #'eql (first cache) key))
         (values (second cache) (third cache))
         (multiple-value-bind (content cursor-offset)
-            (terminal-ui--render-prompt-content ui lisp-draft-p)
+            (terminal-ui--render-prompt-content ui lisp-draft-p async-lisp-draft-p)
           (setf (terminal-ui-prompt-render-cache ui)
                 (list key content cursor-offset))
           (values content cursor-offset)))))
 
 (-> terminal-ui--render-prompt-content
-    (terminal-ui boolean)
+    (terminal-ui boolean boolean)
     (values (or list terminal-rendered-row) integer))
-(defun terminal-ui--render-prompt-content (ui lisp-draft-p)
+(defun terminal-ui--render-prompt-content (ui lisp-draft-p async-lisp-draft-p)
   "Render UI's word-wrapped prompt content and cursor character offset."
   (let* ((terminal (terminal-ui-terminal ui))
          (columns (terminal-columns terminal))
          (editor (terminal-ui-editor ui))
          (raw-content (line-editor-text editor))
+         (async-prefix-length
+           (and async-lisp-draft-p
+                (terminal-ui--async-lisp-prefix-length raw-content)))
+         (display-content (if async-prefix-length
+                              (subseq raw-content async-prefix-length)
+                              raw-content))
          (safe-prompt (sanitize-text (terminal-ui-prompt ui)
                                      :single-line-p t)))
     (multiple-value-bind (prompt-text prompt-spans)
-        (terminal-ui--prompt-spans safe-prompt lisp-draft-p)
-      (if (and (zerop (length raw-content))
+        (terminal-ui--prompt-spans safe-prompt lisp-draft-p async-lisp-draft-p)
+      (if (and (zerop (length display-content))
                (non-empty-string-p (terminal-ui-placeholder ui)))
           (let ((spans
                   (terminal--clip-spans
                    (append prompt-spans
-                           (list
-                            (terminal-span :hint
-                                           (terminal-ui-placeholder ui))))
+                           (list (terminal-span :hint
+                                                 (terminal-ui-placeholder ui))))
                    columns)))
             (values spans
                     (min (length prompt-text)
                          (length (terminal--spans-text spans)))))
-          (let* ((content (sanitize-text raw-content))
+          (let* ((content (sanitize-text display-content))
                  (content-cursor
                    (length
                     (sanitize-text
-                     (subseq raw-content 0 (line-editor-cursor editor)))))
+                     (subseq display-content
+                             0
+                             (max 0 (- (line-editor-cursor editor)
+                                       (or async-prefix-length 0)))))))
                  (content-spans
-                   (or
-                    (and lisp-draft-p
-                         (syntax--highlight-spans
-                          content
-                          :language (language-find ':common-lisp :errorp nil)))
-                    (list
-                     (terminal-span
-                      (if (uiop:string-prefix-p "/" content)
-                          ':user
-                          ':plain)
-                      content))))
-                 (prompt-display
-                   (terminal--render-spans terminal prompt-spans))
-                 (content-display
-                   (terminal--render-spans terminal content-spans)))
-            (multiple-value-bind
-                  (wrapped-content wrapped-display wrapped-cursor)
-                (wrap-styled-editor-text
-                 content
-                 content-display
-                 :cursor content-cursor
-                 :columns columns
-                 :prompt-width (text-cell-width prompt-text))
+                   (or (and (or lisp-draft-p async-lisp-draft-p)
+                            (syntax--highlight-spans
+                             content
+                             :language (language-find ':common-lisp :errorp nil)))
+                       (list (terminal-span
+                              (if (uiop:string-prefix-p "/" content)
+                                  ':user
+                                  ':plain)
+                              content))))
+                 (prompt-display (terminal--render-spans terminal prompt-spans))
+                 (content-display (terminal--render-spans terminal content-spans)))
+            (multiple-value-bind (wrapped-content wrapped-display wrapped-cursor)
+                (wrap-styled-editor-text content content-display
+                                         :cursor content-cursor
+                                         :columns columns
+                                         :prompt-width (text-cell-width prompt-text))
               (values
                (terminal--make-rendered-row
                 (concatenate 'string prompt-text wrapped-content)

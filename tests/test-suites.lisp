@@ -619,6 +619,21 @@
   test-application-prompt-marker-reader-order
   test-application-prompt-marker-lifecycle)
 
+(define-test-suite async-lisp
+  test-terminal-async-lisp-prompt
+  test-application-async-lisp-routing
+  test-conversation-async-lisp-session-durable-append-reload
+  test-conversation-async-lisp-session-delayed-projection
+  test-conversation-async-lisp-session-repeated-source-identifiers
+  test-application-async-lisp-evaluation
+  test-application-async-lisp-concurrency
+  test-application-async-lisp-cancellation
+  test-async-lisp-output-flood
+  test-async-lisp-output-captures-standard-text
+  test-async-lisp-output-sanitizes-control-text
+  test-async-lisp-output-throttles-and-flushes
+  test-async-lisp-output-concurrent-writes)
+
 (define-test-suite user-operation-context
   test-user-operation-persistence-and-context
   test-user-operation-bounds-and-validation

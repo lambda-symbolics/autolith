@@ -259,6 +259,30 @@ Use =//= to send a message beginning with a literal slash.
 The clanker sees both your source input and its evaluated result apart
 from any other effects it may have.
 
+Start input with =?= followed by whitespace to evaluate one form asynchronously
+in the active image. Use this for a blocking operation or a bare variable:
+
+#+BEGIN_SRC lisp
+? *package*
+? (progn (sleep 10) (values :finished 42))
+#+END_SRC
+
+The editor displays =?= in place of the normal prompt. Submit with Enter, then
+continue using the session while the form runs. =??= and =?text= are chat;
+spaces, tabs, and line breaks after =?= select asynchronous Lisp. Continue an
+incomplete form on another line as with ordinary Lisp input.
+
+Inspect or cancel the returned =exec:N= job with =job.get=, =job.wait=, or
+=job.cancel=. Standard output, error output, and Lisp diagnostic streams are
+captured with bounded retention and rate-limited, sanitized terminal display.
+On completion, receive all returned values or the error, together with captured
+output. Asynchronous evaluation uses noninteractive error handling and EOF input
+rather than a restart picker.
+
+The submitted form and its eventual result are retained in the originating
+session, including across a session switch. The model receives these messages
+at a safe request boundary; submitting a form does not start a model turn.
+
 When local Lisp or an interactive command signals a serious condition, the
 restart debugger keeps the signaling stack and its live restarts available. Use
 =Ask Autolith why this failed= to run an independent diagnosis while the failed

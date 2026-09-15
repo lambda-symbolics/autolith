@@ -322,6 +322,11 @@
     :type deque
     :documentation
     "Recent bounded local user operations in chronological durable order.")
+   (pending-async-lisp-events
+    :initform (make-deque)
+    :accessor conversation-pending-async-lisp-events
+    :type deque
+    :documentation "Durable asynchronous Lisp events awaiting provider projection.")
    (latest-goal-record
     :initform nil
     :accessor conversation-latest-goal-record
@@ -689,6 +694,9 @@ a crash may leave one that a later lease acquisition can reuse safely."
         :user-operation-records
         (copy-tree (deque->list
                     (conversation-user-operation-records conversation)))
+        :pending-async-lisp-events
+        (copy-tree (deque->list
+                    (conversation-pending-async-lisp-events conversation)))
         :latest-goal-record
         (copy-tree (conversation-latest-goal-record conversation))))
 
@@ -2837,6 +2845,10 @@ later picker searches read it without scanning the log."
              (if (= version 2)
                  (getf properties :user-operation-records)
                  nil))
+           (pending-async-lisp-events
+             (if (= version 2)
+                 (getf properties :pending-async-lisp-events)
+                 nil))
            (latest-goal-record
              (and (= version 2)
                   (getf properties :latest-goal-record))))
@@ -2873,6 +2885,8 @@ later picker searches read it without scanning the log."
                                                      :test #'string=)))
                        (conversation--header-record-list-p
                         user-operation-records ':user-operation)
+                       (conversation--header-record-list-p
+                        pending-async-lisp-events ':async-lisp-event)
                        (or (null latest-goal-record)
                            (and (conversation--record-form-p latest-goal-record)
                                 (eq (first latest-goal-record) :goal))))
@@ -2912,7 +2926,10 @@ later picker searches read it without scanning the log."
                 (copy-tree latest-goal-record))
           (dolist (record user-operation-records)
             (conversation--project-record
-             ':user-operation conversation (rest record))))
+             ':user-operation conversation (rest record)))
+          (dolist (record pending-async-lisp-events)
+            (conversation--project-record
+             ':async-lisp-event conversation (rest record))))
         conversation))))
 
 (-> conversation--validate-segment-first-record (pathname list list) null)

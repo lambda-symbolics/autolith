@@ -524,6 +524,7 @@
    (lambda ()
      (with-lock-held ((agent-turn-lock agent))
        (let ((conversation (agent-conversation agent)))
+         (conversation-flush-async-lisp-events conversation)
          ;; Compact before appending CONTENT so the fresh question survives
          ;; verbatim instead of being folded into the summary.
          (when (agent-should-compact-p agent)
@@ -1247,6 +1248,7 @@ worker results become explicit unknown outcomes so provider history stays valid.
 Queued user operations run first so a replaced provider, configuration, or
 tool registry reaches the very next provider request."
   (agent-observer-apply-pending-operations observer agent)
+  (conversation-flush-async-lisp-events (agent-conversation agent))
   (let ((messages (agent-observer-take-steering observer))
         (conversation (agent-conversation agent)))
     (unless (listp messages)

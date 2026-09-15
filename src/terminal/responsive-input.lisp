@@ -504,7 +504,8 @@ second reports whether shutdown was prepared."
           (user-message-input-create
            :text (subseq text 1)
            :image-pathnames (user-message-input-image-pathnames input)))))
-      ((terminal-ui--lisp-draft-p text)
+      ((or (terminal-ui--lisp-draft-p text)
+           (terminal-ui--async-lisp-draft-p text))
        nil)
       ((uiop:string-prefix-p "/" text)
        nil)
@@ -527,7 +528,8 @@ second reports whether shutdown was prepared."
   (let ((message (application--message-input input))
         (text (user-message-input-text input)))
     (cond
-      ((terminal-ui--lisp-draft-p text)
+      ((or (terminal-ui--lisp-draft-p text)
+           (terminal-ui--async-lisp-draft-p text))
        (list ':lisp (copy-seq text)))
       (message
        (list ':message message))
@@ -541,8 +543,12 @@ second reports whether shutdown was prepared."
     boolean)
 (defun application-input-controller--defer-lisp-submission-p (controller input)
   "Continue incomplete Lisp INPUT or reject its image attachments in place."
-  (let ((text (user-message-input-text input)))
-    (when (terminal-ui--lisp-draft-p text)
+  (let* ((text (user-message-input-text input))
+         (async-p (terminal-ui--async-lisp-draft-p text))
+         (source (if async-p
+                     (subseq text (terminal-ui--async-lisp-prefix-length text))
+                     text)))
+    (when (or async-p (terminal-ui--lisp-draft-p text))
       (let* ((application
                (application-input-controller-application controller))
              (ui (application-ui application)))
@@ -555,7 +561,7 @@ second reports whether shutdown was prepared."
                             "Local Lisp input cannot include image attachments.")))
            (terminal-ui-set-input ui input)
            t)
-          ((application-lisp-input-incomplete-p text)
+          ((application-lisp-input-incomplete-p source)
            (terminal-ui-set-input
             ui
             (application-lisp-input-with-text
@@ -2104,10 +2110,13 @@ reaches the very next provider request."
         (application (application-input-controller-application controller)))
     (when inputs
       (dolist (input inputs)
-        (if (terminal-ui--lisp-draft-p input)
-            (application-run-lisp-input application input :interactive-p nil)
-            (application--run-command-input
-             application input :interactive-p nil)))
+        (cond
+          ((terminal-ui--async-lisp-draft-p input)
+           (application-run-async-lisp-input application input))
+          ((terminal-ui--lisp-draft-p input)
+           (application-run-lisp-input application input :interactive-p nil))
+          (t
+           (application--run-command-input application input :interactive-p nil))))
       (when agent
         (application--agent-adopt-runtime application agent))))
   nil)
@@ -2303,10 +2312,12 @@ may execute immediately; other Lisp waits for the idle boundary."
          (message (application--message-input input))
          (text (user-message-input-text input))
          (lisp-input-p (terminal-ui--lisp-draft-p text))
+         (async-p (terminal-ui--async-lisp-draft-p text))
          (work (application-input-controller--input-work input))
          (invocation
            (and (null message)
                 (not lisp-input-p)
+                (not async-p)
                 (non-empty-string-p text)
                 (application-command-invocation-parse text)))
          (command
@@ -2314,6 +2325,8 @@ may execute immediately; other Lisp waits for the idle boundary."
                 (application-command-invocation-command invocation)))
          (busy-action
            (cond
+             (async-p
+              ':execute)
              (lisp-input-p
               (application-input-controller--lisp-active-turn-action
                controller text))
@@ -2343,6 +2356,9 @@ may execute immediately; other Lisp waits for the idle boundary."
           (setf handled-p t)
           (when work
             (cond
+              (async-p
+               (setf post-action ':execute
+                     accepted-p t))
               (message
                (let ((delivery
                         (application-input-controller--admit-primary-prompt-locked
@@ -2387,6 +2403,8 @@ may execute immediately; other Lisp waits for the idle boundary."
       (:execute
        (let ((result
                (cond
+                  (async-p
+                   (application-run-async-lisp-input application text))
                  (lisp-input-p
                   (application-input-controller--run-responsive-lisp
                    controller text))
@@ -2464,8 +2482,14 @@ may execute immediately; other Lisp waits for the idle boundary."
   (let* ((application
            (application-input-controller-application controller))
          (message (application--message-input input))
-         (text (user-message-input-text input)))
+         (text (user-message-input-text input))
+         (async-p (terminal-ui--async-lisp-draft-p text)))
     (cond
+      (async-p
+       (when (application-input-controller--submission-storage-ready-p
+              controller input)
+         (application-localgroup-resume application)
+         (application-run-async-lisp-input application text)))
       (message
        (application-input-controller--prompt
         controller message :prefer-steering-p steer-p))
@@ -2527,13 +2551,18 @@ may execute immediately; other Lisp waits for the idle boundary."
     null)
 (defun application-input-controller--handle-queue-submission (controller input)
   "Queue terminal INPUT as post-turn work through canonical prompt when prose."
-  (let ((message (application--message-input input)))
-    (if message
-        (application-input-controller--prompt
-         controller message :prefer-steering-p nil)
-        (when (application-input-controller--submission-storage-ready-p
-               controller input)
-          (application-input-controller--queue-input controller input))))
+  (let* ((application (application-input-controller-application controller))
+         (text (user-message-input-text input))
+         (message (application--message-input input)))
+    (cond
+      ((terminal-ui--async-lisp-draft-p text)
+       (when (application-input-controller--submission-storage-ready-p controller input)
+         (application-localgroup-resume application)
+         (application-run-async-lisp-input application text)))
+      (message
+       (application-input-controller--prompt controller message :prefer-steering-p nil))
+      ((application-input-controller--submission-storage-ready-p controller input)
+       (application-input-controller--queue-input controller input))))
   nil)
 
 (-> application-input-controller--recall-follow-up
@@ -3748,11 +3777,12 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
               :fatal-agent-loop-errors-p nil))
             (:lisp
              (let ((result
-                     (application-input-controller-call-with-reader-paused
-                      controller
-                      (lambda ()
-                        (application-run-lisp-input
-                         application (second work))))))
+                     (if (terminal-ui--async-lisp-draft-p (second work))
+                         (application-run-async-lisp-input application (second work))
+                         (application-input-controller-call-with-reader-paused
+                          controller
+                          (lambda ()
+                            (application-run-lisp-input application (second work)))))))
                (application-input-controller--record-prompt-result
                 controller result)
                (when (eq result ':quit)

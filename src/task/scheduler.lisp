@@ -370,13 +370,19 @@ start under a cancelled ancestor, and hands over to the child."
        (:summary string)
        (:operation-function function)
        (:detached-p boolean)
-       (:parent-call-id (option string)))
+        (:parent-call-id (option string))
+        (:terminal-result-function function))
     tool-execution-job)
 (defun task-orchestrator-start-execution-job
     (orchestrator parent-agent
      &key tool-name description summary operation-function detached-p
-       parent-call-id)
-  "Admit one shell or Lisp operation for exactly-once supervised execution."
+       parent-call-id
+       (terminal-result-function #'tool-execution-job--terminal-record))
+  "Admit one operation for exactly-once supervised execution.
+
+TERMINAL-RESULT-FUNCTION receives the job, terminal state, result, and condition
+report, including cancellation before execution. It returns the retained result,
+condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD does."
   (check-type tool-name non-empty-string)
   (check-type description (option string))
   (check-type summary string)
@@ -392,7 +398,7 @@ start under a cancelled ancestor, and hands over to the child."
          (entry
            (list :function #'tool-execution-job--run
                  :terminal-result-function
-                 #'tool-execution-job--terminal-record
+                  terminal-result-function
                  :name tool-name
                  :owner-identifiers
                  (task-parent-owner-identifiers parent-agent)
