@@ -648,6 +648,7 @@
   test-acp-session-list
   test-acp-unknown-method
   test-acp-prompt-unknown-session
+  test-acp-prompt-text-resource-link
   test-acp-cancel-notification
   test-acp-stdout-purity-and-clean-exit)
 (define-test-suite fixtures

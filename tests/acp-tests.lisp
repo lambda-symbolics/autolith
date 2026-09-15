@@ -242,6 +242,24 @@ Use TIMEOUT as the per-line wait bound."
       (acp-test--request client 3 "session/unknown" (json-object))
     (acp-test--expect-error client 3 *acp-method-not-found-code*)))
 
+(defun test-acp-prompt-text-resource-link ()
+  "acp--prompt-text converts text and resource_link blocks to a string."
+  (let ((text (acp--prompt-text
+               (json-object "prompt"
+                            (json-array
+                             (json-object "type" "text"
+                                          "text" "Look at this")
+                             (json-object "type" "resource_link"
+                                          "name" "acp.json"
+                                          "uri" "file:///example/acp.json"
+                                          "description" "Open file"))))))
+    (test-assert (search "Look at this" text)
+                 "text block is preserved")
+    (test-assert (search "resource" text)
+                 "resource_link block is rendered")
+    (test-assert (search "file:///example/acp.json" text)
+                 "resource uri is preserved")))
+
 (defun test-acp-cancel-notification ()
   "session/cancel is a notification and produces no reply line."
   (acp-test--with-client (client)
