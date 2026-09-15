@@ -70,13 +70,17 @@ Autolith scans these roots recursively, with earlier roots taking precedence:
 
 1. =.autolith/skills/= at the project root
 2. =${XDG_CONFIG_HOME:-~/.config}/autolith/skills/=
-3. bundled Skill roots
+3. =<site-config-root>/skills/=
+4. bundled Skill roots
 
 Outside Git, the workspace directory is the project root. Only the exact,
 case-sensitive filenames =SKILL.sexp= and =SKILL.md= count. Within one
 directory, a valid native definition is considered before =SKILL.md=. An
 invalid definition does not reserve its name, so another valid definition may
 still be selected.
+
+Earlier locations override later ones, so you can have a project-local or
+user-local version of a site Skill.
 
 * Loading
 
