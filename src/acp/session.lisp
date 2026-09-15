@@ -402,25 +402,46 @@
                :code *acp-invalid-params-code*
                :message (format nil "Session ~A is unknown." session-id)))))
 
+(-> acp--content-block-text (t) (option string))
+(defun acp--content-block-text (block)
+  "Return a textual representation of one ACP prompt content BLOCK, or NIL."
+  (unless (json-object-p block)
+    (error 'acp-method-error
+           :code *acp-invalid-params-code*
+           :message "Each session/prompt content block must be an object."))
+  (let ((type (json-get block "type")))
+    (cond
+      ((json-string= type "text")
+       (let ((text (json-get block "text")))
+         (if (stringp text) text "")))
+      ((json-string= type "resource_link")
+       (let ((name (json-get block "name"))
+             (uri (json-get block "uri"))
+             (description (json-get block "description")))
+         (format nil "<resource name=\"~A\" uri=\"~A\"~@[ description=\"~A\"~] />"
+                 (if (stringp name) name "")
+                 (if (stringp uri) uri "")
+                 (if (stringp description) description nil))))
+      (t
+       ;; Unknown block type: preserve it as JSON so the agent can see it.
+       (json-encode block)))))
+
 (-> acp--prompt-text (json-object) string)
 (defun acp--prompt-text (params)
-  "Return the text of PARAMS's text content blocks as one string."
+  "Return the text of PARAMS's prompt content blocks as one string."
   (let ((blocks (json-get params "prompt")))
     (unless (vectorp blocks)
       (error 'acp-method-error
              :code *acp-invalid-params-code*
              :message "The session/prompt prompt field must be an array."))
-    (let ((text (make-string-output-stream)))
+    (let ((parts nil))
       (loop for block across blocks
-            do (unless (and (json-object-p block)
-                            (json-string= (json-get block "type") "text")
-                            (stringp (json-get block "text")))
-                 (error 'acp-method-error
-                        :code *acp-invalid-params-code*
-                        :message "The session/prompt supports text content blocks only."))
-               (write-string (json-get block "text") text)
-               (terpri text))
-      (get-output-stream-string text))))
+            for text = (acp--content-block-text block)
+            when text
+              do (push text parts))
+      (if parts
+          (format nil "~{~A~^~%~}" (nreverse parts))
+          ""))))
 
 (-> acp--session-observer (acp-session) agent-observer)
 (defun acp--session-observer (session)
