@@ -34,11 +34,22 @@
     :initform (make-lock "Autolith ACP cancellation")
     :reader acp-session-cancellation-lock
     :documentation "The lock guarding the turn cancellation flag.")
-   (cancelled-p
-    :initform nil
-    :accessor acp-session-cancelled-p
-    :type boolean
-    :documentation "Whether the client asked to cancel the running turn."))
+    (cancelled-p
+      :initform nil
+      :accessor acp-session-cancelled-p
+      :type boolean
+      :documentation "Whether the client asked to cancel the running turn.")
+   (reasoning-lock
+     :initform (make-lock "Autolith ACP reasoning")
+     :reader acp-session-reasoning-lock
+     :documentation
+     "The lock guarding the buffered reasoning text of the turn.")
+    (reasoning-text
+      :initform ""
+      :accessor acp-session-reasoning-text
+      :type string
+      :documentation
+      "The reasoning text buffered before its next thought chunk."))
   (:documentation "One ACP session bound to one connected application."))
 
 (defclass acp-server ()
@@ -271,6 +282,50 @@
   (acp--session-update
    session update-name
    (json-object "content" (json-object "type" "text" "text" text))))
+
+(defparameter *acp-reasoning-flush-chars* 800
+  "The buffered reasoning length that forces one thought-chunk notification.
+Smaller fragments ride along so the editor renders one thinking batch
+instead of one message per fragment.")
+
+(-> acp--session-reasoning (acp-session string) null)
+(defun acp--session-reasoning (session text)
+  "Buffer one reasoning TEXT fragment for SESSION and flush the buffer once
+it grows past *acp-reasoning-flush-chars*."
+  (block nil
+    (let (flush)
+      (with-lock-held ((acp-session-reasoning-lock session))
+        (let ((current
+                (concatenate 'string
+                             (acp-session-reasoning-text session)
+                             text)))
+          (if (>= (length current) *acp-reasoning-flush-chars*)
+              (progn
+                (setf (acp-session-reasoning-text session) "")
+                (setf flush current))
+              (setf (acp-session-reasoning-text session) current))))
+      (when flush
+        (acp--session-chunk session "agent_thought_chunk" flush)))
+    nil))
+
+(-> acp--flush-reasoning (acp-session) null)
+(defun acp--flush-reasoning (session)
+  "Emit SESSION's buffered reasoning text, if any, as one thought chunk.
+Other update kinds call this first so thinking never lags its context."
+  (let ((pending
+          (with-lock-held ((acp-session-reasoning-lock session))
+            (prog1 (acp-session-reasoning-text session)
+              (setf (acp-session-reasoning-text session) "")))))
+    (when (non-empty-string-p pending)
+      (acp--session-chunk session "agent_thought_chunk" pending))
+    nil))
+
+(-> acp--reset-reasoning (acp-session) null)
+(defun acp--reset-reasoning (session)
+  "Discard SESSION's buffered reasoning text before one new prompt."
+  (with-lock-held ((acp-session-reasoning-lock session))
+    (setf (acp-session-reasoning-text session) ""))
+  nil)
 
 ;;;; -- Conversation Replay --
 
@@ -509,17 +564,20 @@
   "Run one user turn for SESSION and stream its updates to the client.
 Interrupts the turn at observer boundaries and reports stopReason
 cancelled when the client sent session/cancel while it ran."
-  (let* ((session (acp--resolved-session server params))
+    (let* ((session (acp--resolved-session server params))
          (text (acp--prompt-text params)))
     (acp--reset-session-turn session)
+    (acp--reset-reasoning session)
     (handler-case
         (let ((result
                 (agent-run-user-turn
                  (application-agent (acp-session-application session))
                  text
                  :observer (acp--session-observation session))))
+          (acp--flush-reasoning session)
           (json-object "stopReason" (acp--stop-reason result)))
       (acp-turn-cancelled ()
+        (acp--flush-reasoning session)
         (json-object "stopReason" "cancelled")))))
 
 (-> acp--handle-session-set-mode (acp-server json-object) json-object)

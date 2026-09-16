@@ -190,20 +190,24 @@ tool authorization asks the editor through acp/authorization.lisp."
               :text-callback
               (lambda (text)
                 (acp--session-check-cancellation session)
+                (acp--flush-reasoning session)
                 (acp--session-chunk session "agent_message_chunk" text))
               :reasoning-callback
               (lambda (text)
                 (acp--session-check-cancellation session)
-                (acp--session-chunk session "agent_thought_chunk" text))
+                (acp--session-reasoning session text))
               :status-callback
               (lambda (status details)
                 (acp--session-check-cancellation session)
+                (acp--flush-reasoning session)
                 (acp--report-tool-status session status details))
               :command-authorization-callback
               (lambda (command directory)
                 (acp--session-check-cancellation session)
+                (acp--flush-reasoning session)
                 (acp--authorize-command session command directory))
               :tool-authorization-callback
               (lambda (tool arguments)
                 (acp--session-check-cancellation session)
+                (acp--flush-reasoning session)
                 (acp--authorize-tool session tool arguments)))))

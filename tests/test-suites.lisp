@@ -655,6 +655,7 @@
   test-acp-session-request-permission-cancelled
   test-acp-tool-authorization-maps-outcomes
   test-acp-turn-cancellation
+  test-acp-reasoning-batching
   test-acp-stdout-purity-and-clean-exit
   test-acp-tool-call-updates
   test-acp-tool-call-failure-update)
