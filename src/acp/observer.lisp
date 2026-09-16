@@ -43,6 +43,16 @@ ACP kinds are advisory, so unknown namespaces simply report other."
          (t "read")))
       (t "other"))))
 
+(-> acp--bounded-tool-output (string) string)
+(defun acp--bounded-tool-output (text)
+  "Return TEXT cut to *acp-tool-output-limit* characters.
+  Longer output keeps its first characters."
+  (if (<= (length text) *acp-tool-output-limit*)
+      text
+      (concatenate 'string
+                   (subseq text 0 *acp-tool-output-limit*)
+                   "…")))
+
 (-> acp--tool-call-text ((option string)) (option json-object))
 (defun acp--tool-call-text (text)
   "Return one bounded ACP text content object for TEXT, or NIL when empty.
@@ -52,23 +62,27 @@ Output longer than *acp-tool-output-limit* keeps its first characters."
     (json-object
      "type" "content"
      "content"
-     (json-object
-      "type" "text"
-      "text" (if (<= (length text) *acp-tool-output-limit*)
-                 text
-                 (concatenate 'string
-                              (subseq text 0 *acp-tool-output-limit*)
-                              "…"))))))
+     (json-object "type" "text" "text"
+                  (acp--bounded-tool-output text)))))
 
 (-> acp--tool-call-started (acp-session list) null)
 (defun acp--tool-call-started (session details)
-  "Report one starting tool call to SESSION's client as in progress."
-  (acp--session-update
-   session "tool_call"
-   (json-object "toolCallId" (acp--tool-call-id details)
-                "title" (or (getf details :tool) "tool")
-                "kind" (acp--tool-kind (getf details :tool))
-                "status" "in_progress"))
+  "Report one starting tool call to SESSION's client as in progress.
+
+ The call's argument object travels as rawInput when DETAILS carries one."
+  (let ((input (getf details :input)))
+    (acp--session-update
+     session "tool_call"
+     (if (json-object-p input)
+         (json-object "toolCallId" (acp--tool-call-id details)
+                      "title" (or (getf details :tool) "tool")
+                      "kind" (acp--tool-kind (getf details :tool))
+                      "status" "in_progress"
+                      "rawInput" input)
+         (json-object "toolCallId" (acp--tool-call-id details)
+                      "title" (or (getf details :tool) "tool")
+                      "kind" (acp--tool-kind (getf details :tool))
+                      "status" "in_progress"))))
   nil)
 
 (-> acp--tool-call-progress (acp-session list) null)
@@ -84,21 +98,35 @@ Output longer than *acp-tool-output-limit* keeps its first characters."
   nil)
 
 (-> acp--tool-call-completed (acp-session list) null)
-  (defun acp--tool-call-completed (session details)
+(defun acp--tool-call-completed (session details)
   "Report one finished tool call with SESSION's final status and output.
 
 Failed calls report failed; timing details stay in the conversation record.
-Calls without recorded output report status only."
-  (let ((content (acp--tool-call-text (getf details :output))))
+Calls without recorded output report status only. The output travels in
+content for display and in rawOutput for machine reading, bounded alike."
+  (let* ((output (getf details :output))
+         (content (acp--tool-call-text output))
+         (raw-output
+          (and (stringp output) (non-empty-string-p output)
+               (json-object "output" (acp--bounded-tool-output output)))))
     (acp--session-update
      session "tool_call_update"
-     (json-object "toolCallId" (acp--tool-call-id details)
-                  "status" (if (getf details :success-p)
-                               "completed"
-                               "failed")
-                  "content" (if content
-                                (json-array content)
-                                (json-array)))))
+     (if raw-output
+         (json-object "toolCallId" (acp--tool-call-id details)
+                      "status" (if (getf details :success-p)
+                                   "completed"
+                                   "failed")
+                      "content" (if content
+                                    (json-array content)
+                                    (json-array))
+                      "rawOutput" raw-output)
+         (json-object "toolCallId" (acp--tool-call-id details)
+                      "status" (if (getf details :success-p)
+                                   "completed"
+                                   "failed")
+                      "content" (if content
+                                    (json-array content)
+                                    (json-array))))))
   nil)
 
 (-> acp--report-tool-status (acp-session keyword list) null)

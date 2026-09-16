@@ -1078,6 +1078,22 @@ worker results become explicit unknown outcomes so provider history stays valid.
 (-> agent--run-tool-wave
     (agent list agent-observer integer boolean)
     null)
+;; The raw input object travels with the started event so editors can
+;; present the call's arguments before any result exists.
+
+(-> agent--tool-call-input (list) (option json-object))
+(defun agent--tool-call-input (call)
+  "Return CALL's decoded argument object, or NIL when it is unavailable."
+  (block nil
+    (let ((arguments (json-get call "arguments")))
+      (unless (stringp arguments)
+        (return (and (json-object-p arguments) arguments)))
+      (handler-case (json-decode arguments)
+        (error () nil)))))
+
+(-> agent--run-tool-wave
+    (agent list agent-observer integer boolean)
+    null)
 (defun agent--run-tool-wave
     (agent plans observer tool-round tool-restriction-p)
   "Execute independent PLANS concurrently and complete them in wire order."
@@ -1088,7 +1104,8 @@ worker results become explicit unknown outcomes so provider history stays valid.
        :tool-call-started
        (list :tool-round tool-round
              :call-id (json-get call "call_id")
-             :tool (function-call-canonical-name call)))))
+             :tool (function-call-canonical-name call)
+             :input (agent--tool-call-input call)))))
   (let* ((count (length plans))
          (executions
            (map 'vector (lambda (plan) (list :plan plan)) plans))
