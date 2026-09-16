@@ -65,22 +65,54 @@ Output longer than *acp-tool-output-limit* keeps its first characters."
      (json-object "type" "text" "text"
                   (acp--bounded-tool-output text)))))
 
+  (-> acp--tool-call-preview (json-object) (option string))
+(defun acp--tool-call-preview (arguments)
+  "Return a one-line preview of ARGUMENTS for the tool-call title.
+
+The sorted first entry renders: string values inline, anything else as
+compact JSON."
+  (block nil
+    (let ((key (first (sort (loop for entry being the hash-keys of arguments
+                                  collect entry)
+                            #'string<))))
+      (unless key
+        (return nil))
+      (let ((value (json-get arguments key)))
+        (if (stringp value)
+            (text-cell-prefix (sanitize-text value :single-line-p t) 48)
+            (json-encode value))))))
+
+(-> acp--tool-call-title (list) string)
+(defun acp--tool-call-title (details)
+  "Return the tool-call TITLE for DETAILS, previewing known arguments.
+
+Calls whose rawInput is known render as the tool name, a middle dot, and
+the first argument's preview, so the editor's tool window shows the form
+or command instead of the bare tool name."
+  (let ((tool (or (getf details :tool) "tool"))
+        (preview (and (json-object-p (getf details :input))
+                      (acp--tool-call-preview (getf details :input)))))
+    (if preview
+        (format nil "~A · ~A" tool preview)
+        tool)))
+
 (-> acp--tool-call-started (acp-session list) null)
 (defun acp--tool-call-started (session details)
   "Report one starting tool call to SESSION's client as in progress.
 
- The call's argument object travels as rawInput when DETAILS carries one."
+The call's argument object travels as rawInput when DETAILS carries one,
+and the title previews the first argument."
   (let ((input (getf details :input)))
     (acp--session-update
      session "tool_call"
      (if (json-object-p input)
          (json-object "toolCallId" (acp--tool-call-id details)
-                      "title" (or (getf details :tool) "tool")
+                      "title" (acp--tool-call-title details)
                       "kind" (acp--tool-kind (getf details :tool))
                       "status" "in_progress"
                       "rawInput" input)
          (json-object "toolCallId" (acp--tool-call-id details)
-                      "title" (or (getf details :tool) "tool")
+                      "title" (acp--tool-call-title details)
                       "kind" (acp--tool-kind (getf details :tool))
                       "status" "in_progress"))))
   nil)
