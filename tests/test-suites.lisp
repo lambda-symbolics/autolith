@@ -650,9 +650,14 @@
   test-acp-prompt-unknown-session
   test-acp-prompt-text-resource-link
   test-acp-cancel-notification
-    test-acp-stdout-purity-and-clean-exit
-    test-acp-tool-call-updates
-    test-acp-tool-call-failure-update)
+  test-acp-command-permission-options
+  test-acp-session-request-permission-selected
+  test-acp-session-request-permission-cancelled
+  test-acp-tool-authorization-maps-outcomes
+  test-acp-turn-cancellation
+  test-acp-stdout-purity-and-clean-exit
+  test-acp-tool-call-updates
+  test-acp-tool-call-failure-update)
 (define-test-suite fixtures
   test-run-temporary-root-cleanup
   test-configuration-fixture-cleanup

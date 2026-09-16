@@ -481,3 +481,188 @@ Use TIMEOUT as the per-line wait bound."
                  (text (json-get body "text")))
             (test-assert (equal text "peer reset")
                            "failure output text is present")))))))
+
+;;;; -- Permission Request Bridge Tests --
+
+(defun acp-test--authorization-entry (configuration)
+  "Return a started test session whose client replies over two pipes."
+  (multiple-value-bind (server-input client-write)
+      (acp-test--make-pipe)
+    (multiple-value-bind (client-read server-output)
+        (acp-test--make-pipe)
+      (let* ((server
+              (make-instance
+               'acp-server
+               :connection
+               (acp-connection-create
+                :input-stream server-input
+                :output-stream server-output
+                :request-dispatcher
+                (lambda (&rest ignored)
+                  (declare (ignore ignored))
+                  nil)
+                :notification-dispatcher
+                (lambda (&rest ignored)
+                  (declare (ignore ignored))
+                  nil))
+               :configuration configuration))
+             (session (make-instance 'acp-session
+                                     :identifier "sess_perm"
+                                     :server server
+                                     :application nil
+                                     :mode ':ask)))
+        (acp-connection-start (acp-server-connection server))
+        (list :client (list :input client-write :output client-read)
+              :session session)))))
+
+(-> acp-test--answer-permission
+    (list json-object (option string))
+    null)
+(defun acp-test--answer-permission (client request option-id)
+  "Answer the permission REQUEST from CLIENT with OPTION-ID.
+A nil OPTION-ID answers with a cancelled outcome."
+  (let ((outcome (if option-id
+                     (json-object "outcome" "selected"
+                                  "optionId" option-id)
+                     (json-object "outcome" "cancelled"))))
+    (acp-test--write-line
+     client
+     (json-encode
+      (json-object "jsonrpc" "2.0"
+                   "id" (json-get request "id")
+                   "result" (json-object "outcome" outcome)))))
+  nil)
+
+(-> acp-test--next-permission-request (list) (option json-object))
+(defun acp-test--next-permission-request (client)
+  "Read the next message from CLIENT and return it if it is a permission
+request, or signal a test failure when it is nothing else."
+  (let* ((line (acp-test--read-line-timeout client))
+         (message (when line (acp-test--decode-line line))))
+    (when (and message
+               (string= (json-get message "method")
+                        "session/request_permission"))
+      message)))
+
+(defun test-acp-command-permission-options ()
+  "The command permission options carry the ACP option kinds."
+    (let ((options (apply #'json-array (acp--command-permission-options))))
+    (test-assert (vectorp options) "command options form an array")
+    (let ((ids (mapcar
+                (lambda (option) (json-get option "optionId"))
+                (coerce options 'list))))
+      (test-assert (equal ids (list "allow_once" "allow_always" "reject_once"))
+                   "command options list allow, allow always, and reject"))))
+
+(defun test-acp-session-request-permission-selected ()
+  "One selected outcome returns the chosen optionId."
+  (with-test-configuration (configuration)
+    (let ((entry (acp-test--authorization-entry configuration)))
+      (let* ((session (getf entry :session))
+             (client (getf entry :client))
+         (thread
+          (sb-thread:make-thread
+           (lambda ()
+             (acp--session-request-permission
+              session
+              (json-object "title" "run git status" "kind" "execute")
+              (acp--command-permission-options))))))
+        (let ((request (acp-test--next-permission-request client)))
+          (test-assert request "the permission request arrived")
+          (let ((params (json-get request "params")))
+            (test-assert (equal (json-get params "sessionId") "sess_perm")
+                         "the request carries the session id")
+            (let ((tool-call (json-get params "toolCall")))
+              (test-assert (equal (json-get tool-call "title") "run git status")
+                           "the request carries the tool title")))
+          (acp-test--answer-permission client request "allow_once"))
+        (test-assert
+         (string= (sb-thread:join-thread thread :timeout 10 :default ':timeout)
+                  "allow_once")
+         "the selected optionId is returned")))))
+
+(defun test-acp-session-request-permission-cancelled ()
+  "A cancelled outcome denies by returning nil."
+  (with-test-configuration (configuration)
+    (let ((entry (acp-test--authorization-entry configuration)))
+      (let* ((session (getf entry :session))
+             (client (getf entry :client))
+             (thread
+              (sb-thread:make-thread
+               (lambda ()
+                 (acp--session-request-permission
+                  session
+                  (json-object "title" "run git status" "kind" "execute")
+                  (acp--command-permission-options))))))
+        (let ((request (acp-test--next-permission-request client)))
+          (test-assert request "the permission request arrived")
+          (acp-test--answer-permission client request nil))
+        (test-assert
+           (null (sb-thread:join-thread thread :timeout 10 :default ':timeout))
+         "a cancelled outcome denies")))))
+
+(defun test-acp-tool-authorization-maps-outcomes ()
+  "External tool authorization asks once and maps allow and reject."
+  (with-test-configuration (configuration)
+    (let* ((entry (acp-test--authorization-entry configuration))
+           (session (getf entry :session))
+           (client (getf entry :client))
+           (tool (make-instance 'tool
+                                :namespace "mcp"
+                                :name "grep"
+                                :description "Search files"
+                                :parameters (json-object))))
+      (let ((thread
+              (sb-thread:make-thread
+               (lambda ()
+                 (acp--authorize-tool session tool (json-object "q" "x"))))))
+        (let ((request (acp-test--next-permission-request client)))
+          (test-assert request "the tool permission request arrived")
+          (let* ((params (json-get request "params"))
+                 (tool-call (json-get params "toolCall")))
+            (test-assert (equal (json-get tool-call "title") "mcp.grep")
+                         "the tool request title is the canonical name")
+            (test-assert (equal (json-get (json-get tool-call "rawInput") "q")
+                                "x")
+                         "the tool request carries rawInput"))
+          (acp-test--answer-permission client request "allow_once"))
+        (test-assert
+         (eq (sb-thread:join-thread thread :timeout 10 :default ':deny)
+             ':allow)
+         "allow_once allows the tool call"))
+      (let ((thread
+              (sb-thread:make-thread
+               (lambda ()
+                 (acp--authorize-tool session tool (json-object "q" "y"))))))
+        (let ((request (acp-test--next-permission-request client)))
+          (test-assert request "the second tool permission request arrived")
+          (acp-test--answer-permission client request "reject_once"))
+        (test-assert
+         (eq (sb-thread:join-thread thread :timeout 10 :default ':allow)
+             ':deny)
+         "reject_once denies the tool call")))))
+
+;;;; -- Turn Cancellation Tests --
+
+(defun test-acp-turn-cancellation ()
+  "Cancellation flags signal acp-turn-cancelled at observer boundaries."
+  (with-test-configuration (configuration)
+    (let ((session (acp-test--tool-session
+                    configuration (make-string-output-stream))))
+      (test-assert (not (acp--session-turn-cancelled-p session))
+                   "the cancellation flag begins false")
+      (acp--cancel-session-turn session)
+      (test-assert (acp--session-turn-cancelled-p session)
+                   "cancel records the flag")
+      (let ((observer (acp--session-observation session)))
+        (test-assert
+         (handler-case
+             (progn (agent-observer-text observer "chunk") nil)
+           (acp-turn-cancelled () t))
+         "a text callback signals acp-turn-cancelled"))
+      (acp--reset-session-turn session)
+      (test-assert (not (acp--session-turn-cancelled-p session))
+                   "reset clears the flag")
+      (let ((observer (acp--session-observation session)))
+        (agent-observer-text observer "chunk after reset")
+        (test-assert t "a text callback runs normally after reset")))))

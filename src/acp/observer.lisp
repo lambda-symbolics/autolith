@@ -122,25 +122,28 @@ every other status keyword stays invisible here."
 (defun acp--session-observation (session)
   "Return one serialized observer streaming SESSION's turn to the client.
 
-Until the ACP request_permission bridge exists, tool and command
-authorization allows everything unconditionally."
+Every callback boundary first honors session/cancel; command and external
+tool authorization asks the editor through acp/authorization.lisp."
   (make-instance
    'serialized-agent-observer
    :delegate (callback-agent-observer-create
               :text-callback
               (lambda (text)
+                (acp--session-check-cancellation session)
                 (acp--session-chunk session "agent_message_chunk" text))
               :reasoning-callback
               (lambda (text)
+                (acp--session-check-cancellation session)
                 (acp--session-chunk session "agent_thought_chunk" text))
               :status-callback
               (lambda (status details)
+                (acp--session-check-cancellation session)
                 (acp--report-tool-status session status details))
               :command-authorization-callback
               (lambda (command directory)
-                (declare (ignore command directory))
-                ':full-access)
+                (acp--session-check-cancellation session)
+                (acp--authorize-command session command directory))
               :tool-authorization-callback
               (lambda (tool arguments)
-                (declare (ignore tool arguments))
-                ':allow))))
+                (acp--session-check-cancellation session)
+                (acp--authorize-tool session tool arguments)))))

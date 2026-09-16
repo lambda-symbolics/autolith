@@ -29,7 +29,16 @@
     :initarg :mode
     :accessor acp-session-mode
     :type keyword
-    :documentation "The current command permission mode keyword."))
+    :documentation "The current command permission mode keyword.")
+   (cancellation-lock
+    :initform (make-lock "Autolith ACP cancellation")
+    :reader acp-session-cancellation-lock
+    :documentation "The lock guarding the turn cancellation flag.")
+   (cancelled-p
+    :initform nil
+    :accessor acp-session-cancelled-p
+    :type boolean
+    :documentation "Whether the client asked to cancel the running turn."))
   (:documentation "One ACP session bound to one connected application."))
 
 (defclass acp-server ()
@@ -54,6 +63,48 @@
     :documentation "The lock guarding the session table."))
   (:documentation "One ACP agent server over one connection."))
 
+
+;;;; -- Turn Cancellation --
+
+(define-condition acp-turn-cancelled (autolith-error)
+  ((session
+    :initarg :session
+    :reader acp-turn-cancelled-session
+    :type acp-session
+    :documentation "The session whose client cancelled the turn."))
+  (:documentation
+   "Signals that the client asked to cancel SESSION's running prompt.")
+  (:report (lambda (condition stream)
+             (format stream "The client cancelled the ACP turn for session ~A."
+                     (acp-session-identifier
+                      (acp-turn-cancelled-session condition))))))
+
+(-> acp--cancel-session-turn (acp-session) null)
+(defun acp--cancel-session-turn (session)
+  "Record that SESSION's client asked to cancel its running turn."
+  (with-lock-held ((acp-session-cancellation-lock session))
+    (setf (acp-session-cancelled-p session) t))
+  nil)
+
+(-> acp--reset-session-turn (acp-session) null)
+(defun acp--reset-session-turn (session)
+  "Clear SESSION's turn cancellation flag before one new prompt."
+  (with-lock-held ((acp-session-cancellation-lock session))
+    (setf (acp-session-cancelled-p session) nil))
+  nil)
+
+(-> acp--session-turn-cancelled-p (acp-session) boolean)
+(defun acp--session-turn-cancelled-p (session)
+  "Return true when SESSION's client asked to cancel its running turn."
+  (with-lock-held ((acp-session-cancellation-lock session))
+    (acp-session-cancelled-p session)))
+
+(-> acp--session-check-cancellation (acp-session) null)
+(defun acp--session-check-cancellation (session)
+  "Signal acp-turn-cancelled when SESSION's client cancelled its turn.
+  Observer callbacks call this at every safe boundary."
+  (when (acp--session-turn-cancelled-p session)
+    (error 'acp-turn-cancelled :session session)))
 ;;;; -- Mode Mapping --
 
 (defparameter *acp-mode-ids*
@@ -455,15 +506,21 @@
 
 (-> acp--handle-session-prompt (acp-server json-object) json-object)
 (defun acp--handle-session-prompt (server params)
-  "Run one user turn for SESSION and stream its updates to the client."
+  "Run one user turn for SESSION and stream its updates to the client.
+Interrupts the turn at observer boundaries and reports stopReason
+cancelled when the client sent session/cancel while it ran."
   (let* ((session (acp--resolved-session server params))
-         (text (acp--prompt-text params))
-         (result
-          (agent-run-user-turn
-           (application-agent (acp-session-application session))
-           text
-             :observer (acp--session-observation session))))
-    (json-object "stopReason" (acp--stop-reason result))))
+         (text (acp--prompt-text params)))
+    (acp--reset-session-turn session)
+    (handler-case
+        (let ((result
+                (agent-run-user-turn
+                 (application-agent (acp-session-application session))
+                 text
+                 :observer (acp--session-observation session))))
+          (json-object "stopReason" (acp--stop-reason result)))
+      (acp-turn-cancelled ()
+        (json-object "stopReason" "cancelled")))))
 
 (-> acp--handle-session-set-mode (acp-server json-object) json-object)
 (defun acp--handle-session-set-mode (server params)
@@ -531,11 +588,13 @@
 
 (-> acp--handle-session-cancel (acp-server json-object) null)
 (defun acp--handle-session-cancel (server params)
-  "Record the client's request to cancel the running prompt."
-  (declare (ignore server params))
-  ;; Real interruption requires an abort hook in the agent turn; until then
-  ;; the notification is accepted and ignored.
-  (acp--log "session/cancel received; interruption is not yet implemented.")
+  "Record the client's request to interrupt SESSION's running prompt.
+The running turn checks the flag at its observer boundaries and unwinds,
+so a provider wait in progress ends first."
+  (let ((session (acp--resolved-session server params)))
+    (acp--cancel-session-turn session)
+    (acp--log "The client cancelled the turn for session ~A."
+              (acp-session-identifier session)))
   nil)
 
 ;;;; -- Method Dispatch --

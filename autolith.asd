@@ -180,6 +180,7 @@
                               (:file "acp/protocol")
                               (:file "acp/session")
                               (:file "acp/observer")
+                              (:file "acp/authorization")
                               (:file "management/repl")
                              (:file "application/change-viewer")
                              (:file "application/tool-presentation")
