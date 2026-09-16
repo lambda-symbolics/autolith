@@ -46,13 +46,17 @@
          (output-modalities
            (and (json-object-p architecture)
                 (json-get architecture "output_modalities")))
-         (parameters (json-get entry "supported_parameters")))
+         (parameters (json-get entry "supported_parameters"))
+         (supports-reasoning-p
+           (openrouter--string-member-p "reasoning" parameters))
+         (model-id (json-get entry "id")))
+    (unless supports-reasoning-p
+      (setf (gethash (openrouter--model-name model-id) *openrouter-models-without-reasoning*) t))
     (if (and (vectorp output-modalities)
              (vectorp parameters)
              (openrouter--string-member-p "text" output-modalities)
              (openrouter--string-member-p "tools" parameters)
-             (openrouter--string-member-p "tool_choice" parameters)
-             (openrouter--string-member-p "reasoning" parameters))
+             (openrouter--string-member-p "tool_choice" parameters))
         t
         nil)))
 
@@ -114,6 +118,14 @@
     (t
      effort)))
 
+(defparameter *openrouter-models-without-reasoning* (make-hash-table :test #'equal)
+  "Cached set of OpenRouter models that lack reasoning support.")
+
+(-> openrouter--model-supports-reasoning-p (non-empty-string) boolean)
+(defun openrouter--model-supports-reasoning-p (model-id)
+  "Check if MODEL-ID supports reasoning; assumes yes unless known otherwise."
+  (not (gethash model-id *openrouter-models-without-reasoning*)))
+
 (defmethod provider-request-object :around
     ((provider openrouter-chat-completions-provider)
      (conversation conversation)
@@ -124,13 +136,16 @@
       (call-next-method provider conversation tool-namespaces
                         :goal-context goal-context
                         :compaction-p compaction-p)
-    (let ((effort
+    (let* ((model (json-get request "model"))
+           (effort
             (openrouter--reasoning-effort
              (configuration-reasoning-effort
-              (provider-configuration provider)))))
+              (provider-configuration provider))))
+           (model-supports-reasoning-p
+            (openrouter--model-supports-reasoning-p model)))
       (setf (gethash "model" request)
-            (openrouter--wire-model-name (json-get request "model")))
-      (when effort
+            (openrouter--wire-model-name model))
+      (when (and effort model-supports-reasoning-p)
         (setf (gethash "reasoning" request)
               (json-object "effort" effort))))
     (values request delivery)))
