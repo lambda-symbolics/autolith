@@ -387,7 +387,6 @@
              (declare (ignore active-ui))
              (unwind-protect
                   (progn
-                    (terminal-ui-boot-sequence ui)
                     (application-present application
                                          (application-banner application))
                     (let ((update-notice
@@ -437,6 +436,7 @@
                     (application-recovery-input-vault-present-startup-warning
                      application)
                     (localgroup-start application)
+                    (terminal-ui-boot-sequence ui)
                     (management-repl-start application)
                     (application-input-controller--open-prompt-if-ready
                      input-controller)

@@ -2,6 +2,45 @@
 
 ;;;; -- Lisp-Machine Startup and Login --
 
+(defparameter *terminal-ui-boot-mascot-rows*
+  '(
+    "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⠀⠄⠀⠀⠀⠐⠐⠀⠰⠀⠄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠂⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⢀⠴⡶⠠⠀⢀⠀⠀⠀⠀⠀⠀⠂⠀⠀⠀⠀⠈⠁⠀⠁⠀⠀⠀⠠⡀⠀⠀⠀⠀⠀⢀⢡⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠠⣐⣬⡴⣶⣚⡾⠒⠓⠺⠷⠦⠄⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⠀⠀⠰⠁⠀⡂⠀⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⡴⠟⠋⠁⠀⠀⠸⡹⡃⠀⠀⠀⠀⠀⠀⠀⡀⠀⠀⠒⠒⠀⢠⢀⠀⠐⠒⠒⠀⠀⠀⡀⠀⡀⡀⠑⠀⠀⢆⠀⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⠀⠀⡄⡆⠀⠀⠀⠀⠀⠀⠀⠂⠀⠀⠺⠀⠀⣄⣾⠀⠀⠰⠆⠀⠀⠀⡀⠀⠀⠁⠀⠀⠈⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⠀⠀⠃⡅⠀⠀⠀⠀⠀⠀⢨⠀⠀⠀⠀⠀⠀⠉⠁⠀⠀⠀⠀⠀⠀⠀⠁⠀⠀⠀⠀⢠⡀⠀⡂⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⠀⢠⣇⠇⡀⠀⠀⠀⠀⠀⠠⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⠀⠀⡠⡀⠄⠀⠓⠅⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⠀⠸⡿⣷⠠⡀⠀⠀⠀⠀⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡀⢐⠀⠀⠀⠠⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⠀⠀⡅⢼⢄⠈⠂⠤⠠⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⡀⠀⠄⡇⠀⡅⡀⣠⣾⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⠀⠀⠲⣺⠀⠉⠒⠒⠒⠛⠀⠀⠐⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄⣀⣀⣴⡧⠀⣿⣿⣟⣾⡇⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⠀⠀⠈⠉⠀⠀⠀⠀⠀⠄⠀⠀⠀⠠⠀⠀⠀⠀⠀⠀⢀⣁⣴⣶⠒⡢⢶⣿⣿⣿⠀⢽⣿⣿⡏⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢆⠀⠀⠀⠄⠀⠀⠀⣀⣠⣴⣿⡟⣿⣿⣽⣾⣏⣬⣿⣿⠀⣸⣿⠏⠀⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠒⣄⡀⡅⢀⣵⣿⣻⣿⣻⣾⣿⣿⣿⡿⣿⣿⣿⡿⠿⠀⠘⠋⠀⠀⠀⢐⠱⠄⢀⡠⠐⠂"
+    "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠀⠀⠀⠀⠀⠀⠀⠁⢩⠟⢿⠀⠈⠉⠉⠉⢩⠿⢿⠀⠀⠀⢺⣰⠆⠀⣀⢀⣐⣱⡶⢞⡁⠰⠂⠀"
+    "⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠔⠁⠡⡀⠀⠀⠀⠀⠀⠀⠀⠀⠄⠀⠀⠀⠀⠀⢀⠀⠨⡀⡀⠀⠀⠄⠀⠊⠀⠀⢀⠠⢂⠈⠡⢲⡦⠀"
+    "⠀⠀⠀⠀⠀⠀⠀⠀⡠⠉⡂⠏⣢⠘⢄⢀⣄⣀⠀⠀⡀⠀⡇⠀⠄⢄⢐⠀⠸⠀⠸⠀⡠⡶⢄⠄⠁⠀⠂⢠⡀⠲⡒⢌⠉⣉⡀⠀"
+    "⠀⠀⠀⠀⠀⠀⠀⠊⡀⠠⢰⣺⣷⡼⠦⠟⠙⠉⠁⠁⣰⣤⣧⠀⠈⡠⣀⡀⠨⣀⣸⡀⠈⠈⠉⠀⣀⠀⢠⠃⢅⡀⠼⣮⡇⠈⠀⠀"
+    "⠀⢀⠀⠴⠻⠲⠑⠇⠖⠚⠛⠌⠀⠀⠐⠂⠈⠀⠁⢀⢸⣿⣿⢀⢌⣈⢕⣈⢌⣿⣿⣇⠠⣄⢠⠠⠉⠤⠃⠳⠧⣗⣀⠿⠋⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⢀⡊⣿⣲⣌⠀⠀⠚⠛⠀⠀⠀⠀⠴⡿⠿⠿⡛⠓⢋⠪⢌⣭⣿⣿⢿⠿⠕⢋⣑⠈⠐⠉⠓⠑⠚⠋⠅⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠐⠀⠉⠀⠁⠁⠀⠀⠀⠀⣀⢁⠀⠂⠠⠖⢀⠤⠦⢄⠀⠀⠀⠀⠁⠀⠀⠠⠐⠻⠛⠂⠀⠀⠂⠁⠀⠀⠀⠀⠀⠀⠀⠀"
+    "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠁⠀⠀⠁⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"
+    )
+  "A dithered braille rendering of the Autolith rock mascot, for the boot panel.")
+
+(defparameter *terminal-ui-boot-mascot-styles*
+  #(:brand-gradient-1 :brand-gradient-2 :brand-gradient-3
+    :brand-gradient-4 :brand-gradient-5 :brand-gradient-6)
+  "Row styles cycling top-to-bottom across the boot mascot art.")
+
+(-> terminal-ui--boot-mascot-row-style (integer integer) terminal-style)
+(defun terminal-ui--boot-mascot-row-style (row total)
+  "Return ROW's gradient style out of TOTAL rows of boot mascot art."
+  (let ((styles *terminal-ui-boot-mascot-styles*))
+    (aref styles (min (1- (length styles))
+                      (floor (* row (length styles)) (max 1 total))))))
+
 (-> terminal-ui--boot-screen-panel ((or string symbol) (option string) integer) list)
 (defun terminal-ui--boot-screen-panel (phase detail columns)
   "Return horizontally centered styled rows for the actual PHASE and DETAIL."
@@ -9,8 +48,16 @@
          (inside (max 0 (- width 4)))
          (left (make-string (max 0 (floor (- columns width) 2))
                             :initial-element #\Space))
-         (border (concatenate 'string "+" (make-string (max 0 (- width 2))
-                                                        :initial-element #\-) "+")))
+         (top-border
+           (concatenate 'string "┌" (make-string (max 0 (- width 2))
+                                                 :initial-element #\─) "┐"))
+         (mid-border
+           (concatenate 'string "├" (make-string (max 0 (- width 2))
+                                                 :initial-element #\─) "┤"))
+         (bottom-border
+           (concatenate 'string "└" (make-string (max 0 (- width 2))
+                                                 :initial-element #\─) "┘"))
+         (mascot-count (length *terminal-ui-boot-mascot-rows*)))
     (labels ((row (style text)
                (list (terminal-span ':plain left)
                      (terminal-span style (layout-fit-text text width))))
@@ -19,19 +66,31 @@
                (let* ((safe (layout-fit-text (sanitize-text text :single-line-p t) inside))
                       (padding (make-string (max 0 (- inside (text-cell-width safe)))
                                             :initial-element #\Space)))
-                 (row style (format nil "| ~A~A |" safe padding)))))
-      (list (row ':brand border)
-            (boxed ':brand "A U T O L I T H  /  LISP MACHINE")
-            (boxed ':hint "READ . EVAL . PRINT . LOOP")
-            (boxed ':plain "")
-            (boxed ':plain (format nil "(boot :image ~S)"
-                                   (format nil "~A ~A" (lisp-implementation-type)
-                                           (lisp-implementation-version))))
-            (boxed ':brand (format nil ";; ~A" (string-upcase (string phase))))
-            (boxed ':plain (or detail "Awaiting operator input."))
-            (boxed ':plain "")
-            (boxed ':hint "[ SYSTEM CONSOLE ]                         Ctrl-C: halt")
-            (row ':brand border)))))
+                 (row style (format nil "│ ~A~A │" safe padding))))
+
+             (mascot-row (index text)
+               (let ((indent (max 0 (floor (- inside (text-cell-width text)) 2))))
+                 (boxed (terminal-ui--boot-mascot-row-style index mascot-count)
+                        (format nil "~A~A"
+                                (make-string indent :initial-element #\Space)
+                                text)))))
+      (append
+       (list (row ':brand top-border))
+       (loop for index from 0
+             for mascot-line in *terminal-ui-boot-mascot-rows*
+             collect (mascot-row index mascot-line))
+       (list (row ':brand mid-border)
+             (boxed ':brand "A U T O L I T H  /  LISP MACHINE")
+             (boxed ':hint "READ . EVAL . PRINT . LOOP")
+             (boxed ':plain "")
+             (boxed ':plain (format nil "(boot :image ~S)"
+                                    (format nil "~A ~A" (lisp-implementation-type)
+                                            (lisp-implementation-version))))
+             (boxed ':brand (format nil ";; ~A" (string-upcase (string phase))))
+             (boxed ':plain (or detail "Awaiting operator input."))
+             (boxed ':plain "")
+             (boxed ':hint "[ SYSTEM CONSOLE ]                         Ctrl-C: halt")
+             (row ':brand bottom-border))))))
 
 (-> terminal-ui--boot-tip-rows (terminal-ui integer) list)
 (defun terminal-ui--boot-tip-rows (ui columns)
@@ -86,24 +145,71 @@
   nil)
 
 
-(-> terminal-ui-boot-sequence (terminal-ui &key (:wait-function function)) null)
-(defun terminal-ui-boot-sequence (ui &key (wait-function #'sleep))
+(-> terminal-ui--await-interactive (terminal (or null function) number) boolean)
+(defun terminal-ui--await-interactive (terminal wait-function timeout)
+  "Poll TERMINAL for up to TIMEOUT seconds until it reports interactive.
+
+A detached localgroup terminal starts non-interactive and only flips once
+its attaching client reports its size over the wire, shortly after the
+localgroup daemon begins listening. This gives that handshake a brief
+window instead of judging interactivity before it could possibly happen."
+  (or (terminal-interactive-p terminal)
+      (let ((deadline (+ (get-internal-real-time)
+                          (round (* timeout internal-time-units-per-second)))))
+        (loop while (and (not (terminal-interactive-p terminal))
+                         (< (get-internal-real-time) deadline))
+              do (funcall (or wait-function #'sleep) 0.02))
+        (terminal-interactive-p terminal))))
+
+(defparameter *terminal-ui-boot-sequence-default-duration* 3.5
+  "The default total seconds TERMINAL-UI-BOOT-SEQUENCE spends animating.")
+
+(defparameter *terminal-ui-boot-sequence-phases*
+  '((:cold-boot "[#.....]  Waking the saved Lisp world.")
+    (:image-load "[##....]  Reading the boulder back off stable storage.")
+    (:gc-prime "[###...]  Priming the generational garbage collector.")
+    (:cons-check "[####..]  Verifying cons cells are still pointy.")
+    (:reader-sync "[#####.]  Synchronizing reader macros.")
+    (:listener-ready "[######]  World awake. Operator, the listener is yours."))
+  "The ordered (PHASE DETAIL) pairs painted across the boot sequence.")
+
+(-> terminal-ui-boot-sequence-duration () real)
+(defun terminal-ui-boot-sequence-duration ()
+  "Return the boot sequence's total animation duration in seconds.
+
+Reads AUTOLITH_BOOT_DURATION when set, else
+*TERMINAL-UI-BOOT-SEQUENCE-DEFAULT-DURATION*."
+  (environment-positive-real "AUTOLITH_BOOT_DURATION"
+                             *terminal-ui-boot-sequence-default-duration*))
+
+(-> terminal-ui-boot-sequence
+    (terminal-ui &key (:wait-function function) (:duration real))
+    null)
+(defun terminal-ui-boot-sequence
+    (ui &key (wait-function #'sleep) (duration (terminal-ui-boot-sequence-duration)))
   "Present a brief Lisp-machine boot sequence before opening the listener.
 
 Keep ordinary output deferred throughout the presentation. WAIT-FUNCTION accepts
-seconds; the complete sequence takes 1.2 seconds even on a warm startup."
+seconds; DURATION is the total seconds spent across all boot phases, split
+evenly, and defaults to TERMINAL-UI-BOOT-SEQUENCE-DURATION."
   (when (and (terminal-ui-fullscreen-p ui)
-             (terminal-interactive-p (terminal-ui-terminal ui)))
-    (let ((suspended-p nil))
+             (terminal-ui--await-interactive
+              (terminal-ui-terminal ui) wait-function 1.0))
+    ;; TERMINAL-UI-START ran before the detached terminal's client attached,
+    ;; so its own fullscreen-enter attempt was skipped; retry now that the
+    ;; terminal reports interactive.
+    (unless (fullscreen-terminal-ui-active-p ui)
+      (terminal-ui-fullscreen-enter ui))
+    (let ((suspended-p nil)
+          (phase-duration
+            (/ (max 0 duration) (length *terminal-ui-boot-sequence-phases*))))
       (with-terminal-ui-locked (ui)
         (setf suspended-p (terminal-ui-live-output-suspended-p ui)
               (terminal-ui-live-output-suspended-p ui) t))
       (unwind-protect
-           (dolist (phase '((:cold-boot "[##....]  Waking the saved Lisp world.")
-                            (:warm-boot "[####..]  Polishing parentheses. Cons cells standing by.")
-                            (:listener-ready "[######]  World awake. Operator, the listener is yours.")))
+           (dolist (phase *terminal-ui-boot-sequence-phases*)
              (terminal-ui-boot-screen ui (first phase) (second phase))
-             (funcall wait-function 0.4))
+             (funcall wait-function phase-duration))
         (with-terminal-ui-locked (ui)
           (setf (terminal-ui-live-output-suspended-p ui) suspended-p)
           (unless suspended-p

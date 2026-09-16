@@ -370,6 +370,23 @@ configuration can be created before executable user initialization loads."
                    :message (format nil "~A must be a positive integer." variable))))
         fallback)))
 
+(-> environment-positive-real (string real) real)
+(defun environment-positive-real (variable fallback)
+  "Return positive real-valued VARIABLE, or FALLBACK when it is unset.
+
+Parses with *READ-EVAL* disabled so the environment cannot smuggle in a
+read-time evaluation form; the parsed value must still be a positive real."
+  (let ((value (uiop:getenv variable)))
+    (if (non-empty-string-p value)
+        (let ((parsed (let ((*read-eval* nil))
+                        (ignore-errors (read-from-string value)))))
+          (unless (and (realp parsed) (plusp parsed))
+            (error 'configuration-error
+                   :message (format nil "~A must be a positive number, not ~S."
+                                    variable value)))
+          parsed)
+        fallback)))
+
 (-> configuration--default-config-root () pathname)
 (defun configuration--default-config-root ()
   "Return Autolith's default configuration directory for this host."
