@@ -650,7 +650,9 @@
   test-acp-prompt-unknown-session
   test-acp-prompt-text-resource-link
   test-acp-cancel-notification
-  test-acp-stdout-purity-and-clean-exit)
+    test-acp-stdout-purity-and-clean-exit
+    test-acp-tool-call-updates
+    test-acp-tool-call-failure-update)
 (define-test-suite fixtures
   test-run-temporary-root-cleanup
   test-configuration-fixture-cleanup

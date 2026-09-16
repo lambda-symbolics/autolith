@@ -529,7 +529,8 @@ filesystem paths are only a programmatic Lisp designator."
          observer
          ':tool-call-progress
          (list ':tool tool-name
-               ':activity (format nil "~A · ~A" tool-name activity)))))))
+               ':call-id (tool-context-call-id context)
+              ':activity (format nil "~A · ~A" tool-name activity)))))))
 
 (-> rlm--tool-routing-option (hash-table string) (option string))
 (defun rlm--tool-routing-option (arguments name)

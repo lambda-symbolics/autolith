@@ -360,6 +360,124 @@ Use TIMEOUT as the per-line wait bound."
       (test-assert (every #'hash-table-p messages)
                    "every captured stdout line decoded as a JSON object"))
     (let ((thread (getf client :thread)))
-      (test-assert (not (eq (sb-thread:join-thread thread :timeout 10 :default ':timeout)
-                            ':timeout))
-                   "ACP server thread exited cleanly after stdin closed"))))
+        (test-assert (not (eq (sb-thread:join-thread thread :timeout 10 :default ':timeout)
+                              ':timeout))
+                    "ACP server thread exited cleanly after stdin closed"))))
+
+
+(defun acp-test--tool-session (configuration output)
+  "Return one test ACP session writing its notifications to OUTPUT."
+  (let ((connection
+          (make-instance
+           'acp-connection
+           :input-stream (make-string-input-stream "")
+           :output-stream output
+           :request-dispatcher (lambda (method params)
+                                 (declare (ignore method params))
+                                 nil)
+           :notification-dispatcher (lambda (method params)
+                                      (declare (ignore method params))
+                                      nil))))
+    (make-instance 'acp-session
+                   :identifier "sess_observed"
+                   :server (make-instance 'acp-server
+                                          :connection connection
+                                          :configuration configuration)
+                   :application nil
+                   :mode ':ask)))
+
+(defun acp-test--read-updates (output)
+  "Decode every notification captured in OUTPUT as one JSON object."
+  (let ((messages nil))
+    (with-input-from-string (stream (get-output-stream-string output))
+      (loop for line = (read-line stream nil nil)
+            while line
+            do (push (json-decode line) messages)))
+    (nreverse messages)))
+
+(defun acp-test--update-field (message field)
+  "Return FIELD of MESSAGE's session/update params update object."
+  (json-get (json-get (json-get message "params") "update") field))
+
+(defun test-acp-tool-call-updates ()
+  "Tool status events stream tool_call and tool_call_update notifications."
+  (with-test-configuration (configuration)
+    (let ((output (make-string-output-stream)))
+      (let ((session (acp-test--tool-session configuration output)))
+        (acp--report-tool-status
+         session ':tool-call-started
+         (list :tool-round 1 :call-id "call_1" :tool "lisp.eval"))
+        (acp--report-tool-status
+         session ':tool-call-progress
+         (list :call-id "call_1" :tool "lisp.eval"
+               :activity "lisp.eval · compiling"))
+        (acp--report-tool-status
+         session ':tool-call-completed
+         (list :tool-round 1 :call-id "call_1" :tool "lisp.eval"
+               :success-p t :output "42")))
+      (let ((messages (acp-test--read-updates output)))
+        (test-assert (= (length messages) 3)
+                      "started, progress, and completion each notify once")
+        (let ((started (first messages)))
+          (test-assert (equal (json-get started "method") "session/update")
+                        "started sends a session/update notification")
+          (test-assert (equal (acp-test--update-field started "sessionUpdate")
+                              "tool_call")
+                        "started reports a tool_call update")
+          (test-assert (equal (acp-test--update-field started "toolCallId")
+                              "call_1")
+                        "started uses the provider call id")
+          (test-assert (equal (acp-test--update-field started "title") "lisp.eval")
+                        "started titles the tool")
+          (test-assert (equal (acp-test--update-field started "kind") "execute")
+                        "lisp tools report kind execute")
+          (test-assert (equal (acp-test--update-field started "status")
+                              "in_progress")
+                        "started reports in_progress"))
+        (let ((progress (second messages)))
+          (test-assert (equal (acp-test--update-field progress "sessionUpdate")
+                              "tool_call_update")
+                        "progress reports a tool_call_update")
+          (test-assert (equal (acp-test--update-field progress "toolCallId")
+                              "call_1")
+                        "progress correlates through the provider call id")
+            (let* ((entry (aref (acp-test--update-field progress "content") 0))
+                   (body (json-get entry "content"))
+                   (text (json-get body "text")))
+              (test-assert (search "compiling" text)
+                            "progress activity text is present")))
+        (let ((completed (third messages)))
+          (test-assert (equal (acp-test--update-field completed "sessionUpdate")
+                              "tool_call_update")
+                        "completion reports a tool_call_update")
+          (test-assert (equal (acp-test--update-field completed "status")
+                              "completed")
+                        "successful completion reports completed")
+            (let* ((entry (aref (acp-test--update-field completed "content") 0))
+                   (body (json-get entry "content"))
+                   (text (json-get body "text")))
+              (test-assert (equal text "42")
+                            "completion carries the tool output")))))))
+
+(defun test-acp-tool-call-failure-update ()
+  "A failed tool call reports failed with its failure output."
+  (with-test-configuration (configuration)
+    (let ((output (make-string-output-stream)))
+      (let ((session (acp-test--tool-session configuration output)))
+        (acp--report-tool-status
+         session ':tool-call-completed
+         (list :tool-round 2 :call-id nil :tool "shell.launch"
+               :success-p nil :output "peer reset")))
+      (let ((messages (acp-test--read-updates output)))
+        (test-assert (= (length messages) 1) "one completion notification")
+        (let ((message (first messages)))
+          (test-assert (equal (acp-test--update-field message "status") "failed")
+                        "failed success-p reports failed status")
+          (test-assert (equal (acp-test--update-field message "toolCallId")
+                              "round_2")
+                        "missing call id falls back to the tool round id")
+          (let* ((entry (aref (acp-test--update-field message "content") 0))
+                 (body (json-get entry "content"))
+                 (text (json-get body "text")))
+            (test-assert (equal text "peer reset")
+                           "failure output text is present")))))))

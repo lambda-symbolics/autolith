@@ -443,29 +443,6 @@
           (format nil "~{~A~^~%~}" (nreverse parts))
           ""))))
 
-(-> acp--session-observer (acp-session) agent-observer)
-(defun acp--session-observer (session)
-  "Return one serialized observer streaming SESSION's turn to the client.
-
-Until the ACP request_permission bridge exists, tool and command
-authorization allows everything unconditionally."
-  (make-instance
-   'serialized-agent-observer
-   :delegate (callback-agent-observer-create
-              :text-callback
-              (lambda (text)
-                (acp--session-chunk session "agent_message_chunk" text))
-              :reasoning-callback
-              (lambda (text)
-                (acp--session-chunk session "agent_thought_chunk" text))
-              :command-authorization-callback
-              (lambda (command directory)
-                (declare (ignore command directory))
-                ':full-access)
-              :tool-authorization-callback
-              (lambda (tool arguments)
-                (declare (ignore tool arguments))
-                ':allow))))
 
 (-> acp--stop-reason (provider-result) string)
 (defun acp--stop-reason (result)
@@ -485,7 +462,7 @@ authorization allows everything unconditionally."
           (agent-run-user-turn
            (application-agent (acp-session-application session))
            text
-           :observer (acp--session-observer session))))
+             :observer (acp--session-observation session))))
     (json-object "stopReason" (acp--stop-reason result))))
 
 (-> acp--handle-session-set-mode (acp-server json-object) json-object)
