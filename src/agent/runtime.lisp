@@ -1081,7 +1081,7 @@ worker results become explicit unknown outcomes so provider history stays valid.
 ;; The raw input object travels with the started event so editors can
 ;; present the call's arguments before any result exists.
 
-(-> agent--tool-call-input (list) (option json-object))
+(-> agent--tool-call-input (json-object) (option json-object))
 (defun agent--tool-call-input (call)
   "Return CALL's decoded argument object, or NIL when it is unavailable."
   (block nil
