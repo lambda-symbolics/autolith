@@ -443,7 +443,16 @@
                  (test-assert
                   (equal (truename (workspace-file-resource-pathname resource))
                          (truename spaced-path))
-                  "workspace resolution reuses workspace-relative path semantics")))
+                  "workspace resolution reuses workspace-relative path semantics")
+                 (let ((resource
+                         (resource-registry-resolve
+                          (tool-registry-resource-registry registry)
+                          "workspace:space name.txt"
+                          first-context)))
+                   (test-assert
+                    (equal (truename (workspace-file-resource-pathname resource))
+                           (truename spaced-path))
+                    "workspace resolution accepts literal spaces in identifiers"))))
               (multiple-value-bind (result uri revision)
                   (read-resource first-context "workspace:.")
                 (test-assert

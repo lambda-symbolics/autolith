@@ -341,7 +341,7 @@ often base strings while the same text built elsewhere is not."
 (defun resource-uri--identifier-character-p (character)
   "Return true when CHARACTER is allowed in a simple resource identifier."
   (and (graphic-char-p character)
-       (not (find character '(#\Space #\Tab #\Newline #\Return #\Page)))))
+       (not (find character '(#\Tab #\Newline #\Return #\Page)))))
 
 (-> resource-uri-parse (t) (values non-empty-string non-empty-string))
 (defun resource-uri-parse (uri)
@@ -372,7 +372,7 @@ often base strings while the same text built elsewhere is not."
       (unless (every #'resource-uri--identifier-character-p identifier)
         (error 'resource-uri-malformed
                :uri    uri
-               :reason "the identifier must contain only graphic non-space characters"))
+               :reason "the identifier must contain only graphic characters, spaces included"))
       (values scheme identifier))))
 
 (defmethod initialize-instance :after ((resource resource) &key)

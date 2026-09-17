@@ -153,7 +153,7 @@
                      "scheme:"
                      "Upper:identifier"
                      "bad_scheme:identifier"
-                     "scheme:has space"))
+                     (concatenate 'string "scheme:has" (string #\Tab) "tab")))
     (test-assert
      (handler-case
          (progn
@@ -193,6 +193,11 @@
                  "resource URI parsing returns the strict scheme")
     (test-assert (string= identifier "src/resource/protocol.lisp")
                  "resource URI parsing preserves the complete identifier"))
+    (multiple-value-bind (scheme identifier)
+        (resource-uri-parse "workspace:079641/Export JPG NoResize/")
+      (test-assert (and (string= scheme "workspace")
+                        (string= identifier "079641/Export JPG NoResize/"))
+                   "resource URI parsing accepts spaces in identifiers"))
   (let ((registry (make-resource-registry)))
     (test-assert
      (handler-case
