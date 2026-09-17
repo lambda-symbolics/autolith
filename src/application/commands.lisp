@@ -958,8 +958,8 @@ notice preference is on, so enabling it mid-session takes effect immediately."
               :message "Usage: /titles on or /titles off."))))
   nil)
 
-(-> application-compact-view-command (application string) null)
-(defun application-compact-view-command (application argument)
+(-> application-compact-tool-command (application (option string)) null)
+(defun application-compact-tool-command (application argument)
   "Persist and apply APPLICATION's compact tool presentation mode."
   (let ((mode (string-downcase argument)))
     (cond
@@ -986,7 +986,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
         "Compact tool presentation is disabled and saved."))
       (t
        (error 'configuration-error
-              :message "Usage: /compact on or /compact off."))))
+              :message "Usage: /compact-tool on or /compact-tool off."))))
   nil)
 
 (-> application--credentialed-provider-names (application) list)
@@ -2648,16 +2648,26 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-compact-command
     (:name "/compact"
-     :description "compact context now; on/off selects tool detail presentation"
-     :tip "with no argument compacts conversation context. (compact \"on\") collapses tool details; (compact \"off\") shows expanded details."
+     :argument nil
+     :description "compact conversation context now"
+     :tip "compacts the conversation context immediately, replacing older turns with a summary."
+     :busy-behavior :hold
+     :terminal-behavior :shared
+     :callable t)
+    (application)
+  (application-compact application)
+  ':continue)
+
+(define-application-command application--builtin-compact-tool-command
+    (:name "/compact-tool"
+     :description "collapse or expand tool call detail in the transcript"
+     :tip "(compact-tool \"on\") collapses tool details; (compact-tool \"off\") shows expanded details."
      :busy-behavior :hold
      :terminal-behavior :shared
      :callable t
      :static-options ("on" "off"))
     (application &optional mode)
-  (if mode
-      (application-compact-view-command application mode)
-      (application-compact application))
+  (application-compact-tool-command application mode)
   ':continue)
 
 (define-application-command application--builtin-detach-command
