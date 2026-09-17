@@ -256,3 +256,42 @@
           (error (condition)
             (tool-success (format nil "~A~%~%LSP: ~A" (tool-result-content result) condition))))
         result)))
+
+
+;;;; -- Session Context --
+
+(-> lsp-context--server-summary (list) string)
+(defun lsp-context--server-summary (servers)
+  "Return a bounded one-line summary naming enabled SERVERS."
+  (let* ((names (mapcar #'lsp-server-configuration-name servers))
+         (summary
+           (if (<= (length names) 4)
+               (format nil "~{~A~^, ~}" names)
+               (format nil "~{~A~^, ~}, and ~D more"
+                       (subseq names 0 4)
+                       (- (length names) 4)))))
+    (if (> (length summary) 200)
+        (concatenate 'string (subseq summary 0 197) "...")
+        summary)))
+
+(-> lsp-context-contribution (request-context) (option context-contribution))
+(defun lsp-context-contribution (context)
+  "Name enabled language servers while lsp.sexp configures them."
+  (unless (request-context-compaction-p context)
+    (let* ((configuration (request-context-configuration context))
+           (servers (handler-case (lsp-load-configurations configuration)
+                      (lsp-configuration-error () nil)))
+           (enabled (remove-if #'lsp-server-configuration-disabled-p servers)))
+      (when enabled
+        (make-context-contribution
+         :identifier "lsp-servers"
+         :instruction
+         (format nil "Language servers configured in lsp.sexp: ~A. The lsp tools provide definitions, references, hover, symbols, and diagnostics for matching workspace files."
+                 (lsp-context--server-summary enabled))
+         :priority 20
+         :lifetime ':while-relevant
+         :deduplication-key "lsp-servers")))))
+
+(eval-when (:load-toplevel :execute)
+  (register-context-contributor
+   "lsp-servers" 'lsp-context-contribution :source ':built-in))

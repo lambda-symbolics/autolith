@@ -499,7 +499,8 @@ integer from 1 through 120 seconds, defaulting to 30.
   Autolith exposes the =lsp= tools only when =lsp.sexp= defines at least one
   enabled server; without it the registry omits them. A malformed =lsp.sexp=
   keeps the tools registered so the configuration error surfaces when a tool
-  runs.
+  runs. When at least one server is enabled, each provider request includes a
+  context note naming those servers.
 
 Ask Autolith to use these tools:
 

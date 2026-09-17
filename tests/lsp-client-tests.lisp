@@ -242,3 +242,44 @@
                           "registries without a configuration register no LSP tools")
           (tool-registry-close-runtime-state registry)))))
   nil)
+
+
+(-> test-lsp-session-context () null)
+(defun test-lsp-session-context ()
+  "Contribute configured server names to provider request context."
+  (with-test-configuration (configuration)
+    (let ((conversation
+            (conversation-create configuration :identifier "lsp-context")))
+      (labels ((contribution ()
+                 (lsp-context-contribution
+                  (make-instance 'request-context
+                                 :configuration configuration
+                                 :conversation conversation
+                                 :tool-namespaces #()))))
+        (test-assert (null (contribution))
+                     "missing lsp.sexp contributes no session context")
+        (lsp-configuration-tests--write
+         configuration
+         "(:version 1 :servers ((:name \"clangd\" :command \"clangd\" :extensions (\".c\") :language-id \"c\") (:name \"disabled-one\" :command \"x\" :extensions (\".x\") :language-id \"x\" :disabled-p t)))")
+        (let* ((contribution (contribution))
+               (instruction
+                 (and contribution
+                      (context-contribution-instruction contribution))))
+          (test-assert (typep contribution 'context-contribution)
+                       "configured servers contribute session context")
+          (test-assert (search "clangd" instruction)
+                       "the contribution names enabled servers")
+          (test-assert (not (search "disabled-one" instruction))
+                       "disabled servers stay unnamed"))
+        (lsp-configuration-tests--write configuration "(:version 1 :bogus t)")
+        (test-assert (null (contribution))
+                     "malformed lsp.sexp contributes no session context")
+        (lsp-configuration-tests--write
+         configuration
+         "(:version 1 :servers ((:name \"c1\" :command \"x\" :extensions (\".c\") :language-id \"c\") (:name \"c2\" :command \"x\" :extensions (\".c\") :language-id \"c\") (:name \"c3\" :command \"x\" :extensions (\".c\") :language-id \"c\") (:name \"c4\" :command \"x\" :extensions (\".c\") :language-id \"c\") (:name \"c5\" :command \"x\" :extensions (\".c\") :language-id \"c\")))")
+        (let ((instruction
+                (context-contribution-instruction (contribution))))
+          (test-assert (and (search "c1" instruction)
+                            (search "more" instruction))
+                       "long server lists are summarized")))))
+  nil)

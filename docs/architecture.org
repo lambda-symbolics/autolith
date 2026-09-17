@@ -161,9 +161,10 @@ provider request --> semantic events --> agent --> validated tool calls
 =src/lsp/transport.lisp= implements binary Content-Length framing, request
 correlation, ordered server callbacks, deadlines, and process/thread cleanup.
 =src/lsp/client.lisp= owns initialization, disk synchronization, UTF-16
-positions, and version-aware push/pull diagnostics. =src/lsp/tools.lisp=
-registers the query, diagnostics, status, and restart tools and appends bounded
-diagnostics after successful workspace resource edits.
+  positions, and version-aware push/pull diagnostics. =src/lsp/tools.lisp=
+  registers the query, diagnostics, status, and restart tools, appends bounded
+  diagnostics after successful workspace resource edits, and contributes a
+  request-context note naming enabled servers.
 
   Each registry owns one lazy manager. Registries create it and its tools only
   when =lsp.sexp= enables at least one server. Operations share its recursive

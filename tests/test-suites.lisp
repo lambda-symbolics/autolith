@@ -15,8 +15,8 @@
   test-lsp-client-diagnostics-and-stale-invalidation
   test-lsp-client-document-bounds
   test-lsp-client-diagnostics-push-pull
-  test-lsp-client-manager-reuse-restart-and-cleanup
-  test-lsp-tool-conditional-registration)
+  test-lsp-tool-conditional-registration
+  test-lsp-session-context)
 
 (define-test-suite vault-edit
   test-vault-operation-routing
