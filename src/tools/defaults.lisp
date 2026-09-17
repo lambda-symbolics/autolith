@@ -831,6 +831,7 @@
     (default-tools--register-agenda registry)
     (default-tools--register-plan registry)
     (default-tools--register-lisp registry)
+    (lsp-register-tools registry)
     (default-tools--register-self registry)
     (rlm-register-tools registry)
     (skill-augment-tool-registry registry)

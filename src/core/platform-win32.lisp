@@ -12,6 +12,14 @@
   ()
   (:documentation "The adapter for Windows hosts built on the Win32 API."))
 
+(defmethod platform-file-uri ((platform win32-platform) pathname)
+  "Encode drive and UNC paths using URI slashes rather than native separators."
+  (let ((name (substitute #\/ #\\ (uiop:native-namestring pathname))))
+    (if (uiop:string-prefix-p "//" name)
+        (concatenate 'string "file:" (platform--encode-uri-path name))
+        (concatenate 'string "file:///" (subseq name 0 2)
+                     (platform--encode-uri-path (subseq name 2))))))
+
 
 ;;;; -- Alien Bindings --
 

@@ -469,6 +469,60 @@ The file is ordinary Common Lisp in package =AUTOLITH=, with your full
 privileges. It is not copied into private replay or the pristine recovery
 image.
 
+** Language servers
+
+Install your language server, then configure it in =lsp.sexp= under Autolith's
+user configuration directory, alongside =init.lisp=. For example:
+
+#+BEGIN_SRC lisp
+(:version 1
+ :servers ((:name "clangd"
+            :command "clangd"
+            :arguments ("--background-index")
+            :extensions (".c" ".h")
+            :language-id "c"
+            :root-markers ("compile_commands.json" ".git")
+            :timeout-seconds 30)))
+#+END_SRC
+
+Configuration is declarative. Supply a unique =:name=, executable =:command=,
+nonempty =:extensions= list, and =:language-id= for each entry. Arguments are
+literal strings. Optional =:initialization-options= and =:settings= are JSON
+object strings; =:disabled-p t= disables an entry. The request timeout is an
+integer from 1 through 120 seconds, defaulting to 30.
+
+Only configure commands you trust: language servers run with your privileges
+and inherited environment, outside the shell approval sandbox. Keep credentials
+out of this file. Executables must already be installed; commands are resolved
+on =PATH=. Repository-local LSP configuration is not loaded.
+
+Ask Autolith to use these tools:
+
+- =lsp.status=: inspect configuration and running project/server pairs.
+- =lsp.query=: request =definition=, =references=, =hover=, =implementation=,
+  =type-definition=, =document-symbols=, or =workspace-symbols= for a workspace
+  file. Position queries require one-based =line= and =character= coordinates,
+  with columns measured in UTF-16 code units. For workspace symbols, supply
+  =query=; the file selects the project and server.
+- =lsp.diagnostics=: synchronize a file and retrieve diagnostics.
+- =lsp.restart=: stop servers and reload the configuration after changing it.
+
+Servers start lazily on file requests, including diagnostic requests after a
+successful =resource.edit= workspace edit. All enabled entries with matching
+filename suffixes are queried. The project root is the nearest ancestor with a
+configured root marker, bounded by the workspace; otherwise it is the workspace.
+Open files are refreshed from disk before queries, including shell edits.
+
+Results contain native file URIs and zero-based UTF-16 ranges. Diagnostic state
+=received= identifies a versioned report, =unversioned= identifies a report whose
+snapshot cannot be confirmed, and =pending= means no report arrived within the
+wait, not that the file is error-free. Explicit diagnostics allow two seconds
+for push reports; edit follow-ups allow half a second. Pull requests use the
+configured request timeout. Reports retain at most 200 diagnostics per file and
+mark truncation. Files are limited to 2 MiB, with 64 open documents per server
+and 16 live project/server pairs per registry. Use =lsp.restart= to release them.
+Server shutdown occurs when the tool runtime is retired.
+
 ** Active-image management endpoint
 
 The management REPL is a separate opt-in subsystem for trusted programs that

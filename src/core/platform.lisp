@@ -195,6 +195,17 @@ reason :MISSING when PATHNAME does not exist."))
       (platform-parse-namestring *platform* designator)
       designator))
 
+(-> platform-file-uri (platform pathname) string)
+(defgeneric platform-file-uri (platform pathname)
+  (:documentation "Encode an absolute native pathname as a percent-escaped file URI."))
+
+(-> platform--encode-uri-path (string) string)
+(defun platform--encode-uri-path (name)
+  "Percent-encode each UTF-8 path segment while preserving URI separators."
+  (format nil "~{~A~^/~}"
+          (mapcar (lambda (part) (quri:url-encode part :encoding ':utf-8))
+                  (uiop:split-string name :separator "/"))))
+
 (defgeneric platform-path-status (platform pathname &key follow-links-p)
   (:documentation
    "Return PATHNAME's current PLATFORM-FILE-STATUS, or NIL when nothing exists there.

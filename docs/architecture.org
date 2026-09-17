@@ -154,6 +154,25 @@ provider request --> semantic events --> agent --> validated tool calls
 - Tasks use =cl-jobpond= for admission, threads, deadlines, and
   cancellation.
 
+** Native language servers
+
+=src/lsp/configuration.lisp= validates user-owned =lsp.sexp= with the closed
+=sexp-config= grammar and selects workspace-bounded project roots.
+=src/lsp/transport.lisp= implements binary Content-Length framing, request
+correlation, ordered server callbacks, deadlines, and process/thread cleanup.
+=src/lsp/client.lisp= owns initialization, disk synchronization, UTF-16
+positions, and version-aware push/pull diagnostics. =src/lsp/tools.lisp=
+registers the query, diagnostics, status, and restart tools and appends bounded
+diagnostics after successful workspace resource edits.
+
+Each registry owns one lazy manager. Operations share its recursive lock;
+notification delivery uses the client state lock. Runtime retirement closes the
+manager once through shared runtime identity. Saver-child detachment closes
+inherited descriptors without signaling the parent's language servers.
+Configured executables run as trusted local processes, separately from the
+shell sandbox. Server-driven workspace edits are declined; file changes use
+revision-gated resources. File URI encoding belongs to the platform adapters.
+
 * Terminal
 
 Autolith uses the primary screen and leaves finalized output in normal

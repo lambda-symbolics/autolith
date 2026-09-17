@@ -11,6 +11,10 @@
   ()
   (:documentation "The adapter for Linux, macOS, and BSD hosts built on SB-POSIX."))
 
+(defmethod platform-file-uri ((platform posix-platform) pathname)
+  "Encode POSIX path bytes, preserving literal backslashes as escaped filename characters."
+  (concatenate 'string "file://" (platform--encode-uri-path (uiop:native-namestring pathname))))
+
 
 ;;;; -- Failure Translation --
 

@@ -4,6 +4,20 @@
 
 (setf *test-suites* nil)
 
+(define-test-suite lsp
+  test-lsp-configuration
+  test-lsp-transport-framing
+  test-lsp-transport-write-frame
+  test-lsp-transport-process-lifecycle
+  test-lsp-client-position-and-sync-options
+  test-lsp-client-handshake-callbacks
+  test-lsp-client-full-and-incremental-sync
+  test-lsp-client-diagnostics-and-stale-invalidation
+  test-lsp-client-document-bounds
+  test-lsp-client-diagnostics-push-pull
+  test-lsp-tool-position-and-query
+  test-lsp-client-manager-reuse-restart-and-cleanup)
+
 (define-test-suite vault-edit
   test-vault-operation-routing
   test-vault-store-and-edit
