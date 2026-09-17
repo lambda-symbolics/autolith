@@ -51,9 +51,10 @@ Pass =nil= to =preferences-set-fullscreen= to return future launches to inline m
 Use =Shift= with the mouse for terminal text selection. Fullscreen history lives
 in the application rather than the terminal emulator's native scrollback.
 
-Fullscreen startup presents a brief three-stage Lisp-machine boot screen with a
-centered tip, then the session banner and transcript above the composer. Mouse
-wheel scrolling also works through a controlling local-session attachment.
+  Fullscreen startup presents a brief Lisp-machine boot screen with a centered tip
+  and a rock mascot that adapts to short viewports, then the session banner and
+  transcript above the composer. Mouse wheel scrolling also works through a
+  controlling local-session attachment.
 
 * Install and update
 

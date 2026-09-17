@@ -114,11 +114,17 @@
   "Return a centered boot panel and tip, reserving a row for direct input."
   (let* ((terminal (terminal-ui-terminal ui))
          (columns (max 1 (terminal-columns terminal)))
+         (tip (terminal-ui--boot-tip-rows ui columns))
+         (available (max 0 (1- height)))
+         ;; Keep status and advice visible before allocating rows to the mascot.
+         (mascot-limit (max 0 (- available 11 (if tip (1+ (length tip)) 0))))
+         (*terminal-ui-boot-mascot-rows*
+           (subseq *terminal-ui-boot-mascot-rows* 0
+                   (min mascot-limit (length *terminal-ui-boot-mascot-rows*))))
          (panel (mapcar (lambda (row) (terminal--render-spans terminal row))
                         (terminal-ui--boot-screen-panel phase detail columns)))
-         (tip (terminal-ui--boot-tip-rows ui columns))
          (rows (append panel (when tip (cons "" tip))))
-         (visible (subseq rows 0 (min (length rows) (max 0 (1- height)))))
+         (visible (subseq rows 0 (min (length rows) available)))
          (top (max 0 (floor (- height (length visible)) 2))))
     (values (append (make-list top :initial-element "") visible)
             (min (max 0 (1- height)) (+ top (length visible))))))
