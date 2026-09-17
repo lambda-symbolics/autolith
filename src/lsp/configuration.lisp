@@ -241,6 +241,21 @@
               (setf (gethash name seen) t)))
           result)))))
 
+(-> lsp-configuration-enabled-p (configuration) boolean)
+(defun lsp-configuration-enabled-p (configuration)
+  "Return true when CONFIGURATION enables at least one language server.
+
+A present but malformed lsp.sexp returns true so the configuration error
+surfaces through the LSP tools instead of failing registry creation."
+  (unless (probe-file (lsp-configuration-path configuration))
+    (return-from lsp-configuration-enabled-p nil))
+  (handler-case
+      (and (some (lambda (server)
+                   (not (lsp-server-configuration-disabled-p server)))
+                 (lsp-load-configurations configuration))
+           t)
+    (lsp-configuration-error () t)))
+
 (-> lsp-project-root (pathname pathname list) pathname)
 (defun lsp-project-root (path workspace markers)
   "Return the nearest ancestor of PATH containing one of MARKERS.

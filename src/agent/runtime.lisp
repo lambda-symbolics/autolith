@@ -449,8 +449,9 @@
                  :provider (or provider (provider-create configuration))
                  :conversation (or conversation
                                    (conversation-create configuration))
-                 :tool-registry (or tool-registry
-                                    (make-default-tool-registry))
+                   :tool-registry (or tool-registry
+                                      (make-default-tool-registry
+                                       :configuration configuration))
                  :hurry-up-p hurry-up-p
                  :worker (or worker (lisp-worker-pool-create configuration))))
 

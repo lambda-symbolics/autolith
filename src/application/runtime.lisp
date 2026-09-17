@@ -589,8 +589,8 @@ model's effort choice to CONFIGURATION--CLONE."
          (progn
            (setf registry
                  (make-default-tool-registry
-                  :immutable-p
-                  (configuration-immutable-p configuration)))
+                  :immutable-p (configuration-immutable-p configuration)
+                  :configuration configuration))
            (setf registry
                  (task-augment-tool-registry registry))
            (multiple-value-bind (augmented manager)

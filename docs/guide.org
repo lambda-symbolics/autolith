@@ -491,10 +491,15 @@ literal strings. Optional =:initialization-options= and =:settings= are JSON
 object strings; =:disabled-p t= disables an entry. The request timeout is an
 integer from 1 through 120 seconds, defaulting to 30.
 
-Only configure commands you trust: language servers run with your privileges
-and inherited environment, outside the shell approval sandbox. Keep credentials
-out of this file. Executables must already be installed; commands are resolved
-on =PATH=. Repository-local LSP configuration is not loaded.
+  Only configure commands you trust: language servers run with your privileges
+  and inherited environment, outside the shell approval sandbox. Keep credentials
+  out of this file. Executables must already be installed; commands are resolved
+  on =PATH=. Repository-local LSP configuration is not loaded.
+
+  Autolith exposes the =lsp= tools only when =lsp.sexp= defines at least one
+  enabled server; without it the registry omits them. A malformed =lsp.sexp=
+  keeps the tools registered so the configuration error surfaces when a tool
+  runs.
 
 Ask Autolith to use these tools:
 

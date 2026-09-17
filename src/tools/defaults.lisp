@@ -818,9 +818,13 @@
                            (lambda (tool)
                              (typep tool 'mutable-self-tool))))
 
-(-> make-default-tool-registry (&key (:immutable-p boolean)) tool-registry)
-(defun make-default-tool-registry (&key immutable-p)
-  "Create Autolith's tool registry, omitting mutable self tools when requested."
+(-> make-default-tool-registry
+    (&key (:immutable-p boolean) (:configuration (option configuration)))
+    tool-registry)
+(defun make-default-tool-registry (&key immutable-p configuration)
+  "Create Autolith's tool registry, omitting mutable self tools when requested.
+
+LSP tools register only when CONFIGURATION enables a language server."
   (let ((registry (make-instance 'tool-registry))
         (search-worker (search-worker-create)))
     (default-tools--register-workspace registry)
@@ -831,7 +835,8 @@
     (default-tools--register-agenda registry)
     (default-tools--register-plan registry)
     (default-tools--register-lisp registry)
-    (lsp-register-tools registry)
+    (when (and configuration (lsp-configuration-enabled-p configuration))
+      (lsp-register-tools registry))
     (default-tools--register-self registry)
     (rlm-register-tools registry)
     (skill-augment-tool-registry registry)

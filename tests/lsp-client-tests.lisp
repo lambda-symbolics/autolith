@@ -211,3 +211,34 @@
          (lsp-manager-close manager)
          (lsp-client-tests--assert (= closes 2))
          (lsp-client-tests--assert (zerop (hash-table-count (lsp-manager-clients manager)))))))))
+
+(-> test-lsp-tool-conditional-registration () null)
+(defun test-lsp-tool-conditional-registration ()
+  "Register the LSP tool surface only when lsp.sexp enables a server."
+  (with-test-configuration (configuration)
+    (labels ((status (configuration)
+               (let ((registry (make-default-tool-registry
+                                :configuration configuration)))
+                 (unwind-protect (tool-registry-find registry "lsp" "status")
+                   (tool-registry-close-runtime-state registry)))))
+      (test-assert (null (status configuration))
+                   "missing lsp.sexp registers no LSP tools")
+      (lsp-configuration-tests--write
+       configuration
+       "(:version 1 :servers ((:name \"c\" :command \"clangd\" :extensions (\".c\") :language-id \"c\")))")
+      (test-assert (status configuration)
+                   "an enabled server registers the LSP tools")
+      (lsp-configuration-tests--write
+       configuration
+       "(:version 1 :servers ((:name \"c\" :command \"clangd\" :extensions (\".c\") :language-id \"c\" :disabled-p t)))")
+      (test-assert (null (status configuration))
+                   "only disabled servers register no LSP tools")
+      (lsp-configuration-tests--write configuration "(:version 1 :bogus t)")
+      (test-assert (status configuration)
+                   "malformed lsp.sexp keeps LSP tools registered so the error surfaces")
+      (let ((registry (make-default-tool-registry)))
+        (unwind-protect
+             (test-assert (null (tool-registry-find registry "lsp" "status"))
+                          "registries without a configuration register no LSP tools")
+          (tool-registry-close-runtime-state registry)))))
+  nil)
