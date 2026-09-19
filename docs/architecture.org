@@ -239,9 +239,9 @@ stable launcher
    |                                               |
    |                                               +--> retained generation
    |
-   +--> failure or rollback --> recovery --> compatible generation
-                                      |
-                                      +--> clean exact-source checkout
+   +--> failure --> recovery --> pristine exact-source checkout
+   |
+   +--> explicit generation or rollback --> recovery --> retained generation
 #+END_SRC
 
 - =active-image.lisp= builds the preloaded image for normal startup
@@ -250,8 +250,9 @@ stable launcher
 - Updates validate provenance and refresh a readable availability cache.
   Startup reads cached state only. An accepted packaged update runs the
   bundled installer and restarts. 
-- Recovery reports sanitized crash context. It tries compatible retained cores,
-  then checkout of current committed source if all else fails
+- Recovery reports sanitized crash context. Automatic failure recovery boots
+  current committed source without private mutations or user init. Explicit
+  generation selection and rollback retain their saved-state path
 
 * Source map
 

@@ -2,6 +2,31 @@
 
 ;;;; -- Subsystem Tests --
 
+(-> test-pristine-image-state () null)
+(defun test-pristine-image-state ()
+  "Test pristine startup never reads or replays the selected private commit."
+  (with-test-configuration (configuration)
+    (let ((*image-state-initialized-p* nil)
+          (*active-image-commit-identifier* "previous-commit")
+          (*active-image-history-commit* "previous-history")
+          (*active-image-lineage-identifier* nil))
+      (test-call-with-function-replacements
+       (list (list 'image-commit--pointer-state
+                   (lambda (active-configuration)
+                     (declare (ignore active-configuration))
+                     (error "Pristine startup read the private commit pointer."))))
+       (lambda ()
+         (test-assert (null (image-state-load configuration :pristine-p t))
+                      "pristine startup succeeds without reading private state")
+         (test-assert
+          (and *image-state-initialized-p*
+               (null *active-image-commit-identifier*)
+               (null *active-image-history-commit*)
+               (stringp *active-image-lineage-identifier*)
+               (null (image-commit-current configuration)))
+          "pristine startup starts a fresh lineage without a private parent")))))
+  nil)
+
 (-> test-self-target () integer)
 (defun test-self-target ()
   "Return the baseline value used by active-image mutation tests."

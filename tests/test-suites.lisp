@@ -319,6 +319,7 @@
   test-request-context-agenda-selection)
 
 (define-test-suite self-tool
+  test-pristine-image-state
   test-self-definition-reader-boundary
   test-self-replay-foreign-home
   test-self-foreign-definition-lifecycle

@@ -43,6 +43,10 @@ autolith_launcher_parse()
         ;;
       --recovery) recovery_requested=true ;;
       --from-source) from_source_requested=true ;;
+      --pristine)
+        from_source_requested=true
+        remaining_arguments+=("$argument")
+        ;;
       --permissions|--image|-i|--localgroup-handoff|--id|--input|--output|\
       --generation|--status|--capsule|--original-argument|--workspace)
         # Forward a value verbatim, even when it resembles a launcher flag.

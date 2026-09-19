@@ -221,9 +221,10 @@ the library that reads a generation owns only the fields every host shares."
       (format *error-output* "~C[0m" #\Escape))
     (format *error-output*
             "This pristine image starts after active Autolith fails or when ~
-             recovery is requested.~%It inspects the failure and boots a ~
-             compatible retained generation or clean source fallback without ~
-             loading the damaged active core.~2%")
+             recovery is requested.~%It inspects the failure and boots ~
+             pristine committed source. Explicit generation selection and ~
+             rollback can boot retained state. The damaged active core is ~
+             never loaded.~2%")
     (finish-output *error-output*))
   nil)
 
@@ -1286,7 +1287,7 @@ generation. Its validator carries this image's own stricter checks."
     integer)
 (defun recovery-boot-with-source-fallback
     (context selected forwarded-arguments &key capsule source-commit)
-  "Boot retained state when possible, otherwise boot clean committed source."
+  "Boot retained state when selected, otherwise boot pristine committed source."
   (if selected
       (handler-case
           (recovery-boot-with-fallback context
@@ -1299,9 +1300,11 @@ generation. Its validator carries this image's own stricter checks."
                 "Retained-generation recovery failed: ~A~%"
                 (recovery-sanitize-text condition))
         (recovery-boot-source-with-report
-         context forwarded-arguments :capsule capsule)))
+         context (adjoin "--pristine" forwarded-arguments :test #'string=)
+         :capsule capsule)))
     (recovery-boot-source-with-report
-     context forwarded-arguments :capsule capsule)))
+     context (adjoin "--pristine" forwarded-arguments :test #'string=)
+     :capsule capsule)))
 
 
 ;;;; -- Argument Parsing and Entry --
@@ -1387,24 +1390,31 @@ generation. Its validator carries this image's own stricter checks."
                            :status status
                            :capsule capsule
                            :original-arguments original-arguments)))
-                    (let* ((source-commit
-                             (recovery-automatic-source-commit
-                              context generation status))
-                           (selected
-                            (if generation
-                                (recovery-load-generation
-                                 context
-                                 (recovery-manifest-pathname context generation)
-                                 :expected-identifier generation)
-                                (recovery-selected-generation-or-fallback
-                                 context
-                                 :source-commit source-commit))))
-                      (recovery-boot-with-source-fallback
-                       context
-                       selected
-                       forwarded
-                       :capsule reported-capsule
-                       :source-commit source-commit))))))))))
+                    (if (or generation
+                            (and status
+                                 (= (parse-integer status :junk-allowed nil)
+                                    *recovery-rollback-status*)))
+                        (let* ((source-commit
+                                 (recovery-automatic-source-commit
+                                  context generation status))
+                               (selected
+                                 (if generation
+                                     (recovery-load-generation
+                                      context
+                                      (recovery-manifest-pathname
+                                       context generation)
+                                      :expected-identifier generation)
+                                     (recovery-selected-generation-or-fallback
+                                      context
+                                      :source-commit source-commit))))
+                          (recovery-boot-with-source-fallback
+                           context selected forwarded
+                           :capsule reported-capsule
+                           :source-commit source-commit))
+                        (recovery-boot-source-with-report
+                         context
+                         (adjoin "--pristine" forwarded :test #'string=)
+                         :capsule reported-capsule))))))))))
 
 (serapeum:-> recovery-main () null)
 (defun recovery-main ()

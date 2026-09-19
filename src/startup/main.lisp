@@ -645,22 +645,29 @@ dependencies."
     (&key (:configuration configuration)
           (:conversation-id (option string))
           (:immutable-p boolean)
-            (:permission-mode (member :ask :auto :sandboxed :full-access))
+          (:pristine-p boolean)
+          (:permission-mode (member :ask :auto :sandboxed :full-access))
           (:fresh-conversation-p boolean))
     application)
 (defun main--connect-application
-    (&key configuration conversation-id immutable-p permission-mode
+    (&key configuration conversation-id immutable-p pristine-p permission-mode
           fresh-conversation-p)
   "Create or reconnect the active application for one normal or handoff startup."
-  (if (and (not fresh-conversation-p)
+  (if (and (not pristine-p)
+           (not fresh-conversation-p)
            (typep *active-application* 'application))
       (application-reconnect *active-application*
                              :conversation-id conversation-id
                              :immutable-p immutable-p
                              :permission-mode permission-mode)
-      (application-create configuration
-                          :conversation-id conversation-id
-                          :permission-mode permission-mode)))
+      (if pristine-p
+          (application-create configuration
+                              :conversation-id conversation-id
+                              :permission-mode permission-mode
+                              :pristine-p t)
+          (application-create configuration
+                              :conversation-id conversation-id
+                              :permission-mode permission-mode))))
 
 (-> main--start-session
     (clingon:command
@@ -675,7 +682,9 @@ dependencies."
                   authentication-selection authentication-method)
   "Start one interactive Autolith session from COMMAND's parsed options."
   (main--register-local-source-trees)
-  (let* ((immutable-p (not (null (getopt* command ':immutable))))
+  (let* ((pristine-p (not (null (getopt* command ':pristine))))
+         (immutable-p (or pristine-p
+                          (not (null (getopt* command ':immutable)))))
          (explicit-permission-mode (getopt* command ':permissions))
          (image-values (getopt* command ':images))
          (configuration
@@ -721,7 +730,8 @@ dependencies."
                         (and (null recovery-conversation-id)
                              (null recovery-diagnosis)))))))
     (when authenticate-p
-      (user-init-load configuration)
+      (unless pristine-p
+        (user-init-load configuration))
       (main-authenticate (preferences-apply-model-selection
                           (provider-bootstrap-configuration configuration))
                          authentication-selection
@@ -742,6 +752,7 @@ dependencies."
            :recovery-conversation-id recovery-conversation-id
            :recovery-diagnosis recovery-diagnosis
            :image-values image-values
+           :pristine-p pristine-p
            :simulate-crash-p (not (null (getopt* command ':simulate-crash))))
       (let ((session-id (main--spawn-client-session
                          configuration
@@ -770,6 +781,7 @@ dependencies."
              :configuration configuration
              :conversation-id effective-resume-id
              :immutable-p immutable-p
+             :pristine-p pristine-p
              :permission-mode permission-mode
              :fresh-conversation-p (not (null fresh-handoff-p))))
       (application--clear-recovery-environment)
@@ -820,12 +832,13 @@ dependencies."
           (:recovery-conversation-id (option string))
           (:recovery-diagnosis t)
           (:image-values t)
+          (:pristine-p boolean)
           (:simulate-crash-p boolean))
     boolean)
 (defun main--client-session-p
     (&key handoff-record authenticate-p resume-requested-p resume-id
           recovery-conversation-id recovery-diagnosis image-values
-          simulate-crash-p)
+          pristine-p simulate-crash-p)
   "Return true when this start should spawn a detached session and attach.
 
 A client-first start keeps this terminal a thin relay whose detach is
@@ -836,6 +849,7 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
   (declare (ignore resume-requested-p resume-id
                    recovery-conversation-id recovery-diagnosis))
   (and (null handoff-record)
+       (not pristine-p)
        (not authenticate-p)
        (null image-values)
        (not simulate-crash-p)
@@ -881,6 +895,11 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
                 :key ':immutable
                 :persistent t
                 :description "disable source and configuration mutation")
+   (make-option ':flag
+                :long-name "pristine"
+                :key ':pristine
+                :persistent t
+                :description "boot tracked source without private mutations or user init")
    (make-option ':enum
                 :long-name "permissions"
                 :key ':permissions

@@ -952,13 +952,22 @@ autolith --recovery --generation GENERATION-ID
 Recovery starts the separately built pristine core, not the damaged active
 core. If that image is missing or invalid, it falls back to source.
 
-Automatic recovery tries, in order:
-
-- the selected generation from the current source revision
-- other compatible generations from that revision, newest first
-- a private clean checkout of current committed source
-
+Automatic recovery boots a private clean checkout of current committed source
+with =--pristine=. It does not load retained generations or private mutation
+replay. An intentional =(rollback ID)= still boots the selected generation.
 Explicit generation selection may use an older revision.
+
+To start a rescue session directly, use:
+
+#+BEGIN_SRC sh
+autolith resume --pristine --permissions full
+#+END_SRC
+
+=--pristine= forces tracked source instead of a saved active core and skips the
+selected private image commit, mutation journal reconstruction, and executable
+user initialization for this process. It implies =--immutable= so ordinary
+self-mutation tools cannot replace the selected private commit. It does not
+erase any mutation or conversation data. Ordinary startup remains unchanged.
 
 A fatal active failure publishes a private crash capsule and restores the
 terminal. Recovery restores the conversation without duplicating scrollback.

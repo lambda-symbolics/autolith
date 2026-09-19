@@ -191,6 +191,12 @@
     :accessor application-mutation-replay-failures
     :type list
     :documentation "Private replay scripts that failed at startup, with reasons.")
+   (pristine-p
+    :initarg :pristine-p
+    :initform nil
+    :accessor application-pristine-p
+    :type boolean
+    :documentation "Whether this session omits private mutations and user init.")
    (render-lock
     :initform (make-recursive-lock "Autolith transcript rendering")
     :reader application-render-lock
@@ -621,11 +627,15 @@ model's effort choice to CONFIGURATION--CLONE."
   (provider--registry-restore (getf snapshot :provider))
   nil)
 
-(-> application--load-extension-configuration (configuration) null)
-(defun application--load-extension-configuration (configuration)
+(-> application--load-extension-configuration
+    (configuration &key (:pristine-p boolean))
+    null)
+(defun application--load-extension-configuration
+    (configuration &key pristine-p)
   "Load native MCP and executable user configuration for CONFIGURATION."
   (mcp-configuration-load configuration)
-  (user-init-load configuration)
+  (unless pristine-p
+    (user-init-load configuration))
   nil)
 
 (-> application--discard-connection-resources
@@ -747,7 +757,8 @@ model's effort choice to CONFIGURATION--CLONE."
            (handler-case
                (progn
                  (mcp-configuration-load configuration)
-                 (user-init-load configuration)
+                 (unless (application-pristine-p application)
+                   (user-init-load configuration))
                  (setf configuration
                        (provider-bootstrap-configuration configuration))
                  (when old-provider
@@ -912,16 +923,19 @@ newly acquired lease."
 
 (-> application-create
     (configuration &key (:conversation-id (option string))
-                        (:permission-mode (member :ask :auto :sandboxed :full-access)))
+                        (:permission-mode (member :ask :auto :sandboxed :full-access))
+                        (:pristine-p boolean))
     application)
 (defun application-create
-    (configuration &key conversation-id (permission-mode ':ask))
+    (configuration &key conversation-id (permission-mode ':ask) pristine-p)
   "Create a connected application, loading CONVERSATION-ID with PERMISSION-MODE."
   (let ((preferred-configuration configuration))
     (context-runtime-reset)
     (configuration-ensure-directories preferred-configuration)
     (conversation-identifier-migrate preferred-configuration)
-    (durable-mutations-load preferred-configuration)
+    (if pristine-p
+        (clrhash *durable-mutations*)
+        (durable-mutations-load preferred-configuration))
     (let* ((recovery-state
              (multiple-value-list
               (application-recovery-state preferred-configuration)))
@@ -931,7 +945,10 @@ newly acquired lease."
               conversation-id recovery-conversation-id))
            (recovery-rendered-sequence (second recovery-state))
            (recovery-history-floor-sequence (third recovery-state))
-           (mutation-replay-failures (image-state-load preferred-configuration))
+           (mutation-replay-failures
+             (if pristine-p
+                 (image-state-load preferred-configuration :pristine-p t)
+                 (image-state-load preferred-configuration)))
            (extension-registry-snapshot nil)
            (registry nil)
            (worker nil)
@@ -947,7 +964,8 @@ newly acquired lease."
              (unwind-protect
                   (progn
                     (mcp-configuration-load preferred-configuration)
-                    (user-init-load preferred-configuration)
+                    (unless pristine-p
+                      (user-init-load preferred-configuration))
                     (setf preferred-configuration
                           (provider-bootstrap-configuration
                            preferred-configuration))
@@ -1026,6 +1044,7 @@ newly acquired lease."
                                :ui ui
                                :permission-state permission-state
                                :permission-mode permission-mode
+                               :pristine-p pristine-p
                                :reasoning-traces-p reasoning-traces-p
                                :compact-view-p compact-view-p
                                :turn-timestamps-p turn-timestamps-p
@@ -1149,7 +1168,8 @@ newly acquired lease."
                               (configuration-ensure-directories retained-configuration)
                               (conversation-identifier-migrate retained-configuration)
                               (mcp-configuration-load retained-configuration)
-                              (user-init-load retained-configuration)
+                              (unless (application-pristine-p application)
+                                (user-init-load retained-configuration))
                               (setf retained-configuration
                                     (provider-bootstrap-configuration
                                      retained-configuration))
@@ -1243,6 +1263,7 @@ newly acquired lease."
                                :ui ui
                                :permission-state permission-state
                                :permission-mode permission-mode
+                               :pristine-p (application-pristine-p application)
                                :hurry-up-p hurry-up-p
                                :reasoning-traces-p reasoning-traces-p
                                :compact-view-p compact-view-p
@@ -1543,7 +1564,9 @@ command replaced the active conversation."
                  (setf process-moved-p t
                        *default-pathname-defaults* directory)
                  (setf failure-stage ':tools)
-                 (application--load-extension-configuration configuration)
+                 (application--load-extension-configuration
+                  configuration
+                  :pristine-p (application-pristine-p application))
                  (setf configuration
                        (provider-bootstrap-configuration configuration))
                  (application--validate-provider-registration

@@ -596,6 +596,7 @@ exit 64
                "manual recovery without a status preserves explicit selection")))
            (let ((selection-source :unset)
                  (boot-source :unset)
+                 (source-arguments :unset)
                  (selection-called-p nil))
              (test-call-with-function-replacements
               (list
@@ -639,6 +640,11 @@ exit 64
                        (declare
                         (ignore active-context generation arguments capsule))
                        (setf boot-source source-commit)
+                       0))
+               (list 'recovery-boot-source-with-report
+                     (lambda (active-context arguments &key capsule)
+                       (declare (ignore active-context capsule))
+                       (setf source-arguments arguments)
                        0)))
               (lambda ()
                 (test-assert
@@ -647,11 +653,14 @@ exit 64
                     0)
                  "automatic fatal recovery reaches the boot boundary")
                 (test-assert
-                 (and (string= selection-source current-commit)
-                      (string= boot-source current-commit))
-                 "recovery threads its source revision through selection and boot")
+                 (and (not selection-called-p)
+                      (eq selection-source :unset)
+                      (eq boot-source :unset)
+                      (equal source-arguments '("--pristine")))
+                 "automatic recovery boots pristine source without retained state")
                 (setf selection-source :unset
-                      boot-source :unset)
+                      boot-source :unset
+                      source-arguments :unset)
                 (test-assert
                  (= (recovery-run
                      (list (namestring root) "--status" "75" "--"))

@@ -1034,12 +1034,16 @@ the failure stays diagnosable after the tool call ends."
                  :test #'string=)
          t)))
 
-(-> image-state-load (configuration) list)
-(defun image-state-load (configuration)
-  "Load normal startup mutation state and begin a fresh journal lineage."
+(-> image-state-load (configuration &key (:pristine-p boolean)) list)
+(defun image-state-load (configuration &key pristine-p)
+  "Load selected private state unless PRISTINE-P, then begin a fresh lineage."
   (clrhash *exploratory-undo-actions*)
+  (when pristine-p
+    (setf *image-replay-skipped-definitions* nil))
   (multiple-value-bind (identifier history-commit)
-      (image-commit--pointer-state configuration)
+      (if pristine-p
+          (values nil nil)
+          (image-commit--pointer-state configuration))
     (let ((failures nil))
       (setf *active-image-commit-identifier* identifier
             *active-image-history-commit* history-commit

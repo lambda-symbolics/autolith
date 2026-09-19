@@ -694,6 +694,15 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
          (format nil
                  "accepting the interactive prompt bootstraps and starts the new image:~%terminal: ~A~%events: ~A"
                  output events)))
+      (let ((output
+              (release-script-tests--run
+               (list (namestring launcher) "resume" "--pristine")
+               :environment environment)))
+        (test-assert
+         (and (search "SOURCE" output)
+              (search "--pristine" output)
+              (not (search "ACTIVE" output)))
+         "pristine startup bypasses an available active core and forwards its flag"))
       (dolist (arguments '(("--" "--recovery" "--from-source")
                            ("--image" "--from-source")
                            ("--image" "--recovery")))
@@ -2982,6 +2991,9 @@ esac
         (check-forwarding arguments :forwarded arguments))
       (check-forwarding '("--immutable" "--from-source" "resume" "saved")
                         :from-source-p t :forwarded '("--immutable" "resume" "saved"))
+      (check-forwarding '("--pristine" "resume" "saved")
+                        :from-source-p t
+                        :forwarded '("--pristine" "resume" "saved"))
       (check-forwarding '("resume" "saved" "--from-source")
                         :from-source-p t :forwarded '("resume" "saved"))
       (check-forwarding '("--recovery" "--original-argument" "--from-source"
