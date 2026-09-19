@@ -351,6 +351,15 @@ Parent cleanup follows process-group termination, including crashes and timeouts
                    (equal (truename (getf (rest manifest) :core)) (truename core)))
         (check--fail "Autolith's pristine recovery manifest is invalid.")))
     (ensure-directories-exist temporary-home)
+    (let ((pointer
+            (merge-pathnames
+             "state/autolith/current-image-commit.sexp" temporary-root)))
+      (ensure-directories-exist pointer)
+      (with-open-file (stream pointer
+                              :direction :output
+                              :if-exists :supersede
+                              :if-does-not-exist :create)
+        (write-line "This is not a private commit pointer." stream)))
     (let ((entries
             (loop for label in '("Recovery probe" "Recovery listing" "Recovery fallback")
                   for filename in '("probe.log" "list.log" "fallback.log")
@@ -385,7 +394,8 @@ Parent cleanup follows process-group termination, including crashes and timeouts
                      (eql (getf (rest probe) :version) 2))
           (check--print-process-log (first entries))
           (check--fail "Autolith's pristine recovery probe is invalid."))
-        (unless (and (search "No compatible retained generation is available." fallback)
+        (unless (and (search "boots pristine committed source" fallback)
+                     (search "Starting clean committed source" fallback)
                      (search (format nil "autolith version ~A"
                                      (check--committed-version source-root))
                              fallback))
