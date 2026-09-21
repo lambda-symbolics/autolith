@@ -196,6 +196,12 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
    :cache-root (configuration-cache-root configuration)))
 
 
+(-> skill-global-root (configuration) pathname)
+(defun skill-global-root (configuration)
+  "Return the only skill root accepted by native skill authoring tools."
+  (merge-pathnames "skills/" (configuration-config-root configuration)))
+
+
 ;;;; -- Request-Local Skill Instructions --
 
 (-> skill--explicit-instruction (skill-metadata string) string)

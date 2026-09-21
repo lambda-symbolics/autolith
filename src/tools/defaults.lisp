@@ -840,6 +840,7 @@ LSP tools register only when CONFIGURATION enables a language server."
     (default-tools--register-self registry)
     (rlm-register-tools registry)
     (skill-augment-tool-registry registry)
+    (skill-edit-augment-tool-registry registry)
     (when immutable-p
       (default-tools--remove-mutable-self-tools registry))
     registry))
