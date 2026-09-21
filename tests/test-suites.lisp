@@ -299,7 +299,8 @@
 
 (define-test-suite memory-resource
   test-memory-resources
-  test-memory-resource-mutations)
+  test-memory-resource-mutations
+  test-memory-resource-filtered-read-write)
 
 (define-test-suite papercut-resource
   test-papercut-resources)

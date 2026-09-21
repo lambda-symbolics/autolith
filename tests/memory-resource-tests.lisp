@@ -994,3 +994,48 @@
                 "resource.edit advertises three closed memory operation variants")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil))
+
+
+(-> test-memory-resource-filtered-read-write () null)
+(defun test-memory-resource-filtered-read-write ()
+  "Test that a filtered collection read provides a usable write revision."
+  (let* ((base-configuration (test-configuration))
+         (root (test-configuration-root base-configuration))
+         (workspace (merge-pathnames "memory-filtered-read-write/" root))
+         (configuration
+           (progn
+             (ensure-directories-exist (merge-pathnames "marker" workspace))
+             (configuration--clone base-configuration :working-directory workspace)))
+         (conversation
+           (conversation-create configuration :identifier "memory-filtered-read-write"))
+         (context
+           (make-instance 'tool-context
+                          :configuration configuration
+                          :worker nil
+                          :conversation conversation))
+         (registry (make-default-tool-registry)))
+    (unwind-protect
+         (let* ((read-result
+                  (memory-resource-tests--call
+                   registry context "resource" "read"
+                   "uri" "memory:workspace"
+                   "query" "filtered revision probe"
+                   "max-results" 10))
+                (revision
+                  (memory-resource-tests--field
+                   (tool-result-content read-result) "Revision: "))
+                (write-result
+                  (memory-resource-tests--edit
+                   registry context "memory:workspace" revision
+                   (json-object
+                    "op" "memory-remember"
+                    "title" "Filtered revision probe"
+                    "content" "A filtered collection observation permits a guarded write."))))
+           (test-assert (tool-result-success-p read-result)
+                        "filtered memory collection reads succeed")
+           (test-assert (tool-result-success-p write-result)
+                        "a filtered memory collection revision permits memory-remember"))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
+  nil)
