@@ -830,6 +830,7 @@ LSP tools register only when CONFIGURATION enables a language server."
     (default-tools--register-workspace registry)
     (default-tools--register-web registry)
     (default-tools--register-search registry search-worker)
+    (session-augment-tool-registry registry)
     (default-tools--register-shell registry)
     (default-tools--register-papercut registry)
     (default-tools--register-agenda registry)
