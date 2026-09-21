@@ -250,12 +250,11 @@
            (if maximum-results
                (subseq available 0 (min maximum-results (length available)))
                available))
-         (snapshot
-           (list :kind ':collection
-                 :identifier (memory-resource-identifier resource)
-                 :workspace workspace-identity
-                 :query query
-                 :records (mapcar #'memory--record memories))))
+          (snapshot
+            (list :kind ':collection
+                  :identifier (memory-resource-identifier resource)
+                  :workspace workspace-identity
+                  :records (mapcar #'memory--record available))))
     (make-instance 'memory-observation
                    :uri        (resource-uri resource)
                    :revision   (resource-readable-snapshot-digest
