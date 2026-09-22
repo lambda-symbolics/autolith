@@ -64,12 +64,12 @@
     :reader memory-observation-kind
     :type keyword
     :documentation "Whether the observation represents a collection or exact item.")
-   (snapshot
-    :initarg :snapshot
-    :reader memory-observation-snapshot
-    :type list
-    :documentation "The exact detached readable memory snapshot, including empty state."))
-  (:documentation "An exact rendered and structural persistent-memory snapshot."))
+    (snapshot
+     :initarg :snapshot
+     :reader memory-observation-snapshot
+     :type list
+     :documentation "The exact detached readable memory snapshot, including empty state."))
+    (:documentation "An exact rendered and structural persistent-memory snapshot."))
 
 (defclass memory-observation-state (resource-observation-state)
   ()
@@ -80,7 +80,8 @@
   "Return the memory state family and exact structural snapshot key."
   (values 'memory-observation-state (list (resource-observation-uri observation)
                                          (resource-observation-revision observation)
-                                         (memory-observation-snapshot observation))))
+                                         (memory-observation-snapshot observation)
+                                         (resource-observation-metadata observation))))
 
 (defmethod resource-observation-state-class ((resource memory-resource))
   "Record memory observations under the memory state family."
@@ -237,24 +238,26 @@
 (defun memory-resource--collection-observation
     (resource context &key query maximum-results)
   "Return RESOURCE's exact optionally filtered collection observation."
-  (let* ((visibility
-           (memory-collection-resource-visibility resource))
-         (workspace-identity
-           (memory-resource--collection-workspace-identity resource context))
-         (configuration (tool-context-configuration context))
-         (available
-           (if query
-               (memory-search configuration query :visibility visibility)
-               (memory-list configuration :visibility visibility)))
-         (memories
-           (if maximum-results
-               (subseq available 0 (min maximum-results (length available)))
-               available))
-          (snapshot
-            (list :kind ':collection
-                  :identifier (memory-resource-identifier resource)
-                  :workspace workspace-identity
-                  :records (mapcar #'memory--record available))))
+    (let* ((visibility
+             (memory-collection-resource-visibility resource))
+           (workspace-identity
+             (memory-resource--collection-workspace-identity resource context))
+           (configuration (tool-context-configuration context))
+           (snapshot-memories
+             (memory-list configuration :visibility visibility))
+           (available
+             (if query
+                 (memory-search configuration query :visibility visibility)
+                 snapshot-memories))
+           (memories
+             (if maximum-results
+                 (subseq available 0 (min maximum-results (length available)))
+                 available))
+         (snapshot
+           (list :kind ':collection
+                 :identifier (memory-resource-identifier resource)
+                 :workspace workspace-identity
+                 :records (mapcar #'memory--record snapshot-memories))))
     (make-instance 'memory-observation
                    :uri        (resource-uri resource)
                    :revision   (resource-readable-snapshot-digest
@@ -266,6 +269,7 @@
                    :metadata   (list :visibility visibility
                                      :workspace workspace-identity
                                      :query query
+                                     :maximum-results maximum-results
                                      :count (length memories))
                    :identifier (memory-resource-identifier resource)
                    :kind       ':collection
@@ -619,7 +623,14 @@
                      summary
                      exact-uri
                      (resource-item-read-result state)))))
-      (resource-revision-stale ()
-        (tool-failure
-         (format nil "Resource revision ~A is stale, expired, for another memory URI, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
-                 base-revision uri))))))
+        (resource-revision-stale (condition)
+          (tool-failure
+           (if (resource-revision-stale-actual-revision condition)
+               (format nil "Resource revision ~A is stale: ~A changed to revision ~A. Reread ~A with resource.read and retry against the returned revision."
+                       base-revision
+                       (resource-revision-stale-uri condition)
+                       (resource-revision-stale-actual-revision condition)
+                       uri)
+                (format nil "Resource revision ~A is stale, expired, for another memory URI, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
+                        base-revision
+                        uri)))))))

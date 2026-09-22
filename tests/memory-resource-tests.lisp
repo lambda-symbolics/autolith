@@ -1015,15 +1015,35 @@
                           :conversation conversation))
          (registry (make-default-tool-registry)))
     (unwind-protect
-         (let* ((read-result
+         (let* ((matching-memory
+                  (memory-remember
+                   configuration
+                   :title "Matching filtered revision probe"
+                   :content "needle"))
+                (unmatched-memory
+                  (memory-remember
+                   configuration
+                   :title "Unmatched filtered revision probe"
+                   :content "This memory must still affect the collection revision."))
+                (read-result
                   (memory-resource-tests--call
                    registry context "resource" "read"
                    "uri" "memory:workspace"
-                   "query" "filtered revision probe"
+                   "query" "needle"
                    "max-results" 10))
                 (revision
                   (memory-resource-tests--field
                    (tool-result-content read-result) "Revision: "))
+                (unfiltered-result
+                  (memory-resource-tests--call
+                   registry context "resource" "read"
+                   "uri" "memory:workspace"))
+                (filtered-again-result
+                  (memory-resource-tests--call
+                   registry context "resource" "read"
+                   "uri" "memory:workspace"
+                   "query" "needle"
+                   "max-results" 10))
                 (write-result
                   (memory-resource-tests--edit
                    registry context "memory:workspace" revision
@@ -1031,8 +1051,25 @@
                     "op" "memory-remember"
                     "title" "Filtered revision probe"
                     "content" "A filtered collection observation permits a guarded write."))))
-           (test-assert (tool-result-success-p read-result)
-                        "filtered memory collection reads succeed")
+           (test-assert
+            (and (tool-result-success-p read-result)
+                 (search (memory-identifier matching-memory)
+                         (tool-result-content read-result))
+                 (not (search (memory-identifier unmatched-memory)
+                              (tool-result-content read-result))))
+            "filtered memory collection reads expose only matching memories")
+           (test-assert
+            (and (tool-result-success-p unfiltered-result)
+                 (search (memory-identifier unmatched-memory)
+                         (tool-result-content unfiltered-result)))
+            "unfiltered memory collection reads expose hidden memories")
+           (test-assert
+            (and (tool-result-success-p filtered-again-result)
+                 (search (memory-identifier matching-memory)
+                         (tool-result-content filtered-again-result))
+                 (not (search (memory-identifier unmatched-memory)
+                              (tool-result-content filtered-again-result))))
+            "repeated filtered reads retain their requested presentation")
            (test-assert (tool-result-success-p write-result)
                         "a filtered memory collection revision permits memory-remember"))
       (platform-delete-directory-tree *platform* root
