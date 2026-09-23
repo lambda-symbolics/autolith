@@ -34,6 +34,57 @@
            configuration (conversation-identifier conversation)))
     (values application controller relay conversation)))
 
+(-> test-localgroup-handoff-site-arguments () null)
+(defun test-localgroup-handoff-site-arguments ()
+  "Test detached replacements retain the configured site root."
+  (let* ((site-container
+           (uiop:ensure-directory-pathname
+            (merge-pathnames
+             (format nil "autolith-handoff-site-tests-~A/" (make-identifier))
+             (uiop:temporary-directory))))
+         (site-root (merge-pathnames "site/" site-container))
+         (configuration nil)
+         (root nil))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist site-root)
+           (setf configuration
+                 (test-configuration
+                  :site-config-root
+                  (uiop:ensure-directory-pathname
+                    (platform-truename *platform* site-root)))
+                  root (test-configuration-root configuration))
+            (let ((handoff-pathname (merge-pathnames "handoff.sexp" root)))
+              (dolist (enabled-p '(nil t))
+                (setf (configuration-fullscreen-p configuration) enabled-p)
+                (let ((arguments
+                        (localgroup-handoff--arguments
+                         configuration handoff-pathname
+                         :permission-argument "auto"
+                         :immutable-p enabled-p)))
+                  (test-assert
+                   (equal arguments
+                          (append
+                           (platform-session-launch-command
+                            *platform* (configuration-source-root configuration))
+                           (list "--permissions" "auto")
+                           (when enabled-p
+                             (list "--immutable" "--fullscreen"))
+                           (list "--site-config-root"
+                                 (namestring
+                                  (configuration-site-config-root configuration))
+                                 "--localgroup-handoff"
+                                 (namestring handoff-pathname))))
+                   "detached launch arguments preserve the site root and launch modes")))))
+      (when root
+        (platform-delete-directory-tree *platform* root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))
+      (platform-delete-directory-tree *platform* site-container
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-localgroup-handoff-records () null)
 
 (defun test-localgroup-handoff-records ()

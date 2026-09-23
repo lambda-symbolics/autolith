@@ -382,6 +382,25 @@ before any shell is involved."
      :gate-pathname gate-pathname
      :supervisor-script *localgroup-handoff-supervisor-script*)))
 
+(-> localgroup-handoff--arguments
+    (configuration pathname &key (:permission-argument string) (:immutable-p boolean))
+    list)
+(defun localgroup-handoff--arguments
+    (configuration handoff-pathname &key (permission-argument "ask") immutable-p)
+  "Return the platform launch command and handoff arguments for CONFIGURATION."
+  (append
+   (platform-session-launch-command
+    *platform* (configuration-source-root configuration))
+   (list "--permissions" permission-argument)
+   (when immutable-p
+     (list "--immutable"))
+   (when (configuration-fullscreen-p configuration)
+     (list "--fullscreen"))
+   (let ((site-config-root (configuration-site-config-root configuration)))
+     (when site-config-root
+       (list "--site-config-root" (namestring site-config-root))))
+   (list "--localgroup-handoff" (namestring handoff-pathname))))
+
 (-> localgroup-handoff--launch (application pathname) t)
 
 (defun localgroup-handoff--launch (application handoff-pathname)
@@ -400,31 +419,25 @@ before any shell is involved."
 (defun localgroup-handoff--launch-for
     (configuration session-id handoff-pathname permission-argument immutable-p)
   "Launch one detached session process from HANDOFF-PATHNAME."
-  (let ((launcher (platform-session-launch-command
-                   *platform* (configuration-source-root configuration)))
+  (let ((arguments
+          (localgroup-handoff--arguments
+           configuration handoff-pathname
+           :permission-argument permission-argument
+           :immutable-p immutable-p))
         (log-pathname
           (localgroup-handoff-log-pathname configuration session-id)))
-    (let ((arguments
-            (append
-             launcher
-             (list "--permissions" permission-argument)
-             (when immutable-p
-               (list "--immutable"))
-             (when (configuration-fullscreen-p configuration)
-               (list "--fullscreen"))
-             (list "--localgroup-handoff" (namestring handoff-pathname)))))
-      (ensure-directories-exist log-pathname)
-      (with-open-file (output log-pathname
-                              :direction ':output
-                              :if-exists ':append
-                              :if-does-not-exist ':create
-                              :external-format ':utf-8)
-        (platform-make-private *platform* log-pathname)
-        (localgroup-handoff--launch-supervised
-         :arguments arguments
-         :handoff-pathname handoff-pathname
-         :directory (configuration-working-directory configuration)
-         :output output)))))
+    (ensure-directories-exist log-pathname)
+    (with-open-file (output log-pathname
+                            :direction ':output
+                            :if-exists ':append
+                            :if-does-not-exist ':create
+                            :external-format ':utf-8)
+      (platform-make-private *platform* log-pathname)
+      (localgroup-handoff--launch-supervised
+       :arguments arguments
+       :handoff-pathname handoff-pathname
+       :directory (configuration-working-directory configuration)
+       :output output))))
 
 (-> localgroup-handoff-spawn-fresh
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
