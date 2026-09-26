@@ -491,14 +491,16 @@
     (values keyword t (option string) list (option keyword) (option string)))
 (defun run-job-execute-with-application (configuration request permission-mode)
   "Execute REQUEST through the existing application child-agent runtime."
-  (let ((definition (run-job--resolve-definition configuration request))
-        (application nil))
+  (let ((application nil))
     (unwind-protect
          (progn
            (setf application
                  (application-create configuration
                                      :permission-mode permission-mode))
-           (let* ((orchestrator (application--task-orchestrator application))
+           (let* ((definition
+                    (run-job--resolve-definition
+                     (application-configuration application) request))
+                  (orchestrator (application--task-orchestrator application))
                   (assignment (run-job-assignment request)))
              (unless orchestrator
                (run-job--error ':runtime-unavailable

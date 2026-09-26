@@ -37,9 +37,74 @@
   "Read one test result artifact through the safe reader."
   (run-job-read-file pathname))
 
+(-> run-job-tests--init-registered-role () null)
+(defun run-job-tests--init-registered-role ()
+  "Verify headless role validation follows registration of init.lisp models."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (snapshot (provider--registry-snapshot))
+         (request
+           (run-job-validate-envelope
+            (run-job-tests--request-form
+             :role "init-runner" :contract '(:type :string)))))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (task-tests--write-native-form
+            (merge-pathnames "init-runner.sexp"
+                             (task--user-agents-directory configuration))
+            (task-tests--role-form
+             "init-runner" "Registered model role" "Return a string."
+             :models '("init/job-model") :tools nil))
+           (task-tests--write-text
+            (configuration-user-init-path configuration)
+            "(register-openai-compatible-provider
+               :name \"job-init-provider\"
+               :description \"Headless job test provider\"
+               :endpoint \"https://example.invalid/v1/chat/completions\"
+               :models '(\"init/job-model\"))")
+           (test-assert
+            (handler-case
+                (progn (run-job--resolve-definition configuration request) nil)
+              (task-agent-definition-error () t))
+            "the role's init.lisp model is unavailable before initialization")
+           (let ((created-p nil))
+             (test-call-with-function-replacements
+              (list
+               (list 'application-create
+                     (lambda (active-configuration &key permission-mode)
+                       (declare (ignore permission-mode))
+                       (setf created-p t)
+                       (user-init-load active-configuration)
+                       (make-instance 'application
+                                      :configuration active-configuration)))
+               (list 'application--task-orchestrator
+                     (lambda (application)
+                       (declare (ignore application))
+                       nil)))
+              (lambda ()
+                (test-assert
+                 (handler-case
+                     (progn
+                       (run-job-execute-with-application
+                        configuration request ':auto)
+                       nil)
+                   (run-job-error (condition)
+                     (and created-p
+                          (eq (run-job-error-category condition)
+                              ':runtime-unavailable)
+                          (member "init/job-model" (provider-model-identifiers)
+                                  :test #'string=))))
+                 "headless jobs resolve init.lisp models after application creation")))))
+      (provider--registry-restore snapshot)
+      (platform-delete-directory-tree *platform* root :validate t
+                                      :if-does-not-exist ':ignore)))
+  nil)
+
 (-> run-run-job-tests () null)
 (defun run-run-job-tests ()
-  "Test parsing, validation, serialization, permissions, CLI, and one caller role seam."
+  "Test parsing, validation, serialization, permissions, CLI, and caller roles."
+  (run-job-tests--init-registered-role)
   (let ((request (run-job-validate-envelope (run-job-tests--request-form))))
     (test-assert
      (and (string= (run-job-request-identifier request) "job-1")
