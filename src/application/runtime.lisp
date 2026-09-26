@@ -253,6 +253,13 @@
 (defvar *active-application* nil
   "The live application root retained in saved generations.")
 
+(setf *configuration-default-function*
+      (lambda ()
+        (let ((application *active-application*))
+          (and application
+               (slot-boundp application 'configuration)
+               (application-configuration application)))))
+
 (defvar *terminal-resize-pending-p* nil
   "True after SIGWINCH until the active UI recomputes its dimensions.")
 

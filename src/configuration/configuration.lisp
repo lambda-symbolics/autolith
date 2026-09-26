@@ -3,7 +3,16 @@
 ;;;; -- Configuration Object --
 
 (defvar *configuration* nil
-  "The configuration CONFIG reads and writes when no instance is given.")
+  "The configuration CONFIG reads and writes when no instance is given.
+
+When unbound to an instance, CONFIG falls back to the running session's
+configuration through *CONFIGURATION-DEFAULT-FUNCTION*.")
+
+(defvar *configuration-default-function* nil
+  "A function of no arguments returning the running session's configuration, or NIL.
+
+The application installs it so user code at the prompt reaches the live
+configuration without naming it.")
 
 (defvar *configuration-durable-values-function* nil
   "A function of a configuration returning its persisted durable values as a plist.
@@ -58,6 +67,13 @@ The preferences module installs it; without it durable changes stay in memory.")
   "How a stored configuration value was chosen."
   '(member :override :environment :durable :session))
 
+(-> configuration-current () (option configuration))
+(defun configuration-current ()
+  "Return the bound *CONFIGURATION*, else the running session's configuration."
+  (or *configuration*
+      (and *configuration-default-function*
+           (funcall *configuration-default-function*))))
+
 (-> configuration--required ((option configuration)) configuration)
 (defun configuration--required (configuration)
   "Return CONFIGURATION, or signal when no configuration is current."
@@ -108,14 +124,14 @@ The preferences module installs it; without it durable changes stay in memory.")
     (values (gethash name (configuration-sources configuration)))))
 
 (-> config (keyword &optional (option configuration)) t)
-(defun config (name &optional (configuration *configuration*))
+(defun config (name &optional (configuration (configuration-current)))
   "Return the value of setting NAME in CONFIGURATION, by default the current one."
   (let ((configuration (configuration--required configuration)))
     (configuration-setting-value
      configuration (configuration-setting configuration name))))
 
 (-> (setf config) (t keyword &optional (option configuration)) t)
-(defun (setf config) (value name &optional (configuration *configuration*))
+(defun (setf config) (value name &optional (configuration (configuration-current)))
   "Store VALUE as setting NAME in CONFIGURATION after coercion and validation."
   (let ((configuration (configuration--required configuration)))
     (configuration-set configuration (configuration-setting configuration name) value

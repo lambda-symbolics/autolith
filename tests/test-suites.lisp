@@ -70,6 +70,7 @@
 
 (define-test-suite user-init
   test-user-init
+  test-user-init-settings
   test-local-source-tree-registration
   test-directory-user-init)
 

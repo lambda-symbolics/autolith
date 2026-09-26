@@ -58,6 +58,7 @@ not generally have reversible semantics."
               (let ((*package* (find-package '#:autolith))
                     (*user-init-loading-p* t)
                     (*user-init-configuration* configuration)
+                    (*configuration* configuration)
                     (*user-init-pathname* pathname))
                 (load pathname :verbose nil :print nil)
                 (setf loaded-pathname pathname))))
