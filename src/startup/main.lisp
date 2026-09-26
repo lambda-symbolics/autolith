@@ -697,7 +697,8 @@ dependencies."
              ;; The command line beats the saved preference; provider
              ;; validation stays deferred until executable user init.
              (when (getopt* command ':fullscreen)
-               (setf (config :fullscreen-p base) t))
+               (configuration-set base (configuration-setting base :fullscreen-p) t
+                                  :source ':override))
              base))
          (permission-mode
            (or explicit-permission-mode
