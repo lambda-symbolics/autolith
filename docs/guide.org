@@ -492,8 +492,8 @@ choosing a read-only one explains why it cannot change in a running session.
 The page returns to the list after every change until you cancel.
 
 The same operations work without the page. =/settings NAME= describes one
-setting, =/settings NAME VALUE= changes it, and =(settings)= prints every
-setting grouped by area. Values are written as they appear on the page: =on=
+setting, =/settings NAME VALUE= changes it, and =(settings)= called from Lisp
+or a script, where no picker can open, prints every setting grouped by area. Values are written as they appear on the page: =on=
 and =off= for switches, option names for choices, and integers or paths as
 text. A change to a durable setting is saved at once for future sessions.
 

@@ -2091,7 +2091,7 @@ are forwarded to TERMINAL-UI-SELECT."
     (t
      (case (configuration-setting-source configuration (setting-name setting))
        (:environment "environment")
-       (:override "command line")
+       (:override "explicit")
        (:durable "saved")
        (:session "this session")
        (t "default")))))
@@ -2267,7 +2267,7 @@ the settings page and the slash commands behave identically."
     (:name "/settings"
      :argument "[NAME [VALUE]]"
      :description "browse and change settings"
-     :tip "opens the settings page; (settings) lists every setting, (settings \"name\") shows one, and (settings \"name\" \"value\") changes it."
+     :tip "opens the settings page; (settings \"name\") shows one setting, (settings \"name\" \"value\") changes it, and (settings) from Lisp or a script lists them all."
      :busy-behavior :apply
      :terminal-behavior :exclusive-without-arguments
      :callable t)
