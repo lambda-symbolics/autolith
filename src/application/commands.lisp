@@ -2212,6 +2212,7 @@ the settings page and the slash commands behave identically."
                           :initial-name (setting-render-value
                                          setting
                                          (config name (application-configuration application)))
+                          :search-p t
                           :usage "Usage: /settings NAME VALUE"
                           :empty-notice "This setting offers no choices.")))
              (when option
