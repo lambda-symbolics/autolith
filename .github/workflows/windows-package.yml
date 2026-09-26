@@ -81,7 +81,7 @@ jobs:
       - name: Package Windows release
         shell: pwsh
         run: |
-          $tag = "v0.51.0-dev.$env:GITHUB_RUN_NUMBER"
+          $tag = "v0.51.1-dev.$env:GITHUB_RUN_NUMBER"
           script\package-windows-release.ps1 -OutputDirectory dist -Tag $tag
           script\validate-windows-release-artifact.ps1 -Archive (Get-ChildItem dist\*.zip).FullName
 
