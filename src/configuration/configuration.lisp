@@ -5,6 +5,16 @@
 (defvar *configuration* nil
   "The configuration CONFIG reads and writes when no instance is given.")
 
+(defvar *configuration-durable-values-function* nil
+  "A function of a configuration returning its persisted durable values as a plist.
+
+The preferences module installs it; without it nothing durable is read.")
+
+(defvar *configuration-persist-function* nil
+  "A function of (configuration name value) storing one durable value.
+
+The preferences module installs it; without it durable changes stay in memory.")
+
 (defclass configuration ()
   ((settings
     :initarg :settings
@@ -773,16 +783,6 @@ registered providers. DURABLE-P NIL skips the preferences file."
       (setting-validate setting (configuration-setting-value configuration setting)
                         configuration)))
   nil)
-
-(defvar *configuration-durable-values-function* nil
-  "A function of a configuration returning its persisted durable values as a plist.
-
-The preferences module installs it; without it nothing durable is read.")
-
-(defvar *configuration-persist-function* nil
-  "A function of (configuration name value) storing one durable value.
-
-The preferences module installs it; without it durable changes stay in memory.")
 
 (-> configuration-durable-values (configuration) list)
 (defun configuration-durable-values (configuration)
