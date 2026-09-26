@@ -671,7 +671,7 @@ name. Path completions apply when no command prefix matches."
 (defun terminal-ui--picker-search-title (title query match-count)
   "Return TITLE annotated with QUERY and MATCH-COUNT when search is active."
   (if (plusp (length query))
-      (format nil "~A · search: ~A · ~D match~:P"
+      (format nil "~A · search: ~A · ~D match~:*~[es~;~:;es~]"
               title query match-count)
       title))
 
