@@ -31,6 +31,23 @@ a user-local init.lisp change, or a private image commit.
 - Removal condition: discard the exploratory override after booting the tracked
   definition.
 
+** NetBSD directory enumeration
+
+- Problem: The unversioned libc =opendir=/=readdir= bindings returned legacy
+  NetBSD directory structures. =directory-names= decoded them with the current
+  layout, truncating names and producing empty resource directory listings.
+- Behavior: Use =__opendir30= and =__readdir30= together, with the NetBSD x86-64
+  =dirent= layout, bounded iteration, errno checks and owned handle cleanup.
+- Scope and location: private override of =ls-compat.posix:directory-names=,
+  image commit =47f3e7f6-1b0f-4ce0-95e0-3caba894aa2e=, private Git
+  =41637533d508c80becfd51d58346ac0c82ebc1eb=. This is host-specific live state,
+  not a tracked dependency fix.
+- Verification: worker and active-image assertions covered names, uniqueness,
+  zero/one entry limits and missing directories. Resource directory reads now
+  return complete names. The clean-process private replay probe passed.
+- Removal condition: replace this override after installing a dependency with
+  correct NetBSD directory ABI bindings.
+
 ** Child assignment scope
 
 - Problem: The child prompt prohibited work outside the initial workspace,
