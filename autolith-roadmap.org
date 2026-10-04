@@ -1,0 +1,579 @@
+#+TITLE: Autolith capability roadmap
+#+DATE: 2026-10-05
+#+STARTUP: content
+#+OPTIONS: toc:2 num:nil
+#+TODO: NEW EXTEND | PRESENT
+
+* Implementation repositories
+These repositories have been created for the generic mechanisms that should stay
+outside the Autolith product layer:
+
+- DAP :: =git@github.com:lambda-symbolics/daphne.git=
+- AST editing :: =git@github.com:lambda-symbolics/clasted.git=
+- Worktree isolation :: =git@github.com:lambda-symbolics/cl-worktree.git=
+- Resource protocol :: =git@github.com:lambda-symbolics/cl-resources.git=
+
+Autolith should consume these as libraries rather than growing equivalent generic
+implementations in =src/=. Product policy, model-facing tools, permissions and UI
+remain in Autolith.
+
+* Scope and design principles
+This roadmap is based on an audit of Autolith =master@d2841eb24256= and a review
+of contemporary agent-harness implementations. The external projects are reference
+implementations and comparative evidence, not the conceptual ownership or naming
+scheme for these features.
+
+=PRESENT= means the capability is already substantially present. =EXTEND= means a
+current subsystem should grow a defined missing behavior. =NEW= means no integrated
+implementation was found. Priorities are =A= first, =B= next, =C= useful but not
+necessary for the first coherent release.
+
+The architectural rule is simple: generic mechanisms live in reusable
+=lambda-symbolics/*= libraries; Autolith owns agent semantics. In particular:
+
+- libraries own protocols, state machines, lifecycle, validation and reusable data types;
+- Autolith owns goals, acceptance policy, agent authority, prompting, integration policy and presentation;
+- generic implementations and their exhaustive tests move together;
+- heavyweight coding features should be optional systems rather than mandatory core dependencies;
+- new mechanisms should integrate through existing resource, job, provider and task boundaries instead of creating parallel tool-specific infrastructure.
+
+This is a source/design audit, not a runtime benchmark.
+
+* Autonomous work and continual improvement
+
+** EXTEND [#A] A1. Verified missions
+*** Problem
+Autolith already has persistent session goals and automatic continuation, but the
+current goal loop is primarily model-declared completion with a continuation cap.
+That is enough for interactive autonomy, but weak for jobs where completion must
+mean that an externally observable condition is true.
+
+*** Current state
+Goals are durable, restored with the conversation, and automatically continue for
+up to eight turns per user message. =run-job= already supplies headless execution,
+timeouts, structured output contracts and stable terminal statuses.
+
+*** Proposed behavior
+Promote the goal abstraction into a mission with:
+
+- one durable objective and explicit acceptance criteria;
+- mission-wide turn, token and wall-clock budgets that include delegated work;
+- terminal states such as =verified=, =blocked=, =exhausted=, =cancelled= and =failed=;
+- durable evidence explaining why the terminal state was reached;
+- continuation controlled by mission state rather than by a magic completion phrase alone.
+
+A mission may still allow the model to declare that it is done, but verification
+should be a separate transition when acceptance criteria exist.
+
+*** Ownership
+- Autolith :: mission semantics, durable records, continuation policy, presentation.
+- cl-llm-provider-api :: inference/token budget primitives.
+- cl-jobpond :: execution deadlines and job lifecycle.
+- sexp-store :: durable mission state where appropriate.
+
+** NEW [#A] A2. Acceptance and quality gates
+*** Problem
+Tests, type checks, reproducible commands and artifact checks are often the best
+proof that a coding task is finished. Today these can be run by the model, but they
+are not first-class completion conditions owned by the harness.
+
+*** Proposed behavior
+A mission can attach ordered gates such as commands, artifact predicates or custom
+Lisp checks. Before a mission becomes =verified=, applicable gates run and publish
+bounded evidence. A failed gate feeds its result back into the mission and allows
+another work turn while budget remains.
+
+Important mechanics:
+
+- bound gate retries separately from ordinary model turns;
+- remember the input/workspace state associated with a failure;
+- do not rerun an unchanged deterministic gate over an unchanged relevant state;
+- allow gate-specific invalidation, since remote CI and local compilation do not
+  have the same notion of "changed";
+- distinguish "gate passed" from "all user requirements are proven".
+
+*** Ownership
+Autolith owns which gates constitute acceptance and when they run. Use
+=cl-jobpond= for lifecycle and =cl-exec-sandbox= for command execution. Do not add
+a separate general-purpose process runner for gates.
+
+** EXTEND [#A] A3. Unified refine / learn workflow
+*** Problem
+Autolith already has several strong improvement mechanisms, but they are exposed as
+separate concepts: periodic self-review, exploratory self-mutation experiments,
+memories, skills, child roles and RLM policy distillation. A useful lesson has no
+single path from observation to tested reusable behavior.
+
+*** Current state
+- periodic self-review can identify recurring friction;
+- tuning experiments bind a hypothesis and criterion to an exploratory mutation;
+- =rlm.distill= proposes reusable decomposition policies from traces;
+- mutations can be exercised, committed, replayed and discarded;
+- skills and child roles provide less invasive persistence mechanisms.
+
+*** Proposed behavior
+Provide one refinement operation that examines a trajectory and proposes the
+smallest useful adaptation. The target may be:
+
+1. a memory or repository fact;
+2. contextual guidance;
+3. a reusable skill;
+4. a child-agent role;
+5. an RLM decomposition policy;
+6. a live definition/configuration change when the preceding forms are insufficient.
+
+Every proposal records its evidence, scope, expected benefit and evaluation
+criterion. Promotion should follow an explicit progression such as session
+experiment -> project capability -> broader reusable capability. A proposal that
+finds nothing worth retaining is a normal result.
+
+Existing mutation replay checks remain necessary, but they verify mechanical
+survival. Refinement also needs task-level evaluation to determine whether the
+change actually improves behavior.
+
+*** Ownership
+Autolith owns learning decisions, evaluation and promotion policy. =cl-skills=
+owns portable skill packaging, =surgeon= reversible definitions, =sexp-store=
+durable records, and existing RLM/provider libraries keep their current generic
+responsibilities.
+
+** PRESENT A4. Persistent goals
+The existing goal system should remain the user-facing lightweight form of a
+mission. It already records and restores goal state and supports editing, pausing
+and resuming.
+
+Do not create a second competing objective abstraction. Extend the existing goal
+record so a plain goal stays simple while verified missions add budgets, gates and
+terminal evidence.
+
+** NEW [#B] A5. Scheduled and event-driven work
+*** Problem
+Long-running work often spends most of its lifetime waiting: for CI, an external
+service, a future time, or another job. Manual prompts and unconditional polling
+waste attention and tokens.
+
+*** Proposed behavior
+Support durable wakeups that enqueue mission work at a time, interval, or external
+event. The scheduler needs missed-run policy, duplicate suppression, cancellation,
+and enough identity to prove that a stale wakeup belongs to the current mission
+version.
+
+Prefer event-driven wakeups when an observable event exists. A periodic heartbeat
+is the fallback, not the universal execution model.
+
+*** Ownership
+The reusable scheduling state machine should be an optional =cl-jobpond/schedules=
+system if it remains job-oriented. =image-daemon= provides the persistent process
+hosting. Autolith supplies the prompt/mission payload and decides what waking a
+mission means.
+
+** EXTEND [#A] A6. Executable skills
+*** Problem
+Instruction-only skills capture procedure, but recurring engineering work often
+has a stable executable component that should not be regenerated from prose every
+time.
+
+*** Proposed behavior
+Keep standard =SKILL.md= compatibility and add an optional executable sidecar that
+can declare:
+
+- an ASDF system or entrypoint;
+- input and output contracts;
+- required capabilities/tools;
+- version/dependency metadata;
+- self-tests or verification entrypoints.
+
+Loading a skill does not itself grant the executable component authority. Autolith
+resolves the requested capabilities through its normal permission policy when the
+entrypoint is invoked.
+
+*** Ownership
+Extend =cl-skills= with an optional executable system. Autolith owns discovery
+integration, authorization and model-facing invocation. Worker-to-host calls from
+A7 below provide the execution substrate for richer workflows.
+
+** EXTEND [#B] A7. Agent-to-agent messaging
+*** Problem
+Autolith can steer a running child through =job.send=, but coordination is mostly
+parent-to-child. Parallel workers sometimes need bounded peer communication or a
+way to wait for another worker's result without routing everything through the
+primary agent.
+
+*** Proposed behavior
+Add explicit peer grants and bounded mailboxes. Messages should have stable IDs,
+sender/receiver identity, acknowledgement state and lifecycle semantics. Visibility
+continues to follow explicit task authority rather than making every child a global
+peer.
+
+Cross-process or cross-session messages use the same logical interface but a
+transport supplied by the session daemon.
+
+*** Ownership
+Generic mailbox/wait mechanics belong in =cl-jobpond=. =image-daemon= owns
+interprocess delivery. Autolith owns which agents may discover/message which peers
+and how messages enter model context.
+
+** EXTEND [#B] A8. Long-running continuity
+*** Problem
+Detach/reattach keeps a live process useful, but resuming a conversation in a new
+process currently loses live shell jobs, asynchronous jobs and worker state.
+Completed child artifacts survive, unfinished work does not.
+
+*** Proposed behavior
+Make resumability explicit per job type. Persist enough state to classify an
+unfinished activity as one of:
+
+- still owned by a live detached process;
+- reconstructible from a durable checkpoint;
+- safe to restart from its original specification;
+- dead and requiring a new decision.
+
+Never silently duplicate side effects. A resumed session should report whether a
+job was reattached, reconstructed, restarted or abandoned.
+
+*** Ownership
+=image-daemon= owns persistent hosting and endpoint discovery. =sbcl-workers= owns
+worker image persistence. Autolith owns task reconstruction, conversation linkage
+and side-effect deduplication policy.
+
+* Coding and debugging capabilities
+
+** EXTEND [#A] C1. Semantic LSP edits
+*** Problem
+The current LSP integration is excellent for observation but deliberately
+read-only. Renames and code actions therefore fall back to text edits even when the
+language server knows the correct multi-file transformation.
+
+*** Current state
+=cl-lsp= and Autolith expose definitions, references, hover, implementations,
+type definitions, symbols and diagnostics. Successful resource edits already
+trigger bounded diagnostics.
+
+*** Proposed behavior
+Add semantic mutation operations, initially:
+
+- rename symbol;
+- code actions;
+- file rename/move preparation and resulting workspace edits;
+- normalized multi-file =WorkspaceEdit= handling.
+
+The LSP library should return a normalized proposed change set. It should not write
+arbitrary files itself. Autolith observes the affected resources, presents the
+proposal when necessary, then applies it through revision-aware resources.
+
+*** Ownership
+- cl-lsp :: protocol requests, capability negotiation, =WorkspaceEdit=
+  normalization.
+- cl-resources :: revisioned multi-resource change-set application.
+- Autolith :: authority, approval, tool schema and presentation.
+
+** NEW [#C] C2. DAP debugger integration
+*** Problem
+Autolith has strong Common Lisp restart debugging for its own live image, but no
+uniform interface to debug target applications written in C, Rust, Go, Python and
+other languages.
+
+*** Proposed behavior
+Add Debug Adapter Protocol sessions supporting the useful core first:
+
+- launch and attach;
+- breakpoints;
+- continue, pause, step in/over/out;
+- threads and stack frames;
+- scopes and variables;
+- expression evaluation;
+- orderly termination and adapter cleanup.
+
+The model-facing API should expose semantic debugger operations rather than raw DAP
+JSON in the common case, while allowing a bounded escape hatch for adapter-specific
+requests later.
+
+*** Ownership
+=daphne= owns DAP framing, request/event correlation, session state and adapter
+lifecycle. Autolith provides optional debugging tools and presentation.
+=lambda-debugger= remains exclusively responsible for live Common Lisp
+condition/restart handling.
+
+** NEW [#B] C3. Structural AST search and editing
+*** Problem
+Hashline editing is robust for textual changes, but large mechanical migrations
+are more naturally expressed as syntax-aware queries and rewrites.
+
+*** Proposed behavior
+Provide structural search and previewable rewrites. An initial backend may wrap
+=ast-grep= rather than embedding grammars in Autolith. Queries should return stable
+matches with file/snapshot identity. Rewrites return proposed edits, never an
+unreviewable direct filesystem mutation.
+
+The apply path should compose with =cl-resources= so structural edits receive the
+same stale-revision and publication guarantees as ordinary edits.
+
+*** Ownership
+=clasted= owns structural query/rewrite abstraction and backend adapters.
+=cl-resources= applies produced change sets. Keep syntax highlighting/parsing for
+presentation in =colorlisp= rather than conflating it with codemod infrastructure.
+
+** PRESENT C4. Hashline and revision-aware text editing
+Autolith already uses the extracted =cl-hashline= library for anchored edits against
+an observed snapshot. This solves the important stale-file and line-transcription
+problems and should remain the normal lightweight edit path.
+
+Semantic LSP and AST edits complement it; they do not replace it.
+
+* Delegation and task execution
+
+** NEW [#A] D1. Isolated modifying worktrees
+*** Problem
+Parallel child agents are already first-class, but editing children operate in the
+same workspace. Concurrent changes therefore require the parent to prevent overlap
+by convention.
+
+*** Proposed behavior
+Allow a task to request an isolated workspace derived from a known Git baseline.
+The child edits and tests only there. Its terminal artifact identifies the baseline
+and returns a patch or commit-range representation suitable for deliberate parent
+integration.
+
+The lifecycle needs owned cleanup, orphan discovery, conflict reporting and an
+explicit policy for dirty source worktrees. Isolation prevents siblings from
+writing the same files in place; it does not promise conflict-free integration.
+
+Non-Git workspaces should either use a separately defined snapshot backend or state
+clearly that isolation is unavailable.
+
+*** Ownership
+=cl-worktree= owns Git/worktree creation, baselines, cleanup, patch extraction and
+application primitives through an injected command runner. Autolith chooses which
+tasks require isolation and controls integration order.
+
+** EXTEND [#B] D2. Standard engineering task artifacts
+*** Problem
+Child results are already structured and durable, but there is no shared convention
+for what a code-changing child should return. Parent agents therefore still need to
+infer what changed and what was tested from role-specific prose.
+
+*** Proposed behavior
+Define a standard optional engineering result schema containing:
+
+- baseline revision/workspace identity;
+- patch/change-set reference;
+- touched paths and optionally symbols;
+- checks executed with result summaries;
+- evidence/artifact references;
+- unresolved issues and integration notes.
+
+Roles may extend this schema, but the parent can rely on the common portion without
+parsing prose.
+
+*** Ownership
+Autolith owns this task-level convention and its provider-facing contract.
+=cl-worktree= produces baseline/patch material; existing contract and storage
+libraries validate and persist it.
+
+** EXTEND [#B] D3. Agent control and inspection hub
+*** Problem
+Autolith already exposes live activity rows, job inspection, cancellation and
+steering, but supervising several delegated workers requires jumping among separate
+interfaces.
+
+*** Proposed behavior
+Add one optional task inspector showing:
+
+- parent/child lineage and state;
+- current or most recent activity;
+- elapsed time, request/tool counts and known token usage;
+- result/patch artifact locations;
+- recent transcript access;
+- steer, cancel and later revive actions.
+
+This need not imitate another TUI. The value is one coherent operational view over
+existing task/job state. Keep the default inline interface compact.
+
+*** Ownership
+Autolith owns the inspector because its grouping and actions are agent semantics.
+=cl-jobpond= supplies lifecycle/progress events; =clinedi= and =cl-termdown= should
+own any newly reusable picker/layout primitives extracted while implementing it.
+
+** EXTEND [#B] D4. Independent reviewer / advisor
+*** Problem
+A dedicated reviewer can catch requirement drift or unsafe integration before the
+primary agent declares success. Autolith already has reviewer roles, but launching
+them is explicit task orchestration rather than a reusable checkpoint policy.
+
+*** Proposed behavior
+Allow a mission, project configuration or user command to request an independent
+review at defined boundaries such as before integration, before final acceptance or
+after a large edit set. The reviewer has its own context and budget and returns
+identified findings with severity/confidence and evidence.
+
+The primary agent may resolve or reject findings, but that decision should remain
+visible. Avoid an always-on second model by default; checkpoint review has a better
+cost/benefit profile.
+
+*** Ownership
+Keep this in Autolith using existing task, provider, context and contract APIs. No
+new orchestration library is justified.
+
+* Programmatic execution and resources
+
+** EXTEND [#A] R1. Tool calls from worker REPLs
+*** Problem
+Autolith's Lisp workers are excellent persistent computation environments, but they
+cannot currently invoke the agent's ordinary authorized tools. The RLM environment
+has a special-purpose host bridge only for recursive inference operations.
+
+*** Proposed behavior
+Add a generic host-call facility to persistent workers. Worker code issues a
+correlated request to the host; the host resolves it through a supplied dispatcher
+and returns bounded readable data. Required mechanics include:
+
+- request IDs and nesting/reentrancy rules;
+- cancellation propagation;
+- bounded request/result sizes;
+- lifecycle behavior when worker or host dies;
+- optional inherited budget/accounting context.
+
+Autolith's dispatcher maps these calls onto its normal tool registry, preserving
+permissions and trace attribution. The worker protocol itself must not know what an
+Autolith tool is.
+
+*** Ownership
+Extend =sbcl-workers= with an optional host-callback protocol/system. Autolith owns
+tool dispatch, authorization, capability filtering and audit records.
+
+** EXTEND [#A] R2. Executable workflows over the tool bridge
+Once R1 exists, executable skills can orchestrate reads, searches, tasks, resource
+edits and checks programmatically without forcing a provider round trip for every
+small operation.
+
+These workflows should return contracted values and remain subject to the same
+authority as direct model tool calls. A workflow is useful precisely because it
+packages a repeatedly successful procedure into ordinary code that can be tested.
+
+This is primarily an Autolith + =cl-skills= integration feature, not another
+runtime library.
+
+** EXTEND [#B] R3. Unified revisioned resource protocol
+*** Problem
+Autolith already has a strong =scheme:identifier= resource abstraction, but the
+generic protocol still lives in Autolith while new coding features need the same
+notion of identity, observation, stale revisions and controlled mutation.
+
+*** Proposed behavior
+Extract the generic resource model into =cl-resources=:
+
+- URI parsing/resolver registry;
+- authority-neutral resource identities;
+- revisioned observations;
+- supported-operation discovery;
+- stale/unsupported/access-denied conditions;
+- staged single- and multi-resource change sets;
+- optional adapter protocol for external services.
+
+Autolith-specific observation retention, memory/agenda semantics and caller
+authorization remain in Autolith.
+
+After extraction, additional adapters can expose PRs, issues, CI results, task
+artifacts, remote files or conflicts through the same read/observe surface without
+creating a new model tool for each service.
+
+*** Ownership
+=cl-resources= owns the generic protocol and adapter interfaces. =cl-hashline= stays
+an independent text-edit backend consumed by a resource adapter. Autolith owns
+resolver registration, authority and product-specific resource types.
+
+** EXTEND [#C] R4. Selective contextual rules
+*** Problem
+Stable guidance should be active when relevant without occupying every request.
+Autolith already has the necessary context-contributor and budget machinery; what
+is missing is a convenient declarative trigger layer.
+
+*** Proposed behavior
+Allow project/user rules to target predicates such as:
+
+- file/path or language involved;
+- tool or namespace about to be used;
+- current task/role;
+- detected diagnostic or structured event.
+
+Resolve matching rules into ordinary bounded context contributions. Stream-time
+abort/retry rules may be explored later, but only with measurements showing that
+they improve outcomes enough to justify provider churn and complexity.
+
+*** Ownership
+Autolith owns activation and configuration. Reuse
+=cl-llm-provider-api='s context contribution/resolution machinery. A standalone
+rule-engine library is not currently justified.
+
+* Library ownership summary
+
+** Existing dependencies to extend
+| Library | Generic responsibility |
+|---------+------------------------|
+| =cl-jobpond= | Admission, deadlines, progress and job trees; add bounded mailboxes and possibly optional persistent scheduling primitives. |
+| =sbcl-workers= | Persistent Lisp worker lifecycle/images; add optional correlated host callbacks without any Autolith-specific tool concepts. |
+| =cl-skills= | Skill discovery/validation; add optional executable manifests, entrypoints and test metadata. |
+| =cl-lsp= | LSP transport/client/configuration; add semantic mutation requests and normalized =WorkspaceEdit= plans, but no direct host writes. |
+| =cl-llm-provider-api= | Keep budgets, output contracts and context resolution here; do not move mission policy into it. |
+| =image-daemon= | Persistent process hosting, control endpoints and attachment transport; use it for cross-process wakeups/messages rather than duplicating daemon machinery. |
+| =clinedi= / =cl-termdown= | Extract reusable selection/layout pieces discovered while building richer task inspection, but keep agent-specific UI in Autolith. |
+
+** Dedicated libraries now created
+| Repository | Intended scope | Autolith integration |
+|------------+----------------+----------------------|
+| =lambda-symbolics/cl-resources= | Revisioned resource identity, observations, operations and staged change sets. | Foundation for workspace/resource tools and semantic edits. |
+| =lambda-symbolics/cl-worktree= | Git baselines, isolated worktree lifecycle, patch extraction/application and cleanup. | Optional isolation backend for editing child agents. |
+| =lambda-symbolics/daphne= | Debug Adapter Protocol client/session and adapter lifecycle. | Optional =debug.*= tool namespace for target applications. |
+| =lambda-symbolics/clasted= | Structural code search/rewrite abstraction and backends. | Optional AST tools producing change sets consumed through =cl-resources=. |
+
+** Autolith product boundary
+Autolith should continue to own:
+
+- mission and goal semantics;
+- acceptance criteria and continuation decisions;
+- agent/task authority and delegation policy;
+- refinement choice, evaluation and promotion;
+- provider-facing tool schemas and prompt/context policy;
+- application-specific resource types such as memory, agenda and conversation;
+- integration order for child patches/change sets;
+- user-facing commands, transcript presentation and task inspection.
+
+A library API should accept ordinary values, protocols and callbacks. It should not
+need an Autolith =application=, =conversation=, configuration pathname layout or
+prompt wording.
+
+* Recommended delivery order
+1. *Verified missions + gates (A1/A2).* Make autonomous completion mechanically meaningful using the goal/run-job infrastructure already present.
+2. *cl-resources extraction + semantic LSP edits (R3/C1).* Establish the mutation substrate needed by later coding features.
+3. *Unified refinement (A3).* Tie current self-review, experiments, skills, roles and RLM distillation into one evidence/evaluation path.
+4. *Worktree isolation + engineering artifacts (D1/D2).* Make parallel modifying agents safe to supervise and integrate.
+5. *Worker host calls + executable skills/workflows (R1/R2/A6).* Turn successful procedures into tested callable capabilities.
+6. *Task inspector and continuity (D3/A8).* Improve supervision once the underlying task state is rich enough to justify it.
+7. *clasted and daphne integrations (C3/C2).* Add deeper coding/debugging power as optional subsystems.
+8. *Scheduling, peer messaging and contextual rules (A5/A7/R4).* Add them when persistent missions create concrete demand.
+
+For each stage, measure verified completion rate, user interventions, aggregate
+provider usage, elapsed time and recovery/integration failures on fixed tasks.
+Evaluate learned adaptations on separate tasks before promoting them beyond their
+original scope.
+
+* Verification record
+Autolith was checked at current master commit
+[[https://github.com/lambda-symbolics/autolith/commit/d2841eb24256b95830b607b4d0c8aa762570b4e8][d2841eb24256b95830b607b4d0c8aa762570b4e8]].
+The dependency/ownership review used its [[https://github.com/lambda-symbolics/autolith/blob/d2841eb24256b95830b607b4d0c8aa762570b4e8/qlfile][Qlot pins]],
+[[https://github.com/lambda-symbolics/autolith/blob/d2841eb24256b95830b607b4d0c8aa762570b4e8/autolith.asd][ASDF graph]],
+[[https://github.com/lambda-symbolics/autolith/blob/d2841eb24256b95830b607b4d0c8aa762570b4e8/docs/extraction-candidates.org][extraction inventory]],
+and the relevant dependency READMEs.
+
+Comparative implementations reviewed while developing the feature set:
+
+| Repository | Inspected commit | Relevant areas |
+|------------+------------------+----------------|
+| [[https://github.com/PrimeIntellect-ai/prime-agent][Prime Agent]] | =c24ac227f11f552ed1d3fa8ebc7d916937d7f6bc= | long-running autonomous work, quality gates, continual refinement |
+| [[https://github.com/can1357/oh-my-pi][OMP]] | =1c0993c3d12e70042169a951663bb2702e2c0a9e= | coding tools, LSP/DAP/AST integration, isolated agents, operational inspection |
+
+These references establish observed implementation patterns only. The roadmap is
+organized around Autolith's own architecture and the library boundaries above.
+Absence findings mean no integrated built-in feature was found; arbitrary Lisp,
+shell or MCP extensions can of course add capabilities outside the built-in
+surface.
