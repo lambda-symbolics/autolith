@@ -408,19 +408,32 @@ validate that URL is an http or https URL before asking."))
   (:documentation
    "Return the argv that runs the repository check for SOURCE-ROOT on this host."))
 
-(defgeneric platform-call-with-command-sandbox (platform workspace function)
+(defgeneric platform-call-with-command-sandbox (platform workspace function &key writable-roots)
   (:documentation
    "Call FUNCTION with a workspace sandbox policy and optional child environment.
 
 Own temporary scopes and serialize overlapping host ACL changes until FUNCTION
-returns or unwinds. FUNCTION accepts POLICY and ENVIRONMENT and must wait for
-its command and descendants before returning."))
+returns or unwinds. Nonempty WRITABLE-ROOTS replace the default workspace write
+scope with explicit owned directories. FUNCTION accepts POLICY and ENVIRONMENT
+and must wait for its command and descendants before returning."))
 
-(defmethod platform-call-with-command-sandbox ((platform platform) workspace function)
-  "Use the whole-host read-only, workspace-write policy on POSIX backends."
-  (funcall function
-           (workspace-write-sandbox-policy :workspace-roots (list workspace))
-           nil))
+(defmethod platform-call-with-command-sandbox ((platform platform) workspace function
+                                               &key writable-roots)
+  "Use explicit POSIX write scopes and private scratch space for owned operations."
+  (if writable-roots
+      (let ((temporary (platform-make-temporary-directory
+                        platform (uiop:temporary-directory) "autolith-command-")))
+        (unwind-protect
+             (funcall function
+                      (workspace-write-sandbox-policy
+                       :workspace-roots (append writable-roots (list temporary))
+                       :protected-metadata-names '(".agents" ".codex")
+                       :write-tmpdir-p nil :write-slash-tmp-p nil)
+                      (loop for name in '("TMPDIR" "TMP" "TEMP")
+                            collect (format nil "~A=~A" name (namestring temporary))))
+          (platform-delete-directory-tree platform temporary
+                                          :validate t :if-does-not-exist ':ignore)))
+      (funcall function (workspace-write-sandbox-policy :workspace-roots (list workspace)) nil)))
 
 
 ;;;; -- Local Sockets --

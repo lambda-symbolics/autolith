@@ -1071,7 +1071,8 @@ System application directories are available through AppContainer's system acces
           (and equals (member (subseq binding 0 equals) names :test #'string-equal))))
       (sb-ext:posix-environ)))))
 
-(defmethod platform-call-with-command-sandbox ((platform win32-platform) workspace function)
+(defmethod platform-call-with-command-sandbox ((platform win32-platform) workspace function
+                                               &key writable-roots)
   "Run FUNCTION with explicit workspace/tool scopes and a private Windows scratch directory."
   (unless (sandbox-supported-p ':network-isolated)
     (win32--unavailable ':command-sandbox
@@ -1083,8 +1084,13 @@ System application directories are available through AppContainer's system acces
        (unwind-protect
             (funcall function
                      (cl-exec-sandbox:appcontainer-sandbox-policy
-                      :workspace-roots (list workspace temporary)
-                      :read-roots (win32--sandbox-read-roots platform workspace))
+                      :workspace-roots (append (or writable-roots (list workspace))
+                                               (list temporary))
+                      :protected-metadata-names (if writable-roots
+                                                    '(".agents" ".codex")
+                                                    '(".git" ".agents" ".codex"))
+                      :read-roots (append (list workspace)
+                                          (win32--sandbox-read-roots platform workspace)))
                      (win32--sandbox-environment temporary))
          (platform-delete-directory-tree platform temporary
                                          :validate t :if-does-not-exist ':ignore))))))

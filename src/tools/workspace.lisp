@@ -321,7 +321,8 @@ with full permissions never refuses one."
                  (ecase authorization
                    (:sandboxed
                     (platform-call-with-command-sandbox
-                     *platform* (config :working-directory configuration) #'run))
+                      *platform* (config :working-directory configuration) #'run
+                      :writable-roots (task-worktree-command-writable-roots context)))
                    (:full-access
                     (run (external-sandbox-policy) nil)))))
              :async-p async-p

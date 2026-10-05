@@ -1630,6 +1630,10 @@ or explicit =ignore=), and =artifactKind= (=patch= by default, or =commit-range=
 With =ignore=, use only the committed baseline; staged, unstaged and untracked
 source edits are excluded. Git isolation is unavailable for non-Git workspaces.
 
+Sandboxed commands in an isolated child may write its owned checkout and the
+repository's Git administrative directories, including a linked worktree's common
+Git directory. Integration requires authorization for the target workspace.
+
 The child edits and tests in its detached checkout. Before it starts, persist the
 source repository, exact resolved baseline, isolated path and conversation-qualified
 owner. Stage new files before yielding. A patch includes committed and uncommitted

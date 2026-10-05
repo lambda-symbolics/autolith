@@ -54,19 +54,23 @@
     "artifactKind" (json-object "type" "string" "enum" (json-array "patch" "commit-range")
                                  "description" "Terminal engineering artifact; defaults to patch.")) nil))
 
-(-> task-worktree--environment () list)
-(defun task-worktree--environment ()
-  "Build a replacement environment without inherited Git repository selectors.
-An allowlist also removes indexed GIT_CONFIG_KEY/VALUE variables and future selectors.
-HOME preserves ordinary identity configuration; Git execution callbacks are disabled
-by cl-worktree's per-command configuration. No process-global environment is changed."
-  (loop for name in '("PATH" "HOME" "USERPROFILE" "SYSTEMROOT" "WINDIR"
-                     "TMPDIR" "TMP" "TEMP" "LANG" "LC_ALL")
-        for value = (uiop:getenv name)
-        when value collect (format nil "~A=~A" name value)))
+(-> task-worktree--environment (&key (:overrides list)) list)
+(defun task-worktree--environment (&key overrides)
+  "Combine sandbox OVERRIDES with an allowlist excluding Git repository selectors.
+HOME supplies identity configuration; cl-worktree disables execution callbacks.
+Sandbox temporary paths take precedence without changing the host environment."
+  (append overrides
+          (loop for name in '("PATH" "HOME" "USERPROFILE" "SYSTEMROOT" "WINDIR"
+                              "TMPDIR" "TMP" "TEMP" "LANG" "LC_ALL")
+                for value = (uiop:getenv name)
+                when (and value
+                          (not (some (lambda (binding)
+                                       (uiop:string-prefix-p (format nil "~A=" name) binding))
+                                     overrides)))
+                  collect (format nil "~A=~A" name value))))
 
-(-> task-worktree--runner (configuration function) function)
-(defun task-worktree--runner (configuration authorize)
+(-> task-worktree--runner (configuration function &key (:writable-roots list)) function)
+(defun task-worktree--runner (configuration authorize &key writable-roots)
   "Return an argv runner using AUTHORIZE and the ordinary command execution policy."
   (lambda (argv &key directory input)
     (let* ((directory (uiop:ensure-directory-pathname directory))
@@ -79,7 +83,7 @@ by cl-worktree's per-command configuration. No process-global environment is cha
                          (run-sandboxed
                           (first argv) (rest argv) :policy policy
                           :working-directory directory :input (and input (make-string-input-stream input))
-                          :environment (append environment (task-worktree--environment))
+                          :environment (task-worktree--environment :overrides environment)
                           :clear-environment-p t :timeout *task-worktree-command-timeout*
                           :output-limit (if (member "diff" argv :test #'equal)
                                             *task-worktree-artifact-limit* 65536)
@@ -95,14 +99,78 @@ by cl-worktree's per-command configuration. No process-global environment is cha
           (:full-access (run (external-sandbox-policy) nil))
           (:sandboxed
            (platform-call-with-command-sandbox
-            *platform* (config :working-directory configuration) #'run)))))))
+            *platform* (config :working-directory configuration) #'run
+            :writable-roots
+            (remove-duplicates
+             (append writable-roots
+                     (task-worktree--git-admin-roots
+                      (config :working-directory configuration))
+                     (task-worktree--git-admin-roots directory)
+                     (when (uiop:subpathp
+                            directory
+                            (merge-pathnames "task-worktrees/checkouts/"
+                                             (config :data-root configuration)))
+                       (list directory)))
+             :test #'equal))))))))
 
-(-> task-worktree--manager (configuration function) cl-worktree:manager)
-(defun task-worktree--manager (configuration authorize)
+(-> task-worktree--manager (configuration function &key (:writable-roots list)) cl-worktree:manager)
+(defun task-worktree--manager (configuration authorize &key writable-roots)
   "Make a manager over the private durable ownership registry."
   (cl-worktree:make-manager
    :registry (merge-pathnames "task-worktrees/registry/" (config :data-root configuration))
-   :runner (task-worktree--runner configuration authorize)))
+   :runner (task-worktree--runner configuration authorize :writable-roots writable-roots)))
+
+(-> task-worktree--git-admin-roots (pathname) list)
+(defun task-worktree--git-admin-roots (source)
+  "Resolve SOURCE's private and shared Git administrative directories."
+  (let* ((source (uiop:ensure-directory-pathname source))
+         (dot-git (merge-pathnames ".git" source))
+         (status (platform-path-status *platform* dot-git :follow-links-p t))
+         (git-dir
+           (when status
+             (case (platform-file-status-kind status)
+               (:directory
+                (uiop:ensure-directory-pathname dot-git))
+               (:file
+                (let* ((text (uiop:read-file-string dot-git))
+                       (line (first (uiop:split-string text
+                                                      :separator '(#\Newline #\Return)))))
+                  (unless (and line (uiop:string-prefix-p "gitdir: " line))
+                    (task-worktree--error "Malformed Git administrative pointer."))
+                  (merge-pathnames (uiop:parse-native-namestring (subseq line 8)) source)))
+               (otherwise
+                (task-worktree--error "Git administrative path is not a file or directory."))))))
+    (when git-dir
+      (let* ((git-dir (uiop:ensure-directory-pathname
+                      (platform-truename *platform* git-dir)))
+             (commondir (merge-pathnames "commondir" git-dir))
+             (common-dir
+               (if (uiop:file-exists-p commondir)
+                   (merge-pathnames
+                    (uiop:ensure-directory-pathname
+                     (uiop:parse-native-namestring
+                      (string-right-trim '(#\Newline #\Return)
+                                         (uiop:read-file-string commondir))))
+                    git-dir)
+                   git-dir)))
+        (remove-duplicates
+         (list git-dir (uiop:ensure-directory-pathname
+                        (platform-truename *platform* common-dir)))
+         :test #'equal)))))
+
+(-> task-worktree-command-writable-roots (tool-context) list)
+(defun task-worktree-command-writable-roots (context)
+  "Return shell write scopes for the exact isolated checkout owned by CONTEXT."
+  (let* ((agent (tool-context-agent context))
+         (job (and (typep agent 'task-child-agent) (task-child-agent-job agent)))
+         (metadata (and job (getf (task-job-item job) :worktree)))
+         (workspace (config :working-directory (tool-context-configuration context))))
+    (when metadata
+      (unless (and (equal (getf metadata :owner) (task-worktree--owner job))
+                   (equal (platform-truename *platform* workspace)
+                          (platform-truename *platform* (getf metadata :path))))
+        (task-worktree--error "Shell workspace does not match the child's owned checkout."))
+      (cons workspace (task-worktree--git-admin-roots (pathname (getf metadata :source)))))))
 
 (-> task-worktree--owner (task-job) string)
 (defun task-worktree--owner (job)
@@ -134,14 +202,20 @@ The source is never reset or stashed, and child cleanup is always explicit."
         (let* ((source (config :working-directory configuration))
                (owner (task-worktree--owner job))
                (path (merge-pathnames
-                      (format nil "task-worktrees/checkouts/~A/" (task-job-execution-identifier job))
+                      (format nil "task-worktrees/checkouts/~A/workspace/"
+                              (task-job-execution-identifier job))
                       (config :data-root configuration)))
+               (container (uiop:pathname-parent-directory-pathname path))
+               (writable-roots (cons container (task-worktree--git-admin-roots source)))
                (manager (task-worktree--manager
-                         configuration (task-job-command-authorization-function job)))
-               (handle (cl-worktree:create-worktree
-                        manager :source source :path path :owner owner
-                        :baseline (getf policy :baseline)
-                        :dirty-policy (getf policy :dirty-policy)))
+                         configuration (task-job-command-authorization-function job)
+                         :writable-roots writable-roots))
+               (handle (progn
+                         (ensure-directories-exist (merge-pathnames "probe" container))
+                         (cl-worktree:create-worktree
+                          manager :source source :path path :owner owner
+                          :baseline (getf policy :baseline)
+                          :dirty-policy (getf policy :dirty-policy))))
                (metadata-path (merge-pathnames "worktree.sexp" (task--artifact-root configuration job)))
                (metadata (task-worktree--metadata handle (getf policy :artifact-kind)
                                                   (namestring metadata-path))))
@@ -195,8 +269,12 @@ a successful child is downgraded rather than claiming an absent artifact."
     (handler-case
         (with-lock-held (*task-worktree-lock*)
           (let* ((configuration (agent-configuration (task-job-parent-agent job)))
-                 (manager (task-worktree--manager configuration
-                                                 (task-job-command-authorization-function job)))
+                 (manager (task-worktree--manager
+                           configuration (task-job-command-authorization-function job)
+                           :writable-roots
+                           (cons (pathname (getf metadata :path))
+                                 (task-worktree--git-admin-roots
+                                  (pathname (getf metadata :source))))))
                  (artifact (task-worktree--extract manager metadata))
                  (path (merge-pathnames "worktree-artifact.sexp" (task--artifact-root configuration job))))
             (task-worktree--write-artifact path artifact :require-absent t)
@@ -255,9 +333,13 @@ a successful child is downgraded rather than claiming an absent artifact."
                                  "task.worktree")
   (let* ((action (tool-argument arguments "action" :required t))
          (configuration (tool-context-configuration context))
-         (manager (task-worktree--manager
-                   configuration (lambda (command directory)
-                                   (tool-context-authorize-command context command directory)))))
+         (authorize (lambda (command directory)
+                      (tool-context-authorize-command context command directory)))
+         (writable-roots
+           (when (member action '("apply" "commits" "abort") :test #'equal)
+             (list (workspace-tool-path context (tool-argument arguments "target" :required t)
+                                        :tool-name "task.worktree"))))
+         (manager (task-worktree--manager configuration authorize :writable-roots writable-roots)))
     (with-lock-held (*task-worktree-lock*)
       (let ((answer
               (cond
@@ -280,19 +362,26 @@ a successful child is downgraded rather than claiming an absent artifact."
                                       :key #'cl-worktree:worktree-id :test #'equal)))
                    (unless handle
                      (task-worktree--error "No owned orphan has that worktree ID."))
-                  (when (some (lambda (job)
-                                (and (typep job 'task-job)
-                                     (not (job-terminal-p job))
-                                     (equal (task-worktree--owner job)
-                                            (cl-worktree:worktree-owner handle))))
-                              (task-orchestrator-list-visible-jobs
-                               (task-orchestrator-tool-orchestrator tool)
-                               (tool-context-agent context)))
-                    (task-worktree--error "The checkout belongs to a live task; cancel and join it before cleanup."))
-                   (list :removed (cl-worktree:cleanup-worktree
-                                   manager handle :owner (cl-worktree:worktree-owner handle)
-                                   :discard-dirty (tool-boolean-argument arguments "discardDirty"
-                                                                        :tool-name "task.worktree")))))
+                   (when (some (lambda (job)
+                                 (and (typep job 'task-job)
+                                      (not (job-terminal-p job))
+                                      (equal (task-worktree--owner job)
+                                             (cl-worktree:worktree-owner handle))))
+                               (task-orchestrator-list-visible-jobs
+                                (task-orchestrator-tool-orchestrator tool)
+                                (tool-context-agent context)))
+                     (task-worktree--error "The checkout belongs to a live task; cancel and join it before cleanup."))
+                   (let ((cleanup-manager
+                           (task-worktree--manager
+                            configuration authorize
+                            :writable-roots
+                            (cons (uiop:pathname-parent-directory-pathname
+                                   (cl-worktree:worktree-path handle))
+                                  (task-worktree--git-admin-roots source)))))
+                     (list :removed (cl-worktree:cleanup-worktree
+                                     cleanup-manager handle :owner (cl-worktree:worktree-owner handle)
+                                     :discard-dirty (tool-boolean-argument arguments "discardDirty"
+                                                                          :tool-name "task.worktree"))))))
                 ((member action '("conflicts" "abort") :test #'equal)
                  (let ((target (workspace-tool-path context (tool-argument arguments "target" :required t)
                                                     :tool-name "task.worktree")))
@@ -301,7 +390,15 @@ a successful child is downgraded rather than claiming an absent artifact."
                        (list :conflicts (cl-worktree:integration-conflicts manager target)))))
                 (t
                  (let* ((identifier (tool-argument arguments "id" :required t))
-                        (metadata (task-worktree--visible-metadata tool context identifier)))
+                        (metadata (task-worktree--visible-metadata tool context identifier))
+                        (manager
+                          (task-worktree--manager
+                           configuration authorize
+                           :writable-roots
+                           (append writable-roots
+                                   (list (uiop:pathname-parent-directory-pathname
+                                          (pathname (getf metadata :path))))
+                                   (task-worktree--git-admin-roots (pathname (getf metadata :source)))))))
                    (cond
                      ((equal action "cleanup")
                       (list :removed
@@ -328,8 +425,10 @@ a successful child is downgraded rather than claiming an absent artifact."
                                                                :tool-name "task.worktree")))
                               (list :integrated
                                     (cond
-                                      ((equal action "check") (cl-worktree:check-patch manager target (cl-worktree:artifact-patch artifact)))
-                                      ((equal action "apply") (cl-worktree:apply-patch manager target (cl-worktree:artifact-patch artifact)))
+                                      ((equal action "check")
+                                       (cl-worktree:check-patch manager target (cl-worktree:artifact-patch artifact)))
+                                      ((equal action "apply")
+                                       (cl-worktree:apply-patch manager target (cl-worktree:artifact-patch artifact)))
                                       (t (cl-worktree:apply-commit-range manager target artifact))))))))
                      (t (task-worktree--error "Unknown task.worktree action."))))))))
         (task-tool-result (bounded-string (task--write-readable-sexp answer :pretty-p t)

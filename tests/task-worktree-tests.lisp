@@ -17,18 +17,29 @@
   (declare (ignore command directory))
   ':full-access)
 
-(-> task-worktree-tests--git (configuration pathname list) string)
-(defun task-worktree-tests--git (configuration directory arguments)
+(-> task-worktree-tests--sandboxed (string pathname) keyword)
+(defun task-worktree-tests--sandboxed (command directory)
+  "Authorize only the normal isolated-command sandbox for this fixture."
+  (declare (ignore command directory))
+  ':sandboxed)
+
+(-> task-worktree-tests--git
+    (configuration pathname list &key (:authorize function) (:writable-roots list)) string)
+(defun task-worktree-tests--git (configuration directory arguments
+                                 &key (authorize #'task-worktree-tests--authorize)
+                                   writable-roots)
   "Run real Git through the product runner and require success."
   (multiple-value-bind (output error-output status)
-      (funcall (task-worktree--runner configuration #'task-worktree-tests--authorize)
+      (funcall (task-worktree--runner configuration authorize
+                                       :writable-roots writable-roots)
                (cons "git" arguments) :directory directory)
     (test-assert (zerop status) (format nil "Git ~S: ~A" arguments error-output))
     output))
 
-(-> task-worktree-tests--fixture (function) t)
-(defun task-worktree-tests--fixture (function)
+(-> task-worktree-tests--fixture (function &optional t) t)
+(defun task-worktree-tests--fixture (function &optional ignored)
   "Call FUNCTION with a disposable real repository, parent, job and operation tool."
+  (declare (ignore ignored))
   (with-test-configuration (initial root)
     (let* ((source (merge-pathnames "source/" root))
            (configuration (progn (ensure-directories-exist (merge-pathnames "probe" source))
@@ -356,4 +367,77 @@
          (task-worktree-tests--call tool context (json-object "action" "cleanup" "id" id))
          (test-assert (equal "parent commit" (uiop:read-file-string (merge-pathnames "file" source)))
                       "Owned cleanup preserves the parent conflict resolution baseline.")))))
+  nil)
+
+
+(-> test-task-worktree-sandboxed-authorization () null)
+(defun test-task-worktree-sandboxed-authorization ()
+  "Run the complete authorized lifecycle from ordinary and linked repositories."
+  (dolist (linked-p '(nil t))
+    (task-worktree-tests--fixture
+     (lambda (configuration source parent job tool context)
+       (when linked-p
+         (let ((linked (merge-pathnames "../linked/" source)))
+           (task-worktree-tests--git configuration source
+                                    (list "worktree" "add" "--detach" (namestring linked)))
+           (setf source (platform-truename *platform* linked)
+                 configuration (configuration-copy configuration :working-directory source))))
+       (setf (task-job-command-authorization-function job) #'task-worktree-tests--sandboxed
+             (getf (task-job-item job) :isolation)
+             (task-worktree-normalize-options (json-object "artifactKind" "commit-range")))
+       (let* ((child (task-worktree-configuration job configuration))
+              (path (config :working-directory child))
+              (conversation (conversation-create child))
+              (agent (make-instance 'task-child-agent
+                                    :configuration child :conversation conversation
+                                    :provider (agent-provider parent)
+                                    :tool-registry (agent-tool-registry parent)
+                                    :worker nil :definition (task-job-definition job)
+                                    :identity (task-job-identity job) :depth 1
+                                    :completion (make-instance 'task-completion)
+                                    :orchestrator (task-job-orchestrator job) :job job))
+              (child-context (make-instance 'tool-context :configuration child :worker nil
+                                           :agent agent :conversation conversation
+                                           :command-authorization-function #'task-worktree-tests--sandboxed))
+              (parent-context (make-instance 'tool-context :configuration configuration :worker nil
+                                            :agent parent :conversation (agent-conversation parent)
+                                            :command-authorization-function #'task-worktree-tests--sandboxed))
+              (shell (make-instance 'shell-run-tool :namespace "shell" :name "run"
+                                   :description "Run the sandbox fixture."))
+              (unrelated (merge-pathnames "unrelated-config" source)))
+         (declare (ignore context))
+         (test-assert (probe-file (merge-pathnames "file" path)) "The owned checkout is created in the sandbox.")
+         (task-worktree-tests--write (merge-pathnames "file" path) "isolated commit")
+         (dolist (command '("git add file" "git -c user.name=Fixture -c user.email=fixture@example.invalid commit -m isolated"))
+           (let ((result (tool-execute shell child-context (json-object "command" command))))
+             (test-assert (and (tool-result-success-p result)
+                               (uiop:string-prefix-p (format nil "exit 0~%") (tool-result-content result)))
+                          "Ordinary sandboxed child commands can stage and commit.")))
+         (let ((result (tool-execute
+                        shell child-context
+                        (json-object "command" (format nil "git config --file ~S fixture.unrelated denied"
+                                                       (namestring unrelated))))))
+           (test-assert (not (uiop:string-prefix-p (format nil "exit 0~%") (tool-result-content result)))
+                        "The child's sandbox denies unrelated source writes.")
+           (test-assert (not (probe-file unrelated)) "Denied commands leave the unrelated path absent."))
+         (test-assert
+          (handler-case
+              (progn
+                (funcall (task-worktree--runner child (lambda (command directory)
+                                                       (declare (ignore command directory)) ':deny))
+                         '("git" "status") :directory path)
+                nil)
+            (task-worktree-error () t))
+          "Denied authorization prevents the Git operation.")
+         (let* ((result (task-worktree-tests--publish job ':success))
+                (identifier (task-job-execution-identifier job)))
+           (test-assert (getf result :worktree-artifact-path) "Sandboxed extraction retains the commit artifact.")
+           (task-worktree-tests--call tool parent-context
+                                     (json-object "action" "commits" "id" identifier
+                                                  "target" (namestring source)))
+           (test-assert (equal "isolated commit" (uiop:read-file-string (merge-pathnames "file" source)))
+                        "Sandboxed integration applies the isolated commit to the authorized target.")
+           (task-worktree-tests--call tool parent-context
+                                     (json-object "action" "cleanup" "id" identifier))
+           (test-assert (not (probe-file path)) "Sandboxed cleanup removes only the owned checkout."))))))
   nil)
