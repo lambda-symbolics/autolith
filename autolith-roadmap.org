@@ -267,7 +267,7 @@ proposal when necessary, then applies it through revision-aware resources.
 - cl-resources :: revisioned multi-resource change-set application.
 - Autolith :: authority, approval, tool schema and presentation.
 
-** NEW [#C] C2. DAP debugger integration
+** PRESENT [#C] C2. DAP debugger integration
 *** Problem
 Autolith has strong Common Lisp restart debugging for its own live image, but no
 uniform interface to debug target applications written in C, Rust, Go, Python and
@@ -293,6 +293,13 @@ requests later.
 lifecycle. Autolith provides optional debugging tools and presentation.
 =lambda-debugger= remains exclusively responsible for live Common Lisp
 condition/restart handling.
+
+*** Verified implementation
+Optional =autolith/debug= and =autolith/debug/tests= provide conversation-owned
+semantic sessions over =daphne@65f68216152c70110a092b79050b37ce75cdbdb1=.
+The optional ASDF suite passed 6 cases / 95 checks, including actual subprocess
+adapters, cancellation before startup, buffered-event cancellation, deadlines,
+authority and registry shutdown. Evidence: =.cache/check-debug-optional-final.log=.
 
 ** PRESENT [#B] C3. Structural AST search and editing
 *** Problem

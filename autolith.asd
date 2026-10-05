@@ -402,3 +402,20 @@
   :perform (asdf:test-op (operation component)
              (declare (ignore operation component))
              (uiop:symbol-call '#:autolith '#:run-tests :suites '("structural"))))
+
+
+(asdf:defsystem #:autolith/debug
+  :description "Optional semantic Debug Adapter Protocol sessions."
+  :depends-on (#:autolith #:daphne)
+  :serial t
+  :components ((:file "src/debug/sessions")
+               (:file "src/debug/tools")))
+
+(asdf:defsystem #:autolith/debug/tests
+  :description "Autolith debug tool boundary checks."
+  :depends-on (#:autolith/debug #:autolith/tests)
+  :serial t
+  :components ((:file "tests/debug-tests"))
+  :perform (asdf:test-op (operation component)
+             (declare (ignore operation component))
+             (uiop:symbol-call '#:autolith '#:run-tests :suites '("debug"))))

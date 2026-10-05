@@ -1280,6 +1280,31 @@ For an existing registry, call =structural-register-tools= explicitly with
 =:program=. Run the optional checks with =CLASTED_AST_GREP= set to the backend
 path and =(asdf:test-system "autolith/structural/tests")=.
 
+** Debug adapter sessions
+
+Load =autolith/debug= before creating a registry. Configure an adapter in user
+initialization, or pass an explicit adapter to =debug.launch= / =debug.attach=:
+
+#+BEGIN_SRC lisp
+(asdf:load-system "autolith/debug")
+(setf autolith:*debug-adapter-program* "/path/to/debug-adapter"
+      autolith:*debug-adapter-arguments* nil)
+#+END_SRC
+
+For an existing registry, call =debug-register-tools= with =:program= and
+literal =:arguments=. Loading the system starts no adapter. Adapter execution,
+launch, attach and expression evaluation require exact full-access command
+approval. Authorize source and program paths through ordinary path permissions.
+
+Use the returned session ID for =debug.breakpoints=, =debug.continue=,
+=debug.pause=, =debug.step=, =debug.threads=, =debug.stack=, =debug.scopes=,
+=debug.variables= and =debug.evaluate=. Inspect bounded queued events with
+=debug.events=, using =count= and =wait-for= as needed. Session IDs belong to
+the originating conversation. Use =debug.cancel= to interrupt an operation,
+and =debug.terminate= to close the session and reap its adapter. Timeouts and
+cancellation close the owned adapter. Run the optional checks with
+=(asdf:test-system "autolith/debug/tests")=.
+
 ** Child roles
 
 Roles load from these directories. First match wins:

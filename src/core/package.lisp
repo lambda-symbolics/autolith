@@ -1337,6 +1337,10 @@
            #:*structural-program*
            #:structural-register-tools
            #:structural-register-default-tools
+           #:*debug-adapter-program*
+           #:*debug-adapter-arguments*
+           #:debug-register-tools
+           #:debug-register-default-tools
            #:worker-main))
 
 (in-package #:autolith)
