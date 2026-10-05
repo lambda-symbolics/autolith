@@ -67,11 +67,14 @@
 
 (-> mission--gate-fingerprint-unlocked (list tool-context) list)
 (defun mission--gate-fingerprint-unlocked (gate context)
-  "Fingerprint GATE while the workspace mutation lock is held."
-  (list (getf gate :invalidation)
-        (loop for input in (getf gate :inputs)
-              for path = (workspace-tool-path context input)
-              collect (list input (mission--file-digest path)))))
+  "Fingerprint declared inputs and the artifact path while workspace mutations are locked."
+  (let ((inputs (if (eq (getf gate :kind) ':artifact)
+                    (adjoin (getf gate :path) (getf gate :inputs) :test #'equal)
+                    (getf gate :inputs))))
+    (list (getf gate :invalidation)
+          (loop for input in inputs
+                for path = (workspace-tool-path context input)
+                collect (list input (mission--file-digest path))))))
 
 (-> mission-gate-fingerprint (list tool-context) list)
 (defun mission-gate-fingerprint (gate context)

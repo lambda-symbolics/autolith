@@ -812,6 +812,7 @@
   test-mission-acceptance-proof
   test-mission-execution-gates
   test-mission-gate-freshness-after-mutation
+  test-mission-artifact-freshness-after-mutation
   test-mission-invalidation-verification-race
   test-mission-verification-live-operation
   test-mission-wall-budget

@@ -242,6 +242,43 @@
                               :key (lambda (entry) (getf entry :kind)))
                         "snapshot drift is recorded as durable evidence")))))))
 
+(-> test-mission-artifact-freshness-after-mutation () null)
+(defun test-mission-artifact-freshness-after-mutation ()
+  "Reject artifact evidence changed by a later command, including without declared inputs."
+  (with-test-fixture (':posix-shell "artifact mutation by a later command gate")
+    (dolist (case '(("rm result.txt")
+                    ("printf changed > result.txt")
+                    ("printf changed > result.txt" ("gate-input.txt"))
+                    ("printf changed > gate-input.txt" ("gate-input.txt"))))
+      (with-test-configuration (configuration root)
+        (setf configuration (configuration-copy configuration :working-directory root))
+        (let* ((application (mission-test--application configuration))
+               (artifact (list :id "artifact" :kind ':artifact :path "result.txt")))
+          (when (second case)
+            (setf (getf artifact :inputs) (second case)))
+          (mission-test--write-file (merge-pathnames "result.txt" root) "before")
+          (mission-test--write-file (merge-pathnames "gate-input.txt" root) "before")
+          (application-mission-start
+           application
+           (mission-test--specification
+            :gates (list artifact
+                         (list :id "mutation" :kind ':command :command (first case)))))
+          (test-call-with-function-replacements
+           (list (list 'mission--tool-context (lambda (app) (mission-test--context app))))
+           (lambda ()
+             (application-mission-verify application)
+             (let* ((goal (application-goal application))
+                    (gates (getf goal :gates)))
+               (test-assert (eq ':passed (getf (second gates) :status))
+                            "the later command completes successfully")
+               (test-assert (eq ':active (getf goal :status))
+                            "changed artifact evidence prevents terminal verification")
+               (test-assert (eq ':pending (getf (first gates) :status))
+                            "the obsolete artifact pass is invalidated")
+               (test-assert (find ':stale-gate (getf goal :evidence)
+                                  :key (lambda (entry) (getf entry :kind)))
+                            "artifact or declared-input drift is recorded as evidence")))))))))
+
 (-> test-mission-invalidation-verification-race () null)
 (defun test-mission-invalidation-verification-race ()
   "Serialize gate invalidation against the final verified transition."
