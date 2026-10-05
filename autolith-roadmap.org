@@ -41,7 +41,7 @@ This is a source/design audit, not a runtime benchmark.
 
 * Autonomous work and continual improvement
 
-** EXTEND [#A] A1. Verified missions
+** PRESENT [#A] A1. Verified missions
 *** Problem
 Autolith already has persistent session goals and automatic continuation, but the
 current goal loop is primarily model-declared completion with a continuation cap.
@@ -71,7 +71,7 @@ should be a separate transition when acceptance criteria exist.
 - cl-jobpond :: execution deadlines and job lifecycle.
 - sexp-store :: durable mission state where appropriate.
 
-** NEW [#A] A2. Acceptance and quality gates
+** PRESENT [#A] A2. Acceptance and quality gates
 *** Problem
 Tests, type checks, reproducible commands and artifact checks are often the best
 proof that a coding task is finished. Today these can be run by the model, but they
@@ -238,7 +238,7 @@ and side-effect deduplication policy.
 
 * Coding and debugging capabilities
 
-** EXTEND [#A] C1. Semantic LSP edits
+** PRESENT [#A] C1. Semantic LSP edits
 *** Problem
 The current LSP integration is excellent for observation but deliberately
 read-only. Renames and code actions therefore fall back to text edits even when the
@@ -322,7 +322,7 @@ Semantic LSP and AST edits complement it; they do not replace it.
 
 * Delegation and task execution
 
-** NEW [#A] D1. Isolated modifying worktrees
+** PRESENT [#A] D1. Isolated modifying worktrees
 *** Problem
 Parallel child agents are already first-class, but editing children operate in the
 same workspace. Concurrent changes therefore require the parent to prevent overlap
@@ -453,7 +453,7 @@ packages a repeatedly successful procedure into ordinary code that can be tested
 This is primarily an Autolith + =cl-skills= integration feature, not another
 runtime library.
 
-** EXTEND [#B] R3. Unified revisioned resource protocol
+** PRESENT [#B] R3. Unified revisioned resource protocol
 *** Problem
 Autolith already has a strong =scheme:identifier= resource abstraction, but the
 generic protocol still lives in Autolith while new coding features need the same
