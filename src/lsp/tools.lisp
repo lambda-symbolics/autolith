@@ -157,9 +157,10 @@ an authorized file elsewhere, as an editor opening that file would search."
       (lsp-manager-configure manager (tool-context-configuration context))))
   (tool-success "Language servers stopped and configuration reloaded. Next file request starts matching servers."))
 
+(-> lsp-register-semantic-tools (tool-registry lsp-manager) tool-registry)
 (-> lsp-register-tools (tool-registry) tool-registry)
 (defun lsp-register-tools (registry)
-  "Register one lazy LSP manager and its small read-only tool surface."
+  "Register one lazy LSP manager and its observation and semantic tool surface."
   (let* ((manager (make-instance 'lsp-manager :client-name "Autolith"
                                              :client-version *autolith-version*))
          (path (tool-string-property "Existing workspace source file; also selects the project for workspace-symbols."))
@@ -182,7 +183,8 @@ an authorized file elsewhere, as an editor opening that file would search."
       (destructuring-bind (class name description schema) specification
         (tool-registry-register registry
                                 (make-instance class :namespace "lsp" :name name :description description
-                                                     :parameters schema :manager manager)))))
+                                                     :parameters schema :manager manager))))
+    (lsp-register-semantic-tools registry manager))
   registry)
 
 ;;;; -- Saved File Diagnostics --
