@@ -65,13 +65,19 @@
     (t
      (ironclad:byte-array-to-hex-string (ironclad:digest-file ':sha256 pathname)))))
 
-(-> mission-gate-fingerprint (list tool-context) list)
-(defun mission-gate-fingerprint (gate context)
-  "Fingerprint GATE's explicitly declared relevant files and invalidation epoch."
+(-> mission--gate-fingerprint-unlocked (list tool-context) list)
+(defun mission--gate-fingerprint-unlocked (gate context)
+  "Fingerprint GATE while the workspace mutation lock is held."
   (list (getf gate :invalidation)
         (loop for input in (getf gate :inputs)
               for path = (workspace-tool-path context input)
               collect (list input (mission--file-digest path)))))
+
+(-> mission-gate-fingerprint (list tool-context) list)
+(defun mission-gate-fingerprint (gate context)
+  "Fingerprint GATE's relevant files and invalidation epoch atomically."
+  (with-recursive-lock-held (*workspace-file-mutation-lock*)
+    (mission--gate-fingerprint-unlocked gate context)))
 
 (-> mission--gate-tool-result (tool-context string string json-object) tool-result)
 (defun mission--gate-tool-result (context namespace name arguments)
@@ -120,19 +126,26 @@
 (-> application-mission-invalidate (application string string) null)
 (defun application-mission-invalidate (application identifier evidence)
   "Invalidate one gate's relevant state without resetting its attempt budget."
-  (let* ((context (mission-context-find (application-conversation application)))
-         (gate (find identifier (getf (application-goal application) :gates)
-                     :key (lambda (gate) (getf gate :id)) :test #'equal)))
-    (unless (and context gate)
+  (let ((context (mission-context-find (application-conversation application))))
+    (unless context
       (mission--reject ':missing "No such mission gate."))
-    (unless (member (getf (application-goal application) :status) '(:active :paused :blocked))
-      (mission--reject ':terminal "A terminal mission requires a new acceptance policy."))
-    (with-recursive-lock-held ((mission-context-lock context))
-      (incf (getf gate :invalidation))
-      (setf (getf gate :status) ':pending (getf gate :fingerprint) nil)
-      (mission--evidence context ':invalidation (list identifier evidence))
-      (mission--record context)))
-  nil)
+    ;; Request admission and terminal validation share this lock with final
+    ;; acceptance, so invalidation cannot race the verified transition.
+    (with-recursive-lock-held ((mission-context-request-lock context))
+      (with-recursive-lock-held ((mission-context-lock context))
+        (let* ((goal (mission-context-goal context))
+               (gate (find identifier (getf goal :gates)
+                           :key (lambda (candidate) (getf candidate :id))
+                           :test #'equal)))
+          (unless gate
+            (mission--reject ':missing "No such mission gate."))
+          (unless (member (getf goal :status) '(:active :paused :blocked))
+            (mission--reject ':terminal "A terminal mission requires a new acceptance policy."))
+          (incf (getf gate :invalidation))
+          (setf (getf gate :status) ':pending (getf gate :fingerprint) nil)
+          (mission--evidence context ':invalidation (list identifier evidence))
+          (mission--record context))))
+  nil))
 
 (-> application-mission-accept (application string string) null)
 (defun application-mission-accept (application identifier evidence)
@@ -208,6 +221,22 @@
       (mission--record context)
       nil)))
 
+(-> mission--revalidate-gates (mission-context list tool-context) boolean)
+(defun mission--revalidate-gates (context goal tool-context)
+  "Revalidate every passed gate while workspace and mission state are locked."
+  (let ((stale nil))
+    (dolist (gate (getf goal :gates))
+      (let ((fingerprint (mission--gate-fingerprint-unlocked gate tool-context)))
+        (unless (and (eq (getf gate :status) ':passed)
+                     (equal fingerprint (getf gate :fingerprint)))
+          (setf (getf gate :status) ':pending
+                (getf gate :fingerprint) nil)
+          (push (getf gate :id) stale))))
+    (when stale
+      (mission--evidence context ':stale-gate (nreverse stale))
+      (mission--record context))
+    (null stale)))
+
 (-> application-mission-verify (application) null)
 (defun application-mission-verify (application)
   "Run ordered gates and prove every configured criterion, separately from completion."
@@ -221,6 +250,10 @@
     (with-recursive-lock-held ((mission-context-request-lock context))
       (with-recursive-lock-held ((mission-context-lock context))
         (mission--admit context :inference-p nil)
+        (when (plusp (getf goal :requests-outstanding 0))
+          (mission--evidence context ':pending-work "Inference is outstanding; collect its usage before verification.")
+          (mission--record context)
+          (return-from application-mission-verify nil))
         (setf (getf goal :model-complete-p) t)
         (mission--evidence context ':model-complete "Harness verification requested.")
         (mission--record context))
@@ -238,12 +271,25 @@
         (dolist (gate (getf goal :gates))
           (unless (mission--check-gate context gate tool-context)
             (return-from application-mission-verify nil)))
-        (unless (application-mission-review-current-p application ':final-acceptance)
-          (mission--evidence context ':review-pending "Review inputs changed during acceptance checks.")
-          (mission--record context)
-          (return-from application-mission-verify nil))
-        (mission--admit context :inference-p nil)
-        (if (mission--criteria-proven-p goal)
-            (mission--transition context ':verified "Every explicit acceptance criterion has configured evidence.")
-            (mission--transition context ':blocked "Gates passed; acceptance criteria still require user evidence.")))))
-  nil)
+        ;; Hold the workspace mutation lock through the proof and transition.
+        ;; Authorized edits therefore cannot land between the last digest and
+        ;; the terminal status, while invalidation remains serialized by the
+        ;; request lock held above.
+        (with-recursive-lock-held (*workspace-file-mutation-lock*)
+          (with-recursive-lock-held ((mission-context-lock context))
+            (when (or (plusp (getf goal :requests-outstanding 0))
+                      (mission-context-jobs context))
+              (mission--evidence context ':pending-work "Mission work appeared during verification; collect it before acceptance.")
+              (mission--record context)
+              (return-from application-mission-verify nil))
+            (unless (mission--revalidate-gates context goal tool-context)
+              (return-from application-mission-verify nil))
+            (unless (application-mission-review-current-p application ':final-acceptance)
+              (mission--evidence context ':review-pending "Review inputs changed during acceptance checks.")
+              (mission--record context)
+              (return-from application-mission-verify nil))
+            (mission--admit context :inference-p nil)
+            (if (mission--criteria-proven-p goal)
+                (mission--transition context ':verified "Every explicit acceptance criterion has configured evidence.")
+                (mission--transition context ':blocked "Gates passed; acceptance criteria still require user evidence.")))))
+  nil)))

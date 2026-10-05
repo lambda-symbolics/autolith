@@ -102,7 +102,9 @@ gate explicitly:
 #+END_SRC
 
 Invalidation permits another execution without replenishing its attempt budget.
-Collect terminal results from live delegated jobs before verifying the mission.
+Before acceptance, every gate fingerprint is checked again under the workspace
+mutation lock. Changes from a later gate invalidate earlier passing evidence.
+Collect terminal results and outstanding inference usage before verifying.
 
 ** Independent review checkpoints
 

@@ -163,6 +163,8 @@ The calling thread preserves provider bindings and authorization callbacks."
     (unwind-protect
          (progn
            (with-recursive-lock-held ((mission-context-lock context))
+             ;; Register before releasing state so cancellation cannot miss this job.
+             (mission--admit context :inference-p nil)
              (push job (mission-context-jobs context))
              (setf (gethash job (mission-context-threads context)) (current-thread)))
            (job-run-inline job)

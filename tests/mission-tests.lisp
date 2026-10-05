@@ -206,6 +206,146 @@
       (test-assert (eq ':exhausted (getf (application-goal application) :status)) "exhaustion survives restoration"))))
 
 
+(-> test-mission-gate-freshness-after-mutation () null)
+(defun test-mission-gate-freshness-after-mutation ()
+  "Reject ordered gates whose earlier passing evidence is stale after a later gate mutates its input."
+  (with-test-configuration (configuration root)
+    (setf configuration (configuration-copy configuration :working-directory root))
+    (let* ((input (merge-pathnames "gate-input" root))
+           (application (mission-test--application configuration))
+           (gates '((:id "first" :kind :artifact :path "first" :inputs ("gate-input")
+                     :deterministic-p t)
+                    (:id "second" :kind :artifact :path "second" :inputs ("gate-input")
+                     :deterministic-p t))))
+      (mission-test--write-file input "before")
+      (application-mission-start application (mission-test--specification :gates gates))
+      (test-call-with-function-replacements
+       (list (list 'mission--tool-context (lambda (app) (mission-test--context app)))
+             (list 'mission-gate-execute
+                   (lambda (gate context)
+                     (declare (ignore context))
+                     (when (equal (getf gate :id) "second")
+                       (mission-test--write-file input "after"))
+                     (values t "gate passed"))))
+       (lambda ()
+         (application-mission-verify application)
+         (let* ((goal (application-goal application))
+                (first-gate (first (getf goal :gates)))
+                (second-gate (second (getf goal :gates))))
+           (test-assert (eq ':active (getf goal :status))
+                        "a later gate mutation prevents terminal verification")
+           (test-assert (eq ':pending (getf first-gate :status))
+                        "the earlier gate's obsolete pass is invalidated")
+           (test-assert (eq ':pending (getf second-gate :status))
+                        "all stale gate evidence is invalidated")
+           (test-assert (find ':stale-gate (getf goal :evidence)
+                              :key (lambda (entry) (getf entry :kind)))
+                        "snapshot drift is recorded as durable evidence")))))))
+
+(-> test-mission-invalidation-verification-race () null)
+(defun test-mission-invalidation-verification-race ()
+  "Serialize gate invalidation against the final verified transition."
+  (with-test-configuration (configuration)
+    (let* ((application (mission-test--application configuration))
+           (gate '(:id "gate" :kind :artifact :path "missing" :inputs nil))
+           (entered (bordeaux-threads:make-semaphore))
+           (release (bordeaux-threads:make-semaphore))
+           (invalidating (bordeaux-threads:make-semaphore))
+           (invalidation-error nil)
+           (verification-error nil)
+           (verification-thread nil)
+           (invalidation-thread nil))
+      (application-mission-start application (mission-test--specification :gates (list gate)))
+      (test-call-with-function-replacements
+       (list (list 'mission--tool-context (lambda (app) (mission-test--context app)))
+             (list 'mission-gate-execute
+                   (lambda (gate context)
+                     (declare (ignore gate context))
+                     (values t "gate passed")))
+             (list 'mission--revalidate-gates
+                   (lambda (context goal tool-context)
+                     (declare (ignore context goal tool-context))
+                     (bordeaux-threads:signal-semaphore entered)
+                     (unless (bordeaux-threads:wait-on-semaphore release :timeout 10)
+                       (error "Verification barrier timed out."))
+                     t)))
+       (lambda ()
+         (unwind-protect
+              (progn
+                (setf verification-thread
+                      (make-thread
+                       (lambda ()
+                         (handler-case (application-mission-verify application)
+                           (error (condition) (setf verification-error condition))))
+                       :name "Mission verification race"))
+                (test-assert (bordeaux-threads:wait-on-semaphore entered :timeout 10)
+                             "verification reaches the final acceptance barrier")
+                (setf invalidation-thread
+                      (make-thread
+                       (lambda ()
+                         (bordeaux-threads:signal-semaphore invalidating)
+                         (handler-case
+                             (application-mission-invalidate application "gate" "changed")
+                           (mission-error (condition)
+                             (setf invalidation-error condition))))
+                       :name "Mission invalidation race"))
+                (test-assert (bordeaux-threads:wait-on-semaphore invalidating :timeout 10)
+                             "invalidation starts while verification holds its barrier"))
+           (bordeaux-threads:signal-semaphore release)
+           (when verification-thread (join-thread verification-thread))
+           (when invalidation-thread (join-thread invalidation-thread)))
+         (test-assert (null verification-error) "verification completes without error")
+         (test-assert (eq ':verified (getf (application-goal application) :status))
+                      "verification reaches its terminal transition atomically")
+         (test-assert (and invalidation-error
+                           (eq ':terminal (mission-error-reason invalidation-error)))
+                      "invalidation observes the terminal mission after verification"))))))
+
+(-> test-mission-verification-live-operation () null)
+(defun test-mission-verification-live-operation ()
+  "Withhold acceptance when tool work begins during gate execution."
+  (with-test-configuration (configuration)
+    (let* ((application (mission-test--application configuration))
+           (gate '(:id "gate" :kind :artifact :path "missing" :inputs ("absent") :deterministic-p t))
+           (entered (bordeaux-threads:make-semaphore))
+           (release (bordeaux-threads:make-semaphore))
+           (thread nil)
+           (failure nil))
+      (application-mission-start application (mission-test--specification :gates (list gate)))
+      (test-call-with-function-replacements
+       (list (list 'mission--tool-context (lambda (app) (mission-test--context app)))
+             (list 'mission-gate-execute
+                   (lambda (gate tool-context)
+                     (declare (ignore gate tool-context))
+                     (setf thread
+                           (make-thread
+                            (lambda ()
+                              (handler-case
+                                  (mission--supervise
+                                   (mission-context-find (application-conversation application))
+                                   "Concurrent tool operation"
+                                   (lambda ()
+                                     (bordeaux-threads:signal-semaphore entered)
+                                     (unless (bordeaux-threads:wait-on-semaphore release :timeout 10)
+                                       (error "Tool barrier timed out."))))
+                                (error (condition) (setf failure condition))))
+                            :name "Mission tool acceptance race"))
+                     (unless (bordeaux-threads:wait-on-semaphore entered :timeout 10)
+                       (error "Tool operation did not start."))
+                     (values t "gate passed"))))
+       (lambda ()
+         (unwind-protect
+              (progn
+                (application-mission-verify application)
+                (test-assert (eq ':active (getf (application-goal application) :status))
+                             "live work prevents the final verified transition"))
+           (bordeaux-threads:signal-semaphore release)
+           (when thread (join-thread thread)))
+         (test-assert (null failure) "the concurrent operation completes normally")
+         (application-mission-verify application)
+         (test-assert (eq ':verified (getf (application-goal application) :status))
+                      "acceptance succeeds after collecting live work"))))))
+
 (-> test-mission-command-and-compaction () null)
 (defun test-mission-command-and-compaction ()
   "Invoke user/model operations and restore terminal proof after durable compaction."

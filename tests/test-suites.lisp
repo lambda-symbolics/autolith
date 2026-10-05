@@ -802,6 +802,9 @@
   test-mission-gate-retries
   test-mission-acceptance-proof
   test-mission-execution-gates
+  test-mission-gate-freshness-after-mutation
+  test-mission-invalidation-verification-race
+  test-mission-verification-live-operation
   test-mission-wall-budget
   test-mission-command-and-compaction
   test-mission-queued-child-authority
