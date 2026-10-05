@@ -1242,6 +1242,24 @@ with =self.redefine=, drops any the tracked source already covers, and
 publishes the result with =self.commit=. During an active turn, the command
 waits in the idle queue.
 
+** Refinement
+
+Use =self.refine= to record trajectory evidence, choose the smallest useful target
+or =none=, and exercise existing memory, context, skill, role, RLM or mutation
+operations. Every transition names the proposal ID and its observed revision.
+Evaluation records actual task observations separately from owner compile/replay
+checks. Inspect proposals with =/refine= and supply a local assessment before
+promotion:
+
+#+BEGIN_SRC lisp
+/refine (:assess "PROPOSAL-ID" 3 :passed "Evidence from a separate task")
+#+END_SRC
+
+Promotion proceeds from session to project to global scope, with renewed evaluation
+at each scope and an owner-state guard against intervening changes. Recover an
+interrupted operation explicitly using recorded evidence; replay never repeats its
+effects automatically.
+
 ** Child roles
 
 Roles load from these directories. First match wins:

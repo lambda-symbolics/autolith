@@ -97,7 +97,7 @@ Autolith owns which gates constitute acceptance and when they run. Use
 =cl-jobpond= for lifecycle and =cl-exec-sandbox= for command execution. Do not add
 a separate general-purpose process runner for gates.
 
-** EXTEND [#A] A3. Unified refine / learn workflow
+** PRESENT [#A] A3. Unified refine / learn workflow
 *** Problem
 Autolith already has several strong improvement mechanisms, but they are exposed as
 separate concepts: periodic self-review, exploratory self-mutation experiments,

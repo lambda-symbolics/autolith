@@ -880,6 +880,7 @@ LSP tools register only when CONFIGURATION enables a language server."
     (when (and configuration (lsp-configuration-enabled-p configuration))
       (lsp-register-tools registry))
     (default-tools--register-self registry)
+    (refinement-register-tools registry)
     (rlm-register-tools registry)
     (mission-register-tools registry)
     (skill-augment-tool-registry registry)

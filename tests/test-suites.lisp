@@ -578,6 +578,18 @@
   test-task-closed-runtime-refresh
   test-task-scheduler)
 
+(define-test-suite refinement
+  test-refinement-progression
+  test-refinement-no-op
+  test-refinement-failed-evaluation
+  test-refinement-stale-promotion
+  test-refinement-authority
+  test-refinement-interrupted-recovery
+  test-refinement-pending-owner
+  test-refinement-tool-boundary
+  test-refinement-journal-integrity
+  test-refinement-immutable-registry)
+
 (when (find-class 'win32-platform nil)
   (define-test-suite windows-sandbox
       test-windows-sandbox-profile-cleanup-helper
