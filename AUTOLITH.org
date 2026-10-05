@@ -31,6 +31,20 @@ a user-local init.lisp change, or a private image commit.
 - Removal condition: discard the exploratory override after booting the tracked
   definition.
 
+** Resumed-turn job ownership
+
+- Problem: The repeated restart notice did not distinguish new live jobs from
+  pre-restart work during a long resumed turn.
+- Behavior: Identify pre-restart ownership loss explicitly and permit ordinary
+  inspection, joining and cancellation of jobs created during the resumed turn.
+- Scope and location: private =*resume-context-instruction*= setting, image commit
+  =aae299c0-2394-4528-b4d8-e934f37a8bfc=, private Git
+  =d1b92e8c61ddccb83363331e922da4173f13e017=.
+- Verification: subsequent provider requests contain the corrected boundary;
+  new RLM and command jobs completed and were collected. Private replay passed.
+- Removal condition: replace this override after installing an equivalent
+  tracked restart notice.
+
 ** NetBSD directory enumeration
 
 - Problem: The unversioned libc =opendir=/=readdir= bindings returned legacy
