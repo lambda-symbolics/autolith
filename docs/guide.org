@@ -431,6 +431,12 @@ live queue.
 =resource.edit= applies a resource-specific operation only against that exact
 observation.
 
+For multi-file semantic changes, Autolith prepares a =cl-resources= change set
+against retained file revisions and validates every member before publication.
+Each file is published atomically. On a later failure, Autolith restores earlier
+members; conflicting external updates require explicit recovery rather than
+replacement. File moves preserve source permissions captured during staging.
+
 Papercuts use current-workspace resource URIs:
 
 - =papercut:current= lists active reports and accepts =papercut-report=.

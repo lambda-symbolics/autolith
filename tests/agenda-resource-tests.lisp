@@ -112,9 +112,8 @@
                             "operations"
                             (coerce (cons operation more-operations) 'vector))))
              (let ((resolver
-                     (gethash "agenda"
-                              (resource-registry-resolvers
-                               (tool-registry-resource-registry registry)))))
+                      (cl-resources:resource-registry-find
+                       (tool-registry-resource-registry registry) "agenda")))
                (test-assert (typep resolver 'agenda-resolver)
                             "default tools register the agenda resource resolver"))
              (let* ((empty-read (read-agenda first-context))
@@ -148,13 +147,11 @@
                           "agenda-add" "text" "child mutation"))))
                  (test-assert
                   (and (not (tool-result-success-p child-read))
-                       (search "unavailable under this authority context"
-                               (tool-result-content child-read)))
+                       (eq ':access-denied (tool-result-error-code child-read)))
                   "task child contexts cannot read agenda resources")
                  (test-assert
                   (and (not (tool-result-success-p child-edit))
-                       (search "unavailable under this authority context"
-                               (tool-result-content child-edit)))
+                       (eq ':access-denied (tool-result-error-code child-edit)))
                   "task child contexts cannot edit agenda resources"))
                (let* ((file (merge-pathnames "child-safe.txt" first-workspace))
                       (read-result nil)

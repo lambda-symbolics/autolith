@@ -730,6 +730,50 @@ Windows has no world-readable bit, so the file stays owner-only; every file
 Autolith publishes read-only lives below a private root anyway."
   (win32--set-mode pathname #o400))
 
+(defmethod platform-file-uri-pathname ((platform win32-platform) decoded-path)
+  "Remove a file URI's drive-prefix slash before parsing a native Windows pathname."
+  (uiop:parse-native-namestring
+   (if (and (> (length decoded-path) 2)
+            (char= (char decoded-path 0) #\/)
+            (char= (char decoded-path 2) #\:))
+       (subseq decoded-path 1)
+       decoded-path)))
+
+(defmethod platform-file-permissions ((platform win32-platform) pathname)
+  "Capture the ACL mode mapping and native read-only attribute."
+  (let ((attributes (win32--get-file-attributes (win32--namestring pathname))))
+    (when (= attributes *win32-invalid-file-attributes*)
+      (win32--fail ':protect pathname))
+    (list (win32--mode pathname)
+          (not (zerop (logand attributes *win32-file-attribute-readonly*))))))
+
+(defmethod (setf platform-file-permissions) (permissions (platform win32-platform) pathname)
+  "Restore the captured mode mapping and read-only attribute."
+  (win32--set-mode pathname (first permissions))
+  (let ((attributes (win32--get-file-attributes (win32--namestring pathname))))
+    (when (= attributes *win32-invalid-file-attributes*)
+      (win32--fail ':protect pathname))
+    (win32--set-attributes
+     pathname (if (second permissions)
+                  (logior attributes *win32-file-attribute-readonly*)
+                  (logandc2 attributes *win32-file-attribute-readonly*))))
+  permissions)
+
+(defmethod platform-delete-file ((platform win32-platform) pathname)
+  "Clear a native read-only attribute for deletion and restore it if deletion fails."
+  (let ((attributes (win32--get-file-attributes (win32--namestring pathname)))
+        (complete-p nil))
+    (unwind-protect
+         (progn
+           (win32--clear-read-only-attribute pathname)
+           (delete-file pathname)
+           (setf complete-p t))
+      (when (and (not complete-p)
+                 (/= attributes *win32-invalid-file-attributes*)
+                 (platform-path-status platform pathname))
+        (win32--set-attributes pathname attributes))))
+  nil)
+
 (defmethod platform-copy-file-permissions ((platform win32-platform)
                                            source target)
   "Give TARGET the permissions SOURCE's access control list expresses."

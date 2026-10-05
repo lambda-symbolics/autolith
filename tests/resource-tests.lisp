@@ -71,155 +71,7 @@
 
 (-> test-resource-protocol () null)
 (defun test-resource-protocol ()
-  "Exercise resource observations, URI resolution, and default failures."
-  (let* ((metadata    (list ':media-type "text/plain"))
-         (observation (make-instance 'resource-observation
-                                     :uri      "test:item"
-                                     :revision "revision-1"
-                                     :content  "value"
-                                     :metadata metadata)))
-    (test-assert (string= (resource-observation-uri observation) "test:item")
-                 "resource observations retain URI identity")
-    (test-assert (string= (resource-observation-revision observation) "revision-1")
-                 "resource observations retain opaque revisions")
-    (test-assert (string= (resource-observation-content observation) "value")
-                 "resource observations retain resource-specific content")
-    (test-assert (equal (resource-observation-metadata observation) metadata)
-                 "resource observations retain metadata separately from content"))
-  (let* ((registry       (make-resource-registry))
-         (first-resolver (make-instance 'test-resource-resolver
-                                        :scheme "test"
-                                        :marker ':first))
-         (next-resolver  (make-instance 'test-resource-resolver
-                                        :scheme "test"
-                                        :marker ':next))
-         (context        (list ':authority ':fixture)))
-    (multiple-value-bind (registered previous)
-        (resource-registry-register registry first-resolver)
-      (test-assert (eq registered first-resolver)
-                   "resource registration returns the installed resolver")
-      (test-assert (null previous)
-                   "initial resource registration has no replaced resolver"))
-    (let ((resource (resource-registry-resolve registry "test:alpha" context)))
-      (test-assert (typep resource 'test-resource)
-                   "registered resource resolvers construct resources")
-      (test-assert (string= (resource-uri resource) "test:alpha")
-                   "resource resolution preserves the complete URI")
-      (test-assert (string= (test-resource-identifier resource) "alpha")
-                   "resource resolution passes only the identifier to the resolver")
-      (test-assert (eq (test-resource-marker resource) ':first)
-                   "resource resolution dispatches to the registered resolver")
-      (test-assert (eq (test-resource-resolver-last-context first-resolver) context)
-                   "resource resolution passes explicit authority context unchanged")
-      (test-assert (equal (resource-capabilities resource context)
-                          '(:read :edit))
-                   "concrete resources advertise model-facing capabilities")
-      (test-assert
-       (handler-case
-           (progn
-             (resource-observe resource context)
-             nil)
-         (resource-operation-unsupported (condition)
-           (and (eq (resource-operation-unsupported-operation condition) ':observe)
-                (string= (resource-operation-unsupported-uri condition)
-                         "test:alpha"))))
-       "abstract resources reject unsupported observation structurally")
-      (test-assert
-       (handler-case
-           (progn
-             (resource-apply-operations resource context
-                                        :base-revision "revision-1"
-                                        :operations    nil)
-             nil)
-         (resource-operation-unsupported (condition)
-           (and (eq (resource-operation-unsupported-operation condition)
-                    ':apply-operations)
-                (string= (resource-operation-unsupported-uri condition)
-                         "test:alpha"))))
-       "abstract resources reject unsupported mutation structurally"))
-    (multiple-value-bind (registered previous)
-        (resource-registry-register registry next-resolver)
-      (test-assert (eq registered next-resolver)
-                   "replacement registration returns the new resolver")
-      (test-assert (eq previous first-resolver)
-                   "replacement registration returns the displaced resolver"))
-    (let ((resource (resource-registry-resolve registry "test:beta" context)))
-      (test-assert (eq (test-resource-marker resource) ':next)
-                   "duplicate schemes replace their previous resolver")))
-  (dolist (uri (list nil
-                     ""
-                     "missing-separator"
-                     ":identifier"
-                     "scheme:"
-                     "Upper:identifier"
-                     "bad_scheme:identifier"
-                     (concatenate 'string "scheme:has" (string #\Tab) "tab")))
-    (test-assert
-     (handler-case
-         (progn
-           (resource-uri-parse uri)
-           nil)
-       (resource-uri-malformed (condition)
-         (eq (resource-uri-malformed-uri condition) uri)))
-     (format nil "resource URI parser rejects malformed value ~S" uri)))
-  (dolist (constructor
-           (list (lambda ()
-                   (make-instance 'resource :uri "missing-separator"))
-                 (lambda ()
-                   (make-instance 'resource-observation
-                                  :uri      "missing-separator"
-                                  :revision "revision-1"
-                                  :content  nil))))
-    (test-assert
-     (handler-case
-         (progn
-           (funcall constructor)
-           nil)
-       (resource-uri-malformed ()
-         t))
-     "resource construction enforces strict URI identity"))
-  (dolist (scheme '("test:other" "Upper" "bad scheme"))
-    (test-assert
-     (handler-case
-         (progn
-           (make-instance 'resource-resolver :scheme scheme)
-           nil)
-       (resource-uri-malformed ()
-         t))
-     (format nil "resource resolvers reject malformed scheme ~S" scheme)))
-  (multiple-value-bind (scheme identifier)
-      (resource-uri-parse "workspace:src/resource/protocol.lisp")
-    (test-assert (string= scheme "workspace")
-                 "resource URI parsing returns the strict scheme")
-    (test-assert (string= identifier "src/resource/protocol.lisp")
-                 "resource URI parsing preserves the complete identifier"))
-    (multiple-value-bind (scheme identifier)
-        (resource-uri-parse "workspace:079641/Export JPG NoResize/")
-      (test-assert (and (string= scheme "workspace")
-                        (string= identifier "079641/Export JPG NoResize/"))
-                   "resource URI parsing accepts spaces in identifiers"))
-  (let ((registry (make-resource-registry)))
-    (test-assert
-     (handler-case
-         (progn
-           (resource-registry-resolve registry "unknown:item" ':context)
-           nil)
-       (resource-scheme-unknown (condition)
-         (and (string= (resource-scheme-unknown-uri condition) "unknown:item")
-              (string= (resource-scheme-unknown-scheme condition) "unknown"))))
-     "unknown resource schemes signal a structured condition")
-    (resource-registry-register
-     registry (make-instance 'resource-resolver :scheme "plain"))
-    (test-assert
-     (handler-case
-         (progn
-           (resource-registry-resolve registry "plain:item" ':context)
-           nil)
-       (resource-operation-unsupported (condition)
-         (and (eq (resource-operation-unsupported-operation condition) ':resolve)
-              (string= (resource-operation-unsupported-uri condition)
-                       "plain:item"))))
-     "abstract resource resolvers reject resolution structurally"))
+  "Exercise per-agent resolver ownership and generic library tool dispatch."
   (let* ((first-tools  (make-instance 'tool-registry))
          (second-tools (make-instance 'tool-registry)))
     (test-assert
@@ -245,6 +97,16 @@
          (progn
            (resource-registry-register
             (tool-registry-resource-registry registry) resolver)
+           (dolist (uri '("missing-separator" "unknown:item"))
+             (let ((result
+                     (tool-registry-execute-call
+                      registry
+                      (json-object "namespace" "resource" "name" "read"
+                                   "arguments"
+                                   (json-encode (json-object "uri" uri)))
+                      context)))
+               (test-assert (not (tool-result-success-p result))
+                            "generic URI failures cross the tool boundary")))
            (let ((result
                    (tool-registry-execute-call
                     registry
@@ -284,18 +146,6 @@
       (platform-delete-directory-tree *platform* root
                                       :validate t
                                       :if-does-not-exist ':ignore)))
-  (let ((condition (make-condition 'resource-revision-stale
-                                   :uri               "test:item"
-                                   :expected-revision "revision-1"
-                                   :actual-revision   "revision-2")))
-    (test-assert (string= (resource-revision-stale-uri condition) "test:item")
-                 "stale revision conditions retain resource identity")
-    (test-assert
-     (string= (resource-revision-stale-expected-revision condition) "revision-1")
-     "stale revision conditions retain the caller revision")
-    (test-assert
-     (string= (resource-revision-stale-actual-revision condition) "revision-2")
-     "stale revision conditions retain the current revision"))
   nil)
 
 (-> test-resource-edit-operation-schema () null)

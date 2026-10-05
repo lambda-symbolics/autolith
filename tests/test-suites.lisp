@@ -11,6 +11,15 @@
   test-lsp-tool-conditional-registration
   test-lsp-session-context)
 
+(define-test-suite workspace-change
+  test-workspace-change-publication
+  test-workspace-change-stale-and-authority
+  test-workspace-change-compensation
+  test-workspace-change-recovery
+  test-workspace-change-partial-deletion
+  test-workspace-change-same-content-permissions
+  test-workspace-change-linked-undo)
+
 (define-test-suite vault-edit
   test-vault-operation-routing
   test-vault-store-and-edit

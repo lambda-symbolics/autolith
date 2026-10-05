@@ -131,9 +131,8 @@
                             "operations"
                             (coerce (cons operation more) 'vector))))
              (let ((resolver
-                     (gethash "papercut"
-                              (resource-registry-resolvers
-                               (tool-registry-resource-registry registry)))))
+                      (cl-resources:resource-registry-find
+                       (tool-registry-resource-registry registry) "papercut")))
                (test-assert (typep resolver 'papercut-resolver)
                             "default tools register the papercut resolver"))
              (let* ((empty-read (read-resource first-context "papercut:current"))

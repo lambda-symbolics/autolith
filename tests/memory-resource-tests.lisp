@@ -206,9 +206,8 @@
                       (memory-resource-tests--field
                        (tool-result-content result) "Revision: ")))
              (let ((resolver
-                     (gethash "memory"
-                              (resource-registry-resolvers
-                               (tool-registry-resource-registry registry)))))
+                      (cl-resources:resource-registry-find
+                       (tool-registry-resource-registry registry) "memory")))
                (test-assert (typep resolver 'memory-resolver)
                             "default tools register the memory resource resolver"))
              (let* ((relevant (read-resource first-context "memory:relevant"))

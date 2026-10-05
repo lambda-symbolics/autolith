@@ -291,6 +291,19 @@ unless READ-ONLY-P, owner-writable. Signal PLATFORM-ERROR with operation
 
 Signal PLATFORM-ERROR with operation :PROTECT when the change cannot be applied."))
 
+(defgeneric platform-file-uri-pathname (platform decoded-path)
+  (:documentation "Parse a decoded local file-URI path using the host's pathname syntax."))
+
+(defgeneric platform-file-permissions (platform pathname)
+  (:documentation "Return the host's restorable access-permission value for PATHNAME."))
+
+(defgeneric (setf platform-file-permissions) (permissions platform pathname)
+  (:documentation "Restore PERMISSIONS obtained from the same host onto PATHNAME."))
+
+(defgeneric platform-delete-file (platform pathname)
+  (:documentation
+   "Remove one file, handling host read-only attributes and restoring them on failure."))
+
 (defgeneric platform-copy-file-permissions (platform source target)
   (:documentation
    "Give TARGET the access permissions SOURCE currently has.

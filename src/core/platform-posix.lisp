@@ -185,6 +185,25 @@
   "Set mode 0444 on PATHNAME."
   (posix--change-mode pathname #o444))
 
+(defmethod platform-file-uri-pathname ((platform posix-platform) decoded-path)
+  "Parse the decoded absolute POSIX path of a local file URI."
+  (uiop:parse-native-namestring decoded-path))
+
+(defmethod platform-file-permissions ((platform posix-platform) pathname)
+  "Capture PATHNAME's permission bits."
+  (logand #o7777 (posix--mode pathname)))
+
+(defmethod (setf platform-file-permissions) (permissions (platform posix-platform) pathname)
+  "Restore captured permission bits with CHMOD."
+  (posix--change-mode pathname permissions)
+  permissions)
+
+(defmethod platform-delete-file ((platform posix-platform) pathname)
+  "Remove one exact native pathname with typed host failure reporting."
+  (posix--call ':delete pathname
+               (lambda () (sb-posix:unlink (posix--namestring pathname))))
+  nil)
+
 (defmethod platform-copy-file-permissions ((platform posix-platform)
                                            source target)
   "Copy SOURCE's permission bits onto TARGET."

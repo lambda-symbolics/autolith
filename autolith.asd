@@ -13,6 +13,7 @@
                #:cl-hashline
                #:cl-jobpond
                #:cl-lsp
+               #:cl-resources
                #:cl-rfc8252
                #:cl-rfc8628
                #:clinker-transcript
@@ -146,6 +147,7 @@
                              (:file "tools/workspace")
                              (:file "tools/lisp-paren-check")
                              (:file "resource/workspace-file")
+                             (:file "resource/workspace-changes")
                              (:file "lsp/configuration")
                              (:file "lsp/tools")
                              (:file "resource/agenda")
@@ -309,6 +311,7 @@
                              (:file "copilot-provider-tests")
                              (:file "resource-tests")
                              (:file "workspace-resource-tests")
+                             (:file "workspace-change-tests")
                              (:file "agenda-resource-tests")
                              (:file "memory-resource-tests")
                              (:file "papercut-resource-tests")

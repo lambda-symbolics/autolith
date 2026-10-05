@@ -189,6 +189,21 @@ provider request --> semantic events --> agent --> validated tool calls
 - The optional Codex file is a one-time access-token import
 - Renewable ChatGPT credentials come from browser OAuth or the optional device-code flow
 
+* Revisioned resources
+
+=cl-resources= defines authority-neutral identities, resolver registries,
+observations, revision guards, operation discovery, typed conditions and staged
+change-set lifecycles. Autolith registers product resolvers and retains
+conversation-local observation aliases in =src/resource/protocol.lisp=.
+Caller authorization and resource-specific storage policies belong to Autolith.
+
+=src/resource/workspace-changes.lisp= adapts staged changes to exact UTF-8 file
+snapshots. Cooperating operations share the workspace mutation lock. Publication
+is atomic per file; failed batches compensate in reverse order, retaining owned
+undo handles when cleanup or safe rollback requires explicit recovery. Staging
+ownership transfer defers asynchronous interruption. Restorable host permission
+values retain source access state before ordered moves remove their source paths.
+
 * Workspace and workers
 
 - Command execution uses =platform-call-with-command-sandbox= to own policy

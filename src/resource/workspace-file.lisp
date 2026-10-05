@@ -215,7 +215,7 @@
   (let ((path (workspace-file-resource-pathname resource)))
     (if (member (workspace-file--path-kind path) '(:directory :other))
         '(:read)
-        '(:read :edit))))
+        '(:read :edit :stage :transaction))))
 
 
 ;;;; -- Snapshot Observation --

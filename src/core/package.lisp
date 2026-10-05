@@ -1,6 +1,34 @@
 (defpackage #:autolith
   (:use #:cl)
   (:shadow #:trace)
+  (:import-from #:cl-resources
+                #:resource
+                #:resource-uri
+                #:resource-observation
+                #:resource-observation-uri
+                #:resource-observation-revision
+                #:resource-observation-content
+                #:resource-observation-metadata
+                #:resource-uri-parse
+                #:resource-capabilities
+                #:resource-observe
+                #:resource-apply-operations
+                #:resource-resolver
+                #:resource-resolver-scheme
+                #:resource-resolver-resolve
+                #:resource-registry
+                #:make-resource-registry
+                #:resource-registry-register
+                #:resource-uri-malformed
+                #:resource-uri-malformed-reason
+                #:resource-scheme-unknown
+                #:resource-scheme-unknown-scheme
+                #:resource-access-denied
+                #:resource-operation-unsupported
+                #:resource-operation-unsupported-operation
+                #:resource-revision-stale
+                #:resource-revision-stale-expected-revision
+                #:resource-revision-stale-actual-revision)
   (:import-from #:lambda-debugger
                 #:call-with-debugger
                 #:call-with-debugger-hook

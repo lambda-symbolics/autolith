@@ -427,9 +427,8 @@
                                    other-state))
                           "workspace byte eviction preserves zero-weight resource families"))))))
              (let* ((resolver
-                      (gethash "workspace"
-                               (resource-registry-resolvers
-                                (tool-registry-resource-registry registry))))
+                       (cl-resources:resource-registry-find
+                        (tool-registry-resource-registry registry) "workspace"))
                     (spaced-path (merge-pathnames "space name.txt" workspace)))
                (workspace-resource-tests--write-text spaced-path "content")
                (test-assert (typep resolver 'workspace-file-resolver)
@@ -1263,8 +1262,8 @@
                     (resource-registry
                       (tool-registry-resource-registry registry))
                     (previous-resolver
-                      (gethash "workspace"
-                               (resource-registry-resolvers resource-registry)))
+                       (cl-resources:resource-registry-find
+                        resource-registry "workspace"))
                     (read-result nil)
                     (edit-result nil)
                     (edit-started-p nil)
