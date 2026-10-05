@@ -26,6 +26,21 @@
 
 (-> executable-skill-tests--fixture (function) null)
 (defun executable-skill-tests--fixture (function)
+  "Use the installed search library with otherwise isolated executable skill state."
+  (let* ((source-root (asdf:system-source-directory "autolith"))
+         (configuration (configuration-create :source-root source-root
+                                              :working-directory source-root))
+         (configured-library (uiop:getenv "AUTOLITH_FFF_LIBRARY"))
+         (library (if (non-empty-string-p configured-library)
+                      configured-library
+                      (namestring
+                       (merge-pathnames (format nil "native/fff/~A" (fff-library-file-name))
+                                        (config :data-root configuration))))))
+    (with-test-environment (("AUTOLITH_FFF_LIBRARY" library))
+      (executable-skill-tests--call-with-fixture function))))
+
+(-> executable-skill-tests--call-with-fixture (function) null)
+(defun executable-skill-tests--call-with-fixture (function)
   "Provide real registry, command authorizer and executable workflow source."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
