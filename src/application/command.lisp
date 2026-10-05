@@ -792,7 +792,7 @@ without changing the registry."
   (not
    (null
     (member (application-command-definition-name command)
-            '(application--builtin-goal-command)
+            '(application--builtin-goal-command application--builtin-mission-command)
             :test #'eq))))
 
 (-> application-command--raw-remainder-call-p (application-command) boolean)

@@ -157,7 +157,14 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
       (if (and provider configuration)
           (values provider configuration)
           (rlm--environment))
-    (let* ((configuration (or configuration environment-configuration))
+    (let* ((mission-parent-configuration (or configuration environment-configuration))
+           (mission-context (mission-context-find mission-parent-configuration))
+           (configuration
+             (if (and mission-context
+                      (eq mission-parent-configuration
+                          (application-configuration (mission-context-application mission-context))))
+                 (configuration-copy mission-parent-configuration)
+                 mission-parent-configuration))
            (configuration
              (if model
                  (configuration-copy configuration :model model)
@@ -171,6 +178,7 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
                  (provider-with-configuration
                   (or provider environment-provider) configuration)
                  (or provider environment-provider))))
+      (mission-context-inherit mission-parent-configuration configuration)
       (values provider configuration))))
 
 (-> rlm-contract-normalize (t) t)
@@ -216,7 +224,9 @@ value from the text through the library's answer reader."
   "Create the private trace conversation for one inference frame."
   (let ((root (configuration-inference-root configuration)))
     (ensure-directories-exist root)
-    (conversation-create configuration :storage-root root)))
+    (let ((conversation (conversation-create configuration :storage-root root)))
+      (mission-context-inherit configuration conversation)
+      conversation)))
 
 (-> rlm--record-response (conversation provider-result) null)
 (defun rlm--record-response (conversation result)

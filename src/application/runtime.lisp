@@ -2839,11 +2839,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
     (conversation-append-record
      (application-conversation application)
      (if goal
-         (list :goal
-               :objective (getf goal :objective)
-               :status (getf goal :status)
-               :continuations (getf goal :continuations)
-               :created-at (getf goal :created-at))
+         (cons :goal (copy-tree goal))
          (list :goal
                :objective nil
                :status ':cleared
@@ -2861,32 +2857,39 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
          (status (and record (getf (rest record) :status))))
     (setf (application-goal application)
           (and (non-empty-string-p objective)
-               (member status '(:active :paused :complete))
-               (list :objective objective
-                     :status status
-                     :continuations
-                     (let ((count (getf (rest record) :continuations)))
-                       (if (integerp count) count 0))
-                     :created-at
-                     (let ((time (getf (rest record) :created-at)))
-                       (if (integerp time)
-                           time
-                           (getf (rest record) :time)))))))
+                (member status '(:active :paused :complete :verified :blocked
+                                 :exhausted :cancelled :failed))
+                (if (eq (getf (rest record) :kind) ':mission)
+                  (let ((goal (copy-tree (rest record))))
+                    (loop while (remf goal :seq))
+                    (loop while (remf goal :time))
+                    goal)
+                    (list :objective objective
+                          :status status
+                          :continuations
+                          (let ((count (getf (rest record) :continuations)))
+                            (if (integerp count) count 0))
+                          :created-at
+                          (let ((time (getf (rest record) :created-at)))
+                            (if (integerp time) time (getf (rest record) :time))))))))
+  (mission-restore application)
   nil)
 
 (-> application-goal-context (application) (option string))
 (defun application-goal-context (application)
   "Return the transient goal instructions for the next provider request."
   (let ((goal (application-goal application)))
-    (when (and goal (eq (getf goal :status) ':active))
-      (format nil
-              "<goal_context>~%The session goal: ~A~%Work autonomously ~
-               toward this goal every turn. When the goal is genuinely ~
-               complete, include the literal marker ~A in your final ~
-               message. If you cannot continue without the user, state ~
-               plainly what you need and stop.~%</goal_context>"
-              (getf goal :objective)
-              *application-goal-complete-marker*))))
+    (if (mission-goal-p goal)
+        (application-mission-context application)
+        (when (and goal (eq (getf goal :status) ':active))
+          (format nil
+                  "<goal_context>~%The session goal: ~A~%Work autonomously ~
+                   toward this goal every turn. When the goal is genuinely ~
+                   complete, include the literal marker ~A in your final ~
+                   message. If you cannot continue without the user, state ~
+                   plainly what you need and stop.~%</goal_context>"
+                  (getf goal :objective)
+                  *application-goal-complete-marker*)))))
 
 (-> application--goal-continuation-message-p (string) boolean)
 (defun application--goal-continuation-message-p (content)
@@ -3450,14 +3453,17 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                (eq (getf goal :status) ':active)
                text
                (search *application-goal-complete-marker* text))
-      (setf (getf (application-goal application) :status) ':complete)
-      (application--record-goal application)
-      (application-present
-       application
-       (list (terminal-span ':success "✓ goal complete")
-             (terminal-span ':plain (string #\Newline))
-             (terminal-span ':dim
-                            (format nil "  ~A" (getf goal :objective)))))))
+      (if (mission-goal-p goal)
+          (application-mission-verify application)
+          (progn
+            (setf (getf (application-goal application) :status) ':complete)
+            (application--record-goal application)
+            (application-present
+             application
+             (list (terminal-span ':success "✓ goal complete")
+                   (terminal-span ':plain (string #\Newline))
+                   (terminal-span ':dim
+                                  (format nil "  ~A" (getf goal :objective)))))))))
   nil)
 
 (-> application--run-turn
@@ -3529,8 +3535,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
     (let ((goal (application-goal application)))
       (unless (and goal (eq (getf goal :status) ':active))
         (return))
-      (when (>= (getf goal :continuations)
-                *application-goal-continuation-limit*)
+      (when (and (not (mission-goal-p goal))
+                 (>= (getf goal :continuations)
+                     *application-goal-continuation-limit*))
         (setf (getf (application-goal application) :status) ':paused)
         (application--record-goal application)
         (application-present

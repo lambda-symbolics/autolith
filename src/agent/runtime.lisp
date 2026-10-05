@@ -1046,6 +1046,8 @@ restricted turn cannot discover tools outside its allowlist."
     (handler-case
         (setf result
               (cond
+                ((mission-agent-terminal-p agent)
+                 (tool-failure "Mission work stopped; inspect its durable state and evidence."))
                 ((getf plan :withheld-reason)
                  (tool-mechanics (getf plan :withheld-reason)
                                  :code ':storm-withheld))
@@ -1711,7 +1713,8 @@ loop, so compaction ahead of the user message shares the turn's budget."
                  (length (provider-result-output-items result))
                  :tool-call-count (length calls)
                  :turn-completion (provider-result-turn-completion result)))
-          (when (agent-turn-complete-p agent result)
+          (when (or (agent-turn-complete-p agent result)
+                    (and (null calls) (mission-agent-terminal-p agent)))
             (agent-observer-status
              observer
              :turn-completed
@@ -1738,7 +1741,8 @@ loop, so compaction ahead of the user message shares the turn's budget."
                                         :tool-round tool-rounds
                                         :tool-allowlist tool-allowlist
                                         :tool-restriction-p tool-restriction-p)
-             (if (agent-turn-complete-p agent result)
+             (if (or (agent-turn-complete-p agent result)
+                     (mission-agent-terminal-p agent))
                  (progn
                    (agent-observer-status
                     observer

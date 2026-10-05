@@ -1378,6 +1378,9 @@ Return true only when the objective was rewritten."
         application
         "No session goal to update. Use /goal OBJECTIVE to set one.")
        nil)
+      ((mission-goal-p goal)
+       (application-present application "Use /mission start with updated objective and acceptance policy.")
+       nil)
       ((zerop (length objective))
        (application-present application "Usage: /goal update NEW-OBJECTIVE")
        nil)
@@ -1443,6 +1446,7 @@ work must steer the running turn, not queue as follow-up work."
        (application-present application
                             (application--goal-description application)))
       ((string= word "clear")
+       (mission-detach application)
        (setf (application-goal application) nil)
        (application--record-goal application)
        (application-present application "The session goal was cleared."))
@@ -1456,9 +1460,12 @@ work must steer the running turn, not queue as follow-up work."
       ((string= word "resume")
        (if (and goal (eq (getf goal :status) ':paused))
            (progn
-             (setf (getf (application-goal application) :status) ':active
-                   (getf (application-goal application) :continuations) 0)
-             (application--record-goal application)
+             (if (mission-goal-p goal)
+                 (application-mission-resume application)
+                 (progn
+                   (setf (getf (application-goal application) :status) ':active
+                         (getf (application-goal application) :continuations) 0)
+                   (application--record-goal application)))
              (application-present application
                                   "The session goal is active again.")
              (application--start-goal-work application))
@@ -1475,6 +1482,7 @@ work must steer the running turn, not queue as follow-up work."
                      Usage: /goal [OBJECTIVE|update NEW-OBJECTIVE|clear|pause|resume]"
                 remainder)))
       (t
+       (mission-detach application)
        (setf (application-goal application)
              (list :objective remainder
                    :status ':active
