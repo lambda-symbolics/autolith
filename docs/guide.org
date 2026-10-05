@@ -1260,6 +1260,26 @@ at each scope and an owner-state guard against intervening changes. Recover an
 interrupted operation explicitly using recorded evidence; replay never repeats its
 effects automatically.
 
+** Structural code edits
+
+Load the optional =autolith/structural= system and configure an =ast-grep=
+executable before creating the tool registry:
+
+#+BEGIN_SRC lisp
+(asdf:load-system "autolith/structural")
+(setf autolith:*structural-program* "/path/to/ast-grep")
+#+END_SRC
+
+Use =structural.query= with an observed workspace URI and revision. Use
+=structural.rewrite= to retain a complete preview, inspect the proposal, then
+publish with =structural.apply=. Executable and file access require ordinary
+command authorization. Proposals are conversation-owned, bounded and single-use;
+publication uses the same stale-revision checks as resource edits.
+
+For an existing registry, call =structural-register-tools= explicitly with
+=:program=. Run the optional checks with =CLASTED_AST_GREP= set to the backend
+path and =(asdf:test-system "autolith/structural/tests")=.
+
 ** Child roles
 
 Roles load from these directories. First match wins:

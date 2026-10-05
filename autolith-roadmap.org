@@ -294,7 +294,7 @@ lifecycle. Autolith provides optional debugging tools and presentation.
 =lambda-debugger= remains exclusively responsible for live Common Lisp
 condition/restart handling.
 
-** NEW [#B] C3. Structural AST search and editing
+** PRESENT [#B] C3. Structural AST search and editing
 *** Problem
 Hashline editing is robust for textual changes, but large mechanical migrations
 are more naturally expressed as syntax-aware queries and rewrites.

@@ -885,6 +885,8 @@ LSP tools register only when CONFIGURATION enables a language server."
     (mission-register-tools registry)
     (skill-augment-tool-registry registry)
     (skill-edit-augment-tool-registry registry)
+    (when (fboundp 'structural-register-default-tools)
+      (structural-register-default-tools registry))
     (when immutable-p
       (default-tools--remove-mutable-self-tools registry))
     registry))

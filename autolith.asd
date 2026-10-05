@@ -387,3 +387,18 @@
              (declare (ignore operation component))
              (uiop:symbol-call '#:autolith '#:run-tests)))
 
+(asdf:defsystem #:autolith/structural
+  :description "Optional structural code queries and revision-aware rewrites."
+  :depends-on (#:autolith #:clasted/ast-grep)
+  :serial t
+  :components ((:file "src/structural/workspace")
+               (:file "src/structural/tools")))
+
+(asdf:defsystem #:autolith/structural/tests
+  :description "Autolith structural tool boundary checks."
+  :depends-on (#:autolith/structural #:autolith/tests)
+  :serial t
+  :components ((:file "tests/structural-tests"))
+  :perform (asdf:test-op (operation component)
+             (declare (ignore operation component))
+             (uiop:symbol-call '#:autolith '#:run-tests :suites '("structural"))))
