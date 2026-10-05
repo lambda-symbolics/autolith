@@ -1294,6 +1294,29 @@ Persisted child results must contain one data-only form with valid terminal
 status and field types. The default reading limits are 16 MiB, 128 nesting
 levels, and 262,144 tree nodes.
 
+** Engineering task artifacts
+
+Select the bundled =engineering= role or give a native role =:output :engineering=.
+Its version-1 contract requires =schemaVersion=, =baseline= (=kind=, =workspace=,
+=revision=), =change= (=kind=, =reference=), =paths=, =checks=, =evidence=, =issues=
+and =integrationNotes=. =symbols= is optional. Each check names the command,
+status (=passed=, =failed=, =skipped= or =not-run=) and summary, with optional
+evidence references. Use baseline kind =unknown= when no revision is available
+and change kind =none= when no change was produced.
+
+Extend the common contract in a native role:
+
+#+BEGIN_SRC lisp
+:output (:type :engineering
+         :properties (("review" (:type :string)))
+         :required ("review"))
+#+END_SRC
+
+Common properties cannot be overridden. The usual structured =yield.submit= and
+durable result transport validate and retain these values. Checks and evidence
+are child-reported observations; mission gates establish harness acceptance.
+A failed or aborted child follows the ordinary error-only terminal contract.
+
 ** Isolated modifying tasks
 
 Supply an =isolation= object in a flat =task.run= call or in each selected batch

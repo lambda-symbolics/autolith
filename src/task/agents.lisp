@@ -368,6 +368,16 @@
     :reasoning-effort ':low
     :source ':bundled)
    (task-agent-definition-create
+    :name "engineering"
+    :description "Engineering work with a standard baseline, change, checks and evidence artifact."
+    :instructions
+    "Own the engineering assignment end to end. Inspect the baseline before changing, preserve unrelated work, implement and verify the requested behavior. Yield the versioned engineering contract: identify the baseline workspace and revision, the patch/commit-range/change-set reference, touched paths and optional symbols, checks with honest statuses and bounded evidence, unresolved issues and integration notes. Report unknown baseline identity explicitly and use change kind none when no change was produced. Checks are your reported observations, not harness acceptance."
+    :tools ':all
+    :spawns ':all
+    :models '("@task")
+    :output ':engineering
+    :source ':bundled)
+   (task-agent-definition-create
     :name "task"
     :description "General-purpose child agent for delegated multi-step work."
     :instructions

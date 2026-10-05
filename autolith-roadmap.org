@@ -346,7 +346,7 @@ clearly that isolation is unavailable.
 application primitives through an injected command runner. Autolith chooses which
 tasks require isolation and controls integration order.
 
-** EXTEND [#B] D2. Standard engineering task artifacts
+** PRESENT [#B] D2. Standard engineering task artifacts
 *** Problem
 Child results are already structured and durable, but there is no shared convention
 for what a code-changing child should return. Parent agents therefore still need to

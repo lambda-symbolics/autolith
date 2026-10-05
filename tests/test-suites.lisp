@@ -505,6 +505,10 @@
   test-task-child-steering-mailbox
   test-task-child-messaging)
 
+(define-test-suite task-engineering
+  test-task-engineering-native-contract
+  test-task-engineering-yield-transport)
+
 (define-test-suite task-execution
   test-task-abort-control-condition
   test-task-child-prompt-cache-key
