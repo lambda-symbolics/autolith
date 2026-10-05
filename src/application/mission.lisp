@@ -72,6 +72,14 @@
       (mission-context-bind context child)))
   nil)
 
+(-> mission--ensure-reservations (list) null)
+(defun mission--ensure-reservations (allowance)
+  "Append absent reservation counters without replacing ALLOWANCE's identity."
+  (dolist (key '(:tokens-reserved :requests-outstanding))
+    (unless (nth-value 2 (get-properties allowance (list key)))
+      (nconc allowance (list key 0))))
+  nil)
+
 (-> mission--attach (application) (option mission-context))
 (defun mission--attach (application)
   "Register synchronization for APPLICATION's current durable mission."
@@ -137,11 +145,15 @@ Verification may use the final model turn's evidence without another inference."
       (mission--reject ':replaced "The mission was replaced."))
     (unless (eq (getf goal :status) ':active)
       (mission--reject (getf goal :status) "The mission is not active."))
-    (when (or (not (plusp (mission--remaining-milliseconds context)))
-              (and inference-p
-                   (or (>= (getf goal :turns-used) (getf goal :turn-limit))
-                       (>= (getf goal :tokens-used) (getf goal :token-limit)))))
-      (mission--transition context ':exhausted "Mission-wide work budget exhausted.")
+    (unless (plusp (mission--remaining-milliseconds context))
+      (mission--transition context ':exhausted "Mission-wide wall-clock budget exhausted.")
+      (mission--reject ':exhausted "Mission-wide wall-clock budget exhausted."))
+    (when (and inference-p
+               (or (>= (getf goal :turns-used) (getf goal :turn-limit))
+                   (>= (getf goal :tokens-used) (getf goal :token-limit))))
+      ;; Requests already admitted retain their allowance to finish and settle.
+      (unless (plusp (getf goal :requests-outstanding))
+        (mission--transition context ':exhausted "Mission-wide work budget exhausted."))
       (mission--reject ':exhausted "Mission-wide work budget exhausted.")))
   nil)
 
@@ -187,47 +199,6 @@ The calling thread preserves provider bindings and authorization callbacks."
         (remhash job (mission-context-threads context)))
       (job-pool-close pool))))
 
-(-> mission--account-inference (mission-context function function) t)
-(defun mission--account-inference (context function usage-function)
-  "Admit one inference, settle reported billable usage, and preserve multiple values."
-  (with-recursive-lock-held ((mission-context-request-lock context))
-    (with-recursive-lock-held ((mission-context-lock context))
-      (mission--admit context)
-      (incf (getf (mission-context-goal context) :turns-used))
-      (incf (getf (mission-context-goal context) :requests-outstanding))
-      (mission--record context))
-    (let* ((goal (mission-context-goal context))
-           (*provider-maximum-output-tokens*
-             (min (or *provider-maximum-output-tokens* (getf goal :token-limit))
-                  (- (getf goal :token-limit) (getf goal :tokens-used))))
-           (results
-             (handler-case
-                 (mission--supervise context "Mission inference"
-                                     (lambda () (multiple-value-list (funcall function))))
-               (error (condition)
-                 (with-recursive-lock-held ((mission-context-lock context))
-                   (decf (getf goal :requests-outstanding))
-                   (incf (getf goal :unknown-usage))
-                   (when (eq (getf goal :status) ':active)
-                     (mission--transition context ':failed condition))
-                   (mission--record context))
-                 (error condition))))
-           (tokens (rlm-usage-billable-tokens
-                    (provider-usage-normalize (funcall usage-function results)))))
-      (with-recursive-lock-held ((mission-context-lock context))
-        (decf (getf goal :requests-outstanding))
-        (if (integerp tokens)
-            (incf (getf goal :tokens-used) tokens)
-            (progn
-              (incf (getf goal :unknown-usage))
-              (when (eq (getf goal :status) ':active)
-                (mission--transition context ':blocked
-                                     "Provider omitted billable usage; the remaining token budget is unknown."))))
-        (when (and (eq (getf goal :status) ':active)
-                   (> (getf goal :tokens-used) (getf goal :token-limit)))
-          (mission--transition context ':exhausted "Mission token budget exhausted."))
-        (mission--record context))
-      (values-list results))))
 
 (-> mission--conversation-context (conversation) (option mission-context))
 (defun mission--conversation-context (conversation)
@@ -294,7 +265,7 @@ The calling thread preserves provider bindings and authorization callbacks."
           :deadline (+ (get-universal-time) (getf specification :wall-seconds))
           :turn-limit (getf specification :turn-limit)
           :token-limit (getf specification :token-limit)
-          :turns-used 0 :tokens-used 0 :unknown-usage 0 :requests-outstanding 0
+          :turns-used 0 :tokens-used 0 :tokens-reserved 0 :unknown-usage 0 :requests-outstanding 0
           :model-complete-p nil :criteria criteria :gates gates :evidence nil)))
 
 (-> application-mission-start (application list) null)
@@ -360,22 +331,29 @@ The calling thread preserves provider bindings and authorization callbacks."
   (let ((context (mission--attach application)))
     (when context
       (let ((goal (mission-context-goal context)))
-        (dolist (gate (getf goal :gates))
-          (when (eq (getf gate :status) ':running)
-            (setf (getf gate :status) ':failed
-                  (getf gate :fingerprint) nil
-                  (getf gate :evidence) "Interrupted gate execution; no passing evidence recorded.")))
-        (cond
-          ((and (member (getf goal :status) '(:active :paused :blocked))
-                (plusp (getf goal :requests-outstanding 0)))
-           (incf (getf goal :unknown-usage) (getf goal :requests-outstanding))
-           (setf (getf goal :requests-outstanding) 0)
-           (mission--transition context ':blocked
-                                "Interrupted inference has unknown token usage; resume requires a new budget."))
-          ((and (member (getf goal :status) '(:active :paused :blocked))
-                (not (plusp (mission--remaining-milliseconds context))))
-           (mission--transition context ':exhausted "The durable wall-clock deadline elapsed while away."))
-          (t (mission--record context))))))
+        (mission--ensure-reservations goal)
+        (let ((outstanding (getf goal :requests-outstanding)))
+          (incf (getf goal :unknown-usage) outstanding)
+          (setf (getf goal :tokens-reserved) 0
+                (getf goal :requests-outstanding) 0)
+          (dolist (policy (getf goal :reviews))
+            (mission--ensure-reservations policy)
+            (setf (getf policy :tokens-reserved) 0
+                  (getf policy :requests-outstanding) 0))
+          (dolist (gate (getf goal :gates))
+            (when (eq (getf gate :status) ':running)
+              (setf (getf gate :status) ':failed
+                    (getf gate :fingerprint) nil
+                    (getf gate :evidence) "Interrupted gate execution; no passing evidence recorded.")))
+          (cond
+            ((and (member (getf goal :status) '(:active :paused :blocked))
+                  (plusp outstanding))
+             (mission--transition context ':blocked
+                                  "Interrupted inference has unknown token usage; resume requires a new budget."))
+            ((and (member (getf goal :status) '(:active :paused :blocked))
+                  (not (plusp (mission--remaining-milliseconds context))))
+             (mission--transition context ':exhausted "The durable wall-clock deadline elapsed while away."))
+            (t (mission--record context)))))))
   nil)
 
 (-> mission-agent-terminal-p (agent) boolean)

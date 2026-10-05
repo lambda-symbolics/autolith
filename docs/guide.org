@@ -69,10 +69,13 @@ The turn allowance counts provider inference calls across the primary agent,
 children, compaction and recursive inference, including mapped and nested frames.
 Reported billable tokens use the provider API's usage normalization and exclude
 known prompt-cache reads. Admissions and settlements are serialized within a
-mission. Output limits use the remaining allowance; input usage is reported after
-the request, so a request can exhaust the token allowance. Missing usage is
-recorded as unknown and blocks further mission inference instead of substituting
-an estimate. Install a new explicit budget to proceed after unknown usage.
+mission; provider requests execute concurrently. Each admission reserves a turn
+and an output ceiling from the unspent, unreserved tokens. The default ceiling
+divides those tokens among the remaining turns; an explicit provider output cap
+replaces that division. Reviewer requests reserve from both allowances. Settlement
+releases the ceiling and charges reported input and output usage, so a request
+can exhaust the token allowance. Missing usage is recorded as unknown and blocks
+further inference. Install a new explicit budget to proceed after unknown usage.
 
 The wall-clock deadline includes gate execution, delegated tools, pauses and
 time away. Work runs under cl-jobpond supervision. Use =/goal pause= and

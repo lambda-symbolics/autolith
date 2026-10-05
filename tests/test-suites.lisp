@@ -796,6 +796,15 @@
   test-pending-publication-lock-boundaries
   test-pending-input-persistence)
 
+(define-test-suite mission-inference
+  test-mission-inference-overlap-and-settlement
+  test-mission-inference-turn-contention
+  test-mission-inference-verification-pending
+  test-mission-inference-review-accounting
+  test-mission-inference-unknown-and-interruption-cleanup
+  test-mission-inference-output-reservation-cap
+  test-mission-inference-reservation-recovery)
+
 (define-test-suite missions
   test-mission-accounting
   test-mission-unknown-usage-and-recovery

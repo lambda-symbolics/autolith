@@ -35,33 +35,11 @@
 
 (-> mission-review--account (mission-context conversation &key (:function function) (:usage-function function)) t)
 (defun mission-review--account (context conversation &key function usage-function)
-  "Charge reviewer inference to its separate allowance and the ordinary mission."
+  "Charge reviewer inference concurrently to its policy and the ordinary mission."
   (let ((checkpoint (with-lock-held (*mission-review-lock*)
                       (gethash conversation *mission-review-conversations*))))
-    (if (null checkpoint)
-        (mission--account-inference context function usage-function)
-        (with-recursive-lock-held ((mission-context-request-lock context))
-          (let* ((policy (getf checkpoint :policy))
-                 (remaining (- (getf policy :token-limit) (getf policy :tokens-used))))
-            (with-recursive-lock-held ((mission-context-lock context))
-              (mission--admit context)
-              (unless (and (plusp remaining)
-                           (< (getf policy :turns-used) (getf policy :turn-limit)))
-                (mission--reject ':review-budget "Independent reviewer allowance exhausted."))
-              (incf (getf policy :turns-used))
-              (mission--record context))
-            (let* ((*provider-maximum-output-tokens*
-                     (min remaining (or *provider-maximum-output-tokens* remaining)))
-                   (results (multiple-value-list
-                             (mission--account-inference context function usage-function)))
-                   (tokens (rlm-usage-billable-tokens
-                            (provider-usage-normalize (funcall usage-function results)))))
-              (with-recursive-lock-held ((mission-context-lock context))
-                (when tokens (incf (getf policy :tokens-used) tokens))
-                (mission--record context))
-              (when (or (null tokens) (> (getf policy :tokens-used) (getf policy :token-limit)))
-                (mission--reject ':review-budget "Reviewer token allowance exhausted or usage unknown."))
-              (values-list results)))))))
+    (mission--account-inference context function usage-function
+                                :allowance (and checkpoint (getf checkpoint :policy)))))
 
 (-> mission-review--context (application) mission-context)
 (defun mission-review--context (application)
@@ -104,7 +82,8 @@ cumulative across changed snapshots, not reset by retries or restart."
           (let ((policy (list :id id :phase phase :inputs (copy-list inputs)
                               :context background :models (copy-list (getf specification :models))
                               :turn-limit turns :token-limit tokens :run-limit runs
-                              :turns-used 0 :tokens-used 0 :runs nil :current-fingerprint nil)))
+                              :turns-used 0 :tokens-used 0 :tokens-reserved 0 :requests-outstanding 0
+                              :runs nil :current-fingerprint nil)))
             ;; Preserve goal identity when attaching policy to a pre-review snapshot.
             (unless (member :reviews goal)
               (nconc goal (list :reviews nil)))
