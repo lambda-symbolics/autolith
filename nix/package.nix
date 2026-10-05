@@ -48,8 +48,9 @@ let
   # instead of quietly shipping a release that never loaded it.
   qlotLibrariesWithBuildMetadata = [
     "agentcomms" "argo" "cl-colorist" "cl-exec-sandbox" "cl-hashline" "cl-jobpond"
-    "cl-llm-provider-api" "cl-lsp" "cl-rfc8252" "cl-rfc8628" "cl-skills" "cl-termdown"
-    "clifff" "clinedi" "clinker-transcript" "colordiff" "colorlisp" "fetch-gist"
+    "cl-llm-provider-api" "cl-lsp" "cl-resources" "cl-rfc8252" "cl-rfc8628"
+    "cl-skills" "cl-termdown" "cl-worktree" "clasted" "clifff" "clinedi"
+    "clinker-transcript" "colordiff" "colorlisp" "daphne" "fetch-gist"
     "idsmall" "image-daemon" "lambda-debugger" "ls-compat" "ls-flock" "mcparen" "org-templater"
     "parenchek" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config" "sexp-store"
     "sophisticated-clipboard" "structlisp" "surgeon" "yolokuva"
@@ -162,7 +163,7 @@ let
     pname = "image-daemon";
     version = qlotVersion "image-daemon";
     src = qlotSource "image-daemon";
-    systems = [ "image-daemon" "image-daemon/runtime" "image-daemon/eval" ];
+    systems = [ "image-daemon" "image-daemon/runtime" "image-daemon/eval" "image-daemon/messages" ];
     lispLibs = [
       idsmall
       pkgs.sbclPackages.ironclad
@@ -222,7 +223,9 @@ let
     pname = "cl-skills";
     version = qlotVersion "cl-skills";
     src = qlotSource "cl-skills";
+    systems = [ "cl-skills" "cl-skills/executable" ];
     lispLibs = [
+      clLlmProviderApi
       pkgs.sbclPackages.ironclad
       lsCompat
       nyaml
@@ -365,8 +368,10 @@ let
     pname = "sbcl-workers";
     version = qlotVersion "sbcl-workers";
     src = qlotSource "sbcl-workers";
+    systems = [ "sbcl-workers" "sbcl-workers/host-callbacks" ];
     lispLibs = [ lsCompat sexpStore ] ++ (with pkgs.sbclPackages; [
       bordeaux-threads
+      trivial-gray-streams
     ]);
   };
 
@@ -419,7 +424,36 @@ let
     pname = "cl-jobpond";
     version = qlotVersion "cl-jobpond";
     src = qlotSource "cl-jobpond";
+    systems = [ "cl-jobpond" "cl-jobpond/durable-state" "cl-jobpond/schedules" "cl-jobpond/mailboxes" ];
     lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
+  };
+
+  clResources = pkgs.sbcl.buildASDFSystem {
+    pname = "cl-resources";
+    version = qlotVersion "cl-resources";
+    src = qlotSource "cl-resources";
+    lispLibs = [ pkgs.sbclPackages.bordeaux-threads ];
+  };
+
+  clWorktree = pkgs.sbcl.buildASDFSystem {
+    pname = "cl-worktree";
+    version = qlotVersion "cl-worktree";
+    src = qlotSource "cl-worktree";
+  };
+
+  clasted = pkgs.sbcl.buildASDFSystem {
+    pname = "clasted";
+    version = qlotVersion "clasted";
+    src = qlotSource "clasted";
+    systems = [ "clasted" "clasted/ast-grep" ];
+    lispLibs = [ argo ] ++ (with pkgs.sbclPackages; [ babel ironclad ]);
+  };
+
+  daphne = pkgs.sbcl.buildASDFSystem {
+    pname = "daphne";
+    version = qlotVersion "daphne";
+    src = qlotSource "daphne";
+    lispLibs = [ argo ] ++ (with pkgs.sbclPackages; [ babel bordeaux-threads ]);
   };
 
   clExecSandboxSource = qlotSource "cl-exec-sandbox";
@@ -493,7 +527,7 @@ let
     pname = "autolith";
     version = "0.59.1";
     inherit src;
-    systems = [ "autolith" "autolith/tests" ];
+    systems = [ "autolith" "autolith/tests" "autolith/structural" "autolith/debug" ];
     lispLibs = with pkgs.sbclPackages; [
       agentcomms
       argo
@@ -523,9 +557,13 @@ let
       clJobpond
       clLlmProviderApi
       clLsp
+      clResources
       clRfc8252
       clRfc8628
       clSkills
+      clWorktree
+      clasted
+      daphne
       idsmall
       imageDaemon
       lambdaDebugger
