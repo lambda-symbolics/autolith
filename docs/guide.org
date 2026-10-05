@@ -27,6 +27,83 @@ Autolith's prompt window can also evuluate lisp forms directly:
 This can be frequently helpful since you can use the exact same tools
 the clanker can, and the same machinery is exposed to you.
 
+* Goals and verified missions
+
+Use =/goal OBJECTIVE= for lightweight autonomous work. Use =/goal pause=,
+=/goal resume= or =/goal clear= to control it. For externally verifiable work,
+install explicit acceptance policy with =/mission start PLIST=, or evaluate:
+
+#+BEGIN_SRC lisp
+(application-mission-start
+ *active-application*
+ '(:objective "Deliver the accepted build"
+   :turn-limit 40 :token-limit 100000 :wall-seconds 3600
+   :criteria ((:id "build" :description "The build passes" :gates ("build"))
+              (:id "review" :description "The user accepts the result"))
+   :gates ((:id "build" :kind :command :command "make check"
+            :inputs ("Makefile" "src/main.lisp") :deterministic-p t
+            :attempt-limit 3 :timeout-seconds 300))))
+#+END_SRC
+
+Use =/mission run= to begin, =/mission status= to inspect the complete durable
+state, and =/mission verify= to request harness verification. The model can
+also call =mission.status=, =mission.verify=, =mission.stop= and
+=mission.invalidate=. Only the primary agent may mutate mission policy through
+these model operations. Configure acceptance criteria yourself; the model
+cannot weaken them or supply user acceptance.
+
+Each criterion has a unique =:id=, a =:description= and optional ordered gate
+IDs in =:gates=. Criteria without gates require your explicit evidence:
+
+#+BEGIN_SRC text
+/mission accept ("review" "I inspected the artifact and accept the result")
+/mission resume
+/mission verify
+#+END_SRC
+
+The model's completion marker requests verification. Passing a gate proves
+only the criteria you explicitly associated with it. Verification requires all
+gates and all criteria. Inspect the acceptance mapping before beginning work.
+
+The turn allowance counts provider inference calls across the primary agent,
+children, compaction and recursive inference, including mapped and nested frames.
+Reported billable tokens use the provider API's usage normalization and exclude
+known prompt-cache reads. Admissions and settlements are serialized within a
+mission. Output limits use the remaining allowance; input usage is reported after
+the request, so a request can exhaust the token allowance. Missing usage is
+recorded as unknown and blocks further mission inference instead of substituting
+an estimate. Install a new explicit budget to proceed after unknown usage.
+
+The wall-clock deadline includes gate execution, delegated tools, pauses and
+time away. Work runs under cl-jobpond supervision. Use =/goal pause= and
+=/mission resume= without resetting any mission budget; use =/mission cancel
+REASON= to terminate it. Terminal states are =verified=, =exhausted=, =cancelled=
+and =failed=. A =blocked= mission retains the evidence needed to resolve its
+blocker and resume. Interrupted inference restores as blocked when its usage
+cannot be recovered. Gate attempts, fingerprints and evidence restore with the
+conversation and survive compaction independently of model summaries.
+
+Gates run in order, stopping at the first failure. Command gates use the ordinary
+shell authorization and sandbox boundary. Artifact gates require =:path= and
+optionally an expected =:sha256=. Lisp gates require a =:predicate= string and
+run an assertion in the existing isolated Lisp worker. Every gate supports
+=:timeout-seconds= and a separate =:attempt-limit=, defaulting to 60 seconds and
+three executions. Each gate retains bounded evidence.
+
+For deterministic gates, declare all relevant file paths in =:inputs= and set
+=:deterministic-p t=. File contents and missing-file states form the fingerprint;
+directory paths are rejected. Unchanged passing gates supply current proof, and
+unchanged failed gates are withheld while the model works on their relevant
+inputs. For remote state, omit deterministic policy or invalidate a particular
+gate explicitly:
+
+#+BEGIN_SRC text
+/mission invalidate ("build" "The remote build configuration changed")
+#+END_SRC
+
+Invalidation permits another execution without replenishing its attempt budget.
+Collect terminal results from live delegated jobs before verifying the mission.
+
 * Editor sessions over ACP
 
 Configure your ACP-compatible editor to launch:

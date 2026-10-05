@@ -406,6 +406,7 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
                  (task-parent-root-conversation-identifier parent-agent)
                  :initargs
                  (list :orchestrator orchestrator
+                        :mission-context (mission--agent-context parent-agent)
                        :execution-identifier (make-identifier)
                        :session-order session-order
                        :public-identifier identifier
@@ -509,7 +510,8 @@ guarantee."
       (when (or (job-cancellation-requested-p parent-job)
                 (job-terminal-p parent-job))
         (task-orchestrator--refuse-cancelled-parent parent-job))))
-  (let* ((count (length entries))
+  (let* ((mission-context (mission--agent-context parent-agent))
+         (count (length entries))
          (session-orders
            (task-orchestrator-reserve-session-orders orchestrator count))
          (root-conversation-identifier
@@ -546,7 +548,7 @@ guarantee."
                        (nested-synchronous-p
                          (and (typep parent-agent 'task-child-agent)
                               (not (getf entry :detached)))))
-                  (list :function #'task-job--run
+                 (list :function #'mission-task-job-run
                         :terminal-result-function #'task-job--terminal-record
                         :name (task-orchestrator--child-name
                                orchestrator (getf item :name))
@@ -563,6 +565,7 @@ guarantee."
                               :definition (getf entry :definition)
                               :item item
                               :parent-agent parent-agent
+                             :mission-context mission-context
                               :inherited-reference-p inherited-p
                               :inherited-reference-items
                               (and inherited-p inherited-reference-items)

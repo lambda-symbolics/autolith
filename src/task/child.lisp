@@ -779,6 +779,8 @@ candidates."
            (task-job-command-authorization-function job)
            :tool-authorization-callback
            (task-job-tool-authorization-function job))))
+    (mission-context-bind (task-job-mission-context job) configuration)
+    (mission-context-bind (task-job-mission-context job) conversation)
     (unwind-protect
          (progn
            (task-child-inherit-reference-history job conversation provider)

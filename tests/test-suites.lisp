@@ -724,6 +724,17 @@
   test-pending-publication-lock-boundaries
   test-pending-input-persistence)
 
+(define-test-suite missions
+  test-mission-accounting
+  test-mission-unknown-usage-and-recovery
+  test-mission-gate-retries
+  test-mission-acceptance-proof
+  test-mission-execution-gates
+  test-mission-wall-budget
+  test-mission-command-and-compaction
+  test-mission-queued-child-authority
+  test-mission-native-compaction-budget)
+
 (define-test-suite lisp-machine
   test-application-lisp-evaluation
   test-application-debugger-diagnosis

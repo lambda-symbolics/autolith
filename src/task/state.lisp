@@ -314,6 +314,12 @@ nesting depth, and lifecycle listeners."))
     :accessor task-job-parent-agent
     :type (option agent)
     :documentation "The parent session while this job remains live.")
+   (mission-context
+    :initarg :mission-context
+    :initform nil
+    :reader task-job-mission-context
+    :type t
+    :documentation "Exact mission authority captured at admission, before any queue delay.")
    (inherited-reference-p
     :initarg :inherited-reference-p
     :initform nil
