@@ -163,10 +163,10 @@
 
 (-> posix--change-mode (pathname integer) null)
 (defun posix--change-mode (pathname mode)
-  "Set PATHNAME's permission bits to MODE through ls-compat."
+  "Set PATHNAME's access and special permission bits with CHMOD."
   (posix--call ':protect pathname
                (lambda ()
-                 (setf (ls-compat.posix:file-mode pathname) (logand mode #o777))))
+                 (sb-posix:chmod (posix--namestring pathname) (logand mode #o7777))))
   nil)
 
 (defmethod platform-make-private ((platform posix-platform) pathname

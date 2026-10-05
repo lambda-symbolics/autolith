@@ -778,7 +778,8 @@
   test-configuration-fixture-isolation
   test-environment-fixture-restoration
   test-environment-fixture-evaluation
-  test-function-replacement-fixture-restoration)
+  test-function-replacement-fixture-restoration
+  test-platform-copy-file-permissions)
 
 (define-test-suite test-runner
   test-runner-selection

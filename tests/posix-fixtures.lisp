@@ -40,9 +40,9 @@
   #P"/dev/null")
 
 (defmethod test-fixture-file-mode ((platform posix-platform) pathname)
-  "Return PATHNAME's permission bits from stat(2)."
+  "Return PATHNAME's access and special permission bits from stat(2)."
   (declare (ignore platform))
-  (logand (sb-posix:stat-mode (sb-posix:stat (namestring pathname))) #o777))
+  (logand (sb-posix:stat-mode (sb-posix:stat (namestring pathname))) #o7777))
 
 (defmethod test-fixture-set-file-mode ((platform posix-platform) pathname mode)
   "Set PATHNAME's permission bits with chmod(2)."
