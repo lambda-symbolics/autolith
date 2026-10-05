@@ -241,6 +241,11 @@ synchronization, UTF-16 positions, and version-aware push/pull diagnostics.
 =src/lsp/tools.lisp= registers the query, diagnostics, status, and restart tools,
 appends bounded diagnostics after successful workspace resource edits, and
 contributes a request-context note naming enabled servers.
+=src/lsp/semantic-proposals.lisp= retains bounded conversation-scoped edit plans
+and compiles ordered server proposals into resource change sets.
+=src/lsp/semantic-tools.lisp= registers semantic request, preview, resolution and
+apply operations. Each affected path is authorized and revalidated before
+application; annotated confirmations use the command-authorization boundary.
 
   Each registry owns one lazy manager. Registries create it and its tools only
   when =lsp.sexp= enables at least one server. Operations share its recursive

@@ -11,6 +11,14 @@
   test-lsp-tool-conditional-registration
   test-lsp-session-context)
 
+(define-test-suite lsp-semantic
+  test-lsp-semantic-ordered-resources
+  test-lsp-semantic-preconditions
+  test-lsp-semantic-stale-and-approval
+  test-lsp-semantic-conversation-bounds
+  test-lsp-semantic-tool-workflow
+  test-lsp-semantic-authority-and-validation)
+
 (define-test-suite workspace-change
   test-workspace-change-publication
   test-workspace-change-stale-and-authority

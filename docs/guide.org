@@ -715,6 +715,36 @@ Ask Autolith to use these tools:
 - =lsp.diagnostics=: synchronize a file and retrieve diagnostics.
 - =lsp.restart=: stop servers and reload the configuration after changing it.
 
+Use =lsp.semantic= for revisioned transformations:
+
+- =prepare-rename=: inspect the symbol at =path=, =line= and =character=.
+- =rename=: propose a symbol rename with those coordinates and =new-name=.
+- =code-actions=: discover choices for a range, using =line=, =character=,
+  =end-line= and =end-character=. Optionally filter =only= action kinds or
+  supply =diagnostics=.
+- =resolve=: retrieve a complete action using its returned =choice= ID.
+- =propose=: retain an action's edit as an applicable proposal using =choice=.
+- =move=: propose server preparatory edits followed by moving =path= to
+  =new-path=. Both paths must identify regular files or a missing destination.
+- =inspect=: review a retained =proposal= ID.
+- =apply=: apply a retained =proposal=. Obtain explicit approval for annotations
+  with =needsConfirmation=, then include their IDs in =approved-annotations=.
+  Confirm each synthetic =lsp.semantic-confirmation= request through the ordinary
+  command-permission prompt. Without a permission callback, confirmation is denied.
+
+Proposals preserve ordered text, create, move and delete effects. Every affected
+file passes the ordinary resource authority checks before observation and again
+before application. Resource revisions cover file kind and content; synchronized
+document versions must also match. Request a fresh proposal after a conflicting
+edit or server restart. Moves preserve the source permissions captured during
+staging, including edited multi-hop moves. Publication is atomic per file with
+change-set rollback on failure. Proposals
+and action choices are conversation-local, limited to 32 retained choices and
+240,000 encoded characters per choice, and depend on ordinary resource snapshot
+retention. Server commands are presented as data for separate explicit execution.
+Use local =file:///= URIs; directories, service resources and URI authorities
+are unsupported.
+
 Servers start lazily on file requests, including diagnostic requests after a
 successful =resource.edit= workspace edit. All enabled entries with matching
 filename suffixes are queried. The project root is the nearest ancestor with a
