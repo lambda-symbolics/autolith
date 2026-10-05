@@ -115,11 +115,14 @@ an authorized file elsewhere, as an editor opening that file would search."
 
 (defmethod tool-execute ((tool lsp-diagnostics-tool) (context tool-context) (arguments hash-table))
   "Return settled diagnostics without equating an unreported file with a clean file."
-  (tool-success
-   (lsp-tool--render
-    (lsp-tool--call-for-file
-     (lsp-tool-manager tool) context (lsp-tool--path context (tool-argument arguments "path" :required t))
-     (lambda (client document) (lsp-client-diagnostics client document))))))
+  (let ((reports
+          (lsp-tool--call-for-file
+           (lsp-tool-manager tool) context
+           (lsp-tool--path context (tool-argument arguments "path" :required t))
+           (lambda (client document) (lsp-client-diagnostics client document)))))
+    (context-rule-note-diagnostics (tool-context-conversation context) reports
+                                   :generation (tool-context-rule-generation context))
+    (tool-success (lsp-tool--render reports))))
 
 (defmethod tool-execute ((tool lsp-status-tool) (context tool-context) (arguments hash-table))
   "Inspect configured servers without launching them."
@@ -213,6 +216,9 @@ Explicit LSP tools use the configured server timeout; failed startup also reaps 
                                       manager context path
                                       (lambda (client document)
                                         (lsp-client-diagnostics client document :wait-seconds 0.5)))))
+                        (context-rule-note-diagnostics
+                         (tool-context-conversation context) reports
+                         :generation (tool-context-rule-generation context))
                         (tool-success (format nil "~A~%~%LSP diagnostics (zero-based UTF-16):~%~A"
                                               (tool-result-content result) (lsp-tool--render reports 6000))))
                       result))))

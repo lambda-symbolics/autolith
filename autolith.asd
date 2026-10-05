@@ -12,6 +12,8 @@
                #:cl-exec-sandbox
                #:cl-hashline
                #:cl-jobpond
+               #:cl-jobpond/schedules
+               #:cl-jobpond/mailboxes
                #:cl-lsp
                #:cl-resources
                #:cl-rfc8252
@@ -24,6 +26,7 @@
                #:cl-llm-provider-api/registry
                #:cl-llm-provider-api/contracts
                #:cl-skills
+               #:cl-skills/executable
                #:cl-termdown
                #:clifff
                #:clinedi
@@ -41,6 +44,7 @@
                #:idsmall
                #:image-daemon/runtime
                #:image-daemon/eval
+               #:image-daemon/messages
                #:ironclad/mac/siphash
                #:lambda-debugger
                #:ls-flock
@@ -55,6 +59,7 @@
                #:sb-bsd-sockets
                #:sbcl-generations
                #:sbcl-workers
+               #:sbcl-workers/host-callbacks
                #:surgeon
                #:yolokuva
                #:yolokuva/opticl
@@ -159,7 +164,9 @@
                              (:file "tools/search")
                              (:file "workers/search")
                              (:file "workers/lisp")
+                             (:file "workers/host-calls")
                              (:file "workers/scratchpad")
+                             (:file "skills/executable")
                              (:file "self/tools")
                              (:file "self/apropos")
                              (:file "state/durable-mutations")
@@ -192,7 +199,10 @@
                              (:file "task/notes")
                              (:file "task/scheduler")
                              (:file "task/tools")
+                             (:file "task/continuity")
+                             (:file "task/continuity-tools")
                              (:file "task/worktrees")
+                             (:file "agent/context-rules")
                              (:file "terminal/protocol")
                              (:file "terminal/input")
                              (:file "terminal/style")
@@ -210,6 +220,8 @@
                              (:file "application/mission")
                              (:file "application/mission-gates")
                              (:file "application/mission-tools")
+                             (:file "application/mission-review")
+                             (:file "application/mission-review-tools")
                              (:file "application/clipboard")
                              (:file "conversation/replay")
                              (:file "conversation/search")
@@ -219,8 +231,13 @@
                              (:file "application/tool-presentation")
                              (:file "application/change-presentation")
                              (:file "application/recovery")
+                             (:file "application/task-inspector")
                              (:file "application/commands")
                              (:file "application/operation")
+                             (:file "application/mission-schedules")
+                             (:file "application/mission-schedule-tools")
+                             (:file "task/peer-messages")
+                             (:file "task/peer-message-tools")
                              (:file "self/refinement")
                              (:file "self/refinement-tools")
                              (:file "application/help")
@@ -286,12 +303,14 @@
                              (:file "prompt-cache-tests")
                              (:file "permissions-tests")
                              (:file "context-tests")
+                             (:file "context-rule-tests")
                              (:file "interpreter-discipline-tests")
                              (:file "resume-context-tests")
                              (:file "self-review-tests")
                              (:file "refinement-tests")
                              (:file "skill-tests")
                              (:file "skill-tool-tests")
+                             (:file "executable-skill-tests")
                              (:file "mcp-configuration-tests")
                               (:file "directory-configuration-tests")
                              (:file "mcp-tool-tests")
@@ -334,12 +353,18 @@
                              (:file "active-image-tests")
                              (:file "recovery-tests")
                              (:file "lisp-worker-tests")
+                             (:file "worker-host-call-tests")
                              (:file "self-tool-tests")
                                (:file "device-authentication-tests")
                              (:file "nous-device-authentication-tests")
                              (:file "agent-tests")
                              (:file "inference-tests")
                              (:file "task-test-support")
+                             (:file "task-continuity-tests")
+                             (:file "task-inspector-tests")
+                             (:file "mission-review-tests")
+                             (:file "mission-schedule-tests")
+                             (:file "peer-message-tests")
                              (:file "task-worktree-tests")
                              (:file "task-agent-tests")
                              (:file "task-engineering-tests")

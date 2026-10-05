@@ -636,6 +636,7 @@ have the same evaluation behavior as DEFUN."
   (with-lock-held (*context-lock*)
     (clrhash *context-last-deliveries*)
     (setf *context-last-delivery-order* nil))
+  (context-rule-reset)
   nil)
 
 ;;;; -- Diagnostics --

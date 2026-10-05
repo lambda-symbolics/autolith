@@ -18,7 +18,7 @@ git agentcomms https://github.com/lambda-symbolics/agentcomms.git :ref c56cdca0b
 git fetch-gist https://github.com/lambda-symbolics/fetch-gist.git :ref 0adb33b6801d1218ce6249d2a751b05f88b98c40
 git cl-colorist https://github.com/luciusmagn/cl-colorist.git :ref a70749493fbdbe79d6766f254a664119042102b9
 git clinedi https://github.com/lambda-symbolics/clinedi.git :ref 0987b9116004adc5659a33b5ec27f1afd873ca7b
-git cl-jobpond https://github.com/luciusmagn/cl-jobpond.git :ref ee2e2eb0bd5080c52db55036f853c00671962178
+git cl-jobpond https://github.com/lambda-symbolics/cl-jobpond.git :ref 2546d65afd961acd8e00a6cad3b8b15ad6483b91
 git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 73c73e83eab3e999f2bae90149baf53252784b02
 git cl-rfc8252 https://github.com/lambda-symbolics/cl-rfc8252.git :ref b9affbd04c12e2adac4a2403f60a3a2802f9ac45
 git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref 740ccdff7d10c192c75cc1589259682e3e66e007
@@ -27,12 +27,12 @@ git cl-lsp https://github.com/lambda-symbolics/cl-lsp.git :ref 170885bfc140fb786
 git cl-resources https://github.com/lambda-symbolics/cl-resources.git :ref 2a160c6fdacac6f1f70689c43209b26182fd7f4d
 git clasted https://github.com/lambda-symbolics/clasted.git :ref dc8b2df5a68b396c4cdd825a58e7a4d50dfb9def
 git daphne https://github.com/lambda-symbolics/daphne.git :ref 65f68216152c70110a092b79050b37ce75cdbdb1
-git cl-skills https://github.com/lambda-symbolics/cl-skills.git :ref f9eea22421272362e1b99a48cc8f2705127b5ff2
+git cl-skills https://github.com/lambda-symbolics/cl-skills.git :ref 9ece528bfe07253a9450651808b28457b7ede71d
 git cl-termdown https://github.com/lambda-symbolics/cl-termdown.git :ref 76a1d82d72b7b14cf2863f5ce54b186795552972
 git cl-worktree https://github.com/lambda-symbolics/cl-worktree.git :ref f7725d23a215be5cce778a85df1d47f8b4618714
 git cl-exec-sandbox https://github.com/lambda-symbolics/cl-exec-sandbox.git :ref 76478d0c0e78bbd4e374953af12a2188630d794d
 git cl-hashline https://github.com/lambda-symbolics/cl-hashline.git :ref 9a989dc73bf46ff3f8e8c6921126612e2451a8a8
-git clifff https://github.com/luciusmagn/clifff.git :ref 54be5993f13a5fea20caae84de8378bf7fc225e5
+git clifff https://github.com/lambda-symbolics/clifff.git :ref 134f517a56862b37abb7f7700dccd154d9f91106
 git colorlisp https://github.com/lambda-symbolics/colorlisp.git :ref 2654ae0fa34aee42cff401693b5a80a86f0942c4
 git colordiff https://github.com/lambda-symbolics/colordiff.git :ref 1e1e85af707690e100e1c140513e042387fecf22
 git parenchek https://github.com/lambda-symbolics/parenchek.git :ref 60dcd4636cb7c18003f24a5e7192acba55979d6b
@@ -46,7 +46,7 @@ git sbcl-generations https://github.com/lambda-symbolics/sbcl-generations.git :r
 git sexp-config https://github.com/lambda-symbolics/sexp-config.git :ref 09e0b86650d08d98c7624ec525d346a41b98323c
 git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref 4d38e6544d87412d99acef9f097272df41359eff
 git sophisticated-clipboard https://github.com/lambda-symbolics/sophisticated-clipboard.git :ref 756b65f4f8be18c786e2331de89708729df42bd4
-git sbcl-workers https://github.com/lambda-symbolics/sbcl-workers.git :ref 86c7fea658e977bbd2e95c577fe9b934c19e1265
+git sbcl-workers https://github.com/lambda-symbolics/sbcl-workers.git :ref b966b7a17bd122318ab12f5732885ff1680cc3b9
 git surgeon https://github.com/lambda-symbolics/surgeon.git :ref 347e3a48f931c6ba178d0582fb8a79bd22a4ea6f
 git structlisp https://github.com/lambda-symbolics/structlisp.git :ref 66bbfbe947b69f3105f71f5e4293637decc91746
 git argo https://github.com/lambda-symbolics/argo.git :ref 3658b947372fb19ae07aca65a439b63b0685ae47

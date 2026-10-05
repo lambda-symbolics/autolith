@@ -146,7 +146,7 @@ Do not create a second competing objective abstraction. Extend the existing goal
 record so a plain goal stays simple while verified missions add budgets, gates and
 terminal evidence.
 
-** NEW [#B] A5. Scheduled and event-driven work
+** PRESENT [#B] A5. Scheduled and event-driven work
 *** Problem
 Long-running work often spends most of its lifetime waiting: for CI, an external
 service, a future time, or another job. Manual prompts and unconditional polling
@@ -167,7 +167,14 @@ system if it remains job-oriented. =image-daemon= provides the persistent proces
 hosting. Autolith supplies the prompt/mission payload and decides what waking a
 mission means.
 
-** EXTEND [#A] A6. Executable skills
+*** Verified implementation
+=mission.schedule= persists timed, interval and event continuations through
+=cl-jobpond/schedules= and daemon timers. Wakeups enter the durable command queue
+and ordinary mission admission. Focused checks cover missed runs, duplicates,
+cancellation, stale versions, uncertain delivery, live-effect recovery exclusion,
+snapshot bounds and a real hosted wakeup reaching the primary provider.
+
+** PRESENT [#A] A6. Executable skills
 *** Problem
 Instruction-only skills capture procedure, but recurring engineering work often
 has a stable executable component that should not be regenerated from prose every
@@ -190,9 +197,17 @@ entrypoint is invoked.
 *** Ownership
 Extend =cl-skills= with an optional executable system. Autolith owns discovery
 integration, authorization and model-facing invocation. Worker-to-host calls from
-A7 below provide the execution substrate for richer workflows.
+R1 below provide the execution substrate for richer workflows.
 
-** EXTEND [#B] A7. Agent-to-agent messaging
+*** Verified implementation
+=cl-skills/executable= supplies sidecar manifests and exact-source discovery;
+=skill.run= and =skill.verify= authorize capabilities before worker loading.
+Checks exercise contracted workflows, verification entrypoints, source changes,
+permission refusal, exact tool allowlists, bounded readable results and transport
+replacement during open. Published library checks cover 148 base and 127
+executable assertions.
+
+** PRESENT [#B] A7. Agent-to-agent messaging
 *** Problem
 Autolith can steer a running child through =job.send=, but coordination is mostly
 parent-to-child. Parallel workers sometimes need bounded peer communication or a
@@ -213,7 +228,15 @@ Generic mailbox/wait mechanics belong in =cl-jobpond=. =image-daemon= owns
 interprocess delivery. Autolith owns which agents may discover/message which peers
 and how messages enter model context.
 
-** EXTEND [#B] A8. Long-running continuity
+*** Verified implementation
+=peer.*= composes explicit endpoint grants with durable =cl-jobpond/mailboxes=
+and authenticated =image-daemon/messages=. Execution identities are immutable;
+context delivery acknowledges only after conversation persistence. Focused checks
+cover grant revocation during transport, identity rotation, deduplication,
+uncertain delivery, recovery bounds, actual daemon delivery and the first child
+provider request. Initial peer delivery preserves ordinary prose steering timing.
+
+** PRESENT [#B] A8. Long-running continuity
 *** Problem
 Detach/reattach keeps a live process useful, but resuming a conversation in a new
 process currently loses live shell jobs, asynchronous jobs and worker state.
@@ -235,6 +258,13 @@ job was reattached, reconstructed, restarted or abandoned.
 =image-daemon= owns persistent hosting and endpoint discovery. =sbcl-workers= owns
 worker image persistence. Autolith owns task reconstruction, conversation linkage
 and side-effect deduplication policy.
+
+*** Verified implementation
+=job.continuity= records original specifications, execution lineage, activity and
+terminal artifacts. Inventory distinguishes owned live work, compatible worker
+checkpoints, explicitly safe restart specifications and work needing a decision.
+Checks cover reconstruction evidence, authorized revive/abandon, duplicate
+suppression, ownership and bounded whole-row pagination after recovery.
 
 * Coding and debugging capabilities
 
@@ -377,7 +407,7 @@ Autolith owns this task-level convention and its provider-facing contract.
 =cl-worktree= produces baseline/patch material; existing contract and storage
 libraries validate and persist it.
 
-** EXTEND [#B] D3. Agent control and inspection hub
+** PRESENT [#B] D3. Agent control and inspection hub
 *** Problem
 Autolith already exposes live activity rows, job inspection, cancellation and
 steering, but supervising several delegated workers requires jumping among separate
@@ -401,7 +431,14 @@ Autolith owns the inspector because its grouping and actions are agent semantics
 =cl-jobpond= supplies lifecycle/progress events; =clinedi= and =cl-termdown= should
 own any newly reusable picker/layout primitives extracted while implementing it.
 
-** EXTEND [#B] D4. Independent reviewer / advisor
+*** Verified implementation
+=/tasks= projects owned live and durable rows through the ordinary job registry.
+Checks cover lineage, timing/usage, bounded recent output, artifact paths,
+transcript windows across compacted chunks, missing/foreign transcript refusal,
+ordinary cancellation and revive, authorization forwarding and a real multiword
+slash steering invocation.
+
+** PRESENT [#B] D4. Independent reviewer / advisor
 *** Problem
 A dedicated reviewer can catch requirement drift or unsafe integration before the
 primary agent declares success. Autolith already has reviewer roles, but launching
@@ -421,9 +458,17 @@ cost/benefit profile.
 Keep this in Autolith using existing task, provider, context and contract APIs. No
 new orchestration library is justified.
 
+*** Verified implementation
+=mission.review= runs independent contracted reviewers at configured checkpoints,
+with separate cumulative reviewer allowances included in mission accounting.
+Durable findings retain primary resolve/reject decisions and snapshot applicability.
+Focused checks cover contracts, authority, cancellation, failures, reuse and
+changed-input acceptance races. Final acceptance requires a current completed,
+adjudicated review; delegation occurs outside mission request/state locks.
+
 * Programmatic execution and resources
 
-** EXTEND [#A] R1. Tool calls from worker REPLs
+** PRESENT [#A] R1. Tool calls from worker REPLs
 *** Problem
 Autolith's Lisp workers are excellent persistent computation environments, but they
 cannot currently invoke the agent's ordinary authorized tools. The RLM environment
@@ -448,7 +493,14 @@ Autolith tool is.
 Extend =sbcl-workers= with an optional host-callback protocol/system. Autolith owns
 tool dispatch, authorization, capability filtering and audit records.
 
-** EXTEND [#A] R2. Executable workflows over the tool bridge
+*** Verified implementation
+=sbcl-workers/host-callbacks= supplies correlated bounded requests. Autolith's
+=worker-tool-call= dispatcher uses the ordinary registry, exact admitted allowlist,
+authorization callbacks and originating mission authority across asynchronous
+handoff. Focused checks cover persistent worker transport, capability refusal,
+audit attribution and explicit absence of a mission at admission.
+
+** PRESENT [#A] R2. Executable workflows over the tool bridge
 Once R1 exists, executable skills can orchestrate reads, searches, tasks, resource
 edits and checks programmatically without forcing a provider round trip for every
 small operation.
@@ -459,6 +511,12 @@ packages a repeatedly successful procedure into ordinary code that can be tested
 
 This is primarily an Autolith + =cl-skills= integration feature, not another
 runtime library.
+
+*** Verified implementation
+Executable skill workers invoke admitted tools through =worker-tool-call= and
+return contracted values. The integrated workflow and verification cases exercise
+actual worker-to-host transport, failed contracts, capability boundaries and
+bounded result envelopes. =docs/guide.org= includes a bridge workflow example.
 
 ** PRESENT [#B] R3. Unified revisioned resource protocol
 *** Problem
@@ -489,7 +547,7 @@ creating a new model tool for each service.
 an independent text-edit backend consumed by a resource adapter. Autolith owns
 resolver registration, authority and product-specific resource types.
 
-** EXTEND [#C] R4. Selective contextual rules
+** PRESENT [#C] R4. Selective contextual rules
 *** Problem
 Stable guidance should be active when relevant without occupying every request.
 Autolith already has the necessary context-contributor and budget machinery; what
@@ -511,6 +569,12 @@ they improve outcomes enough to justify provider churn and complexity.
 Autolith owns activation and configuration. Reuse
 =cl-llm-provider-api='s context contribution/resolution machinery. A standalone
 rule-engine library is not currently justified.
+
+*** Verified implementation
+Declarative contextual rules contribute through the existing request-context
+budget resolver. Path/language, tool/namespace, role/task and diagnostic/event
+selectors have focused behavior coverage. Turn generations begin under the agent
+turn lock; stale asynchronous diagnostic notes cannot activate a later turn.
 
 * Library ownership summary
 
@@ -565,7 +629,26 @@ Evaluate learned adaptations on separate tasks before promoting them beyond thei
 original scope.
 
 * Verification record
-Autolith was checked at current master commit
+*** Delivery checks
+NetBSD integration checks passed 110 cases / 1,005 assertions. The final
+source/replay, cancellation, resource-authority and peer/context repair checks
+passed 42 cases / 509 assertions. Optional structural and debugger systems passed
+8 cases / 86 assertions and 6 cases / 95 assertions respectively.
+The final pinned native-search, executable-skill and worker-host-call checks passed
+8 cases / 135 assertions. The clifff recovery repair passed 15 library assertions
+and three forced helper-crash/recovery cycles with unchanged semaphore usage.
+
+For the final source check, use the matching pinned workspace native search library.
+On this NetBSD host, close other native search helpers and run one test worker
+at a time within the System V semaphore limit:
+
+#+BEGIN_SRC sh
+AUTOLITH_FFF_LIBRARY="$PWD/.cache/data/autolith/native/fff/libfff_c.so" \
+  ./script/check --jobs 1 --timeout 900
+#+END_SRC
+
+*** Initial audit
+The initial source/design audit examined master commit
 [[https://github.com/lambda-symbolics/autolith/commit/d2841eb24256b95830b607b4d0c8aa762570b4e8][d2841eb24256b95830b607b4d0c8aa762570b4e8]].
 The dependency/ownership review used its [[https://github.com/lambda-symbolics/autolith/blob/d2841eb24256b95830b607b4d0c8aa762570b4e8/qlfile][Qlot pins]],
 [[https://github.com/lambda-symbolics/autolith/blob/d2841eb24256b95830b607b4d0c8aa762570b4e8/autolith.asd][ASDF graph]],

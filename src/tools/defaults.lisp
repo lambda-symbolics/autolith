@@ -19,6 +19,15 @@
             :parameters parameters
             initialization-arguments))))
 
+(-> default-tools--worker-host-tools-property () json-object)
+(defun default-tools--worker-host-tools-property ()
+  "Return the explicit bounded worker callback capability schema."
+  (json-object
+   "type" "array"
+   "items" (json-object "type" "string" "minLength" 1)
+   "maxItems" 64
+   "description" "Optional exact host tool names available to this request. Omit for plain worker execution; ordinary originating authority still applies."))
+
 (-> default-tools--required-form-schema (string) json-object)
 (defun default-tools--required-form-schema (description)
   "Return a closed schema containing FORMS, compilation mode, REPL, and async policy."
@@ -29,6 +38,7 @@
                       "Compile before executing; defaults to false.")
            "repl" (tool-string-property
                    "The persistent REPL name; defaults to default.")
+            "host-tools" (default-tools--worker-host-tools-property)
            "async" (tool-boolean-property
                     "Run as an inspectable background job; defaults to false."))))
     (tool-object-schema properties '("forms"))))
@@ -559,6 +569,7 @@
                      "The relative scratchpad Lisp file path.")
              "repl" (tool-string-property
                      "The persistent REPL name; defaults to default.")
+             "host-tools" (default-tools--worker-host-tools-property)
              "async" (tool-boolean-property
                       "Run as an inspectable background job; defaults to false."))
             '("path")))
@@ -883,7 +894,10 @@ LSP tools register only when CONFIGURATION enables a language server."
     (refinement-register-tools registry)
     (rlm-register-tools registry)
     (mission-register-tools registry)
+    (mission-review-augment-tool-registry registry)
+    (mission-schedule-register-tools registry)
     (skill-augment-tool-registry registry)
+    (executable-skill-register-tools registry)
     (skill-edit-augment-tool-registry registry)
     (when (fboundp 'structural-register-default-tools)
       (structural-register-default-tools registry))

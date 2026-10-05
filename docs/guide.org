@@ -104,6 +104,72 @@ gate explicitly:
 Invalidation permits another execution without replenishing its attempt budget.
 Collect terminal results from live delegated jobs before verifying the mission.
 
+** Independent review checkpoints
+
+Attach a reviewer to an active mission with =mission-review.configure=, or evaluate:
+
+#+BEGIN_SRC lisp
+(application-mission-review-configure
+ *active-application*
+ '(:id "release-review" :phase :final-acceptance
+   :inputs ("src/main.lisp" "tests/main-tests.lisp")
+   :context "Review the changed behavior and test coverage. Report concrete findings."
+   :turn-limit 4 :token-limit 16000 :run-limit 3))
+#+END_SRC
+
+Declare the complete relevant file set. The reviewer receives an independent
+snapshot and background, returns contracted findings, and has no tools or spawning
+permission. Reviewer call and token allowances are cumulative across changed
+snapshots and also count against the mission allowances. =:run-limit= bounds the
+number of distinct snapshots reviewed.
+
+Use =mission-review.trigger= with =id= to review a checkpoint and
+=mission-review.inspect= to read its durable findings, decisions and usage.
+Unchanged snapshots reuse completed, failed or interrupted runs. Resolve or reject
+each finding through =mission-review.decide= with =id=, =finding=, =decision=
+(=resolve= or =reject=) and an evidence-bearing =reason=. Only the primary agent
+or local user may configure, trigger and adjudicate reviews.
+
+Final verification runs configured =final-acceptance= checkpoints. Pending
+findings and failed or interrupted reviews block acceptance. For
+=before-integration= and =after-edit-set= checkpoints, trigger the named review
+explicitly at the chosen boundary. Reviewer findings are advisory; mission gates
+and user acceptance supply harness evidence.
+
+** Scheduled mission continuations
+
+Attach explicit wakeups to the current mission with =mission-schedule.add=.
+Supply an immutable =id=, continuation =content=, and a time policy: =at= is an
+absolute Common Lisp universal time, =interval= is a positive number of seconds,
+and =event= names an external event instead of a time policy. For example:
+
+#+BEGIN_SRC lisp
+(application-mission-schedule-add
+ *active-application* :id "build-followup"
+ :content "Check the pending build and continue the mission."
+ :at (+ (get-universal-time) 300) :missed-policy :latest)
+#+END_SRC
+
+For recurring wakeups, choose =missed-policy= =latest= (the default), =all= or
+=skip= to select the newest missed occurrence, every missed occurrence or none.
+Use =mission-schedule.event= with an event name and stable external event =id=;
+repeated delivery of that ID is deduplicated. The local daemon listener hosts time
+wakeups. Due work enters the ordinary primary command queue as a persisted
+=/mission-wakeup= ticket and executes as a mission continuation under the existing
+turn, token and wall-clock budgets.
+
+Only the primary agent may use the =mission-schedule= tools. Each wakeup retains
+its exact mission identity and version, checked at admission and execution;
+replaced or inactive mission work is cancelled. Use =mission-schedule.inspect=
+to read schedules, occurrence IDs and claim tokens, and =mission-schedule.cancel=
+with the schedule =id= to cancel future and pending work.
+
+Interrupted admissions and executions restore as uncertain outcomes. Inspect the
+external effects before calling =mission-schedule.resolve= with the readable
+=occurrence= ID, current =token= and =action= =completed=, =failed= or =retry=.
+Retry is an explicit decision and is refused while the occurrence is executing.
+Cancellation retains claim and duplicate history.
+
 * Editor sessions over ACP
 
 Configure your ACP-compatible editor to launch:
@@ -976,6 +1042,27 @@ eventually disappear:
 Note that these are provider-request-only, and don't not count as a conversation turn,
 and do not get attached to your messages.
 
+Register selective project or user advice as a declarative rule:
+
+#+BEGIN_SRC lisp
+(register-context-rule
+ '(:id "lisp-edits"
+   :when (:paths ("src/") :languages ("common-lisp")
+          :events ("tool-success"))
+   :instruction "Check the changed declarations before committing."
+   :priority 30 :lifetime :while-relevant))
+#+END_SRC
+
+Use =:paths=, =:languages=, =:tools=, =:namespaces=, =:roles=,
+=:diagnostics= and =:events= in =:when=. Fields are conjunctive; values
+within a field are alternatives. Paths match prefixes; other values match
+exactly. Add an absolute =:workspace= directory for project scope. Authorized
+tool operations and structured LSP severities supply bounded current-turn
+metadata. Asynchronous completions use their originating turn identity.
+Rules share the ordinary advice budget, priority, lifetime and deduplication
+policy. Inspect delivery with =context-status=; remove a rule with
+=unregister-context-rule= and its original ID.
+
 The status line keeps a context meter visible while idle. It shows used tokens
 and the full model window. =|= marks the automatic compaction point. The
 ChatGPT subscription catalog currently reports a 272K-token window for the
@@ -1260,6 +1347,80 @@ at each scope and an owner-state guard against intervening changes. Recover an
 interrupted operation explicitly using recorded evidence; replay never repeats its
 effects automatically.
 
+** Executable Skills
+
+Use =skill.load= with an exact catalog name to select prose instructions for the
+logical turn. To publish executable behavior, put a bounded data-only
+=EXECUTABLE.sexp= beside =SKILL.md= or =SKILL.sexp=. Declare the Skill and ASDF
+system versions, entrypoint, input/output contracts, capabilities and exact host
+tool names. An executable manifest has this shape:
+
+#+BEGIN_SRC lisp
+(:skill-executable :format-version 1 :skill-version "1.0.0"
+ :system "my-workflow" :system-version "1.0.0"
+ :entrypoint ("MY-WORKFLOW" "RUN")
+ :self-test ("MY-WORKFLOW" "SELF-TEST")
+ :verify ("MY-WORKFLOW" "VERIFY")
+ :capabilities ("workspace-read") :tools ("resource.read")
+ :input (:type :object) :output (:type :object))
+#+END_SRC
+
+The invocation function accepts =input &key context=; self-test and verification
+functions accept =&key context=. Input and output use the native portable JSON
+representation, such as =(:object ("status" "ready"))=. Install the declared
+ASDF system in the worker environment, or supply its authorized =asd= pathname.
+Call =skill.invoke= with =name= and contract-valid =input=:
+
+#+BEGIN_SRC json
+{"name":"my-workflow","input":{},
+ "asd":".autolith/skills/my-workflow/my-workflow.asd","async":true}
+#+END_SRC
+
+Use =skill.verify= with =name= to run the self-test; set =entrypoint= to =verify=
+for the verification function. Each operation requires ordinary explicit
+full-access code authorization and runs in a fresh disposable worker. Capabilities
+are declarations for admission; only declared exact host tools allowed by the
+originating agent policy enter the callback bridge. Source and sidecar identity
+and the complete manifest are rechecked before loading executable code; declared
+ASDF versions are checked during authorized system resolution.
+
+Invocation output is contract-validated and retained with its executable identity
+as native execution evidence. Result publication is bounded to 1 MiB and read as
+one data-only form after stopping the worker. Use =async: true= for managed jobs
+and collect their results through =job.wait=. Mission accounting and ordinary
+execution supervision apply to workflows and their callbacks.
+
+** Worker tool calls
+
+Supply =host-tools=, an array of exact tool names, to =lisp.eval= or
+=lisp.scratchpad-run= for an explicitly authorized workflow request. Inside that
+request, call:
+
+#+BEGIN_SRC lisp
+(autolith:worker-tool-call "resource.read" "{\"uri\":\"workspace:src/main.lisp\"}")
+(autolith:worker-tool-context)
+#+END_SRC
+
+Read =:success-p=, =:content=, =:code= and =:details= from the returned result.
+The host dispatch retains the originating conversation, callbacks, capability
+policy, mission context and job lineage. Requests and results are bounded and
+correlated in the conversation audit. Sequential callbacks are supported; choose
+a different REPL for nested worker operations. Omit =host-tools= for ordinary
+worker execution.
+
+For a Lisp-controlled workflow, branch on returned native results and make the
+next authorized call from the same evaluation. For example, pass these arguments
+to =lisp.eval=:
+
+#+BEGIN_SRC json
+{"host-tools":["resource.read"],
+ "forms":["(let ((result (autolith:worker-tool-call \"resource.read\" \"{\\\"uri\\\":\\\"workspace:README.org\\\"}\"))) (if (getf result :success-p) (getf result :content) (getf result :code)))"]}
+#+END_SRC
+
+Host calls pass through ordinary registry authorization with the captured
+mission admission, including its absence. An interrupted callback is recorded as
+=unknown-outcome= in the audit. Inspect effects before repeating a mutating call.
+
 ** Structural code edits
 
 Load the optional =autolith/structural= system and configure an =ast-grep=
@@ -1356,6 +1517,86 @@ with one =yield.submit= of =success=, =failed=, or =aborted=.
 Persisted child results must contain one data-only form with valid terminal
 status and field types. The default reading limits are 16 MiB, 128 nesting
 levels, and 262,144 tree nodes.
+
+** Task inspection and continuity
+
+Use =/tasks= for a compact nonmodal inventory of owned live and durable work,
+including lineage, timing, reported usage, recent activity and artifact paths:
+
+#+BEGIN_SRC text
+/tasks get JOB-ID
+/tasks transcript JOB-ID 0 4000
+/tasks send JOB-ID Inspect the failing check before continuing.
+/tasks cancel JOB-ID
+#+END_SRC
+
+Transcript arguments are a character offset and window limit, defaulting to
+0 and 4000; use the returned =:next-offset= for another window. =get=, =send=
+and =cancel= use the ordinary owned job operations and authorization.
+
+Use =job.continuity= with =action= =list= or =get= to classify retained work as
+live detached, completed, reconstructible from a checkpoint, safe to restart,
+abandoned or needing a decision. List pages contain whole records with
+=:total=, =:next-offset= and =:more-p=; =offset= defaults to 0 and =limit= to 20
+(maximum 100). Supply a visible job or durable execution =id= for other actions.
+
+The primary owner may declare =allow-restart= with a =safety= rationale and
+=authorize: true=, or declare =checkpoint= with a compatible saved worker
+=image=, target =repl= and the same explicit authority. A safety rationale is
+an assertion about repeating external effects. Revival reattaches live work,
+starts the named REPL from its saved image, or dispatches a new child from a safe
+retained shared-workspace task specification:
+
+#+BEGIN_SRC text
+/tasks revive JOB-ID authorize
+/tasks abandon EXECUTION-ID authorize
+#+END_SRC
+
+Equivalent =job.continuity= actions are =revive= and =abandon= with =id= and
+=authorize: true=. The durable recovery decision precedes dispatch and links the
+old execution to the new execution. Failed or interrupted revival consumes its
+claim and records an uncertain outcome for explicit inspection. Resuming a
+conversation presents this inventory for a decision rather than replaying work.
+
+** Granted peer messages
+
+The primary owner establishes directional communication with =peer.grant=.
+Supply an immutable grant =id=, =sender= and =receiver= as primary-visible job
+IDs or =primary=. For example, these arguments grant one child permission to send
+coordination data to the primary:
+
+#+BEGIN_SRC json
+{"id":"build-report","sender":"CHILD-JOB-ID","receiver":"primary","context":true}
+#+END_SRC
+
+Each participating actor uses =peer.discover= to inspect its current grants and
+exact endpoint identities. Call =peer.send= with a stable message =id=, the
+receiver's endpoint ID from discovery, and =text= of 1 to 8192 characters.
+The sender is the actual executing actor. =peer.receive= claims incoming work
+and returns a delivery token; use =peer.ack= with =id= and =token= after handling
+it. =peer.wait= waits for incoming work or a named message acknowledgment, with
+=timeout= bounded to five seconds. =peer.inspect= returns scoped metadata pages
+or the payload and recovery token for an exact message =id=.
+
+With =context: true= on the grant, receive coordination data at the existing
+safe steering boundary. Acknowledgment follows durable persistence of that
+input. Peer text is coordination data, not additional tool or execution authority.
+Children need their ordinary role permission for each =peer= tool; grants do
+not expose parent or sibling job-control operations.
+
+Cross-session communication requires paired explicit grants on both sessions.
+Set =remote-session= and =direction= (=outgoing= or =incoming=); name a remote
+child with both =remote-job= and =remote-execution=, or omit both for its primary.
+Transport uses authenticated local daemon discovery. =peer.revoke= durably
+revokes a grant. Endpoints include exact execution identity, so a replacement
+child does not inherit its predecessor's grant.
+
+Grants and messages restore with the session; interrupted deliveries become
+uncertain. Keep the same stable message ID when transport completion is unknown.
+Only the primary may call =peer.resolve= with =id=, current =token= and =action=
+=acknowledge=, =retry= or =cancel=; retry requires a current grant. Final session
+finish closes its mailbox, while transient daemon handoff preserves delivery
+state.
 
 ** Engineering task artifacts
 

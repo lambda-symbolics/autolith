@@ -579,6 +579,7 @@ model's effort choice to CONFIGURATION--CLONE."
           (task-orchestrator-add-listener orchestrator listener)
           (application--refresh-task-presentation-locked
            application orchestrator)))))
+  (application-peer-messages-ensure application)
   (application--wake-input-controller application)
   nil)
 
@@ -2873,6 +2874,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                           (let ((time (getf (rest record) :created-at)))
                             (if (integerp time) time (getf (rest record) :time))))))))
   (mission-restore application)
+  (application-mission-schedules application)
   nil)
 
 (-> application-goal-context (application) (option string))

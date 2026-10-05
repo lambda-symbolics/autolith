@@ -552,6 +552,7 @@ request that carries its expansion."
    (lambda ()
      (with-lock-held ((agent-turn-lock agent))
        (let ((conversation (agent-conversation agent)))
+          (context-rule-start-turn agent)
          (conversation-flush-async-lisp-events conversation)
          ;; Compact before appending CONTENT so the fresh question survives
          ;; verbatim instead of being folded into the summary.
@@ -1169,9 +1170,11 @@ worker results become explicit unknown outcomes so provider history stays valid.
 (-> agent--tool-thread-function (function) function)
 (defun agent--tool-thread-function (function)
   "Return FUNCTION wrapped with the current turn-scoped tool bindings."
-  (let ((skill-logical-turn-state *skill-logical-turn-state*))
+  (let ((skill-logical-turn-state *skill-logical-turn-state*)
+        (worker-host-tool-policy (copy-tree *worker-host-tool-policy*)))
     (lambda ()
-      (let ((*skill-logical-turn-state* skill-logical-turn-state))
+      (let ((*skill-logical-turn-state* skill-logical-turn-state)
+            (*worker-host-tool-policy* worker-host-tool-policy))
         (funcall function)))))
 
 (-> agent--run-tool-wave
@@ -1274,7 +1277,9 @@ worker results become explicit unknown outcomes so provider history stays valid.
   (let ((serialized-observer
           (make-instance 'serialized-agent-observer :delegate observer))
         (wave nil)
-        (wave-keys (make-hash-table :test #'eql)))
+        (wave-keys (make-hash-table :test #'eql))
+        (*worker-host-tool-policy*
+          (list :restricted-p tool-restriction-p :allowlist (copy-list tool-allowlist))))
     (labels ((flush-wave ()
                (when wave
                  (agent--run-tool-wave
@@ -1347,8 +1352,17 @@ Queued user operations run first so a replaced provider, configuration, or
 tool registry reaches the very next provider request."
   (agent-observer-apply-pending-operations observer agent)
   (conversation-flush-async-lisp-events (agent-conversation agent))
-  (let ((messages (agent-observer-take-steering observer))
-        (conversation (agent-conversation agent)))
+  (agent--persist-steering-input
+   agent observer
+   :messages (agent-observer-take-steering observer)
+   :request-number request-number))
+
+(-> agent--persist-steering-input
+    (agent agent-observer &key (:messages list) (:request-number integer))
+    null)
+(defun agent--persist-steering-input (agent observer &key messages request-number)
+  "Persist MESSAGES before acknowledging each identifier through OBSERVER."
+  (let ((conversation (agent-conversation agent)))
     (unless (listp messages)
       (error 'agent-loop-error
              :message "The agent observer returned malformed steering input."
@@ -1588,6 +1602,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
         (storm-state (agent-tool-storm-state-create))
         (tool-rounds 0)
         (tool-calls 0)
+        (first-request-p t)
         (maximum-output-tokens nil))
     (loop
       (when (>= request-number *agent-maximum-provider-requests-per-turn*)
@@ -1610,6 +1625,12 @@ loop, so compaction ahead of the user message shares the turn's budget."
         (mcp-tool-registry-refresh
          (agent-tool-registry agent)
          :only-dirty-p t))
+      (when first-request-p
+        (agent--persist-steering-input
+         agent observer
+         :messages (peer-message-take-context agent)
+         :request-number (1+ request-number))
+        (setf first-request-p nil))
       (incf request-number)
       (let ((output-limit
               (agent-observer-status

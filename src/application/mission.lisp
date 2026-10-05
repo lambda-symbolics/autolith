@@ -244,8 +244,9 @@ The calling thread preserves provider bindings and authorization callbacks."
   (declare (ignore tool-namespaces event-callback goal-context compaction-p))
   (let ((context (mission--conversation-context conversation)))
     (if (and context (mission--request-owned-p context conversation))
-        (mission--account-inference context #'call-next-method
-                                    (lambda (results) (provider-result-usage (first results))))
+        (mission-review--account context conversation
+                                 :function #'call-next-method
+                                 :usage-function (lambda (results) (provider-result-usage (first results))))
         (call-next-method))))
 
 (defmethod provider-native-compact-conversation :around
@@ -255,7 +256,8 @@ The calling thread preserves provider bindings and authorization callbacks."
   (declare (ignore tool-namespaces event-callback))
   (let ((context (mission--conversation-context conversation)))
     (if (and context (mission--request-owned-p context conversation))
-        (mission--account-inference context #'call-next-method #'second)
+        (mission-review--account context conversation
+                                 :function #'call-next-method :usage-function #'second)
         (call-next-method))))
 
 (-> mission--validate-specification (list) list)
@@ -444,10 +446,12 @@ The calling thread preserves provider bindings and authorization callbacks."
 
 (-> mission--agent-context (agent) (option mission-context))
 (defun mission--agent-context (agent)
-  "Return the mission authority of AGENT's current work at admission."
-  (or (mission-context-find agent)
-      (let ((context (mission-context-find (agent-conversation agent))))
-        (and context (mission--request-owned-p context (agent-conversation agent)) context))))
+  "Return the exact admitted mission, including an explicitly captured absence."
+  (if *worker-host-admission*
+      (first *worker-host-admission*)
+      (or (mission-context-find agent)
+          (let ((context (mission-context-find (agent-conversation agent))))
+            (and context (mission--request-owned-p context (agent-conversation agent)) context)))))
 
 (-> mission-task-job-run (task-job) t)
 (defun mission-task-job-run (job)

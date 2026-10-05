@@ -154,11 +154,12 @@
   (with-test-configuration (configuration root)
     (let ((provider (make-instance 'acp-session-test-gated-provider
                                    :configuration configuration
-                                   :results (list (acp-session-test-text-result "second")))))
+                                    ;; Cancellation may arrive after the first response is consumed.
+                                    :results (list (acp-session-test-text-result "first")
+                                                   (acp-session-test-text-result "second")))))
       (acp-session-test--call-with-client
        configuration
        (lambda (service client)
-         (declare (ignore service))
          (let* ((identifier (agentcomms:client-new-session client (namestring root)))
                 (result nil)
                 (thread (make-thread
@@ -171,8 +172,19 @@
                                    (agentcomms:acp-error (condition)
                                      condition)))))))
            (acp-session-test-gated-wait provider)
-           (agentcomms:client-cancel client identifier)
-           (acp-session-test-gated-release provider)
+            (unwind-protect
+                 (progn
+                   (agentcomms:client-cancel client identifier)
+                   ;; The wire notification has no reply; observe server admission before releasing work.
+                   (let ((session (acp-service--session service identifier))
+                         (deadline (+ (get-internal-real-time)
+                                      (* 5 internal-time-units-per-second))))
+                     (loop until (with-lock-held ((acp-session-lock session))
+                                   (acp-session-cancelled-p session))
+                           do (when (> (get-internal-real-time) deadline)
+                                (error "The ACP service did not admit the cancellation notification."))
+                              (sleep 0.001))))
+              (acp-session-test-gated-release provider))
            (join-thread thread)
            (test-assert (or (eq result ':cancelled)
                             (and (typep result 'agentcomms:acp-error)

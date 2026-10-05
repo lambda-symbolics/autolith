@@ -274,6 +274,7 @@ start under a cancelled ancestor, and hands over to the child."
                               (job-identifier job) reason)
              :identifier (job-identifier job)
              :reason reason)))
+  (task-continuity-record-job job (task-job-parent-agent job))
   (task-run-child job))
 
 (-> task-parent-root-conversation-identifier (agent) non-empty-string)
@@ -404,9 +405,16 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
            (first (task-orchestrator-reserve-session-orders orchestrator 1)))
          (identifier (format nil "exec:~D" session-order))
          (entry
-           (list :function #'tool-execution-job--run
+          (list :function (lambda (job)
+                            (task-continuity-record-job job parent-agent)
+                            (tool-execution-job--run job))
                  :terminal-result-function
-                  terminal-result-function
+                 (lambda (job state result report)
+                   (multiple-value-bind (record final-report final-state)
+                       (funcall terminal-result-function job state result report)
+                     (task-continuity-record-terminal job parent-agent record
+                                                      :state final-state)
+                     (values record final-report final-state)))
                  :name tool-name
                  :owner-identifiers
                  (task-parent-owner-identifiers parent-agent)
@@ -533,7 +541,8 @@ guarantee."
              (child-configuration
                (task-configuration-for-definition
                 (agent-configuration parent-agent) definition)))
-        (when (task-child-reference-history-p parent-agent child-configuration)
+        (when (and (not (getf entry :independent-context-p))
+                   (task-child-reference-history-p parent-agent child-configuration))
           (let ((limit
                   (task-child-reference-history-byte-limit
                    child-configuration)))
@@ -573,7 +582,8 @@ guarantee."
                               :definition (getf entry :definition)
                               :item item
                               :parent-agent parent-agent
-                             :mission-context mission-context
+                              :mission-context mission-context
+                              :review-checkpoint (getf entry :review-checkpoint)
                               :inherited-reference-p inherited-p
                               :inherited-reference-items
                               (and inherited-p inherited-reference-items)
@@ -598,6 +608,8 @@ guarantee."
                        orchestrator reserved-count)
                       (task-orchestrator--refuse-admission
                        orchestrator condition)))))))
+        (dolist (job jobs)
+          (task-continuity-record-job job parent-agent))
         (values jobs
                 (if (typep parent-agent 'task-child-agent)
                     (remove-if #'task-job-detached-p jobs)

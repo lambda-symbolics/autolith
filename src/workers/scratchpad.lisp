@@ -314,25 +314,28 @@
            (format nil
                    "(load ~A :verbose nil :print nil :external-format :utf-8)"
                    (prin1-to-string path))))
-    (cond
-      ((uiop:directory-exists-p path)
-       (tool-failure (format nil "~A is a directory." path)))
-      ((not (probe-file path))
-       (tool-failure (format nil "~A does not exist." path)))
-      (t
-       (lisp-tool-invoke-execution
-        context arguments
-        :tool-name "lisp.scratchpad-run"
-        :summary (format nil "Load scratchpad ~A" path)
-        :operation-function
-        (lambda (worker)
-          (let ((result
-                  (worker-response-tool-result
-                   (lisp-worker-request worker :eval (list :forms (list form))))))
-            (if (tool-result-success-p result)
-                (tool-success
-                 (format nil "Loaded scratchpad file ~A into Lisp REPL ~A.~%~A"
-                         path
-                         repl
-                         (tool-result-content result)))
-                result))))))))
+    (multiple-value-bind (tools enabled-p) (worker-host--allowlist context arguments)
+      (cond
+        ((uiop:directory-exists-p path)
+         (tool-failure (format nil "~A is a directory." path)))
+        ((not (probe-file path))
+         (tool-failure (format nil "~A does not exist." path)))
+        (t
+         (lisp-tool-invoke-execution
+          context arguments
+          :tool-name "lisp.scratchpad-run"
+          :summary (format nil "Load scratchpad ~A" path)
+          :operation-function
+          (lambda (worker)
+            (let ((result
+                    (worker-response-tool-result
+                     (worker-host-eval-request worker :eval (list :forms (list form))
+                                               :context context :tools tools
+                                               :enabled-p enabled-p))))
+              (if (tool-result-success-p result)
+                  (tool-success
+                   (format nil "Loaded scratchpad file ~A into Lisp REPL ~A.~%~A"
+                           path
+                           repl
+                           (tool-result-content result)))
+                  result)))))))))

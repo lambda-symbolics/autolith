@@ -493,6 +493,9 @@ second reports whether shutdown was prepared."
     (when pending-publication
       (application-input-controller--publish-pending-publication
        controller pending-publication nil))
+    (when (and prepared-p (member reason '(:quit :localgroup-kill)))
+      (application-peer-messages-close
+       (application-input-controller-application controller)))
     (values active-p prepared-p)))
 
 (-> application--message-input
@@ -1802,10 +1805,18 @@ work receive steering as soon as possible instead of as follow-ups."
   (unwind-protect
        (funcall function
                 (lambda ()
-                  (application-input-controller--take-steering controller))
+                  (append
+                   (application-input-controller--take-steering controller)
+                   (peer-message-take-context
+                    (application-peer-messages--actor
+                     (application-input-controller-application controller)))))
                 (lambda (identifier)
-                  (application-input-controller--acknowledge-steering
-                   controller identifier)))
+                  (or (peer-message-ack-context
+                       (application-peer-messages--actor
+                        (application-input-controller-application controller))
+                       identifier)
+                      (application-input-controller--acknowledge-steering
+                       controller identifier))))
     (with-lock-held ((application-input-controller-lock controller))
       (setf (application-input-controller-primary-steering-p controller)
             nil))))
@@ -3672,11 +3683,15 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
                       (second work)
                       :steering-function
                       (lambda ()
-                        (application-input-controller--take-steering controller))
+                        (append
+                         (application-input-controller--take-steering controller)
+                         (peer-message-take-context (application-peer-messages--actor application))))
                       :steering-persisted-function
                       (lambda (identifier)
-                        (application-input-controller--acknowledge-steering
-                         controller identifier))
+                        (or (peer-message-ack-context
+                             (application-peer-messages--actor application) identifier)
+                            (application-input-controller--acknowledge-steering
+                             controller identifier)))
                       :user-message-persisted-function
                       (lambda (identifier)
                         (application-input-controller--acknowledge-active-work

@@ -4,6 +4,22 @@
 
 (setf *test-suites* nil)
 
+(define-test-suite mission-schedule
+  test-mission-schedule-missed-and-dedup
+  test-mission-schedule-version-and-cancel
+  test-mission-schedule-recovery
+  test-mission-schedule-events-and-authority
+  test-mission-schedule-live-retry-exclusion
+  test-mission-schedule-hosted-admission)
+
+(define-test-suite peer-message
+  test-peer-message-authority
+  test-peer-message-durable-delivery
+  test-peer-message-context-boundary
+  test-peer-message-identity-and-finish
+  test-peer-message-daemon-transport
+  test-peer-message-child-provider-boundary)
+
 (define-test-suite lsp
   test-lsp-configuration
   test-lsp-tool-position-and-query
@@ -123,6 +139,12 @@
 (define-test-suite context
   test-session-state-context-contributor
   test-request-local-context)
+
+(define-test-suite context-rule
+  test-context-rule-selection
+  test-context-rule-validation-and-budget
+  test-context-rule-tool-events
+  test-context-rule-generation-and-diagnostics)
 
 (define-test-suite interpreter-discipline
   test-interpreter-discipline)
@@ -577,6 +599,31 @@
   test-task-run-native-manifest
   test-task-closed-runtime-refresh
   test-task-scheduler)
+
+(define-test-suite executable-skill
+  test-executable-skill-admission
+  test-executable-skill-workflow
+  test-executable-skill-verification-contracts)
+
+(define-test-suite task-continuity
+  test-task-continuity-classification
+  test-task-continuity-revive
+  test-task-continuity-ownership)
+
+(define-test-suite task-inspector
+  test-task-inspector-transcript
+  test-task-inspector-dispatch)
+
+(define-test-suite mission-review
+  test-mission-review-checkpoint-lifecycle
+  test-mission-review-native-contract
+  test-mission-review-budget-and-failure
+  test-mission-review-cancellation-and-authority)
+
+(define-test-suite worker-host-call
+  test-worker-host-dispatch-authority
+  test-worker-host-capabilities
+  test-worker-host-persistent-transport)
 
 (define-test-suite refinement
   test-refinement-progression

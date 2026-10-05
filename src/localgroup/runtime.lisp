@@ -116,6 +116,7 @@ conversation transaction can roll back before releasing either lease."
                 (setf (image-daemon:daemon-runtime-identifier session) old-identifier
                       (image-daemon:daemon-runtime-registry-pathname session)
                         old-pathname))))))))
+  (application-mission-schedules-notify application)
   nil)
 
 (defun localgroup-endpoint-records (configuration)
@@ -608,6 +609,7 @@ already disconnected costs nothing."
            (unless restart-p (localgroup-handoff-assert-startup-active))
            (image-daemon:daemon-runtime-start session)
            (localgroup--publish-registry session)
+           (application-mission-schedules-host application session)
            (setf completed-p t)
            (when (and (not restart-p) (localgroup--attach-expected-p startup-values))
              (setf (localgroup-session-attach-watchdog-thread session)
@@ -621,9 +623,20 @@ already disconnected costs nothing."
 
 (defun localgroup--handle-request (session request &key socket stream)
   "Dispatch authenticated requests according to Autolith's command and attachment policy."
-  (if (eq (localgroup--request-field request :operation) ':attach)
-      (localgroup--serve-attachment session socket stream request)
-      (daemon-write-packet stream (localgroup--dispatch-request session request))))
+  (case (localgroup--request-field request :operation)
+    (:attach
+     (localgroup--serve-attachment session socket stream request))
+    (:message
+     (image-daemon:daemon-message-handle-request
+      session request :stream stream
+      :dispatcher
+      (lambda (envelope &key cancelled-p)
+        (application-peer-message-dispatch
+         (localgroup-session-application session)
+         envelope :cancelled-p cancelled-p))
+      :character-limit 32768 :request-timeout 2))
+    (otherwise
+     (daemon-write-packet stream (localgroup--dispatch-request session request)))))
 
 (defun localgroup-stop (application)
   "Stop APPLICATION's watchdog and its owned image-daemon endpoint."

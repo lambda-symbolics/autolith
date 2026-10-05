@@ -334,7 +334,7 @@
    (tool-context-agent context)
    :tool-name tool-name
    :summary summary
-   :operation-function operation-function
+   :operation-function (worker-host--bound-function operation-function :context context)
    :async-p (tool-boolean-argument arguments "async" :tool-name tool-name)
    :parent-call-id (tool-context-call-id context)))
 
@@ -369,16 +369,18 @@ that worker, while cancellation after a completed request leaves the REPL intact
   (let ((forms (tool-forms-argument arguments "lisp.eval"))
         (compile-p
           (tool-boolean-argument arguments "compile" :tool-name "lisp.eval")))
-    (lisp-tool-invoke-execution
-     context arguments
-     :tool-name "lisp.eval"
-     :summary (format nil "~{~A~^ ~}" forms)
-     :operation-function
-     (lambda (worker)
-       (worker-response-tool-result
-        (lisp-worker-request worker
-                             (if compile-p ':compile ':eval)
-                             (list :forms forms)))))))
+    (multiple-value-bind (tools enabled-p) (worker-host--allowlist context arguments)
+      (lisp-tool-invoke-execution
+       context arguments
+       :tool-name "lisp.eval"
+       :summary (format nil "~{~A~^ ~}" forms)
+       :operation-function
+       (lambda (worker)
+         (worker-response-tool-result
+          (worker-host-eval-request worker
+                                    (if compile-p ':compile ':eval)
+                                    (list :forms forms)
+                                    :context context :tools tools :enabled-p enabled-p)))))))
 
 (defmethod tool-execute ((tool lisp-load-system-tool)
                          (context tool-context)

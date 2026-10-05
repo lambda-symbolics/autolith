@@ -905,37 +905,57 @@ dependency), which counts only when its feature expression holds."
          :symbol symbol
          :path-prefix (format nil "~A:" (asdf:component-name system)))))))
 
-(-> self-source--withheld-files () list)
-(defun self-source--withheld-files ()
-  "Return the system's source files, relative to its root, that :IF-FEATURE withholds here.
+(-> self-source--withheld-files (&key (:root pathname)) list)
+(defun self-source--withheld-files
+    (&key (root (asdf:system-source-directory (asdf:find-system "autolith"))))
+  "Return source paths unavailable in this image through ASDF component boundaries.
 
-Such a file is not loaded in this image and may not even read on this host,
-as the POSIX adapter does not on Windows."
-  (let* ((system (asdf:find-system "autolith"))
-         (root (asdf:system-source-directory system)))
+Feature-withheld components and unloaded optional Autolith systems may refer to
+packages absent from this image. Do not read those files during source lookup.
+Files shared with a loaded system are available through that system."
+  (let* ((loaded (asdf:already-loaded-systems))
+         (systems (loop for name in (asdf:registered-systems)
+                        when (or (string= name "autolith")
+                                 (uiop:string-prefix-p "autolith/" name))
+                          collect (asdf:find-system name)))
+         (available (mapcan #'self-source--component-pathnames
+                            (remove-if-not
+                             (lambda (component)
+                               (member (asdf:component-name component) loaded
+                                       :test #'string-equal))
+                             systems))))
     (labels ((collect (component withheld-p)
-               "Return the withheld files below COMPONENT, all of them when WITHHELD-P."
+               "Return withheld files below COMPONENT, respecting loaded owners."
                (let* ((feature (asdf/component:component-if-feature component))
                       (withheld-p (or withheld-p
                                       (and feature (not (uiop:featurep feature))))))
-                 (cond ((not (typep component 'asdf:cl-source-file))
-                        (mapcan (lambda (child) (collect child withheld-p))
-                                (asdf:component-children component)))
-                       (withheld-p
-                        (list (enough-namestring (asdf:component-pathname component)
-                                                 root)))
-                       (t
-                        nil)))))
-      (collect system nil))))
+                 (cond
+                   ((not (typep component 'asdf:cl-source-file))
+                    (mapcan (lambda (child) (collect child withheld-p))
+                            (asdf:component-children component)))
+                   ((and withheld-p
+                         (not (member (asdf:component-pathname component) available
+                                      :test #'uiop:pathname-equal)))
+                    (list (enough-namestring (asdf:component-pathname component)
+                                             root)))
+                   (t
+                    nil)))))
+      (remove-duplicates
+       (mapcan (lambda (component)
+                 (collect component
+                          (not (member (asdf:component-name component) loaded
+                                       :test #'string-equal))))
+               systems)
+       :test #'string=))))
 
 (-> self-tracked-definitions (configuration symbol) list)
 (defun self-tracked-definitions (configuration symbol)
   "Return complete tracked top-level definitions whose name is SYMBOL.
 
-Files the system withholds from this image through :IF-FEATURE are left out."
+Files belonging only to unloaded optional systems or withheld features are left out."
   (let* ((source-root (config :source-root configuration))
          (editable-root (merge-pathnames "src/" source-root))
-         (withheld (self-source--withheld-files)))
+         (withheld (self-source--withheld-files :root source-root)))
     (self-source--definitions
      (remove-if (lambda (pathname)
                   (member (enough-namestring pathname source-root) withheld

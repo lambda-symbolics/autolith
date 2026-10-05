@@ -312,10 +312,15 @@ The primary blocking field and legacy inverse async field are mutually exclusive
     t)
 (defun task--artifact-field
     (value field &key preview-limit artifact-available-p)
-  "Return VALUE inline or a typed descriptor naming FIELD in an artifact."
+  "Return VALUE inline, a bounded newest progress tail, or an artifact descriptor."
   (cond
     ((null value)
      nil)
+    ((and (eq field :progress-output) (stringp value)
+          (> (length value) preview-limit))
+     (let ((start (- (length value) preview-limit)))
+       (list :tail (subseq value start)
+             :omitted (list :field field :characters start))))
     ((stringp value)
      (if (<= (length value) preview-limit)
          value
@@ -1292,5 +1297,12 @@ Only the current primary conversation's artifact root is searched."
                                              (tool-string-property
                                               "The steering message text."))
                                             '("id" "message"))))
+    (tool-registry-register
+     registry
+     (make-instance 'task-continuity-tool :orchestrator orchestrator
+                    :namespace "job" :name "continuity"
+                    :description "Classify owned durable jobs and explicitly reattach, reconstruct, safely restart, or abandon unfinished work. Recovery requires primary-owner authorization and a durable replay claim."
+                    :parameters (task-continuity-parameters)))
     (task-worktree-register-tool registry orchestrator)
+    (peer-message-register-tools registry :orchestrator orchestrator)
     registry))

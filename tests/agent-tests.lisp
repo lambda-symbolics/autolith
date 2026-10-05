@@ -859,31 +859,40 @@
                                    :if-does-not-exist ':create
                                    :external-format ':utf-8)
              (write-string "restricted workspace content" stream))
-           (let ((*agent-restricted-maximum-tool-rounds* 3))
-             (agent-run-user-turn
-              agent
-              "diagnose within the workspace"
-              :tool-allowlist '("resource.read")
-              :tool-restriction-p t))
-           (let ((outputs
-                   (loop for item in (conversation-input-items conversation)
-                         when (string= (or (json-get item "type") "")
-                                       "function_call_output")
-                           collect (json-get item "output"))))
-             (test-assert
-              (and (= (length outputs) 3)
-                   (search "restricted workspace content" (first outputs)))
-              "a restricted turn may read workspace resources")
-             (test-assert
-              (and (search "agenda:current" (second outputs))
-                   (search "unavailable under this authority context"
-                           (second outputs)))
-              "a restricted turn rejects agenda resources")
-             (test-assert
-              (and (search "memory:relevant" (third outputs))
-                   (search "unavailable under this authority context"
-                           (third outputs)))
-              "a restricted turn rejects memory resources")))
+           (let ((codes (make-hash-table :test #'equal))
+                 (execute (symbol-function 'tool-registry-execute-call)))
+             (test-call-with-function-replacements
+              (list
+               (list 'tool-registry-execute-call
+                     (lambda (registry call context)
+                       (let ((result (funcall execute registry call context)))
+                         (setf (gethash (json-get call "call_id") codes)
+                               (tool-result-error-code result))
+                         result))))
+              (lambda ()
+                (let ((*agent-restricted-maximum-tool-rounds* 3))
+                  (agent-run-user-turn
+                   agent
+                   "diagnose within the workspace"
+                   :tool-allowlist '("resource.read")
+                   :tool-restriction-p t))))
+             (let ((outputs
+                     (loop for item in (conversation-input-items conversation)
+                           when (string= (or (json-get item "type") "")
+                                         "function_call_output")
+                             collect (json-get item "output"))))
+               (test-assert
+                (and (= (length outputs) 3)
+                     (search "restricted workspace content" (first outputs)))
+                "a restricted turn may read workspace resources")
+               (test-assert
+                (and (search "agenda:current" (second outputs))
+                     (eq (gethash "restricted-agenda-read" codes) ':access-denied))
+                "a restricted turn rejects agenda resources")
+               (test-assert
+                (and (search "memory:relevant" (third outputs))
+                     (eq (gethash "restricted-memory-read" codes) ':access-denied))
+                "a restricted turn rejects memory resources"))))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

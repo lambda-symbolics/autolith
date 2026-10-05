@@ -1920,7 +1920,8 @@
                       (lambda (checked-configuration checked-source)
                         (declare (ignore checked-configuration checked-source))
                         "active checks passed"))))
-                  (tool (make-instance 'self-persist-definition-tool)))
+                  (tool (tool-registry-find (make-default-tool-registry)
+                                            "self" "persist-definition")))
              (setf (symbol-function 'durable-mutation-transition)
                    (lambda (checked-configuration checked-mutation phase
                             &key detail git-commit)
@@ -1942,7 +1943,11 @@
                      context
                      (json-object "definition" definition-source))
                     nil)
-                (error ()
+                (error (condition)
+                  (test-assert
+                   (search "Injected post-publication journal failure."
+                           (princ-to-string condition))
+                   (format nil "the failure follows publication: ~A" condition))
                   t))
               "an error after image publication still escapes the tool")
              (setf (symbol-function 'durable-mutation-transition)
@@ -2374,9 +2379,77 @@
                                       :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-self-source-optional-components () null)
+(defun test-self-source-optional-components ()
+  "Test source lookup respects loaded optional, shared and feature-gated owners."
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (let* ((source-configuration (test-configuration-for-source-root root))
+           (identifier (make-identifier))
+           (loaded-name (format nil "autolith/source-reader-~A-loaded" identifier))
+           (unloaded-name (format nil "autolith/source-reader-~A-unloaded" identifier))
+           (shared-pathname (merge-pathnames "src/shared.lisp" root))
+           (foreign-pathname (merge-pathnames "src/foreign.lisp" root))
+           (gated-pathname (merge-pathnames "src/gated.lisp" root))
+           (unowned-pathname (merge-pathnames "src/unowned.lisp" root))
+           (source "(defun test-source-reader-shared () :shared)")
+           (unreadable "(defun test-source-reader-unavailable () autolith-absent-optional-reader:value)"))
+      (unwind-protect
+           (progn
+             (test-assert (null (find-package "AUTOLITH-ABSENT-OPTIONAL-READER"))
+                          "optional reader fixture has no dependency package")
+             (dolist (entry (list (cons shared-pathname source)
+                                 (cons foreign-pathname unreadable)
+                                 (cons gated-pathname unreadable)))
+               (ensure-directories-exist (first entry))
+               (with-open-file (stream (first entry) :direction ':output
+                                                    :if-exists ':supersede)
+                 (format stream "(in-package #:autolith)~%~A~%" (rest entry))))
+             (eval `(asdf:defsystem ,loaded-name
+                      :pathname ,root
+                      :components ((:file "src/shared")
+                                   (:file "src/gated"
+                                    :if-feature :autolith-absent-source-reader-feature))))
+             (eval `(asdf:defsystem ,unloaded-name
+                      :pathname ,root
+                      :components ((:file "src/shared") (:file "src/foreign"))))
+             (test-assert
+              (null (self-tracked-definitions source-configuration
+                                             'test-source-reader-shared))
+              "an unloaded optional system contributes no source definitions")
+             (asdf:load-system loaded-name)
+             (let ((definitions (self-tracked-definitions source-configuration
+                                                          'test-source-reader-shared)))
+               (test-assert
+                (and (= 1 (length definitions))
+                     (string= source (tracked-definition-source (first definitions)))
+                     (string= "src/shared.lisp"
+                              (tracked-definition-relative-pathname (first definitions))))
+                "loaded optional source is exact even when an unloaded system shares it"))
+             (test-assert
+              (null (self-tracked-definitions source-configuration
+                                             'test-source-reader-unavailable))
+              "unloaded dependency and feature-gated source are not read")
+             (with-open-file (stream unowned-pathname :direction ':output)
+               (write-string unreadable stream))
+             (test-assert
+              (handler-case
+                  (progn
+                    (self-tracked-definitions source-configuration
+                                              'test-source-reader-shared)
+                    nil)
+                (reader-error () t))
+              "a malformed non-optional tracked file still fails source lookup"))
+        (asdf:clear-system loaded-name)
+        (asdf:clear-system unloaded-name)
+        (when (fboundp 'test-source-reader-shared)
+          (fmakunbound 'test-source-reader-shared)))))
+  nil)
+
 (-> test-lisp-source-undefined-name () null)
 (defun test-lisp-source-undefined-name ()
   "Name the requested symbol when lisp.source finds nothing in the active image."
+  (test-self-source-optional-components)
   (with-test-configuration (configuration)
     (let* ((conversation
              (conversation-create configuration

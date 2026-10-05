@@ -320,6 +320,12 @@ nesting depth, and lifecycle listeners."))
     :reader task-job-mission-context
     :type t
     :documentation "Exact mission authority captured at admission, before any queue delay.")
+   (review-checkpoint
+    :initarg :review-checkpoint
+    :initform nil
+    :reader task-job-review-checkpoint
+    :type t
+    :documentation "Optional mission reviewer budget captured before the child starts.")
    (inherited-reference-p
     :initarg :inherited-reference-p
     :initform nil
@@ -490,6 +496,8 @@ parent, and borrowed capabilities are released at terminal state."))
                "The role and policy configuring this child.")
    (identity :initarg :identity :reader task-child-agent-identity :type
              list :documentation "The stable identity of this child.")
+   (peer-endpoint :initform nil :accessor task-child-agent-peer-endpoint
+                  :documentation "Immutable peer endpoint captured when this child is initialized.")
    (depth :initarg :depth :reader task-child-agent-depth :type
           (integer 1) :documentation
           "The explicit child depth below the primary agent.")

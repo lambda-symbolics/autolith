@@ -3,8 +3,8 @@
 ;;;; -- Resumed Conversation Notice --
 
 (defparameter *resume-context-instruction*
-    "Autolith restarted and resumed this conversation from disk. Background jobs, asynchronous shell runs, and Lisp worker state started before the restart are gone, so do not poll, wait for, or cancel them; only durable child task results remain readable through job.get."
-  "The notice telling the model that pre-restart work no longer exists.")
+    "Autolith resumed this conversation from disk. Inspect job.continuity to classify earlier unfinished work: owned live jobs may be reattached, compatible saved worker images reconstructed, explicitly safe specifications restarted, and other dead work needs a decision. Do not replay side effects without explicit authority and a fresh deduplication claim. Ordinary job operations are available for currently owned jobs; durable completed child results are readable through job.get."
+  "The explicit continuity boundary shown on the first resumed turn.")
 
 (-> resume-context--active-p (conversation) boolean)
 (defun resume-context--active-p (conversation)
@@ -31,7 +31,7 @@ later user turn begins."
 
 (-> resume-context (request-context) (option context-contribution))
 (defun resume-context (request)
-  "Tell the model once, after a resume, that earlier background work is dead."
+  "Tell the model once after resume to inspect explicit job continuity."
   (when (and (not (request-context-compaction-p request))
              (resume-context--active-p (request-context-conversation request)))
     (make-context-contribution

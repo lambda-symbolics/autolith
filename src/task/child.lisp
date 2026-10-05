@@ -779,16 +779,18 @@ candidates."
              (task-job-note-agent-status job status details))
            :steering-callback
            (lambda ()
-             (task-job-take-steering job))
+             (append (task-job-take-steering job) (peer-message-take-context child)))
            :steering-persisted-callback
            (lambda (identifier)
-             (task-job-acknowledge-steering job identifier))
+             (or (peer-message-ack-context child identifier)
+                 (task-job-acknowledge-steering job identifier)))
            :command-authorization-callback
            (task-job-command-authorization-function job)
            :tool-authorization-callback
            (task-job-tool-authorization-function job))))
     (mission-context-bind (task-job-mission-context job) configuration)
     (mission-context-bind (task-job-mission-context job) conversation)
+    (mission-review-bind-checkpoint (task-job-review-checkpoint job) conversation)
     (unwind-protect
          (progn
            (task-child-inherit-reference-history job conversation provider)

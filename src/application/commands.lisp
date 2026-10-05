@@ -2843,6 +2843,31 @@ the settings page and the slash commands behave identically."
     (application-permissions-command application choice))
   ':continue)
 
+(define-application-command application--builtin-tasks-command
+    (:name "/tasks"
+     :argument "[list|get|transcript|send|cancel|revive|abandon] [ID] [ARGUMENTS]"
+     :description "inspect task lineage, artifacts and explicit recovery"
+     :tip "shows compact activity and routes steering through ordinary job authority."
+     :busy-behavior :inspect
+     :terminal-behavior :shared
+     :callable t)
+    (application &optional (remainder ""))
+  (application-present application (application-task-inspector application remainder))
+  ':continue)
+
+
+(define-application-command application--builtin-mission-wakeup-command
+    (:name "/mission-wakeup"
+     :argument "TICKET"
+     :description "consume an admitted durable mission wakeup"
+     :tip "rechecks the current mission version and records uncertain execution before effects."
+     :busy-behavior :hold
+     :terminal-behavior :shared
+     :callable t)
+    (application &optional (remainder ""))
+  (application-mission-wakeup-command application remainder)
+  ':continue)
+
 (define-application-command application--builtin-refine-command
     (:name "/refine"
      :argument "[(:assess ID REVISION VERDICT EVIDENCE)]"

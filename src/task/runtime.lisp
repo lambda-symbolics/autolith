@@ -523,6 +523,9 @@ under the progress lock before releasing it to other threads."
                   :status (task-progress-status progress)
                   :current-tool (task-progress-current-tool progress)
                   :request-count (task-progress-request-count progress))))
+    (when (member status '(:provider-request-started :provider-request-completed
+                           :tool-call-started :tool-call-completed))
+      (task-continuity-note-activity job status details))
     (task-orchestrator-emit (task-job-orchestrator job) :task-subagent-progress
                             event)
     ;; Every observed child event is also a cancellation point, so a child whose

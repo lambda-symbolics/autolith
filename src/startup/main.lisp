@@ -448,6 +448,8 @@ it on the normal screen after its alternate buffer closes."
                            :pending-persistence-enabled-p
                            recovery-input-storage-ready-p
                            :start-reader-p nil))
+                    (application-mission-schedules-recover application :startup-p t)
+                    (application-peer-messages-recover application)
                     (application-recovery-input-vault-present-startup-warning
                      application)
                     (localgroup-start application)

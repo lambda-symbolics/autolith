@@ -252,6 +252,12 @@
     :reader tool-context-conversation
     :type conversation
     :documentation "The conversation requesting the operation.")
+   (context-rule-generation
+    :initarg :context-rule-generation
+    :initform nil
+    :reader tool-context-rule-generation
+    :type (option string)
+    :documentation "The originating logical-turn identity for advisory metadata.")
    (mutation-checker
     :initarg :mutation-checker
     :initform nil
