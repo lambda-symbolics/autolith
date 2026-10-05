@@ -31,6 +31,21 @@ a user-local init.lisp change, or a private image commit.
 - Removal condition: discard the exploratory override after booting the tracked
   definition.
 
+** Recent child coordination notes
+
+- Problem: Long live child output became an omitted-field descriptor in =job.get=,
+  hiding the newest source-freeze and Git-index coordination notes.
+- Behavior: Retain a bounded newest-tail preview for =:progress-output= in native
+  job records, including a count of omitted leading characters.
+- Scope and location: private =task--artifact-field= definition, image commit
+  =1f767606-fbcc-4002-a141-06e220dc9ed6=, private Git
+  =0e8907b605e0db35a49d416ae4c054fd9df9943a=.
+- Verification: assertions covered long, short, empty and zero-budget progress;
+  a 7,000-character native job record retained its latest note within 1,024
+  characters. Clean-process private replay passed.
+- Removal condition: replace the override after installing equivalent tracked
+  native job preview behavior.
+
 ** Resumed-turn job ownership
 
 - Problem: The repeated restart notice did not distinguish new live jobs from
