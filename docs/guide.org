@@ -1294,6 +1294,45 @@ Persisted child results must contain one data-only form with valid terminal
 status and field types. The default reading limits are 16 MiB, 128 nesting
 levels, and 262,144 tree nodes.
 
+** Isolated modifying tasks
+
+Supply an =isolation= object in a flat =task.run= call or in each selected batch
+item. Omit it for the ordinary shared workspace. The object accepts =baseline=
+(a commit-resolving revision, default =HEAD=), =dirtyPolicy= (=reject= by default,
+or explicit =ignore=), and =artifactKind= (=patch= by default, or =commit-range=).
+With =ignore=, use only the committed baseline; staged, unstaged and untracked
+source edits are excluded. Git isolation is unavailable for non-Git workspaces.
+
+The child edits and tests in its detached checkout. Before it starts, persist the
+source repository, exact resolved baseline, isolated path and conversation-qualified
+owner. Stage new files before yielding. A patch includes committed and uncommitted
+tracked changes; a commit range requires a clean checkout and ancestor baseline.
+Terminal results, including aborted tasks, identify the secured engineering artifact.
+Extraction failures retain the checkout and report =:worktree-error=; a successful
+child without a complete artifact is reported as failed.
+
+Use =task.worktree= with an explicit =action=:
+
+- =inspect= returns provenance, touched paths and the durable artifact pathname;
+  =extract= explicitly retries extraction after repairing an incomplete checkout.
+  Supply a visible terminal job =id= or its durable execution ID.
+- =check= verifies patch applicability without mutation. =apply= applies the patch
+  to the clean target's index and working tree; =commits= cherry-picks the recorded
+  commit range. Supply =id= and an explicit =target= repository.
+- =conflicts= inspects unmerged paths; =abort= explicitly aborts an interrupted
+  cherry-pick. Supply the target repository.
+- =cleanup= removes only the task's owned checkout. Dirty cleanup requires
+  =discardDirty: true=. Secured artifacts are independent of checkout removal.
+- =discover= lists this conversation's active and absent owned records. Supply
+  =source= to recover interrupted registry publication from Git markers.
+  =cleanup-orphan= uses a discovery worktree =id= and explicit =source=, including
+  after task-result publication failed. Unrelated worktrees are excluded.
+
+Git lifecycle and integration commands use ordinary command authorization and
+execution policy. Target paths use ordinary tool-path authorization. Isolation
+is an accidental-overlap boundary, not hostile-code confinement. The parent
+chooses integration order and resolves conflicts deliberately.
+
 Primary shell and Lisp executions and child agents appear as live rows with
 spinners and elapsed time. The command and agent strips share a viewport bound,
 and provider activity remains visible below them. =shell.run= accepts an optional

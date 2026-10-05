@@ -238,7 +238,14 @@ boundary cannot fit within that budget."
   (let* ((definition (task-job-definition job))
          (identity (task-job-identity job))
          (item (task-job-item job))
-         (context (getf item :context))
+         (context
+          (if (getf item :worktree)
+              (format nil "~@[~A~2%~]This is an isolated modifying task at baseline ~A. Edit and test in ~A. Return your findings through yield; the parent will explicitly inspect and integrate your artifact. Do not modify or integrate into source workspace ~A. Stage new files before yielding so the complete patch can be extracted."
+                      (getf item :context)
+                      (getf (getf item :worktree) :baseline)
+                      (getf (getf item :worktree) :path)
+                      (getf (getf item :worktree) :source))
+              (getf item :context)))
          (output (task-output-definition-text definition)))
     (format nil
             "You are child agent ~A of type ~A, depth ~D. Your specialized role follows.~2%~A~@[~2%Shared parent context:~%~A~]~@[~2%Your yield data must satisfy this native output contract:~%~A~]~2%You are not the primary Autolith session. self.* tools are deliberately unavailable. Your initial workspace is ~A. Work within the assignment's scope. Paths outside the workspace use the ordinary tool path authorization; this initial directory is not an additional confinement policy. Complete the assignment in the user message. You MUST end by calling yield.submit exactly once. A normal assistant stop without yield is a failed child run. Put the useful parent-facing answer in yield.text and structured data in yield.data when requested."
@@ -732,8 +739,9 @@ candidates."
          (orchestrator (task-job-orchestrator job))
          (depth (1+ (task-parent-depth parent)))
          (configuration
-          (task-configuration-for-definition (agent-configuration parent)
-                                             definition))
+          (task-worktree-configuration
+           job (task-configuration-for-definition (agent-configuration parent)
+                                                  definition)))
          (conversation
           (conversation-create
            configuration

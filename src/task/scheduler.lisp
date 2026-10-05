@@ -30,7 +30,8 @@
                     :structured-output-present-p :structured-output :label
                     :request-count :usage :duration-ms :model
                     :conversation-file :detached :output-path
-                    :undelivered-prompt-count :agent-definition)
+                    :undelivered-prompt-count :agent-definition
+                    :worktree :worktree-artifact-path :worktree-error)
                 append (list field (getf result field))))
         (storage (if artifact-available-p :artifact :omitted)))
     (flet ((compact-string
@@ -50,6 +51,9 @@
       (compact-string :error *task-retained-output-limit*
                       :storage-field ':error-storage
                       :characters-field ':error-characters)
+      (compact-string :worktree-error *task-retained-output-limit*
+                      :storage-field ':worktree-error-storage
+                      :characters-field ':worktree-error-characters)
       (compact-string :label *task-result-label-maximum-characters*
                       :storage-field ':label-storage
                       :characters-field ':label-characters))
@@ -191,6 +195,10 @@ that a body returned. An artifact that cannot be written downgrades the state to
             (:aborted :aborted)
             (otherwise :failed))
           (getf final-result :agent-definition) definition-summary)
+    (setf final-result (task-worktree-finalize-result job final-result))
+    (when (and (eq final-state ':completed)
+               (eq (getf final-result :status) ':failed))
+      (setf final-state ':failed))
     (handler-case
         (setf final-result
               (append final-result

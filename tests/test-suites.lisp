@@ -28,6 +28,14 @@
   test-workspace-change-same-content-permissions
   test-workspace-change-linked-undo)
 
+(define-test-suite task-worktree
+  test-task-worktree-options
+  test-task-worktree-isolation
+  test-task-worktree-artifacts
+  test-task-worktree-authority
+  test-task-worktree-interruption
+  test-task-worktree-conflicts)
+
 (define-test-suite vault-edit
   test-vault-operation-routing
   test-vault-store-and-edit

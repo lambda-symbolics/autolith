@@ -16,6 +16,7 @@
                #:cl-resources
                #:cl-rfc8252
                #:cl-rfc8628
+               #:cl-worktree
                #:clinker-transcript
                #:cl-llm-provider-api
                #:cl-llm-provider-api/dexador
@@ -190,6 +191,7 @@
                              (:file "task/notes")
                              (:file "task/scheduler")
                              (:file "task/tools")
+                             (:file "task/worktrees")
                              (:file "terminal/protocol")
                              (:file "terminal/input")
                              (:file "terminal/style")
@@ -334,6 +336,7 @@
                              (:file "agent-tests")
                              (:file "inference-tests")
                              (:file "task-test-support")
+                             (:file "task-worktree-tests")
                              (:file "task-agent-tests")
                              (:file "task-execution-tests")
                              (:file "task-scheduler-tests")

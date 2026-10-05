@@ -86,7 +86,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
     (error 'task-error :message "Every tasks item must be a JSON object."
            :tool-name "task.run"))
   (task--validate-json-fields
-   object '("name" "agent" "task" "context" "blocking" "async")
+   object '("name" "agent" "task" "context" "blocking" "async" "isolation")
    "a task item")
   (let ((task (task--repair-prose (json-get object "task")))
         (name (json-get object "name"))
@@ -121,13 +121,14 @@ The primary blocking field and legacy inverse async field are mutually exclusive
           :agent (string-downcase agent)
           :task task
           :context (task--combine-context shared-context context)
+          :isolation (task-worktree-normalize-options (json-get object "isolation"))
           :blocking blocking-p
           :async (not blocking-p))))
 
 (defun task-normalize-arguments (arguments)
   "Validate TASK.RUN ARGUMENTS and return ordinary normalized item plists."
   (task--validate-json-fields
-   arguments '("name" "agent" "task" "context" "blocking" "async" "tasks")
+   arguments '("name" "agent" "task" "context" "blocking" "async" "tasks" "isolation")
    "the top-level call")
   (let* ((tasks nil)
          (tasks-present-p nil)
@@ -153,7 +154,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                (error 'task-error :message
                       "A batch task call cannot also contain top-level task."
                       :tool-name "task.run"))
-             (dolist (field '("name" "agent"))
+             (dolist (field '("name" "agent" "isolation"))
                (when (nth-value 1 (gethash field arguments))
                  (error 'task-error
                         :message
@@ -340,6 +341,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
             (ecase field
               (:output ':output-storage)
               (:error ':error-storage)
+              (:worktree-error ':worktree-error-storage)
               (:label ':label-storage)
               (:structured-output ':structured-output-storage)
               (:usage ':usage-storage)))
@@ -347,6 +349,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
             (ecase field
               (:output ':output-characters)
               (:error ':error-characters)
+              (:worktree-error ':worktree-error-characters)
               (:label ':label-characters)
               (:structured-output ':structured-output-characters)
               (:usage ':usage-characters)))
@@ -431,6 +434,12 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                   :agent-definition
                   :preview-limit preview-limit
                   :artifact-available-p artifact-available-p)
+                 :worktree (getf result :worktree)
+                 :worktree-artifact-path (getf result :worktree-artifact-path)
+                 :worktree-error
+                 (task--retained-result-field result :worktree-error
+                                              :preview-limit preview-limit
+                                              :artifact-available-p artifact-available-p)
                  :artifact artifact))))
     (append
      (list :id (getf snapshot :job-id)
@@ -1144,6 +1153,7 @@ Only the current primary conversation's artifact root is searched."
                         "context"
                         (tool-string-property
                          "Optional item-specific background.")
+                        "isolation" (task-worktree-options-schema)
                         "blocking"
                         (tool-boolean-property
                          "Wait for this child instead of detaching it; defaults to false.")
@@ -1164,6 +1174,7 @@ Only the current primary conversation's artifact root is searched."
                         "context"
                         (tool-string-property
                          "Shared non-empty background required for batch calls.")
+                        "isolation" (task-worktree-options-schema)
                         "blocking"
                         (tool-boolean-property
                          "Wait for non-forced children instead of detaching them; defaults to false.")
@@ -1281,4 +1292,5 @@ Only the current primary conversation's artifact root is searched."
                                              (tool-string-property
                                               "The steering message text."))
                                             '("id" "message"))))
+    (task-worktree-register-tool registry orchestrator)
     registry))
