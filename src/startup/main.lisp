@@ -666,7 +666,12 @@ dependencies."
                    (main--authentication-output-styled-p *standard-output*)))
              (format t "~&~A~%"
                      (provider-authenticate-with-method
-                      provider method :stream *standard-output* :open-browser-p t)))))
+                      provider method :stream *standard-output* :open-browser-p t))
+             (let ((model (provider-authenticated-model configuration provider)))
+               (when model
+                 (setf (config :model configuration) model)
+                 (format t "~&Active provider: ~A; model: ~A.~%"
+                         (provider-model-provider-name model) model))))))
     (if (config :fullscreen-p configuration)
         (multiple-value-bind (rows columns) (terminal-current-size)
           (with-terminal-ui

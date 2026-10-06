@@ -2097,7 +2097,15 @@ are forwarded to TERMINAL-UI-SELECT."
               (setf message
                     (provider-authenticate-with-method
                      provider method :stream output :open-browser-p t))))))))
-    (application-present application message))
+    (application-present application message)
+    (let ((model (provider-authenticated-model
+                  (application-configuration application) provider)))
+      (when model
+        (application-set-model application model)
+        (application-present
+         application
+         (format nil "Active provider: ~A; model: ~A."
+                 (provider-model-provider-name model) model)))))
   nil)
 
 (-> application-checkpoint (application) null)

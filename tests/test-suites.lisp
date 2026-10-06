@@ -142,7 +142,8 @@
   test-application-settings-command
   test-application-mcp-reload-capability-change
   test-terminal-authentication-streams
-  test-application-authentication-command)
+  test-application-authentication-command
+  test-authentication-preserves-non-copilot-model)
 
 (define-test-suite project-adaptation
   test-project-adaptations)
@@ -285,6 +286,16 @@
 (define-test-suite nous-provider
   nous-provider-test--registration-and-discovery
   nous-provider-test--transport)
+
+(define-test-suite copilot-provider
+  copilot-test--authentication
+  copilot-test--failures
+  copilot-test--discovery-and-transport
+  copilot-test--model-policies
+  copilot-test--login-selects-backend
+  copilot-test--domain-validation
+  copilot-test--route-cache-validation
+  copilot-test--authentication-repairs-route-cache)
 
 (define-test-suite fireworks-provider
   fireworks-provider-test--selection

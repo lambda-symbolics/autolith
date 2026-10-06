@@ -445,14 +445,15 @@
          (observed-descriptor nil)
          (observed-styled-p ':unset)
           (observed-method nil)
+         (test-provider (make-instance 'model-provider))
          (provider-function
            (lambda (candidate selection)
              (declare (ignore candidate selection))
-             ':test-provider))
+             test-provider))
          (authenticator
             (lambda (provider method &key stream open-browser-p)
               (declare (ignore stream))
-              (test-assert (and (eq provider ':test-provider)
+              (test-assert (and (eq provider test-provider)
                                 open-browser-p)
                            "command-line auth invokes the selected provider")
               (setf observed-descriptor *api-key-input-file-descriptor*

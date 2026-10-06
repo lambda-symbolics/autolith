@@ -1008,7 +1008,7 @@
                          :output-stream terminal-output :input-file-descriptor -1
                          :styled-p t :columns 80))
          (ui (terminal-ui-create :terminal terminal))
-         (application (make-instance 'application :ui ui))
+         (application (make-instance 'application :ui ui :configuration (make-configuration)))
          (provider (make-instance 'application-authentication-test-provider))
          (stopped-p nil)
          (started-p nil))
@@ -1054,7 +1054,7 @@
           (make-instance 'image-daemon:attachment :socket nil :stream attachment-stream
                          :mode ':control))
          (ui (terminal-ui-create :terminal terminal))
-         (application (make-instance 'application :ui ui))
+         (application (make-instance 'application :ui ui :configuration (make-configuration)))
          (suspended-during-authentication-p nil)
          (repaint-during-authentication-p nil)
          (paste-input nil)
@@ -1273,4 +1273,38 @@
                (null picks)
                "the page loops until the picker is cancelled"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+
+
+nil)
+
+(-> test-authentication-preserves-non-copilot-model () null)
+(defun test-authentication-preserves-non-copilot-model ()
+  "Authenticate another registered account without changing the active backend."
+  (with-test-environment (("AUTOLITH_MODEL" nil))
+    (with-test-configuration (configuration)
+      (setf (config :model configuration) *default-model*)
+      (let ((snapshot (provider--registry-snapshot))
+            (output (make-string-output-stream))
+            (logins 0))
+        (unwind-protect
+             (progn
+               (register-provider
+                "authentication-other"
+                :models '("authentication-other/test")
+                :factory (lambda (selected &key reasoning-summaries-p)
+                           (declare (ignore selected reasoning-summaries-p))
+                           (make-instance 'model-provider))
+                :authenticator (lambda (provider &key stream open-browser-p)
+                                 (declare (ignore provider stream open-browser-p))
+                                 (incf logins)
+                                 "Provider authentication was saved."))
+               (let ((*standard-output* output))
+                 (main-authenticate configuration "authentication-other"))
+               (test-assert (= logins 1) "startup authenticates the selected account")
+               (test-assert (equal (config :model configuration) *default-model*)
+                            "authenticating another account preserves the active model")
+               (test-assert (equal (getf (preferences-load-values configuration) :model)
+                                   *default-model*)
+                            "startup persists the existing model selection"))
+          (provider--registry-restore snapshot)))))
   nil)

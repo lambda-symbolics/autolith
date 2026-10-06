@@ -942,6 +942,32 @@ OAuth with a local loopback callback.
 Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, and user-registered
 OpenAI-compatible providers use API keys.
 
+Authenticate a GitHub Copilot subscription with =autolith auth copilot=,
+=/auth copilot=, or =(auth "copilot")=. Approve the displayed device code at
+GitHub. Credentials are stored in the private =copilot-auth.sexp= under the
+state root. Tokens renew automatically before expiry.
+
+Login discovers account-accessible tool-capable models and attempts to enable
+unconfigured picker models. Models are named =copilot/<model-id>= locally to
+avoid collisions with direct vendor subscriptions. Successful Copilot login
+selects a Copilot model and saves it as the default. It keeps the current
+Copilot model if the account still serves it; otherwise it uses
+the first available model. The completion output reports the active provider
+and model. If no models are available, login reports that instead of silently
+leaving another provider active. Use =/model= to pick a different model, or
+launch with =--model copilot/<model-id>=. =(models)= refreshes and lists the
+catalog; normal startup uses its last successful cache without a network call.
+Disabled models are excluded. If enabling fails, enable the model in VS Code's
+Copilot Chat model selector and run =(models)= again.
+
+For GitHub Enterprise Cloud with data residency, set
+=AUTOLITH_COPILOT_DOMAIN= to your =TENANT.ghe.com= hostname during both login
+and subsequent launches. Tokens are pinned to that host and streams use the
+subscription-specific endpoint returned by Copilot. Chat Completions,
+Responses, and Anthropic Messages reuse the existing transports. This
+integration uses GitHub's internal Copilot endpoint, following pi, so it may
+require updates when GitHub changes that service.
+
 ChatGPT Codex Fast mode sends =service_tier=priority= when the active Codex model
 advertises Fast support. Fast responses count more heavily against plan usage;
 the exact rate is set by OpenAI per model and is not tracked here. The built-in

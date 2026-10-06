@@ -255,21 +255,26 @@ it is NIL, the effective registration for CONFIGURATION's model is used."
     (setf (model-provider-registration provider) effective-registration)
     provider))
 
+(defparameter *provider-authentication-bootstrap-p* nil
+  "Whether provider construction is for login rather than a model request.
+Account adapters may skip cached wire routing while this is true.")
+
 (-> provider-authentication-provider
     (configuration string &key (:reasoning-summaries-p boolean))
     model-provider)
 (defun provider-authentication-provider
     (configuration name &key reasoning-summaries-p)
   "Create NAME's registered provider for authentication.
-
-When an authenticator exists without model metadata, construct the provider directly
-so authentication can bootstrap credentials before model discovery."
-  (let* ((canonical (provider--canonical-name name))
+Bind the authentication construction context so account adapters can recover
+credentials and model metadata independently of their cached wire routes."
+  (let* ((*provider-authentication-bootstrap-p* t)
+         (canonical (provider--canonical-name name))
          (registration (provider-registration-find canonical)))
     (unless registration
       (error 'configuration-error
              :message
-             (format nil "Unknown provider ~A. Registered providers: ~{~A~^, ~}."
+             (format nil
+                     "Unknown provider ~A. Registered providers: ~{~A~^, ~}."
                      name
                      (mapcar #'provider-registration-name (provider-registrations)))))
     (if (and (null (provider-registration-models registration))
@@ -303,6 +308,17 @@ so authentication can bootstrap credentials before model discovery."
              (configuration-copy configuration :model (provider-model-name model))
              :reasoning-summaries-p reasoning-summaries-p
              :registration registration))))))
+
+(-> provider-authenticated-model (configuration model-provider) (option string))
+(defgeneric provider-authenticated-model (configuration provider)
+  (:documentation
+   "Return a provider-specific model selection after login, or NIL to keep it."))
+
+(defmethod provider-authenticated-model
+    ((configuration configuration) (provider model-provider))
+  "Leave model selection unchanged unless the provider opts into switching."
+  (declare (ignore configuration provider))
+  nil)
 
 (-> provider-reconfiguration-initargs
     (session-preserving-provider-mixin)
