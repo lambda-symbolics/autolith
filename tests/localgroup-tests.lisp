@@ -600,6 +600,11 @@
 (-> test-localgroup-checkpoint-source-precheck-order () null)
 (defun test-localgroup-checkpoint-source-precheck-order ()
   "Test a source-validation failure leaves the attached client connected."
+  (unless (or (platform-supports-p *platform* ':forked-image-saver)
+              (platform-supports-p *platform* ':restartable-image-saver))
+    (test-withheld ':forked-image-saver
+                   "checkpoint source validation with an attached client")
+    (return-from test-localgroup-checkpoint-source-precheck-order nil))
   (with-test-configuration (configuration root)
     (let* ((application nil)
            (controller nil)
