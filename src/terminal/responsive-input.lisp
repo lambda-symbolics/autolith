@@ -3217,6 +3217,7 @@ sandbox grant is revalidated at this final authorization boundary."
                controller function))))
     (when load-pending-p
       (application-input-controller--load-pending controller))
+    (application-job-completions-connect application)
     (application-input-controller--publish-counts controller)
     (when start-reader-p
       (application-input-controller--open-prompt-if-ready controller)
@@ -3322,9 +3323,21 @@ sandbox grant is revalidated at this final authorization boundary."
             ;; Publish active WORK after releasing the controller lock.
             (setf persist-p t)
            (return)))
-        (let ((wait-seconds
-                (and (application-localgroup-handoff-pending-p application)
-                     1/10)))
+        (when (and (null (application-input-controller-follow-up-edit-index controller))
+                   (setf work (or (application-job-completions--take-work controller)
+                                  (application-job-completions--take-maintenance controller))))
+          (setf (application-input-controller-active-p controller) t)
+          (return))
+        (let* ((deadline (application-job-completions--next-time controller))
+               (completion-wait (and deadline (max 1/100 (- deadline (get-universal-time)))))
+               (handoff-wait (and (application-localgroup-handoff-pending-p application) 1/10))
+               (wait-seconds (cond
+                               ((and completion-wait handoff-wait)
+                                (min completion-wait handoff-wait))
+                               (completion-wait
+                                completion-wait)
+                               (t
+                                handoff-wait))))
           (if wait-seconds
               (condition-wait
                (application-input-controller-condition-variable controller)
@@ -3449,6 +3462,11 @@ sandbox grant is revalidated at this final authorization boundary."
 (-> application-input-controller-stop (application-input-controller) null)
 (defun application-input-controller-stop (controller)
   "Retire CONTROLLER after shutdown work is complete and join its reader."
+  (when (eq controller
+            (application-input-controller
+             (application-input-controller-application controller)))
+    (application-job-completions-disconnect
+     (application-input-controller-application controller)))
   (with-lock-held ((application-input-controller-lock controller))
     (mapc #'deque-clear
           (application-input-controller--queues controller))
@@ -3676,6 +3694,10 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           (case (first work)
             (:apply-pending
              (application-input-controller--apply-pending-commands controller))
+            (:job-completion
+             (application-job-completions-run controller (second work)))
+            (:job-completion-maintenance
+             (application-job-completions-maintain controller (second work)))
             (:message
              (let ((result
                      (application--run-message-input

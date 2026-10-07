@@ -222,6 +222,12 @@ that a body returned. An artifact that cannot be written downgrades the state to
           (and final-report
                (bounded-string final-report
                                :limit *task-retained-output-limit*)))
+    (when (session-job-completion-owner-conversation job)
+      (task-continuity-record-terminal
+       job (task-job-parent-agent job)
+       (list :status (getf final-result :status)
+             :output-path (getf final-result :output-path))
+       :state final-state))
     (task-job--compact-progress job final-state)
     (setf (task-job-item job) (task-job--compact-item job)
           (task-job-definition-summary job) definition-summary
@@ -379,6 +385,7 @@ start under a cancelled ancestor, and hands over to the child."
        (:summary string)
        (:operation-function function)
        (:detached-p boolean)
+        (:completion-policy (member :notify :continue))
         (:parent-call-id (option string))
         (:terminal-result-function function))
     tool-execution-job)
@@ -386,7 +393,8 @@ start under a cancelled ancestor, and hands over to the child."
     (orchestrator parent-agent
      &key tool-name description summary operation-function detached-p
        parent-call-id
-       (terminal-result-function #'tool-execution-job--terminal-record))
+      (completion-policy ':continue)
+      (terminal-result-function #'tool-execution-job--terminal-record))
   "Admit one operation for exactly-once supervised execution.
 
 TERMINAL-RESULT-FUNCTION receives the job, terminal state, result, and condition
@@ -395,6 +403,7 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
   (check-type tool-name non-empty-string)
   (check-type description (option string))
   (check-type summary string)
+  (check-type completion-policy (member :notify :continue))
   (check-type operation-function function)
   (when (typep parent-agent 'task-child-agent)
     (let ((parent-job (task-child-agent-job parent-agent)))
@@ -426,6 +435,11 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
                        :execution-identifier (make-identifier)
                        :session-order session-order
                        :public-identifier identifier
+                       :completion-owner-conversation
+                       (conversation-identifier (agent-conversation parent-agent))
+                       :completion-policy completion-policy
+                       :completion-mission-id
+                       (task-completion-mission-identifier parent-agent)
                        :parent-call-id parent-call-id
                        :detached-p detached-p
                        :tool-name tool-name
@@ -588,6 +602,11 @@ guarantee."
                               :inherited-reference-items
                               (and inherited-p inherited-reference-items)
                               :parent-call-id parent-call-id
+                              :completion-owner-conversation
+                              (conversation-identifier (agent-conversation parent-agent))
+                              :completion-policy (or (getf item :completion-policy) ':continue)
+                              :completion-mission-id
+                              (task-completion-mission-identifier parent-agent)
                               :detached-p (getf entry :detached)
                               :command-authorization-function
                               command-authorization-function
@@ -609,7 +628,9 @@ guarantee."
                       (task-orchestrator--refuse-admission
                        orchestrator condition)))))))
         (dolist (job jobs)
-          (task-continuity-record-job job parent-agent))
+          (task-continuity-record-job job parent-agent)
+          (when (session-job-detached-p job)
+            (task-completion-watch job parent-agent)))
         (values jobs
                 (if (typep parent-agent 'task-child-agent)
                     (remove-if #'task-job-detached-p jobs)

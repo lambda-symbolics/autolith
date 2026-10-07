@@ -80,13 +80,15 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                     :tool-name "task.run"))
   nil)
 
-(defun task--normalize-item (object shared-context top-blocking-p)
+(defun task--normalize-item
+    (object &key shared-context top-blocking-p (top-completion-policy ':continue))
   "Validate and normalize one flat task OBJECT."
   (unless (json-object-p object)
     (error 'task-error :message "Every tasks item must be a JSON object."
            :tool-name "task.run"))
   (task--validate-json-fields
-   object '("name" "agent" "task" "context" "blocking" "async" "isolation")
+   object '("name" "agent" "task" "context" "blocking" "async" "isolation"
+            "completion-policy")
    "a task item")
   (let ((task (task--repair-prose (json-get object "task")))
         (name (json-get object "name"))
@@ -123,12 +125,16 @@ The primary blocking field and legacy inverse async field are mutually exclusive
           :context (task--combine-context shared-context context)
           :isolation (task-worktree-normalize-options (json-get object "isolation"))
           :blocking blocking-p
+          :completion-policy
+          (tool-completion-policy-argument
+           object :tool-name "task.run" :default top-completion-policy)
           :async (not blocking-p))))
 
 (defun task-normalize-arguments (arguments)
   "Validate TASK.RUN ARGUMENTS and return ordinary normalized item plists."
   (task--validate-json-fields
-   arguments '("name" "agent" "task" "context" "blocking" "async" "tasks" "isolation")
+   arguments '("name" "agent" "task" "context" "blocking" "async" "tasks" "isolation"
+               "completion-policy")
    "the top-level call")
   (let* ((tasks nil)
          (tasks-present-p nil)
@@ -137,6 +143,8 @@ The primary blocking field and legacy inverse async field are mutually exclusive
          (shared-context (task--repair-prose (json-get arguments "context")))
          (top-blocking-p
            (task--blocking-policy arguments nil "the top-level call"))
+         (top-completion-policy
+           (tool-completion-policy-argument arguments :tool-name "task.run"))
          (items nil))
     (multiple-value-setq (tasks tasks-present-p)
       (gethash "tasks" arguments))
@@ -173,9 +181,14 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                       "A batch task call requires non-empty shared context."
                       :tool-name "task.run"))
              (loop for item across tasks
-                   collect (task--normalize-item item shared-context
-                                                 top-blocking-p)))
-            (t (list (task--normalize-item arguments nil top-blocking-p)))))
+                   collect (task--normalize-item
+                            item :shared-context shared-context
+                            :top-blocking-p top-blocking-p
+                            :top-completion-policy top-completion-policy)))
+            (t
+             (list (task--normalize-item
+                    arguments :top-blocking-p top-blocking-p
+                    :top-completion-policy top-completion-policy)))))
     (when (> (length items) *task-maximum-batch-size*)
       (error 'task-error
              :message
@@ -453,6 +466,8 @@ The primary blocking field and legacy inverse async field are mutually exclusive
            :agent (getf snapshot :agent)
            :state state
            :detached (and (getf snapshot :detached) t)
+           :owner (getf snapshot :owner)
+           :completion-policy (getf snapshot :completion-policy)
            :result result-record
            :cancellation-reason (getf snapshot :cancellation-reason))
      (when include-progress-p
@@ -521,6 +536,8 @@ The primary blocking field and legacy inverse async field are mutually exclusive
            :summary (getf snapshot :summary)
            :state (getf snapshot :state)
            :detached (and (getf snapshot :detached) t)
+           :owner (getf snapshot :owner)
+           :completion-policy (getf snapshot :completion-policy)
            :result
            (and result
                 (list :status (getf result :status)
@@ -662,7 +679,7 @@ Only the current primary conversation's artifact root is searched."
     task-tool-result)
 (defun task--tool-execution-handoff-result (job viewer reason)
   "Detach JOB and return its inspectable identity with handoff REASON."
-  (setf (session-job-detached-p job) t)
+  (task-completion-watch job viewer)
   (let ((snapshot (session-job-snapshot job)))
     (multiple-value-bind (form content)
         (task--job-native-form
@@ -677,7 +694,8 @@ Only the current primary conversation's artifact root is searched."
 
 (defmethod tool-execution-invoke
     ((runtime task-orchestrator) parent
-     &key tool-name description summary operation-function async-p parent-call-id)
+     &key tool-name description summary operation-function async-p parent-call-id
+       (completion-policy ':continue))
   "Run one operation exactly once, returning quickly or handing off its same job."
   (unless (typep parent 'agent)
     (error 'tool-error
@@ -695,6 +713,7 @@ Only the current primary conversation's artifact root is searched."
               (let ((*tool-result-overflow-function* overflow-function))
                 (funcall operation-function)))
             :detached-p async-p
+            :completion-policy completion-policy
             :parent-call-id parent-call-id)))
     (if async-p
         (task--tool-execution-handoff-result job parent ':requested)
@@ -1162,6 +1181,7 @@ Only the current primary conversation's artifact root is searched."
                         "blocking"
                         (tool-boolean-property
                          "Wait for this child instead of detaching it; defaults to false.")
+                        "completion-policy" (tool-completion-policy-property)
                         "async"
                         (tool-boolean-property
                          "Compatibility inverse: true detaches and false blocks; cannot combine with blocking.")))
@@ -1183,6 +1203,7 @@ Only the current primary conversation's artifact root is searched."
                         "blocking"
                         (tool-boolean-property
                          "Wait for non-forced children instead of detaching them; defaults to false.")
+                        "completion-policy" (tool-completion-policy-property)
                         "async"
                         (tool-boolean-property
                          "Compatibility inverse: true detaches and false blocks; cannot combine with blocking.")

@@ -1033,6 +1033,36 @@ spilling is unavailable, in which case the tail is discarded as before.")
     (and (typep registry 'tool-registry)
          (tool-registry-runtime-binding registry 'task-orchestrator))))
 
+(-> tool-completion-policy-argument
+    (hash-table &key (:tool-name non-empty-string) (:default keyword))
+    keyword)
+(defun tool-completion-policy-argument
+    (arguments &key tool-name (default ':continue))
+  "Return ARGUMENTS' completion policy, inheriting DEFAULT when omitted.
+
+Notify delivers a completion notice and retains the result for inspection;
+continue also requests an automatic continuation after a detached job completes."
+  (multiple-value-bind (value present-p) (gethash "completion-policy" arguments)
+    (if present-p
+        (cond
+          ((equal value "notify")
+           ':notify)
+          ((equal value "continue")
+           ':continue)
+          (t
+           (error 'tool-error
+                  :tool-name tool-name
+                  :message "completion-policy must be notify or continue.")))
+        default)))
+
+(-> tool-completion-policy-property () hash-table)
+(defun tool-completion-policy-property ()
+  "Return the shared JSON schema for detached completion delivery policy."
+  (json-object
+   "type" "string" "enum" #("notify" "continue") "default" "continue"
+   "description"
+   "Detached completion policy: notify delivers a completion notice and retains the result; continue also requests an automatic continuation. Defaults to continue, including grace-expired handoffs."))
+
 (-> tool-execution-invoke
     (t t
      &key (:tool-name non-empty-string)
@@ -1040,19 +1070,22 @@ spilling is unavailable, in which case the tail is discarded as before.")
        (:summary string)
        (:operation-function function)
        (:async-p boolean)
+       (:completion-policy keyword)
        (:parent-call-id (option string)))
     tool-result)
 (defgeneric tool-execution-invoke
     (runtime parent
-     &key tool-name description summary operation-function async-p parent-call-id)
+     &key tool-name description summary operation-function async-p parent-call-id
+       completion-policy)
   (:documentation
    "Run one shell or Lisp operation synchronously or through inspectable RUNTIME."))
 
 (defmethod tool-execution-invoke
     ((runtime null) parent
-     &key tool-name description summary operation-function async-p parent-call-id)
+     &key tool-name description summary operation-function async-p parent-call-id
+       (completion-policy ':continue))
   "Run directly when no session execution runtime is available."
-  (declare (ignore runtime parent description summary parent-call-id))
+  (declare (ignore runtime parent description summary parent-call-id completion-policy))
   (when async-p
     (error 'tool-error
            :message

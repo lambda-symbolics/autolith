@@ -336,6 +336,7 @@
    :summary summary
    :operation-function (worker-host--bound-function operation-function :context context)
    :async-p (tool-boolean-argument arguments "async" :tool-name tool-name)
+   :completion-policy (tool-completion-policy-argument arguments :tool-name tool-name)
    :parent-call-id (tool-context-call-id context)))
 
 (-> lisp-tool-invoke-execution

@@ -543,6 +543,7 @@ model's effort choice to CONFIGURATION--CLONE."
 (-> application-disconnect-task-presentation (application) null)
 (defun application-disconnect-task-presentation (application)
   "Disconnect APPLICATION's task observer and clear its live session-job rows."
+  (application-job-completions-disconnect application)
   (with-lock-held ((application-task-presentation-lock application))
     (application--disconnect-task-presentation-locked application))
   (application--wake-input-controller application)
@@ -580,6 +581,7 @@ model's effort choice to CONFIGURATION--CLONE."
           (application--refresh-task-presentation-locked
            application orchestrator)))))
   (application-peer-messages-ensure application)
+  (application-job-completions-connect application)
   (application--wake-input-controller application)
   nil)
 

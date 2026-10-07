@@ -367,7 +367,8 @@ The calling thread preserves provider bindings and authorization callbacks."
 
 (defmethod tool-execution-invoke :around
     ((runtime task-orchestrator) parent
-     &key tool-name description summary operation-function async-p parent-call-id)
+     &key tool-name description summary operation-function async-p parent-call-id
+       (completion-policy ':continue))
   "Apply mission deadlines to delegated execution using the existing job lifecycle."
   (let ((context (and (typep parent 'agent) (mission--agent-context parent))))
     (if (or (null context)
@@ -376,6 +377,7 @@ The calling thread preserves provider bindings and authorization callbacks."
         (call-next-method
          runtime parent :tool-name tool-name :description description :summary summary
          :async-p async-p :parent-call-id parent-call-id
+         :completion-policy completion-policy
          :operation-function
          (lambda ()
            (mission--admit context :inference-p nil)

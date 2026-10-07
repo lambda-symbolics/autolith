@@ -14,6 +14,7 @@
                #:cl-jobpond
                #:cl-jobpond/schedules
                #:cl-jobpond/mailboxes
+               #:cl-jobpond/completions
                #:cl-lsp
                #:cl-resources
                #:cl-rfc8252
@@ -200,6 +201,7 @@
                              (:file "task/scheduler")
                              (:file "task/tools")
                              (:file "task/continuity")
+                             (:file "task/completions")
                              (:file "task/continuity-tools")
                              (:file "task/worktrees")
                              (:file "agent/context-rules")
@@ -248,6 +250,7 @@
                              (:file "application/async-lisp-output")
                              (:file "application/async-lisp")
                              (:file "terminal/responsive-input")
+                             (:file "application/job-completions")
                              (:file "task/job-boundary")
                              (:file "application/recovery-input-vault")
                              (:file "application/vault-edit")
@@ -361,6 +364,8 @@
                              (:file "agent-tests")
                              (:file "inference-tests")
                              (:file "task-test-support")
+                             (:file "job-completion-policy-tests")
+                             (:file "job-completion-delivery-tests")
                              (:file "task-continuity-tests")
                              (:file "task-inspector-tests")
                              (:file "mission-review-tests")
@@ -392,6 +397,7 @@
                              (:file "async-lisp-output-tests")
                              (:file "async-lisp-tests")
                              (:file "async-lisp-session-tests")
+                             (:file "job-completion-controller-tests")
                              (:file "data-transfer-command-tests")
                              (:file "data-transfer-tests")
                              (:file "user-operation-context-tests")

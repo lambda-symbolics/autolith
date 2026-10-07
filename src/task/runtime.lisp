@@ -373,6 +373,7 @@ identifier is what an agent uses to refer to its own children."
             (job-pool-close (task-orchestrator-execution-pool orchestrator)))
           (task-closed-p
             (job-pool-close (task-orchestrator-pool orchestrator))))
+      (task-completion-close orchestrator)
       (and execution-closed-p task-closed-p))))
 
 (-> task-orchestrator-detach (task-orchestrator) null)
@@ -795,6 +796,8 @@ values from either side of a terminal transition."
              (task-job-agent-name job))))
     (list :job-id (session-job-identifier job)
           :execution-id (task-job-execution-identifier job)
+          :owner (session-job-completion-owner-conversation job)
+          :completion-policy (session-job-completion-policy job)
           :type :task
           :state (getf snapshot :state)
           :pending-prompt-count (task-job-steering-pending-count job)
@@ -826,6 +829,8 @@ values from either side of a terminal transition."
          (progress (getf snapshot :progress)))
     (list :job-id (session-job-identifier job)
           :execution-id (session-job-execution-identifier job)
+          :owner (session-job-completion-owner-conversation job)
+          :completion-policy (session-job-completion-policy job)
           :type :tool
           :state (getf snapshot :state)
           :detached (session-job-detached-p job)

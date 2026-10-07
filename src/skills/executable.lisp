@@ -302,6 +302,7 @@ not grants. Only declared exact tools enter the host bridge."
                                     "input" (json-object "description" "Invocation input satisfying the manifest contract.")
                                     "entrypoint" (json-object "type" "string" "enum" (vector "self-test" "verify"))
                                     "asd" (tool-string-property "Optional authorized ASDF definition pathname.")
-                                    "async" (json-object "type" "boolean"))
+                                     "async" (json-object "type" "boolean")
+                                     "completion-policy" (tool-completion-policy-property))
                        (if (eq (second entry) ':invoke) '("name" "input") '("name")))))))
   registry)

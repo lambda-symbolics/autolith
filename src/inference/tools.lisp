@@ -119,7 +119,8 @@
   (list
    "async"
    (tool-boolean-property
-    "Run as an inspectable background job; defaults to false.")))
+    "Run as an inspectable background job; defaults to false.")
+   "completion-policy" (tool-completion-policy-property)))
 
 (-> rlm--shared-frame-parameters (&optional boolean) list)
 (defun rlm--shared-frame-parameters (&optional nested-p)
@@ -540,6 +541,7 @@ turn, and async requests hand off at admission."
    :summary summary
    :operation-function operation-function
    :async-p (tool-boolean-argument arguments "async" :tool-name tool-name)
+   :completion-policy (tool-completion-policy-argument arguments :tool-name tool-name)
    :parent-call-id (tool-context-call-id context)))
 
 (defmethod tool-execute

@@ -241,6 +241,14 @@
     :accessor task-orchestrator-next-session-order
     :type (integer 0)
     :documentation "The source of ordering shared by child and tool jobs.")
+   (completion-lock
+    :initform (make-lock "Autolith completion services")
+    :reader task-orchestrator-completion-lock
+    :documentation "Serializes creation and closure of owner completion services.")
+   (completion-services
+    :initform (make-hash-table :test #'equal)
+    :reader task-orchestrator-completion-services
+    :documentation "Durable notification subscriptions keyed by owning conversation.")
    (listeners
     :initform nil
     :accessor task-orchestrator-listeners
@@ -287,7 +295,25 @@ nesting depth, and lifecycle listeners."))
     :initform t
     :accessor session-job-detached-p
     :type boolean
-    :documentation "True when the caller is no longer waiting for this job."))
+    :documentation "True when the caller is no longer waiting for this job.")
+   (completion-owner-conversation
+    :initarg :completion-owner-conversation
+    :initform nil
+    :reader session-job-completion-owner-conversation
+    :type (option non-empty-string)
+    :documentation "The exact parent conversation authorized to receive this outcome.")
+   (completion-policy
+    :initarg :completion-policy
+    :initform ':continue
+    :reader session-job-completion-policy
+    :type (member :notify :continue)
+    :documentation "Notify at a safe boundary, or also request an automatic continuation.")
+   (completion-mission-id
+    :initarg :completion-mission-id
+    :initform nil
+    :reader session-job-completion-mission-id
+    :type (option non-empty-string)
+    :documentation "The admitted mission identity, preventing a completion from reviving another goal."))
   (:documentation
    "Common session ownership, identity, ordering, and waiting state for a job."))
 

@@ -89,6 +89,28 @@
   test-terminal-fullscreen-exit-epilogue
   test-terminal-fullscreen-forced-exit-resume)
 
+(define-test-suite job-completion-policy
+  test-job-completion-policy-normalization
+  test-job-completion-policy-schema-invocation
+  test-job-completion-policy-transport)
+
+(define-test-suite job-completion-delivery
+  test-job-completion-durable-delivery
+  test-job-completion-delivery-crash-points
+  test-job-completion-terminal-truth-and-reconstruction
+  test-job-completion-event-wakeup
+  test-job-completion-history-rollover
+  test-job-completion-capacity-recovery
+  test-job-completion-headless-owner)
+
+(define-test-suite job-completion-controller
+  test-job-completion-controller-coalescing
+  test-job-completion-controller-notify-and-busy
+  test-job-completion-controller-pause-and-switch
+  test-job-completion-controller-mission-admission
+  test-job-completion-controller-real-runtime
+  test-job-completion-controller-mixed-overflow)
+
 (define-test-suite hyperlinks
   test-hyperlinked-rendering)
 (define-test-suite stream

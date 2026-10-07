@@ -563,6 +563,8 @@ request that carries its expansion."
                       :tool-allowlist tool-allowlist
                       :tool-restriction-p tool-restriction-p)
                      0)))
+            (when (conversation-async-lisp--safe-boundary-p conversation)
+              (task-completion-deliver agent))
            (multiple-value-bind (item record)
                (conversation-append-user-message
                 conversation
@@ -1352,6 +1354,8 @@ Queued user operations run first so a replaced provider, configuration, or
 tool registry reaches the very next provider request."
   (agent-observer-apply-pending-operations observer agent)
   (conversation-flush-async-lisp-events (agent-conversation agent))
+  (when (conversation-async-lisp--safe-boundary-p (agent-conversation agent))
+    (task-completion-deliver agent))
   (agent--persist-steering-input
    agent observer
    :messages (agent-observer-take-steering observer)

@@ -64,6 +64,11 @@ explicit safety declaration; admission alone grants no replay authority."
                :owners (copy-list (job-owner-identifiers job))
                :owner-execution-ids owner-executions
                :parent-call-id (session-job-parent-call-id job)
+                :completion-owner-conversation
+                (session-job-completion-owner-conversation job)
+                :completion-policy (session-job-completion-policy job)
+                :completion-mission-id (session-job-completion-mission-id job)
+                :detached-p (session-job-detached-p job)
                :created-at (get-universal-time)
                :kind (if (typep job 'task-job) ':task ':tool)
                :specification (when (typep job 'task-job)
@@ -237,6 +242,15 @@ explicit safety declaration; admission alone grants no replay authority."
            :job-id (getf record :job-id) :execution-id (getf record :execution-id)
            :root-conversation (getf record :root-conversation)
            :owners (getf record :owners) :created-at (getf record :created-at)
+           :completion-owner-conversation (getf record :completion-owner-conversation)
+           :completion-policy (getf record :completion-policy)
+           :completion-mission-id (getf record :completion-mission-id)
+           :completion-route
+           (when (getf record :detached-p)
+             (if (equal (getf record :completion-owner-conversation)
+                        (conversation-identifier (agent-conversation viewer)))
+                 ':owning-conversation
+                 ':inspection-only))
            :path (getf entry :path) :tool-count (getf activity :tool-count)
            :latest-activity (getf activity :latest-activity)
            :updated-at (getf activity :updated-at)

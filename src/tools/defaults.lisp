@@ -39,6 +39,7 @@
            "repl" (tool-string-property
                    "The persistent REPL name; defaults to default.")
             "host-tools" (default-tools--worker-host-tools-property)
+           "completion-policy" (tool-completion-policy-property)
            "async" (tool-boolean-property
                     "Run as an inspectable background job; defaults to false."))))
     (tool-object-schema properties '("forms"))))
@@ -355,6 +356,7 @@
                    "The working directory; defaults to the workspace.")
       "timeout-seconds" (tool-integer-property
                          "Seconds before the command is stopped; defaults to 60 with no maximum.")
+      "completion-policy" (tool-completion-policy-property)
       "async" (tool-boolean-property
                "Run as an inspectable background job; defaults to false."))
      '("command"))))
@@ -570,6 +572,7 @@
              "repl" (tool-string-property
                      "The persistent REPL name; defaults to default.")
              "host-tools" (default-tools--worker-host-tools-property)
+             "completion-policy" (tool-completion-policy-property)
              "async" (tool-boolean-property
                       "Run as an inspectable background job; defaults to false."))
             '("path")))
@@ -593,6 +596,7 @@
                      "An optional path to the exact ASD file defining the system.")
              "repl" (tool-string-property
                      "The persistent REPL name; defaults to default.")
+             "completion-policy" (tool-completion-policy-property)
              "async" (tool-boolean-property
                       "Run as an inspectable background job; defaults to false."))
             '("system")))
@@ -662,6 +666,7 @@
                      "An optional path to the exact ASD file defining the system.")
              "repl" (tool-string-property
                      "The persistent REPL name; defaults to default.")
+             "completion-policy" (tool-completion-policy-property)
              "async" (tool-boolean-property
                       "Run as an inspectable background job; defaults to false."))
             '("system")))

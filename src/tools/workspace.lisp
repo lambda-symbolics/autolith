@@ -288,7 +288,9 @@ with full permissions never refuses one."
          (timeout (workspace-tool-shell-timeout arguments))
          (async-p
            (tool-boolean-argument
-            arguments "async" :tool-name "shell.run")))
+            arguments "async" :tool-name "shell.run"))
+         (completion-policy
+           (tool-completion-policy-argument arguments :tool-name "shell.run")))
     (unless (non-empty-string-p command)
       (error 'tool-error
              :message "shell.run requires a non-empty command."
@@ -326,4 +328,5 @@ with full permissions never refuses one."
                    (:full-access
                     (run (external-sandbox-policy) nil)))))
              :async-p async-p
+             :completion-policy completion-policy
              :parent-call-id (tool-context-call-id context)))))))
