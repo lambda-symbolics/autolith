@@ -1414,10 +1414,10 @@ a crash may leave one that a later lease acquisition can reuse safely."
      :handoff-families (conversation-portable-handoff-families conversation))))
 
 (-> conversation-compaction-summary-view
-    (conversation list keyword)
+    (conversation list &optional (option keyword))
     conversation)
-(defun conversation-compaction-summary-view (conversation items family)
-  "Return a transient request view containing family-compatible ITEMS."
+(defun conversation-compaction-summary-view (conversation items &optional family)
+  "Return a detached request view, preserving original families unless FAMILY is supplied."
   (let ((view
           (make-instance
            'conversation
@@ -1432,8 +1432,11 @@ a crash may leave one that a later lease acquisition can reuse safely."
            :reasoning-effort (conversation-reasoning-effort conversation)
            :next-sequence (conversation-next-sequence conversation)
            :input-items (copy-list items))))
-    (dolist (item items)
-      (setf (gethash item (conversation-input-item-families view)) family))
+    (if family
+        (dolist (item items)
+          (setf (gethash item (conversation-input-item-families view)) family))
+        (conversation-compaction--copy-metadata
+         (conversation-projection conversation) (conversation-projection view) items))
     view))
 
 (defparameter *conversation-inherited-reference-boundary*
@@ -2054,76 +2057,6 @@ copied."
                               *conversation-summary-prefix*
                               content)))))
 
-(-> conversation-append-summary (conversation string) list)
-(defun conversation-append-summary (conversation content)
-  "Persist a compaction summary and replace CONVERSATION's projection with it.
-
-The durable record covers every record before it, so replay reproduces the
-same compacted projection. The provider turn-state token is dropped because
-it described the uncompacted context."
-  (with-recursive-lock-held ((conversation-append-lock conversation))
-    (let* ((ephemeral-items
-             (mapcar
-              (lambda (entry)
-                (getf entry :item))
-              (conversation-ephemeral-input-entries conversation)))
-           (record
-             (conversation-append-record
-              conversation
-              (list :summary
-                    :through-seq (1- (conversation-next-sequence conversation))
-                    :content content))))
-      (setf (conversation-input-items conversation)
-            (cons (conversation-summary-item content) ephemeral-items)
-            (conversation-turn-state conversation) nil
-            (conversation-last-total-tokens conversation) 0)
-      record)))
-
-(-> conversation-append-native-compaction
-    (conversation json-object &key (:family keyword) (:summary string))
-    list)
-(defun conversation-append-native-compaction
-    (conversation item &key family summary)
-  "Persist opaque native ITEM and portable SUMMARY as one compaction checkpoint.
-
-ITEM retains private model context for FAMILY. SUMMARY is deliberately kept
-alongside it so a later provider family can continue from a readable handoff.
-The producing family receives only ITEM. Both replace every preceding durable
-provider item while pending request-local items remain available for the next
-ordinary request."
-  (native-compaction-item-canonicalize item)
-  (unless (and (keywordp family)
-               (native-compaction-item-p item)
-               (non-empty-string-p summary))
-    (error 'conversation-invariant-error
-           :message "A native compaction checkpoint is invalid."
-           :pathname (conversation-pathname conversation)
-           :sequence (conversation-next-sequence conversation)))
-  (with-recursive-lock-held ((conversation-append-lock conversation))
-    (let* ((ephemeral-items
-             (mapcar
-              (lambda (entry)
-                (getf entry :item))
-              (conversation-ephemeral-input-entries conversation)))
-           (summary-item (conversation-summary-item summary))
-           (record
-             (conversation-append-record
-              conversation
-              (list :native-compaction
-                    :through-seq (1- (conversation-next-sequence conversation))
-                    :family family
-                    :wire-json (json-encode item)
-                    :summary summary))))
-      (setf (conversation-input-items conversation)
-            (append (list item summary-item) ephemeral-items)
-            (conversation-turn-state conversation) nil
-            (conversation-last-total-tokens conversation) 0
-            (gethash item (conversation-input-item-families conversation))
-            family
-            (gethash summary-item
-                     (conversation-portable-handoff-families conversation))
-            family)
-      record)))
 
 
 ;;;; -- Conversation Loading --
@@ -2598,50 +2531,6 @@ later picker searches read it without scanning the log."
          conversation
          (conversation--inherited-reference-boundary-item))))))
 
-(defmethod conversation--project-record
-    ((kind (eql :summary)) conversation properties)
-  (let ((content (getf properties :content)))
-    (unless (stringp content)
-      (conversation--record-error
-       conversation properties
-       "A persisted summary checkpoint has invalid content."))
-    (setf (conversation-input-items conversation)
-          (list (conversation-summary-item content))
-          (conversation-last-total-tokens conversation) 0)))
-
-(defmethod conversation--project-record
-    ((kind (eql :native-compaction)) conversation properties)
-  (let ((family (getf properties :family))
-        (wire-json (getf properties :wire-json))
-        (summary (getf properties :summary)))
-    (unless (and (keywordp family)
-                 (stringp wire-json)
-                 (non-empty-string-p summary))
-      (conversation--record-error
-       conversation properties
-       "A persisted native compaction checkpoint is invalid."))
-    (let ((item
-            (handler-case
-                (json-decode wire-json)
-              (error ()
-                (conversation--record-error
-                 conversation properties
-                 "A persisted native compaction checkpoint is not JSON.")))))
-      (native-compaction-item-canonicalize item)
-      (unless (native-compaction-item-p item)
-        (conversation--record-error
-         conversation properties
-         "A persisted native compaction item is unsupported."))
-      (let ((summary-item (conversation-summary-item summary)))
-        (setf (conversation-input-items conversation)
-              (list item summary-item)
-              (conversation-turn-state conversation) nil
-              (conversation-last-total-tokens conversation) 0
-              (gethash item (conversation-input-item-families conversation))
-              family
-              (gethash summary-item
-                       (conversation-portable-handoff-families conversation))
-              family)))))
 
 (defmethod conversation--project-record
     ((kind (eql :provider)) conversation properties)

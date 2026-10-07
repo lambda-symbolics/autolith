@@ -1088,6 +1088,15 @@ The native checkpoint and the portable summary are two provider requests. Each
 is recorded with its usage as a numbered request of the turn, so the request
 count and the persisted usage cover compaction work instead of hiding it.
 
+Before either request, Autolith captures a fixed history cutoff. The checkpoint
+includes unresolved calls with correlated actual or interrupted/unknown outputs,
+plus results and steering received during summarization. Running jobs and
+undelivered outcomes are recorded separately from the model-written summary.
+Ordinary requests include bounded authoritative job references and an omitted
+count; inspect =job.continuity=, =job.*= and their resources for full details.
+Provider-family changes use the portable handoff and exclude foreign private
+context.
+
 Providers bill context served from their prompt cache at a fraction of the
 uncached input price, so a request that re-reads context the previous request
 had cached costs noticeably more. =/cache-misses on= or =(cache-misses "on")=

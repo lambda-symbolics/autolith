@@ -1489,13 +1489,16 @@ side channel, avoiding a second upload of the full pre-compaction history. The
 durable summary remains a handoff for another provider family.
 
 Each provider request is metered under the next number after REQUEST-NUMBER
-once the summary is known to be usable, so a failed compaction leaves no
-trace. Return the number of requests issued so the turn's request count
-covers them."
-  (let ((conversation (agent-conversation agent))
-        (*request-context-hurry-up-p* (agent-hurry-up-p agent))
-        (issued 0)
-        (native-usage nil))
+once the summary is known to be usable. Capture the durable cutoff before
+native or portable requests and retain arrivals at checkpoint publication.
+Return the number of requests issued so the turn's request count covers them."
+  (let* ((conversation (agent-conversation agent))
+         (compaction (conversation-compaction-capture conversation))
+         (captured-view (conversation-compaction-view compaction))
+         (unfinished-work (task-unfinished-work-snapshot agent))
+         (*request-context-hurry-up-p* (agent-hurry-up-p agent))
+         (issued 0)
+         (native-usage nil))
     (agent-observer-status
      observer
      :compaction-started
@@ -1506,7 +1509,7 @@ covers them."
              (multiple-value-bind (item usage)
                  (provider-native-compact-conversation
                   provider
-                  conversation
+                  captured-view
                   :tool-namespaces
                   (if tool-restriction-p
                       (tool-registry-provider-schemas
@@ -1524,11 +1527,11 @@ covers them."
             (family (provider-family provider))
             (summary-conversation
               (conversation-compaction-summary-view
-               conversation
+               captured-view
                (if native-item
                    (list native-item)
                    (conversation-input-items-for-family
-                    conversation family :include-ephemeral-p nil))
+                    captured-view family :include-ephemeral-p nil))
                family))
             (summary-results nil)
             (summary nil))
@@ -1573,12 +1576,18 @@ covers them."
          :kind ':summary
          :usage (provider-result-usage result)
          :response-id (provider-result-response-id result)))
-      (if native-item
-          (conversation-append-native-compaction
-           conversation native-item
-           :family (provider-family provider)
-           :summary summary)
-          (conversation-append-summary conversation summary))
+      (with-recursive-lock-held ((conversation-append-lock conversation))
+        (setf unfinished-work (task-unfinished-work-snapshot agent))
+        (if native-item
+            (conversation-append-native-compaction
+             conversation native-item
+             :family (provider-family provider)
+             :summary summary
+             :compaction compaction
+             :unfinished-work unfinished-work)
+            (conversation-append-summary
+             conversation summary :compaction compaction
+             :unfinished-work unfinished-work)))
       (agent-observer-status
        observer
        :compaction-completed
@@ -1602,12 +1611,14 @@ covers them."
 
 REQUEST-NUMBER counts provider requests the turn already issued before the
 loop, so compaction ahead of the user message shares the turn's budget."
-  (let ((seen-call-identifiers (make-hash-table :test #'equal))
+  (let ((*task-unfinished-work-agent* agent)
+        (seen-call-identifiers (make-hash-table :test #'equal))
         (storm-state (agent-tool-storm-state-create))
         (tool-rounds 0)
         (tool-calls 0)
         (first-request-p t)
         (maximum-output-tokens nil))
+    (declare (special *task-unfinished-work-agent*))
     (loop
       (when (>= request-number *agent-maximum-provider-requests-per-turn*)
         (error 'agent-loop-error

@@ -867,6 +867,20 @@
   test-async-lisp-output-throttles-and-flushes
   test-async-lisp-output-concurrent-writes)
 
+(define-test-suite compaction-unfinished-work
+  test-compaction-job-state-bounds
+  test-compaction-job-state-delivery
+  test-compaction-job-state-exact-owner
+  test-compaction-job-state-live-unknown
+  test-compaction-job-state-request-context
+  test-compaction-unfinished-cutoff-replay
+  test-compaction-unfinished-durable-repair
+  test-agent-compaction-unfinished-arrivals
+  test-compaction-unfinished-failure-atomicity
+  test-agent-compaction-live-child-shell
+  test-compaction-unfinished-corrupt-replay
+  test-agent-compaction-completed-during-request)
+
 (define-test-suite user-operation-context
   test-user-operation-persistence-and-context
   test-user-operation-bounds-and-validation

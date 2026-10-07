@@ -143,6 +143,11 @@ holds the same file lock as source invalidation and writes.
   durable configuration records, so resume restores the latest choices
 - Identifiers use =idsmall= Base58 IDs, which are not the most secure, but they encode a timestamp and are short enough that
   you can at least remember the prefix.
+- =src/conversation/compaction.lisp= captures the provider cutoff and uses a pure
+  =clinker-transcript= carry-forward plan. It validates late arrivals and truthful
+  repairs before publishing a self-contained checkpoint, then installs the
+  replacement projection. =:cutoff-seq= identifies the request snapshot;
+  =:through-seq= covers every record before checkpoint publication.
 
 ** Configuration
 
@@ -236,6 +241,9 @@ values retain source access state before ordered moves remove their source paths
   frees mailbox capacity occupied by notify-only or inadmissible outcomes.
   Producer callbacks only signal its condition variable; provider requests occur
   on the normal turn path.
+- =src/task/unfinished-work.lisp= reads owned durable continuity and exact-owner
+  conversation receipts for bounded outstanding-job context. Compaction records
+  contain reference snapshots; later request contributions re-read job authority.
 
 ** Native language servers
 

@@ -80,12 +80,12 @@
   :version "git-0987b9116004adc5659a33b5ec27f1afd873ca7b"))
 ("cl-jobpond" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-jobpond.git" :ref "5d94b5e26405412ae2bfa12192ff1ca4c65a13e7")
-  :version "git-5d94b5e26405412ae2bfa12192ff1ca4c65a13e7"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-jobpond.git" :ref "3f91120faedf42b370e5f4298f2dc81f18d0b531")
+  :version "git-3f91120faedf42b370e5f4298f2dc81f18d0b531"))
 ("clinker-transcript" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/clinker-transcript.git" :ref "73c73e83eab3e999f2bae90149baf53252784b02")
-  :version "git-73c73e83eab3e999f2bae90149baf53252784b02"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/clinker-transcript.git" :ref "d7cd04903fb36b62224fe618a0e1a11bebf0d8cb")
+  :version "git-d7cd04903fb36b62224fe618a0e1a11bebf0d8cb"))
 ("cl-rfc8252" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-rfc8252.git" :ref "b9affbd04c12e2adac4a2403f60a3a2802f9ac45")
