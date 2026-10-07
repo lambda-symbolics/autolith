@@ -373,6 +373,9 @@
 (-> test-task-worktree-sandboxed-authorization () null)
 (defun test-task-worktree-sandboxed-authorization ()
   "Run the complete authorized lifecycle from ordinary and linked repositories."
+  (unless (application--command-sandbox-available-p)
+    (test-withheld ':command-sandbox "sandboxed isolated worktree authorization")
+    (return-from test-task-worktree-sandboxed-authorization nil))
   (dolist (linked-p '(nil t))
     (task-worktree-tests--fixture
      (lambda (configuration source parent job tool context)
