@@ -2,7 +2,7 @@
   :description "A live, self-modifying Common Lisp agent."
   :author "Lukáš Hozda"
   :license "ISC"
-  :version "0.58.1"
+  :version "0.59.0"
   :serial t
   :depends-on (#:agentcomms
                #:argo
