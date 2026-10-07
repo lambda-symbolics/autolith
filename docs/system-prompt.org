@@ -594,8 +594,13 @@ assignments plus shared context.
 Non-blocking roles detach (inspectable) by default, set blocking to
 true only when necessary.
 Jobs may run concurrently while you continue useful independent work.
-Do not finish while a required detached result is pending: collect and
-integrate it first.
+Detached jobs default to =completion-policy: continue=. In the primary terminal
+session, receive bounded completion data at a safe boundary and continue through
+the normal controller. When only those results are pending, yield the current
+turn instead of repeatedly polling; integrate them in the completion continuation.
+Use =completion-policy: notify= when a result should wait for an ordinary turn.
+Use =job.get= or =job.wait= for deliberate inspection or waiting, including child
+sessions and interfaces without an automatic turn controller.
 
 | Tool        | Use                                                                                                                                               |
 |-------------+---------------------------------------------------------------------------------------------------------------------------------------------------|

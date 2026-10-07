@@ -1391,8 +1391,9 @@ ASDF versions are checked during authorized system resolution.
 
 Invocation output is contract-validated and retained with its executable identity
 as native execution evidence. Result publication is bounded to 1 MiB and read as
-one data-only form after stopping the worker. Use =async: true= for managed jobs
-and collect their results through =job.wait=. Mission accounting and ordinary
+one data-only form after stopping the worker. Use =async: true= for managed jobs;
+completion policy applies as described below. Inspect full results with =job.get=
+or deliberately await them with =job.wait=. Mission accounting and ordinary
 execution supervision apply to workflows and their callbacks.
 
 ** Worker tool calls
@@ -1522,6 +1523,28 @@ with one =yield.submit= of =success=, =failed=, or =aborted=.
 Persisted child results must contain one data-only form with valid terminal
 status and field types. The default reading limits are 16 MiB, 128 nesting
 levels, and 262,144 tree nodes.
+
+** Completion-driven turns
+
+Set =completion-policy= to =continue= (the default) or =notify= on asynchronous
+tools and =task.run=. A batch inherits its outer policy unless an item overrides
+it. The policy also applies after the synchronous grace period hands work off.
+
+In a primary terminal session, continue independent work while jobs run. When
+only job results are pending, yield the current turn. Receive a bounded result
+summary, truthful outcome and artifact reference in the exact owning conversation.
+Idle completions within a one-second window share one automatic turn through the
+ordinary controller. Busy turns receive results at their next safe request
+boundary. With =notify=, receive results on the next ordinary turn instead.
+
+Delivery receipts survive restart and conversation compaction. Notification
+reconstruction reads terminal artifacts without repeating job effects. Cancellation,
+paused or terminal missions, spent budgets, and conversation ownership constrain
+automatic turns. Inspect retained results with =job.get=, =job.continuity= or =/tasks=.
+Child-owned outcomes are inspection-only outside their exact conversation; completing
+a child does not reopen it or redirect descendant results into the primary context.
+ACP and other interfaces without a primary input controller deliver results on
+subsequent ordinary turns. Use =job.wait= when deliberate waiting is appropriate.
 
 ** Task inspection and continuity
 

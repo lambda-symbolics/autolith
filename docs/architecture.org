@@ -228,8 +228,14 @@ values retain source access state before ordered moves remove their source paths
   from source otherwise; the choice is made again at every start.
 - Worker images never participate in active startup or recovery
 - =sexp-config= reads skills, MCP configuration, child roles, etc.
-- Tasks use =cl-jobpond= for admission, threads, deadlines, and
-  cancellation.
+- Tasks use =cl-jobpond= for admission, threads, deadlines, cancellation, and
+  generic durable completion subscriptions. =src/task/completions.lisp= projects
+  bounded outcomes and reconciles mailbox claims with durable conversation receipts.
+  =src/application/job-completions.lisp= admits coalesced primary continuations
+  through the ordinary input controller. Bounded metadata-only controller work
+  frees mailbox capacity occupied by notify-only or inadmissible outcomes.
+  Producer callbacks only signal its condition variable; provider requests occur
+  on the normal turn path.
 
 ** Native language servers
 
