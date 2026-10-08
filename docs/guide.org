@@ -947,26 +947,29 @@ Authenticate a GitHub Copilot subscription with =autolith auth copilot=,
 GitHub. Credentials are stored in the private =copilot-auth.sexp= under the
 state root. Tokens renew automatically before expiry.
 
-Login discovers account-accessible tool-capable models and attempts to enable
-unconfigured picker models. Models are named =copilot/<model-id>= locally to
-avoid collisions with direct vendor subscriptions. Successful Copilot login
-selects a Copilot model and saves it as the default. It keeps the current
-Copilot model if the account still serves it; otherwise it uses
-the first available model. The completion output reports the active provider
-and model. If no models are available, login reports that instead of silently
-leaving another provider active. Use =/model= to pick a different model, or
-launch with =--model copilot/<model-id>=. =(models)= refreshes and lists the
-catalog; normal startup uses its last successful cache without a network call.
-Disabled models are excluded. If enabling fails, enable the model in VS Code's
-Copilot Chat model selector and run =(models)= again.
+Login discovers tool-capable picker models and =copilot/auto=, and attempts to
+enable unconfigured picker models. Models are named =copilot/<model-id>= locally
+to avoid collisions with direct vendor subscriptions. Successful Copilot login
+selects Auto and saves it as the default, unless the current Copilot model is
+still available. Use =(models)= to refresh the catalog, then
+=(model "copilot/auto")= to select Auto on an existing installation, or launch
+with =--model copilot/auto=. Normal startup reads the last successful catalog
+without a network request.
+
+Use Auto with Copilot Student or Free plans, which do not offer manual model
+selection. Each request resolves an account-authorized concrete model and uses
+its Chat Completions, Responses, or Messages protocol with a short-lived session
+token. Auto keeps the previous concrete model while it is available. Hidden
+named models are not offered as manual choices. For other plans, select an
+available named model with =(model)=. Disabled picker models are excluded.
 
 For GitHub Enterprise Cloud with data residency, set
 =AUTOLITH_COPILOT_DOMAIN= to your =TENANT.ghe.com= hostname during both login
 and subsequent launches. Tokens are pinned to that host and streams use the
 subscription-specific endpoint returned by Copilot. Chat Completions,
 Responses, and Anthropic Messages reuse the existing transports. This
-integration uses GitHub's internal Copilot endpoint, following pi, so it may
-require updates when GitHub changes that service.
+integration uses GitHub's internal Copilot endpoints, following pi and VS Code,
+so it may require updates when GitHub changes that service.
 
 ChatGPT Codex Fast mode sends =service_tier=priority= when the active Codex model
 advertises Fast support. Fast responses count more heavily against plan usage;

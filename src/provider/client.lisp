@@ -795,30 +795,57 @@ and codes follow the Codex reference at commit 6f51c65958."
    "Perform one normalized provider attempt, optionally forcing credential refresh."))
 
 
+(-> provider-call-with-request-adapter
+    (subscription-provider oauth-credentials function &key (:conversation conversation))
+    provider-result)
+(defgeneric provider-call-with-request-adapter (provider credentials function &key conversation)
+  (:documentation
+   "Call FUNCTION with the request's wire adapter and additional secret values.
+Resolve account-specific routing inside credential ownership. Additional secrets
+are request-scoped and included in transport and result redaction."))
+
+(defmethod provider-call-with-request-adapter
+    ((provider subscription-provider) (credentials oauth-credentials) (function function)
+     &key conversation)
+  "Use the configured wire adapter without additional credentials."
+  (declare (ignore credentials conversation))
+  (funcall function provider nil))
+
 (defmethod provider-attempt-turn
-           ((provider subscription-provider) (conversation conversation)
-            &key tool-namespaces event-callback force-refresh goal-context
-            compaction-p)
+    ((provider subscription-provider) (conversation conversation)
+     &key tool-namespaces event-callback force-refresh goal-context compaction-p)
   "Execute one projected request inside product credential and delivery ownership."
-  (with-credentials (credentials (provider-credential-manager provider) :force-refresh
-                     force-refresh)
+  (with-credentials (credentials (provider-credential-manager provider)
+                                :force-refresh force-refresh)
     (let* ((*provider-active-credential-values*
-            (oauth-credentials-secret-values credentials))
+             (oauth-credentials-secret-values credentials))
            (*provider-active-credential-redaction-marker*
-            (safe-redaction-marker *provider-credential-redaction-marker*
-                                   *provider-active-credential-values*)))
-      (handler-case
-       (multiple-value-bind (request delivery)
-           (provider-request-object provider conversation tool-namespaces :goal-context
-                                    goal-context :compaction-p compaction-p)
-         (cl-llm-provider-api::provider-execute-request provider request :secrets
-          *provider-active-credential-values* :event-callback event-callback :transport
-          (lambda (request)
-            (provider--open-response-stream provider request :credentials credentials
-                                            :conversation conversation))
-          :completion (lambda () (context-delivery-complete delivery))))
-       (http-request-failed (condition)
-                            (provider-signal-transport-failure provider condition))))))
+             (safe-redaction-marker *provider-credential-redaction-marker*
+                                    *provider-active-credential-values*)))
+      (provider-call-with-request-adapter
+       provider credentials
+       (lambda (adapter additional-secrets)
+         (let* ((*provider-active-credential-values*
+                  (append additional-secrets *provider-active-credential-values*))
+                (*provider-active-credential-redaction-marker*
+                  (safe-redaction-marker *provider-credential-redaction-marker*
+                                         *provider-active-credential-values*)))
+           (handler-case
+               (multiple-value-bind (request delivery)
+                   (provider-request-object adapter conversation tool-namespaces
+                                            :goal-context goal-context
+                                            :compaction-p compaction-p)
+                 (cl-llm-provider-api::provider-execute-request
+                  adapter request :secrets *provider-active-credential-values*
+                  :event-callback event-callback
+                  :transport (lambda (request)
+                               (provider--open-response-stream
+                                adapter request :credentials credentials
+                                :conversation conversation))
+                  :completion (lambda () (context-delivery-complete delivery))))
+            (http-request-failed (condition)
+              (provider-signal-transport-failure adapter condition)))))
+       :conversation conversation))))
 
 (-> provider--call-with-bounded-retries
     (subscription-provider function function)

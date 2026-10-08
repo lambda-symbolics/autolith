@@ -132,6 +132,7 @@
                              (:file "provider/openrouter/client")
                              (:file "provider/mistral/client")
                              (:file "provider/copilot/client")
+                             (:file "provider/copilot/auto")
                              (:file "provider/builtins")
                              (:file "resource/protocol")
                              (:file "resource/item-identity")

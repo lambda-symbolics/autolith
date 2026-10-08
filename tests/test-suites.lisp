@@ -296,7 +296,9 @@
   copilot-test--login-selects-backend
   copilot-test--domain-validation
   copilot-test--route-cache-validation
-  copilot-test--authentication-repairs-route-cache)
+  copilot-test--authentication-repairs-route-cache
+  copilot-test--auto-routing
+  copilot-test--auto-session-boundary)
 
 (define-test-suite fireworks-provider
   fireworks-provider-test--selection

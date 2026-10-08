@@ -5,6 +5,9 @@
 (defparameter *copilot-enable-models-p* nil
   "Whether explicit Copilot authentication may enable unconfigured models.")
 
+(defparameter *copilot-auto-request* nil
+  "The wire adapter and Auto token dynamically owned by one request only.")
+
 (-> copilot--catalog-path (configuration) pathname)
 (defun copilot--catalog-path (configuration)
   "Return the private route catalog accompanying the shared model cache."
@@ -31,7 +34,7 @@
 
 (-> copilot--fetch-models (configuration &key (:enable-p boolean)) list)
 (defun copilot--fetch-models (configuration &key (enable-p *copilot-enable-models-p*))
-  "Discover account models and publish their validated wire routes atomically."
+  "Discover picker models and Auto, preserving hidden routes for automatic selection."
   (with-credentials (credentials (copilot-credential-manager-create configuration))
     (let* ((base-url (copilot--base-url credentials))
            (token (oauth-credentials-access-token credentials))
@@ -39,14 +42,14 @@
                       (concatenate 'string base-url "/models") token
                       :headers (list (cons "X-GitHub-Api-Version" "2026-06-01"))))
            (models (copilot-model-catalog
-                    document :model-prefix "copilot/"
-                    :personal-account-p
-                    (string= base-url "https://api.individual.githubcopilot.com")
+                    document :model-prefix "copilot/" :include-auto-p t
                     :enable-model-function
                     (when enable-p
                       (lambda (model) (copilot--enable-model base-url token model))))))
       (snapshot-write (copilot--catalog-path configuration)
-                      (list :domain (copilot--domain) :models models) :mode #o600)
+                      (list :domain (copilot--domain) :models models
+                            :document (json-encode document))
+                      :mode #o600)
       models)))
 
 (-> copilot--cached-protocol (configuration) keyword)
@@ -62,7 +65,7 @@
                           (find (config :model configuration) (getf catalog :models)
                                 :key (lambda (model) (getf model :name)) :test #'string=)))
                (protocol (and spec (getf spec :protocol))))
-          (unless (member protocol '(:chat-completions :messages :responses))
+          (unless (member protocol '(:auto :chat-completions :messages :responses))
             (error 'configuration-error
                    :message "Copilot route cache is missing or invalid; refresh with (models) or autolith auth copilot."))
           protocol)
@@ -117,21 +120,24 @@
   ':copilot)
 
 (-> copilot-provider--make
-    (configuration credential-manager string &key (:registration (option provider-registration)))
+    (configuration credential-manager string
+     &key (:registration (option provider-registration)) (:protocol (option keyword)))
     model-provider)
-(defun copilot-provider--make (configuration manager session-id &key registration)
-  "Construct the cached wire adapter with shared credentials and session identity."
-  (let* ((protocol (if *provider-authentication-bootstrap-p*
-                       ':chat-completions
-                       (copilot--cached-protocol configuration)))
+(defun copilot-provider--make (configuration manager session-id &key registration protocol)
+  "Construct the wire adapter with shared credentials and session identity."
+  (let* ((protocol (or protocol
+                       (if *provider-authentication-bootstrap-p*
+                           ':chat-completions
+                           (copilot--cached-protocol configuration))))
          (class (ecase protocol
+                  (:auto 'copilot-auto-provider)
                   (:chat-completions 'copilot-chat-provider)
                   (:messages 'copilot-messages-provider)
                   (:responses 'copilot-responses-provider))))
     (apply #'make-instance class
            :configuration configuration :credential-manager manager
            :registration registration :session-id session-id
-           (when (eq protocol ':chat-completions)
+           (when (member protocol '(:auto :chat-completions))
              (list :display-name "GitHub Copilot" :family ':copilot
                    :stream-usage-p nil :reasoning-parameter nil)))))
 
@@ -220,16 +226,21 @@
       (values request delivery))))
 
 (-> copilot--request-headers
-    (oauth-credentials conversation json-object &key (:protocol keyword)) list)
-(defun copilot--request-headers (credentials conversation request &key (protocol ':chat-completions))
+    (oauth-credentials conversation json-object
+     &key (:protocol keyword) (:session-token (option string))) list)
+(defun copilot--request-headers
+    (credentials conversation request &key (protocol ':chat-completions) session-token)
   "Add account credentials and distinguish user input from agent continuations."
   (let* ((last-item (first (last (conversation-input-items-for-family conversation ':copilot))))
          (initiator (if (or (null last-item) (equal (json-get last-item "role") "user"))
                         "user" "agent")))
-    (copilot-stream-headers (oauth-credentials-access-token credentials) request
-                            :protocol protocol :initiator initiator
-                            :user-agent (provider-user-agent)
-                            :anthropic-version *anthropic-api-version*)))
+    (append (copilot-stream-headers
+             (oauth-credentials-access-token credentials) request
+             :protocol protocol :initiator initiator
+             :user-agent (provider-user-agent)
+             :anthropic-version *anthropic-api-version*)
+            (when session-token
+              (list (cons "Copilot-Session-Token" session-token))))))
 
 (defmethod provider-open-response-stream
     ((provider copilot-provider-mixin) (request hash-table) &key credentials conversation)
@@ -238,7 +249,10 @@
     (provider-post-event-stream
      (concatenate 'string (copilot--base-url credentials) (copilot-protocol-endpoint protocol))
      (json-encode-utf8 request)
-     :headers (copilot--request-headers credentials conversation request :protocol protocol))))
+     :headers (copilot--request-headers
+               credentials conversation request :protocol protocol
+               :session-token (when (eq provider (first *copilot-auto-request*))
+                                (second *copilot-auto-request*))))))
 
 (-> copilot--models-cache-key () string)
 (defun copilot--models-cache-key ()

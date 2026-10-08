@@ -285,12 +285,15 @@
                 #:browser-authentication-request
                 #:browser-authentication-token-document)
   (:import-from #:cl-llm-provider-api
+                #:copilot-auto-session-model
+                #:copilot-auto-session-request
                 #:copilot-base-url
                 #:copilot-http-headers
                 #:copilot-model-catalog
                 #:copilot-model-protocol
                 #:copilot-protocol-endpoint
                 #:copilot-stream-headers
+                #:copilot-vision-request-p
                 #:*provider-maximum-streaming-retries*
                 #:*provider-maximum-transient-retries*
                 #:*sse-inactivity-seconds*
