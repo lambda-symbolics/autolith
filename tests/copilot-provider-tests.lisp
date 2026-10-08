@@ -554,6 +554,8 @@
                          (let ((request (json-decode (babel:octets-to-string body :encoding :utf-8))))
                            (test-assert (equal (json-get request "model") selected)
                                         "the wire request uses the concrete model, never auto")
+                           (test-assert (equal (response-header headers "X-GitHub-Api-Version") "2026-06-01")
+                                        "concrete Auto inference uses the same API version as its session")
                            (test-assert (equal (rest (assoc "Copilot-Session-Token" headers
                                                           :test #'string-equal)) session-token)
                                         "every protocol carries its Auto entitlement token"))
