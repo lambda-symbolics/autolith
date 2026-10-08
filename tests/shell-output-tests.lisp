@@ -37,7 +37,7 @@
     (test-fixture-shell-command
      *platform*
      (format nil "cat ~A; printf 'FINAL-DIAGNOSTIC\\n' >&2; exit ~D" quoted (if fail-p 7 0))
-     (format nil "[Console]::OpenStandardOutput().Write([IO.File]::ReadAllBytes(~A)); [Console]::Error.WriteLine('FINAL-DIAGNOSTIC'); exit ~D"
+     (format nil "$bytes=[IO.File]::ReadAllBytes(~A); $stdout=[Console]::OpenStandardOutput(); $stdout.Write($bytes,0,$bytes.Length); $stdout.Flush(); [Console]::Error.Write('FINAL-DIAGNOSTIC'+[char]10); exit ~D"
              quoted (if fail-p 7 0)))))
 
 (-> test-shell-retained-preview-and-ranges () null)
