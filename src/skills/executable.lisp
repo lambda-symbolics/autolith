@@ -109,7 +109,7 @@ not grants. Only declared exact tools enter the host bridge."
                                                    (format nil "Selected Skill revalidation failed: ~A"
                                                            (cl-skills:skill-diagnostic-message diagnostic))
                                                    "Selected Skill source or executable identity changed after admission."))))
-                  ,@(when asd `((asdf:load-asd ,(namestring asd))))
+                  ,@(when asd `((asdf:load-asd (uiop:parse-native-namestring ,(namestring asd)))))
                   (list :success-p t :identity ',identity :value
                         ,(if (eq operation ':invoke)
                              `(cl-skills:skill-executable-invoke
