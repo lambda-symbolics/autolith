@@ -424,7 +424,13 @@ let
     pname = "cl-jobpond";
     version = qlotVersion "cl-jobpond";
     src = qlotSource "cl-jobpond";
-    systems = [ "cl-jobpond" "cl-jobpond/durable-state" "cl-jobpond/schedules" "cl-jobpond/mailboxes" ];
+    systems = [
+      "cl-jobpond"
+      "cl-jobpond/durable-state"
+      "cl-jobpond/schedules"
+      "cl-jobpond/mailboxes"
+      "cl-jobpond/completions"
+    ];
     lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
   };
 
