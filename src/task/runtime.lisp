@@ -344,6 +344,9 @@ identifier is what an agent uses to refer to its own children."
       (let ((status (getf payload :status)))
         (etypecase job
           (task-job
+           ;; Publish admission evidence before exposing the accepted start.
+           (when (eq status :started)
+             (task-continuity-record-job job (task-job-parent-agent job)))
            (task-orchestrator-emit
             (session-job-orchestrator job)
             :task-subagent-lifecycle
@@ -491,6 +494,21 @@ under the progress lock before releasing it to other threads."
     (t
      (copy-tree usage))))
 
+(-> task-progress--event-usage (t) list)
+(defun task-progress--event-usage (usage)
+  "Project only bounded normalized numeric token counters from USAGE."
+  (when (and (proper-list-p usage) (<= (length usage) 32))
+    (loop for (name key) in '(("input_tokens" :input-tokens)
+                             ("output_tokens" :output-tokens)
+                             ("total_tokens" :total-tokens))
+          for entry = (find name usage
+                            :key (lambda (entry)
+                                   (and (consp entry) (first entry)))
+                            :test #'equal)
+          for value = (and (consp (rest entry)) (second entry))
+          when (typep value '(integer 0 9223372036854775807))
+            append (list key value))))
+
 (defun task-progress-note-status (job status details)
   "Update JOB's normalized progress from one child observer STATUS event."
   (let ((progress (task-job-progress job))
@@ -520,10 +538,17 @@ under the progress lock before releasing it to other threads."
                (task-progress-current-tool-started-at progress) nil)))
       (setf (task-progress-updated-at progress) now
             event
-            (list :id (job-identifier job)
-                  :status (task-progress-status progress)
-                  :current-tool (task-progress-current-tool progress)
-                  :request-count (task-progress-request-count progress))))
+            (append
+             (list :id (job-identifier job)
+                   :status (task-progress-status progress)
+                   :observer-status status
+                   :call-id (getf details :call-id)
+                   :tool (getf details :tool)
+                   :success-p (and (getf details :success-p) t)
+                   :current-tool (task-progress-current-tool progress)
+                   :request-count (task-progress-request-count progress))
+             (when (eq status :provider-request-completed)
+               (task-progress--event-usage (getf details :usage))))))
     (when (member status '(:provider-request-started :provider-request-completed
                            :tool-call-started :tool-call-completed))
       (task-continuity-note-activity job status details))

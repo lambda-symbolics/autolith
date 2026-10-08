@@ -255,6 +255,39 @@ values retain source access state before ordered moves remove their source paths
   conversation receipts for bounded outstanding-job context. Compaction records
   contain reference snapshots; later request contributions re-read job authority.
 
+** Headless job observation
+
+=src/task/job-boundary.lisp= runs one contracted role through the application
+runtime and atomically publishes its terminal result. =src/startup/main.lisp=
+accepts the opt-in =run-job --events sexp= flag. The event stdout stream is
+captured before redirecting diagnostic streams to stderr and interactive input
+to EOF. Bordeaux Threads initial bindings include recursively inherited stream
+bindings for nested workers; no scheduler or provider transport is added.
+After application cleanup and bounded delivery, the streaming CLI exits directly
+with its result status, without flushing or interrupting a blocked stdout writer.
+
+=src/task/job-event-observer.lisp= adapts the existing orchestrator listener and
+child observer events. Its scope is one generated root admission name in the
+owning conversation, then that root's exact job identifier and descendant
+ancestry. It retains only the root identifier. Wire job IDs are execution UUIDs;
+provider call IDs are hashed with the run UUID, without a growing call map.
+Projection permits registered canonical tool names, approved statuses, and
+bounded normalized numeric usage fields. Continuity precedes task start events.
+Descendant terminal events follow durable task results or tool terminal metadata;
+root terminal events follow publication of the outer result artifact. Listener
+registration is removed on every exit.
+
+=src/task/job-events.lisp= owns the version-one closed vocabulary, bounded
+=sexp-config= grammar, validation, UTF-8 serialization, finite queue, and single
+writer. Producers enqueue bounded owned snapshots without waiting on stdout.
+Backpressure evicts progress first and reports lifecycle overflow with a fixed
+warning. Final delivery has a reserved slot; shutdown waits only for a bounded
+interval. An in-flight blocked writer retains one bounded payload; it is not
+killed or used to interrupt task execution.
+=:run-finished= is the last delivered event when the consumer remains connected.
+The stream has no durable replay authority; consumers reconcile with the output
+artifact.
+
 ** Native language servers
 
 =src/lsp/configuration.lisp= validates user-owned =lsp.sexp= with the closed

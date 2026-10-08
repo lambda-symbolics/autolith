@@ -1793,6 +1793,65 @@ only sandboxed commands. =full= permits full command execution. External tool
 calls whose configured policy requires approval are denied unless full access
 was selected. The role allowlist remains the child capability boundary.
 
+** Live S-expression events
+
+Add =--events sexp= to observe a run on stdout. Capture diagnostics separately on
+stderr and read the authoritative terminal result from =--output=:
+
+#+BEGIN_SRC sh
+autolith --permissions auto run-job \
+  --input /path/to/job.sexp --output /path/to/result.sexp \
+  --events sexp >events.sexp 2>diagnostics.log
+#+END_SRC
+
+Read consecutive top-level data forms, rather than splitting physical lines.
+Strings may contain newlines. Each version-one record has this shape:
+
+#+BEGIN_SRC lisp
+(:autolith-event :version 1
+ :run-id "a-generated-run-uuid" :seq 1 :time "2026-10-08T09:00:00Z"
+ :kind :run-started :data nil)
+#+END_SRC
+
+The event kinds are =:run-started=, =:job-started=, =:tool-started=, =:progress=,
+=:tool-finished=, =:job-finished=, =:usage=, =:warning=, =:progress-omitted=, and
+=:run-finished=. Ignore unknown versioned kinds. Sequence numbers increase
+strictly within one run. Job and execution identifiers are opaque execution
+UUIDs; provider call identifiers are pseudonymous within that run. Tool names
+come from the registered tool catalog. Observe only the requested root and its
+owned descendants, excluding other roots in the same conversation. Event data
+contains allowlisted statuses and numeric counters, not prompts, tool arguments,
+tool output, or provider payloads.
+Interactive input is EOF, and diagnostic/query streams go to stderr in the
+initiating thread and its workers.
+
+Use =run-job-event-read-stream= to read one validated record at a time, returning
+NIL at EOF. It uses the bounded =sexp-config= data grammar with =*read-eval*= NIL.
+Only approved keywords, strings, NIL/T, bounded nonnegative integers, and finite
+proper lists are accepted. The maximum record size is 16 KiB of UTF-8; character
+streams supplied to the library must already use UTF-8. Binary streams receive
+UTF-8 octets.
+
+Root =:job-finished= and final =:run-finished= records follow atomic result
+publication. Published terminal job events include a =:result-uri= resource
+reference; descendant references identify execution-qualified artifacts. The
+final data includes =:status= and =:published-p=; successful publication also
+includes =:output-path=. An output write failure reports
+=:failed=, =:published-p nil=, and =:category :result-publication-failed=, with a
+nonzero exit status. Inspect the result artifact for contracted data and full
+failure details.
+
+Delivery is best effort through one bounded queue and a single writer. Progress
+may be omitted under backpressure, with =:progress-omitted= reporting its count.
+Lifecycle overflow is reported with =:warning= and =:code :queue-full=; final
+delivery has a reserved slot. A slow or disconnected consumer may miss the
+terminal record; execution and result publication continue. There is no replay
+or reconnect cursor. For a new invocation, expect a new run UUID and sequence
+beginning at one.
+
+From Lisp, call =run-job-run= with =:events :sexp= and =:event-output STREAM=.
+Without the events option, use the existing artifact-only interface.
+
 * Generations and recovery
 
 =(checkpoint)= requires a clean Git worktree and a passing =./script/check=.

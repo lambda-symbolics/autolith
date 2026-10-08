@@ -1143,31 +1143,42 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
     (make-option ':string :long-name "input" :key ':input
                  :parameter "FILE" :description "data-only job S-expression")
     (make-option ':string :long-name "output" :key ':output
-                 :parameter "FILE" :description "atomically installed terminal result"))
+                 :parameter "FILE" :description "atomically installed terminal result")
+    (make-option ':string :long-name "events" :key ':events
+                 :parameter "sexp" :description "observe bounded S-expression events on stdout"))
    :handler
    (lambda (command)
      (when (command-arguments command)
        (error 'configuration-error
-              :message "run-job accepts only --input and --output options."))
+              :message "run-job accepts only --input, --output and --events options."))
      (let ((input (getopt* command ':input))
-            (output (getopt* command ':output)))
+           (output (getopt* command ':output))
+           (events (getopt* command ':events)))
+       (unless (or (null events) (equal events "sexp"))
+         (error 'configuration-error :message "run-job --events requires sexp."))
        (unless (non-empty-string-p input)
          (error 'configuration-error :message "run-job requires --input FILE."))
        (unless (non-empty-string-p output)
          (error 'configuration-error :message "run-job requires --output FILE."))
-        (let* ((configuration
-                 (apply #'configuration-create
-                        :immutable-p (not (null (getopt* command ':immutable)))
-                        :defer-provider-validation-p t
-                        (main--site-root-arguments command)))
+       (let* ((configuration
+                (apply #'configuration-create
+                       :immutable-p (not (null (getopt* command ':immutable)))
+                       :defer-provider-validation-p t
+                       (main--site-root-arguments command)))
               (permission-mode
                 (or (getopt* command ':permissions)
                     (config :permission-mode configuration)
                     ':auto))
-              (status (run-job-run input output permission-mode
-                                   :configuration configuration)))
-         (unless (zerop status)
-           (uiop:quit status)))))))
+              (status (apply #'run-job-run input output permission-mode
+                             :configuration configuration
+                             (when events
+                               (list :events ':sexp :event-output *standard-output*)))))
+         ;; The boundary has cleaned up the application and attempted publication.
+         ;; Normal Lisp exit can interrupt or flush a retained blocked writer.
+         (if events
+             (sb-ext:exit :code status :abort t)
+             (unless (zerop status)
+               (uiop:quit status))))))))
 
 
 (-> main--known-model-identifiers () list)

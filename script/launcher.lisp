@@ -29,7 +29,7 @@
 
 (defparameter *launcher-value-options*
   '("--permissions" "--image" "-i" "--localgroup-handoff" "--id" "--input"
-    "--output" "--generation" "--status" "--capsule" "--original-argument"
+    "--output" "--events" "--generation" "--status" "--capsule" "--original-argument"
     "--workspace")
   "Options whose next argument is forwarded verbatim, as script/launcher-cli.sh does.")
 

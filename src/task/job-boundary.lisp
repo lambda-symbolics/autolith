@@ -325,7 +325,9 @@
     (values keyword t (option string) list (option keyword) (option string)))
 (defun run-job-execute-with-application (configuration request permission-mode)
   "Execute REQUEST through the existing application child-agent runtime."
-  (let ((application nil))
+  (let ((application nil)
+        (event-orchestrator nil)
+        (event-listener nil))
     (unwind-protect
          (progn
            (setf application
@@ -341,15 +343,35 @@
                                "The task runtime is unavailable."))
              (task-agent-definition-validate-tools-available
               definition (application-tool-registry application))
+             (when *run-job-event-emitter*
+               (handler-case
+                   (setf event-orchestrator orchestrator
+                         event-listener
+                         (task-orchestrator-add-listener
+                          orchestrator
+                          (run-job-event-observer-create
+                           orchestrator *run-job-event-emitter*
+                           :configuration (application-configuration application)
+                           :registry (application-tool-registry application)
+                           :root-conversation
+                           (task-parent-root-conversation-identifier
+                            (application-agent application))
+                           :root-name *run-job-event-root-name*)))
+                 (serious-condition ()
+                   (run-job-event-emit *run-job-event-emitter* ':warning
+                                       (list :code ':invalid-event)))))
              (multiple-value-bind (jobs inline)
                  (task-orchestrator-start-jobs
                   orchestrator
                   (application-agent application)
                   (list
                    (list :item
-                         (list :agent (run-job-request-role request)
-                               :task assignment
-                               :blocking t)
+                         (append
+                          (list :agent (run-job-request-role request)
+                                :task assignment
+                                :blocking t)
+                          (when *run-job-event-root-name*
+                            (list :name *run-job-event-root-name*)))
                          :definition definition
                          :detached nil))
                   :command-authorization-function
@@ -419,6 +441,8 @@
                          (or
                           (getf result :error)
                           "The child failed before yielding structured data."))))))))))
+      (when (and event-orchestrator event-listener)
+        (task-orchestrator-remove-listener event-orchestrator event-listener))
       (run-job--close-application application))))
 
 (-> run-job--success-result-valid-p (t list) boolean)
@@ -429,63 +453,170 @@
     (error ()
       nil)))
 
-(-> run-job-run
+(-> run-job--run-artifact
     ((or pathname string) (or pathname string) keyword
      &key (:executor function) (:configuration (option configuration)))
     integer)
-(defun run-job-run
+(defun run-job--run-artifact
     (input-path output-path permission-mode
      &key (executor #'run-job-execute-with-application) configuration)
-  "Run one input artifact, atomically write its terminal result, and return an exit code."
+  "Execute and publish one authoritative artifact, then finish optional observation."
   (let ((started-at (get-universal-time))
         (identifier "")
         (request nil)
-        (form nil))
-    (flet ((write-failure (category condition)
-             (ignore-errors
-               (run-job-write-result-atomically
-                output-path
-                (run-job-result-envelope
-                 identifier ':failed
-                 :started-at started-at :finished-at (get-universal-time)
-                 :category category
-                 :message (princ-to-string condition))))))
-      (handler-case
-          (progn
-            (setf form (run-job-read-file input-path)
-                  identifier (run-job--recover-identifier form)
-                  request (run-job-validate-envelope form)
-                  identifier (run-job-request-identifier request))
-            (multiple-value-bind (status result trace-id usage category message)
-                (funcall
-                 executor
-                 (or configuration
-                     (configuration-create :defer-provider-validation-p t))
-                 request
-                 permission-mode)
-              (when (and (eq status ':succeeded)
-                         (not (run-job--success-result-valid-p
-                               result
-                               (run-job-request-output-contract request))))
-                (setf status ':failed
-                      result nil
-                      category ':invalid-output
-                      message
-                      "The child result does not satisfy the supplied contract."))
-              (run-job-write-result-atomically
-               output-path
-               (run-job-result-envelope
-                identifier status
-                :started-at started-at :finished-at (get-universal-time)
-                :result result :trace-id trace-id :usage usage
-                :category category :message message))
-              (if (eq status ':succeeded) 0 1)))
-        (run-job-error (condition)
-          (write-failure (run-job-error-category condition) condition)
-          64)
-        (error (condition)
-          (write-failure ':process-failure condition)
-          1)
-        (serious-condition (condition)
-          (write-failure ':process-failure condition)
-          1)))))
+        (form nil)
+        (terminal-status ':failed)
+        (terminal-category ':process-failure)
+        (terminal-trace nil)
+        (publication-attempted-p nil)
+        (published-p nil))
+    (labels ((publish (envelope)
+               (setf publication-attempted-p t published-p nil)
+               (run-job-write-result-atomically output-path envelope)
+               (setf published-p t))
+
+             (write-failure (category condition)
+               (let ((publication-failed-p
+                       (and *run-job-event-emitter* publication-attempted-p)))
+                 (setf terminal-status ':failed
+                       terminal-category
+                       (if publication-failed-p
+                           ':result-publication-failed
+                           (run-job-event--category category)))
+                 (unless publication-failed-p
+                   (ignore-errors
+                     (publish
+                      (run-job-result-envelope
+                       identifier ':failed
+                       :started-at started-at :finished-at (get-universal-time)
+                      :category category :message (princ-to-string condition))))))))
+      (unwind-protect
+           (handler-case
+               (progn
+                 (setf form (run-job-read-file input-path)
+                       identifier (run-job--recover-identifier form)
+                       request (run-job-validate-envelope form)
+                       identifier (run-job-request-identifier request))
+                 (multiple-value-bind (status result trace-id usage category message)
+                     (funcall
+                      executor
+                      (or configuration
+                          (configuration-create :defer-provider-validation-p t))
+                      request permission-mode)
+                   (when (and (eq status ':succeeded)
+                              (not (run-job--success-result-valid-p
+                                    result (run-job-request-output-contract request))))
+                     (setf status ':failed result nil category ':invalid-output
+                           message "The child result does not satisfy the supplied contract."))
+                   (setf terminal-status status
+                         terminal-category (and category (run-job-event--category category))
+                         terminal-trace trace-id)
+                   (publish
+                    (run-job-result-envelope
+                     identifier status
+                     :started-at started-at :finished-at (get-universal-time)
+                     :result result :trace-id trace-id :usage usage
+                     :category category :message message))
+                   (if (eq status ':succeeded) 0 1)))
+             (run-job-error (condition)
+               (write-failure (run-job-error-category condition) condition)
+               64)
+             (error (condition)
+               (write-failure ':process-failure condition)
+               1)
+             (serious-condition (condition)
+               (write-failure ':process-failure condition)
+               1))
+        (when *run-job-event-emitter*
+          (handler-case
+              (let* ((status (if published-p terminal-status ':failed))
+                     (category (if published-p terminal-category ':result-publication-failed))
+                     (base (append
+                            (list :status status :published-p published-p)
+                            (when (and (stringp terminal-trace)
+                                       (<= 1 (length terminal-trace) 256))
+                              (list :job-id terminal-trace))
+                            (when category (list :category category)))))
+                (when (getf base :job-id)
+                  (run-job-event-emit
+                   *run-job-event-emitter* ':job-finished
+                   (append base (list :execution-id terminal-trace)
+                           (when published-p
+                             (list :result-uri
+                                   (run-job-event--artifact-uri output-path))))))
+                (run-job-event-emitter-finish
+                 *run-job-event-emitter*
+                 (append base
+                         (when published-p
+                           (list :output-path (namestring (pathname output-path)))))))
+            (serious-condition ()
+              nil)))))))
+
+(-> run-job--thread-output-bindings (stream list) list)
+(defun run-job--thread-output-bindings (diagnostics inherited)
+  "Return recursively inherited worker stream bindings for one headless run.
+
+Bordeaux Threads does not inherit dynamic bindings implicitly. Bind its default
+alist too, so workers that create further workers cannot fall back to stdout."
+  (let ((inherited
+          (remove-if (lambda (entry)
+                       (member (first entry)
+                               '(*standard-input* *standard-output* *trace-output* *error-output*
+                                 *query-io* *terminal-io* *debug-io*
+                                 bordeaux-threads:*default-special-bindings*)))
+                     inherited)))
+    (append
+     (list (cons '*standard-input* '(make-string-input-stream ""))
+           (cons '*standard-output* (list 'quote diagnostics))
+           (cons '*trace-output* (list 'quote diagnostics))
+           (cons '*error-output* (list 'quote diagnostics))
+           (cons '*query-io*
+                 (list 'make-two-way-stream '(make-string-input-stream "") (list 'quote diagnostics)))
+           (cons '*terminal-io*
+                 (list 'make-two-way-stream '(make-string-input-stream "") (list 'quote diagnostics)))
+           (cons '*debug-io*
+                 (list 'make-two-way-stream '(make-string-input-stream "") (list 'quote diagnostics)))
+           (cons 'bordeaux-threads:*default-special-bindings*
+                 (list 'run-job--thread-output-bindings
+                       (list 'quote diagnostics) (list 'quote inherited))))
+     inherited)))
+
+(-> run-job-run
+    ((or pathname string) (or pathname string) keyword
+     &key (:executor function) (:configuration (option configuration))
+          (:events (member nil :sexp)) (:event-output stream))
+    integer)
+(defun run-job-run
+    (input-path output-path permission-mode
+     &key (executor #'run-job-execute-with-application) configuration
+          events (event-output *standard-output*))
+  "Run one contracted job; optionally observe it through version-one S-expression events.
+
+The output artifact is authoritative. With EVENTS :SEXP, EVENT-OUTPUT receives
+only data forms and producer diagnostics go to stderr, including new workers.
+Observation failure never changes execution or result publication."
+  (check-type events (member nil :sexp))
+  (if (null events)
+      (run-job--run-artifact input-path output-path permission-mode
+                             :executor executor :configuration configuration)
+      (let* ((run-id (make-identifier))
+             (diagnostics *error-output*)
+             (*standard-input* (make-string-input-stream ""))
+             (*standard-output* diagnostics)
+             (*trace-output* diagnostics)
+             (*debug-io* (make-two-way-stream *standard-input* diagnostics))
+             (*query-io* (make-two-way-stream *standard-input* diagnostics))
+             (*terminal-io* (make-two-way-stream *standard-input* diagnostics))
+             (bordeaux-threads:*default-special-bindings*
+              (run-job--thread-output-bindings
+               diagnostics bordeaux-threads:*default-special-bindings*))
+             (*run-job-event-root-name* run-id)
+             (*run-job-event-emitter*
+               (handler-case
+                   (run-job-event-emitter-create run-id event-output)
+                 (serious-condition ()
+                   nil))))
+        (when *run-job-event-emitter*
+          (run-job-event-emit *run-job-event-emitter* ':run-started nil))
+        (run-job--run-artifact input-path output-path permission-mode
+                               :executor executor :configuration configuration))))
