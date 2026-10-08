@@ -105,7 +105,12 @@
                  (shell-log--fail "Invalid shell capture filename in manifest."))
                (let* ((path (shell-log--safe-path
                              configuration (merge-pathnames (getf capture :file) directory)))
-                      (status (platform-path-status *platform* path :follow-links-p nil))
+                      (status (handler-case
+                                  (platform-path-status *platform* path :follow-links-p nil)
+                                (platform-error (condition)
+                                  (shell-log--fail
+                                   (format nil "Cannot inspect shell capture: ~A" condition)
+                                   path))))
                       (size (if status (platform-file-status-size status) 0))
                       (limit (getf metadata :capture-byte-limit)))
                  (when (and status (not (eq (platform-file-status-kind status) ':file)))
