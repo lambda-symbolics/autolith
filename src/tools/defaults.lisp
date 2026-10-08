@@ -279,13 +279,16 @@
     (resource-registry-register
      resource-registry
      (make-instance 'conversation-resolver :scheme "conversation"))
+    (resource-registry-register
+     resource-registry
+     (make-instance 'shell-log-resolver :scheme "shell-log"))
     (dolist
         (specification
          (list
           (list
            'resource-read-tool
            "resource" "read"
-            "Read a model-addressable resource. workspace: URIs return bounded numbered file windows with short stable line anchors, sorted directory listings, or an observed missing state; scratchpad: URIs expose the current conversation's disposable files through the same bounded observations; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations; papercut:current and canonical papercut:id/<percent-encoded-stable-id> URIs return active current-workspace papercut observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. inference:<trace-id> and context:<sha256> URIs return bounded numbered read-only windows over recursive-inference trace logs and stored context objects, honoring start-line and line-count. conversation:current is this conversation's complete durable history, including what compaction removed from context: it returns the newest records, start-sequence and record-count page by record sequence, and query lists the newest records containing every whitespace-separated term, ASCII letters matching either case. conversation:id/<id> reads another conversation only when the user names it. Every read establishes a transient conversation-local revision."
+            "Read a model-addressable resource. workspace: and scratchpad: URIs return bounded file or directory observations. agenda:, memory:, and papercut: expose revisioned workspace state. inference: and context: expose bounded trace and context windows. conversation:current exposes durable records, paginated by start-sequence/record-count or searched with query. conversation:id/<id> names another conversation. shell-log: reads execution-owned retained raw output as bounded UTF-8 text: use byte-offset/byte-count for ranges, or query with byte-offset/max-results for paginated literal search. Logs are authorized by session and task ownership; a missing or pruned artifact returns a diagnostic. Reads never load an entire log into conversation or context storage."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
@@ -294,14 +297,18 @@
                            "The first line to return, starting at 1. Line windows apply only to workspace:, scratchpad:, inference:, and context: resources; agenda:, memory:, and papercut: resources are always returned in full and reject start-line and line-count.")
              "line-count" (tool-integer-property
                            "How many lines to return; default 400, maximum 1000. Accepted only where start-line is.")
+             "byte-offset" (tool-integer-property
+                            "Zero-based byte offset for a shell-log: range or search page; defaults to 0.")
+             "byte-count" (tool-integer-property
+                           "Maximum raw bytes in a shell-log: range, capped by the log resource adapter.")
              "start-sequence" (tool-integer-property
                                "The first durable record sequence a conversation: window returns; without it the window ends at the newest record.")
              "record-count" (tool-integer-property
                              "How many records a conversation: window returns; default 20, maximum 200.")
              "query" (tool-string-property
-                      "Optional lexical query for memory collection resources, or the terms a conversation: search requires.")
+                       "Optional lexical memory/conversation query, or literal shell-log: text search.")
              "max-results" (tool-integer-property
-                            "Optional memory collection or conversation: search result limit, capped at 50."))
+                            "Optional memory, conversation, or shell-log: search result limit, capped at 50."))
             '("uri"))
            :resource-registry resource-registry)
           (list
@@ -345,7 +352,7 @@
    (list
     'shell-run-tool
     "shell" "run"
-    "Run one external command line in the workspace, optionally as an inspectable job, and return its exit code and combined output. Use PowerShell syntax on Windows and POSIX shell syntax elsewhere."
+     "Run one authorized external command, synchronously or as an inspectable job. Retain private raw output and return exit/status metadata, a bounded head/tail preview, and shell-log: references for later ranges or search. Use PowerShell syntax on Windows and POSIX shell syntax elsewhere."
     (tool-object-schema
      (json-object
       "command" (tool-string-property "The shell command line to execute.")
@@ -356,6 +363,8 @@
                    "The working directory; defaults to the workspace.")
       "timeout-seconds" (tool-integer-property
                          "Seconds before the command is stopped; defaults to 60 with no maximum.")
+       "separate-output" (tool-boolean-property
+                          "Capture stdout/stderr separately; defaults to false (merged output). Separate streams have no reconstructed interleaving.")
       "completion-policy" (tool-completion-policy-property)
       "async" (tool-boolean-property
                "Run as an inspectable background job; defaults to false."))

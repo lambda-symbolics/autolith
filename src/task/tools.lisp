@@ -524,7 +524,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
     ((job tool-execution-job) snapshot viewer
      &key (preview-limit 0) include-progress-p)
   "Return tool execution JOB's bounded native inspection record."
-  (declare (ignore viewer preview-limit))
+  (declare (ignore preview-limit))
   (let ((progress (getf snapshot :progress))
         (result (getf snapshot :result)))
     (append
@@ -538,10 +538,14 @@ The primary blocking field and legacy inverse async field are mutually exclusive
            :detached (and (getf snapshot :detached) t)
            :owner (getf snapshot :owner)
            :completion-policy (getf snapshot :completion-policy)
+           :shell-logs
+           (getf (shell-log-job-metadata (agent-configuration viewer) job) :shell-logs)
            :result
            (and result
                 (list :status (getf result :status)
                       :content (getf result :content)
+                      :details (getf result :details)
+                      :shell-logs (getf result :shell-logs)
                       :duration-ms (getf result :duration-ms)))
            :cancellation-reason (getf snapshot :cancellation-reason)
            :condition-report (getf snapshot :condition-report))

@@ -1751,7 +1751,8 @@ exactly that race."
                                             "[Console]::Write('fast-shell')"))))
                (test-assert
                 (and (tool-result-success-p result)
-                     (not (typep result 'task-tool-result))
+                     (eq (tool-result-category result) ':success)
+                     (= 0 (getf (tool-result-details result) :exit-code))
                      (search "exit 0" (tool-result-content result))
                      (search "fast-shell" (tool-result-content result))
                      (= (execution-count) (1+ before))
@@ -1871,15 +1872,16 @@ exactly that race."
                     (job (handoff-job result)))
                (multiple-value-bind (snapshot terminal-p)
                    (session-job-await job 2)
-                 (let ((content (getf (getf snapshot :result) :content)))
+                 (let* ((record (getf snapshot :result))
+                        (content (getf record :content))
+                        (capture (first (getf (first (getf record :shell-logs)) :captures))))
                    (test-assert
                     (and terminal-p
-                         (search "12345" content)
-                         (not (search "6789" content))
-                         (search
-                          "combined output truncated after 5 characters"
-                          content))
-                    "an asynchronous shell job retains its admission-time output bound")))))
+                         (search "6789" content)
+                         (not (search "123456789" content))
+                         (= 9 (getf capture :byte-count))
+                         (getf capture :complete-p))
+                    "An asynchronous shell job bounds its preview and retains complete raw output")))))
         (ignore-errors (tool-registry-close-runtime-state registry))
         (platform-delete-directory-tree *platform* root :validate t
                                              :if-does-not-exist ':ignore))))

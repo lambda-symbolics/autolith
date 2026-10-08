@@ -302,6 +302,12 @@ start under a cancelled ancestor, and hands over to the child."
 
 ;;;; -- Asynchronous Tool Execution --
 
+(defmethod job-interrupt-on-cancellation-p ((job tool-execution-job))
+  "Cancel shell jobs through the executor's poll so capture cleanup can finish."
+  (if (string= (tool-execution-job-tool-name job) "shell.run")
+      nil
+      (call-next-method)))
+
 (-> tool-execution-job--run (tool-execution-job) tool-result)
 (defun tool-execution-job--run (job)
   "Call JOB's operation exactly once after checking task ancestry."
@@ -314,7 +320,8 @@ start under a cancelled ancestor, and hands over to the child."
                      (session-job-identifier job) reason)
              :identifier (job-identifier job)
              :reason reason)))
-  (let ((operation (tool-execution-job-operation-function job)))
+  (let ((operation (tool-execution-job-operation-function job))
+        (*tool-execution-current-job* job))
     (unless operation
       (error 'tool-error
              :message "The asynchronous tool operation is no longer available."
@@ -358,6 +365,8 @@ start under a cancelled ancestor, and hands over to the child."
                  (get-internal-real-time)))))
     (values (list :status status
                   :content content
+                  :details (when tool-result-p
+                             (conversation--bounded-tool-details (tool-result-details result)))
                   :duration-ms duration)
             (and final-report
                  (bounded-string final-report
@@ -368,15 +377,20 @@ start under a cancelled ancestor, and hands over to the child."
     (tool-execution-job)
     tool-result)
 (defun tool-execution-job-result->tool-result (job)
-  "Rebuild the ordinary tool outcome retained by terminal execution JOB."
+  "Rebuild JOB's retained outcome using its ordinary result rendering policy."
   (let* ((record (job-result job))
          (content
            (or (and (listp record) (getf record :content))
                (job-condition-report job)
-               "The tool execution has no retained result.")))
-    (if (and (listp record) (eq (getf record :status) :success))
-        (tool-success content)
-        (tool-failure content))))
+               "The tool execution has no retained result."))
+         (details (and (listp record) (getf record :details)))
+         (success-p (and (listp record) (eq (getf record :status) ':success))))
+    (if (string= (tool-execution-job-tool-name job) "shell.run")
+        (shell-command-result content details success-p)
+        (let ((result (if success-p (tool-success content) (tool-failure content))))
+          (if details
+              (task-tool-result (tool-result-content result) details success-p)
+              result)))))
 
 (-> task-orchestrator-start-execution-job
     (task-orchestrator agent
@@ -421,6 +435,35 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
                  (lambda (job state result report)
                    (multiple-value-bind (record final-report final-state)
                        (funcall terminal-result-function job state result report)
+                     (when (and (typep result 'tool-result)
+                                (null (getf record :details)))
+                       (setf (getf record :details) (tool-result-details result)))
+                     (setf (getf record :details)
+                           (conversation--bounded-tool-details (getf record :details)))
+                     (let* ((metadata (shell-log-job-metadata
+                                       (agent-configuration parent-agent) job))
+                            (details (getf record :details))
+                            (properties-p
+                              (and (proper-list-p details)
+                                   (evenp (length details))
+                                   (loop for (key value) on details by #'cddr
+                                         always (keywordp key))))
+                            (logs (or (and properties-p (getf details :shell-logs))
+                                      (getf metadata :shell-logs))))
+                       ;; A final result can be stronger evidence than an unwritten
+                       ;; manifest after disk failure. Use storage on abort/no result.
+                       (when logs
+                         (setf (getf record :shell-logs) logs
+                               (getf record :shell-logs-omitted)
+                               (getf metadata :shell-logs-omitted 0)
+                               (getf record :details)
+                               (if properties-p
+                                   (let ((updated (copy-list details)))
+                                     (setf (getf updated :shell-logs) logs)
+                                     updated)
+                                   (list :shell-logs logs :tool-details details)))))
+                     (setf (getf record :details)
+                           (conversation--bounded-tool-details (getf record :details)))
                      (task-continuity-record-terminal job parent-agent record
                                                       :state final-state)
                      (values record final-report final-state)))

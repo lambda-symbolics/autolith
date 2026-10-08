@@ -4,6 +4,26 @@
 
 (setf *test-suites* nil)
 
+(define-test-suite shell-output
+  test-shell-retained-preview-and-ranges
+  test-shell-retained-timeout
+  test-shell-log-export-boundary)
+
+(define-test-suite shell-log-resource
+  test-shell-log-private-allocation
+  test-shell-log-byte-windows-and-search
+  test-shell-log-resource-authority
+  test-shell-log-reopen-and-pruning
+  test-shell-log-capture-failure-metadata)
+
+(define-test-suite shell-log-job
+  test-shell-log-job-results
+  test-shell-log-job-cancellation
+  test-shell-log-reference-summary
+  test-shell-log-durable-tool-details
+  test-shell-log-publication-failures
+  test-shell-log-command-gates)
+
 (define-test-suite mission-schedule
   test-mission-schedule-missed-and-dedup
   test-mission-schedule-version-and-cancel

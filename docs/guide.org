@@ -1719,6 +1719,37 @@ The default pool admits eight concurrent children.
 =AUTOLITH_TASK_MAX_CONCURRENCY= raises that up to 32. Child jobs have no
 deadline unless =AUTOLITH_TASK_MAX_RUNTIME_MS= is set positive.
 
+** Retained command output
+
+Use =shell.run= for synchronous commands, detached commands and command mission
+gates. Each authorized invocation receives private execution-owned raw captures
+before launch. Results include exit, timeout and cancellation status, retained and
+observed byte counts, capture completeness, and stable =shell-log:= references.
+The inline preview samples the beginning and end, with most space reserved for
+trailing diagnostics. Set =separate-output: true= to capture stdout and stderr
+independently; the preview allocates more space to stderr.
+
+Read a reference with =resource.read= using zero-based =byte-offset= and
+=byte-count= (default and maximum 4096 bytes). Use =query= for a literal UTF-8
+search, optionally =max-results= and =byte-offset=. Continue with the returned
+next offset. Each search scans at most 1 MiB and returns at most 20 excerpts.
+Text rendering replaces invalid UTF-8; the retained files contain the original
+bytes. Access follows the owning conversation and ordinary task-descendant
+inspection authority.
+
+References are included in job inspection, durable tool-result metadata and
+completion notices. Reopen them after restart or compaction without executing
+the command again. Missing, interrupted and pruned captures return diagnostics.
+
+Defaults are 64 MiB per stream, 1 GiB of reserved capture capacity and 256
+retained artifacts. Eligible completed captures become pruneable after seven
+days or under capacity pressure, on the next allocation. Active captures and
+undelivered completion evidence are protected. Adjust
+=*shell-log-capture-byte-limit*=, =*shell-log-retention-byte-limit*=,
+=*shell-log-retention-count-limit*= and =*shell-log-retention-age*= in trusted
+configuration. Captures exceeding their limit are explicitly incomplete.
+Session export collects task metadata independently of local log storage.
+
 * Non-interactive jobs
 
 =run-job= executes one caller-supplied child role without an interactive

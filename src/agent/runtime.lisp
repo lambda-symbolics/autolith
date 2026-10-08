@@ -1143,6 +1143,7 @@ worker results become explicit unknown outcomes so provider history stays valid.
          call-id
          :tool-name tool-name
          :output output
+         :details (tool-result-details effective-result)
          :content-blocks (tool-result-content-blocks effective-result)
          :success-p (tool-result-success-p effective-result)
          :category (tool-result-category effective-result)

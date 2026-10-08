@@ -177,6 +177,23 @@ explicit safety declaration; admission alone grants no replay authority."
            append (list key (task--compact-native-value (getf progress key) 256)))
      (list :usage (task--compact-native-value (getf progress :usage) 1000)))))
 
+(-> task--shell-log-reference-summary (list) list)
+(defun task--shell-log-reference-summary (logs)
+  "Project at most four latest stable log references from portable LOGS metadata."
+  (let* ((references
+           (remove-duplicates
+            (loop for log in (stable-sort (copy-list logs) #'>
+                                          :key (lambda (log) (getf log :created-at 0)))
+                  append (loop for capture in (getf log :captures)
+                               for reference = (getf capture :reference)
+                               when (stringp reference) collect reference))
+            :test #'equal))
+         (total (length references))
+         (retained (remove-if (lambda (reference) (> (length reference) 1024))
+                              (subseq references 0 (min total 4)))))
+    (list :shell-log-references retained
+          :shell-log-omitted-count (- total (length retained)))))
+
 (-> task-continuity--result-summary (list (option pathname)) list)
 (defun task-continuity--result-summary (result path)
   "Project timing, reported usage and artifact locations without result bodies."
@@ -184,6 +201,7 @@ explicit safety declaration; admission alone grants no replay authority."
     (append
      (loop for key in '(:status :request-count :duration-ms :conversation-file :worktree-artifact-path)
            append (list key (task--compact-native-value (getf result key) 1000)))
+     (task--shell-log-reference-summary (getf result :shell-logs))
      (list :usage (task--compact-native-value (getf result :usage) 1000)
            :output-path (and path (namestring path))))))
 
@@ -472,6 +490,12 @@ require a new human decision rather than an automatic second attempt."
   "Persist terminal metadata for an opaque asynchronous tool without replaying it."
   (let* ((path (task-continuity-record-job job parent))
          (target (merge-pathnames "terminal.sexp" (uiop:pathname-directory-pathname path))))
+    (unless (getf result :shell-logs)
+      (let ((metadata (shell-log-job-metadata (agent-configuration parent) job)))
+        (when (getf metadata :shell-logs)
+          (setf result (copy-list result)
+                (getf result :shell-logs) (getf metadata :shell-logs)
+                (getf result :shell-logs-omitted) (getf metadata :shell-logs-omitted)))))
     (task-continuity--write target (list :state state :result result
                                 :ended-at (get-universal-time)) :require-absent t))
   nil)

@@ -29,6 +29,9 @@
                                   :decision (getf continuity :decision)
                                   :recovery-outcome (getf continuity :recovery-outcome)
                                   :recovery-result (getf continuity :recovery-result)
+                                  :shell-logs
+                                  (getf (shell-log-job-metadata (agent-configuration viewer) job)
+                                        :shell-logs)
                                   :state (getf snapshot :state)
                                   :progress (task-continuity--progress-summary (getf snapshot :progress))
                                   :result (task-continuity--result-summary
@@ -72,6 +75,11 @@
           (when (getf row :updated-at)
             (format stream "  activity ~(~A~) at ~D~%"
                     (getf row :latest-activity) (getf row :updated-at)))
+          (let ((references (or (getf result :shell-log-references)
+                                (getf (task--shell-log-reference-summary
+                                       (getf row :shell-logs)) :shell-log-references))))
+            (dolist (reference references)
+              (format stream "  shell log ~A~%" reference)))
           (dolist (path (remove nil (list (getf row :path)
                                          (getf result :output-path)
                                          (getf result :worktree-artifact-path))))

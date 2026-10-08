@@ -40,8 +40,8 @@
 (defparameter *shell-default-timeout-seconds* 60
   "The seconds one shell.run command may take by default.")
 
-(defparameter *shell-maximum-output-characters* 65536
-  "The maximum combined output characters returned by shell.run.")
+(defparameter *shell-maximum-output-characters* 6000
+  "The raw-byte head/tail sampling budget for an inline shell.run preview.")
 
 (defparameter *workspace-tool-readable-roots* nil
   "Pathname roots confining workspace-tool access for the current call.
@@ -234,47 +234,6 @@ with full permissions never refuses one."
      :image-attachments (list attachment))))
 
 
-(-> workspace-tool-run-shell-command
-    (string pathname t (integer 1) (integer 0) &key (:environment list))
-    tool-result)
-(defun workspace-tool-run-shell-command
-    (command directory policy timeout output-limit &key environment)
-  "Run one already authorized shell COMMAND with fully resolved execution policy."
-  (let* ((result
-           (handler-bind
-               ((sb-int:stream-decoding-error
-                  (lambda (condition)
-                    (let ((restart (find-restart 'use-value condition)))
-                      (when restart
-                        (invoke-restart restart (code-char #xFFFD)))))))
-             (destructuring-bind (program &rest arguments)
-                 (platform-shell-command-line *platform* command)
-               (run-sandboxed
-                program
-                arguments
-                :policy policy
-                :working-directory directory
-                :environment environment
-                :timeout timeout
-                :merge-output-p t
-                :output-limit output-limit
-                :error-output-limit output-limit))))
-         (output (sandbox-result-output result))
-         (presented-output
-           (if (sandbox-result-output-truncated-p result)
-               (format nil
-                       "~A~%[combined output truncated after ~D characters]"
-                       output output-limit)
-               output)))
-    (if (sandbox-result-timed-out-p result)
-        (tool-failure
-         (format nil "The command was stopped after ~D seconds.~%~A"
-                 timeout presented-output))
-        (tool-success
-         (format nil "exit ~D~%~A"
-                 (sandbox-result-exit-code result)
-                 presented-output)))))
-
 (defmethod tool-execute ((tool shell-run-tool)
                          (context tool-context)
                          (arguments hash-table))
@@ -286,6 +245,9 @@ with full permissions never refuses one."
          (directory-argument (tool-argument arguments "directory"))
          (directory (workspace-tool-resolve-path context directory-argument))
          (timeout (workspace-tool-shell-timeout arguments))
+         (merge-output-p
+           (not (tool-boolean-argument
+                 arguments "separate-output" :tool-name "shell.run")))
          (async-p
            (tool-boolean-argument
             arguments "async" :tool-name "shell.run"))
@@ -319,7 +281,8 @@ with full permissions never refuses one."
                (flet ((run (policy environment)
                         (workspace-tool-run-shell-command
                          command directory policy timeout output-limit
-                         :environment environment)))
+                          :environment environment :context context
+                          :merge-output-p merge-output-p)))
                  (ecase authorization
                    (:sandboxed
                     (platform-call-with-command-sandbox

@@ -94,6 +94,7 @@
            :time (getf (rest record) :time)
            :tool (getf (rest record) :tool)
            :status (getf (rest record) :status)
+            :details (getf (rest record) :details)
            :output (getf (rest record) :output)))
     (:turn-aborted
      (list ':turn-aborted

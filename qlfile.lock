@@ -80,8 +80,8 @@
   :version "git-0987b9116004adc5659a33b5ec27f1afd873ca7b"))
 ("cl-jobpond" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-jobpond.git" :ref "3f91120faedf42b370e5f4298f2dc81f18d0b531")
-  :version "git-3f91120faedf42b370e5f4298f2dc81f18d0b531"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-jobpond.git" :ref "3fa176f20caaf954ebe3b352a18c01fef34d33ee")
+  :version "git-3fa176f20caaf954ebe3b352a18c01fef34d33ee"))
 ("clinker-transcript" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/clinker-transcript.git" :ref "d7cd04903fb36b62224fe618a0e1a11bebf0d8cb")
@@ -128,8 +128,8 @@
   :version "git-f7725d23a215be5cce778a85df1d47f8b4618714"))
 ("cl-exec-sandbox" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-exec-sandbox.git" :ref "76478d0c0e78bbd4e374953af12a2188630d794d")
-  :version "git-76478d0c0e78bbd4e374953af12a2188630d794d"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-exec-sandbox.git" :ref "e17e83fa724fb6e18be59d2658e83e0e4d6fd357")
+  :version "git-e17e83fa724fb6e18be59d2658e83e0e4d6fd357"))
 ("cl-hashline" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-hashline.git" :ref "9a989dc73bf46ff3f8e8c6921126612e2451a8a8")
@@ -160,8 +160,8 @@
   :version "git-7cd4b782e54c3d583a718876df7bfdd89778249b"))
 ("ls-compat" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/ls-compat.git" :ref "52c959f2bc00adc30f2970c2fd2226bd0c01730d")
-  :version "git-52c959f2bc00adc30f2970c2fd2226bd0c01730d"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/ls-compat.git" :ref "d67c607188ed434aa541c7048d422954d31bebcc")
+  :version "git-d67c607188ed434aa541c7048d422954d31bebcc"))
 ("ls-flock" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/ls-flock.git" :ref "0e3e0ada0f5b693cb3f32f46aefbb8dbebcc20f2")

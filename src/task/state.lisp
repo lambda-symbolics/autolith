@@ -44,6 +44,9 @@
 (defparameter *tool-execution-result-limit* 8000
   "The result characters retained for one terminal tool execution.")
 
+(defparameter *tool-execution-current-job* nil
+  "The supervised tool job executing on this worker, or NIL outside execution.")
+
 (defparameter *tool-execution-blocking-grace-seconds* 10
   "Seconds a default execution may block before handing off its existing job.")
 

@@ -144,16 +144,20 @@
                             (and (probe-file terminal-path) (namestring terminal-path))))
          (preview (or (getf result :response) (getf result :content)
                       (getf result :error) (getf result :output) result)))
-    (list :job-id (getf record :job-id)
-          :execution-id (getf record :execution-id)
-          :owner-conversation (getf record :completion-owner-conversation)
-          :completion-policy (getf record :completion-policy)
-          :mission-id (getf record :completion-mission-id)
-          :state state
-          :summary (task--compact-native-value preview *task-completion-summary-limit*)
-          :artifact-path artifact-path
-          :ready-at (+ (or (getf terminal :ended-at) (getf record :created-at))
-                       *task-completion-coalescing-seconds*))))
+    (append
+     (list :job-id (getf record :job-id)
+           :execution-id (getf record :execution-id)
+           :owner-conversation (getf record :completion-owner-conversation)
+           :completion-policy (getf record :completion-policy)
+           :mission-id (getf record :completion-mission-id)
+           :state state
+           :summary (task--compact-native-value preview *task-completion-summary-limit*)
+           :artifact-path artifact-path
+           :ready-at (+ (or (getf terminal :ended-at) (getf record :created-at))
+                        *task-completion-coalescing-seconds*))
+     (task--shell-log-reference-summary
+      (or (getf result :shell-logs)
+          (getf (getf terminal :result) :shell-logs))))))
 
 (-> task-completion--snapshot (session-job list &key (:root pathname)) list)
 (defun task-completion--snapshot (job snapshot &key root)

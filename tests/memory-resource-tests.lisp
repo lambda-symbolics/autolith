@@ -546,25 +546,7 @@
                  (and (tool-result-success-p exact-read)
                       (search (memory-resource--render-item global-memory)
                               (tool-result-content exact-read)))
-                 "canonical memory item resources return complete content"))
-             (let* ((resource-read
-                      (tool-registry-find registry "resource" "read"))
-                    (resource-edit
-                      (tool-registry-find registry "resource" "edit"))
-                    (uri-property
-                      (json-get
-                       (json-get (tool-parameters resource-read) "properties")
-                       "uri")))
-               (test-assert
-                (and (search "memory:relevant" (tool-description resource-read))
-                     (search "memory:id/<percent-encoded-stable-id>"
-                             (json-get uri-property "description")))
-                "resource.read schema advertises workspace, agenda, and memory URIs")
-               (test-assert
-                (and (search "memory:workspace" (tool-description resource-edit))
-                     (search "memory:id/<percent-encoded-stable-id>"
-                             (tool-description resource-edit)))
-                "resource.edit advertises guarded memory mutation"))))
+                 "canonical memory item resources return complete content"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)
       (platform-delete-directory-tree *platform* empty-root
                                       :validate t

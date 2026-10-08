@@ -99,6 +99,7 @@
                 #:job-identifier
                 #:job-index
                 #:job-maximum-runtime-milliseconds
+                #:job-interrupt-on-cancellation-p
                 #:job-name
                 #:job-not-found
                 #:job-owner-identifiers

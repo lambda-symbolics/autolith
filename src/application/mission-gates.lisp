@@ -94,9 +94,9 @@
             (+ 1 (gethash "timeout-seconds" arguments 60))))
       (tool-execute tool context arguments))))
 
-(-> mission-gate-execute (list tool-context) (values boolean string))
+(-> mission-gate-execute (list tool-context) (values boolean string list))
 (defun mission-gate-execute (gate context)
-  "Execute one first-class gate through existing execution and permission policy."
+  "Return the gate outcome, bounded evidence and portable execution metadata."
   (let ((timeout (getf gate :timeout-seconds)))
     (ecase (getf gate :kind)
       (:command
@@ -108,7 +108,8 @@
                 (text (tool-result-content result)))
            (values (and (tool-result-success-p result)
                         (uiop:string-prefix-p (format nil "exit 0~%") text))
-                   (mission--bounded-text text)))))
+                   (mission--bounded-text text)
+                   (conversation--bounded-tool-details (tool-result-details result))))))
       (:artifact
        (let* ((path (workspace-tool-path context (getf gate :path)))
               (digest (mission--file-digest path))
@@ -117,14 +118,16 @@
                              (or (null expected) (string-equal expected digest)))))
          (values (and passed-p t)
                  (format nil "Artifact ~A SHA-256 ~A~@[; expected ~A~]"
-                         (getf gate :path) digest expected))))
+                         (getf gate :path) digest expected)
+                 nil)))
       (:lisp
        (let* ((code (format nil "(assert (progn ~A))" (getf gate :predicate)))
               (result (mission--gate-tool-result
                        context "lisp" "eval"
                        (json-object "forms" (vector code) "timeout-seconds" timeout))))
          (values (tool-result-success-p result)
-                 (mission--bounded-text (tool-result-content result))))))))
+                 (mission--bounded-text (tool-result-content result))
+                 (conversation--bounded-tool-details (tool-result-details result))))))))
 
 (-> application-mission-invalidate (application string string) null)
 (defun application-mission-invalidate (application identifier evidence)
@@ -207,6 +210,9 @@
                         (lambda () (multiple-value-list (mission-gate-execute gate tool-context)))
                         :timeout (* 1000 (getf gate :timeout-seconds))))
                (passed-p (first result)) (evidence (second result)))
+          (unless (nth-value 2 (get-properties gate '(:tool-details)))
+            (nconc gate (list :tool-details nil)))
+          (setf (getf gate :tool-details) (third result))
           (setf (getf gate :status) (if passed-p ':passed ':failed)
                 (getf gate :evidence) (mission--bounded-text evidence))
           (mission--evidence context ':gate (list (getf gate :id) (getf gate :status) evidence))

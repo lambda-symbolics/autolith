@@ -138,9 +138,9 @@
                                          (list result-path) excluded)))))))))
     (values (nreverse children) excluded)))
 
-(-> data-transfer--walk-files (pathname) list)
-(defun data-transfer--walk-files (root)
-  "Collect confined regular files recursively without following symlinks."
+(-> data-transfer--walk-files (pathname &key (:excluded-directory-names list)) list)
+(defun data-transfer--walk-files (root &key excluded-directory-names)
+  "Collect confined regular files, omitting caller-selected asset subtrees."
   (let ((files nil))
     (labels ((walk (directory)
                (data-transfer--check-path root directory)
@@ -148,8 +148,10 @@
                  (data-transfer--check-path root file)
                  (push file files))
                (dolist (child (uiop:subdirectories directory))
-                 (data-transfer--check-path root child)
-                 (walk child))))
+                 (unless (member (first (last (pathname-directory child)))
+                                 excluded-directory-names :test #'string=)
+                   (data-transfer--check-path root child)
+                   (walk child)))))
       (when (uiop:directory-exists-p root) (walk root)))
     (sort files #'string< :key #'namestring)))
 
@@ -167,10 +169,12 @@
 
 (-> data-transfer--assets (configuration keyword string) list)
 (defun data-transfer--assets (configuration area owner)
-  "Collect only files owned by one session asset subtree."
+  "Collect session assets independently of retained command-output storage."
   (let ((root (data-transfer--asset-root configuration area owner)))
     (data-transfer--check-path (config :data-root configuration) root)
-    (loop for pathname in (data-transfer--walk-files root)
+    (loop for pathname in (data-transfer--walk-files
+                          root :excluded-directory-names
+                          (when (eq area ':tasks) '("shell-log")))
           collect (list :area area :owner owner
                         :path (data-transfer--relative-components pathname root)
                         :bytes (data-transfer--bytes pathname)))))

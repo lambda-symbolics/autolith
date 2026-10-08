@@ -1825,10 +1825,39 @@ copied."
   "Autolith interrupted this tool call before recording its result. The call may have changed external state. Inspect the relevant state before deciding whether to retry it."
   "The provider-visible result synthesized for a tool call with an unknown outcome.")
 
+(defparameter *conversation-tool-details-maximum-octets* (* 64 1024)
+  "Maximum portable structured tool metadata retained in one durable result.")
+
+(-> conversation--bounded-tool-details (t) t)
+(defun conversation--bounded-tool-details (details)
+  "Return portable bounded DETAILS or a truthful omission descriptor."
+  (handler-case
+      (progn
+        (validate-tree
+         details
+         (make-source-grammar
+          :label "Tool result metadata"
+          :maximum-depth 64 :maximum-nodes 8192
+          :maximum-string-characters *conversation-tool-details-maximum-octets*
+          :allowed-atom-predicate
+          (lambda (value)
+            (or (null value) (eq value t) (keywordp value)
+                (stringp value) (numberp value)))))
+        (let* ((text (with-standard-io-syntax
+                       (let ((*print-circle* nil) (*print-readably* t))
+                         (write-to-string details))))
+               (octets (length (utf8-string-to-octets text))))
+          (if (<= octets *conversation-tool-details-maximum-octets*)
+              details
+              (list :omitted-p t :reason ':metadata-size-limit :octets octets))))
+    ((or sexp-config-error print-not-readable) ()
+      (list :omitted-p t :reason ':metadata-not-portable))))
+
 (-> conversation-append-tool-result
     (conversation string
      &key (:tool-name string)
           (:output string)
+          (:details t)
           (:image-attachments list)
           (:content-blocks list)
           (:success-p boolean)
@@ -1839,10 +1868,10 @@ copied."
     json-object)
 (defun conversation-append-tool-result
     (conversation call-id
-     &key tool-name output image-attachments content-blocks success-p
+     &key tool-name output details image-attachments content-blocks success-p
        (category (if success-p ':success ':failure))
        cpu-microseconds real-microseconds (persistence ':durable))
-  "Append one categorized tool OUTPUT, optional content, timing, and PERSISTENCE."
+  "Append categorized tool OUTPUT, bounded metadata, optional content and timing."
   (when (and image-attachments content-blocks)
     (error 'conversation-invariant-error
            :message
@@ -1902,6 +1931,7 @@ copied."
                                    (:neutral ':neutral)
                                    (:mechanics ':mechanics))
                          :category category
+                         :details (conversation--bounded-tool-details details)
                          :output output)
                   (when attachments
                     (list

@@ -107,6 +107,16 @@ terminal prompt          local Lisp result       finalized scrollback
 | image-daemon/runtime | Service registry, relays, attachment queues and shutdown | Conversation leases, steering, handoff and input-reader coordination |
 | clinedi | Modal sessions, editor/history state and terminal transports | Completion, submission, paste and interruption policy |
 | cl-termdown | Column layout and semantic span presentation | Transcript composition, modeline and activity content |
+| cl-exec-sandbox | Bounded raw capture files, process cleanup, capture metadata and byte head/tail sampling | Private execution-owned log artifacts, preview budgets, retention, durable references and authorized resource reads |
+
+Retained shell output is split across =src/task/shell-logs.lisp= (ownership,
+private manifests and pruning), =src/tools/shell-output.lisp= (bounded previews)
+and =src/resource/shell-log.lisp= (authorized byte windows and search). Jobpond
+execution identities and durable tool, mission-gate and completion evidence
+connect capture lifetime to the task runtime. Shell jobs opt into Jobpond's
+cooperative cancellation policy and poll from the executor so process and capture
+cleanup finish before terminal publication. Portable result details preserve
+references in conversation records; raw output is independent of context storage.
 
 * ACP service
 
