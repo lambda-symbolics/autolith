@@ -115,7 +115,9 @@
                                          (bounded-string (princ-to-string condition) :limit 500)))))))
                         (cl-exec-sandbox:sandbox-execution-error (condition)
                           (setf diagnostic (bounded-string (princ-to-string condition) :limit 500))
-                          (cl-exec-sandbox:sandbox-execution-error-result condition)))))
+                          (or (cl-exec-sandbox:sandbox-execution-error-result condition)
+                              (return-from workspace-tool-run-shell-command
+                                (tool-failure diagnostic)))))))
                (shell-command-result
                 (shell-output--render-result result artifact output-limit :diagnostic diagnostic)
                 (list :exit-code (sandbox-result-exit-code result)

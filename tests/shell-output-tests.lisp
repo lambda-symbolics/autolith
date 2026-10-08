@@ -102,6 +102,30 @@
       (test-assert (zerop overflow-count) "Raw logs and previews never spill into context storage")))
   nil)
 
+(-> test-shell-prelaunch-failure () null)
+(defun test-shell-prelaunch-failure ()
+  "Report the original launch failure when no sandbox capture result exists."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let* ((registry (make-default-tool-registry))
+           (context (shell-output-tests--context configuration registry))
+           (result
+             (test-call-with-function-replacements
+              (list (list 'run-sandboxed
+                          (lambda (&rest arguments)
+                            (declare (ignore arguments))
+                            (error 'cl-exec-sandbox:sandbox-execution-error
+                                   :message "sandbox-launch-probe"
+                                   :command '("fixture")))))
+              (lambda ()
+                (tool-execute (tool-registry-find registry "shell" "run") context
+                              (json-object "command" "fixture"))))))
+      (test-assert (not (tool-result-success-p result))
+                   "A prelaunch failure reports unsuccessful execution")
+      (test-assert (search "sandbox-launch-probe" (tool-result-content result))
+                   "The launch diagnostic is preserved without a capture result")))
+  nil)
+
 (-> test-shell-retained-timeout () null)
 (defun test-shell-retained-timeout ()
   "Retain pre-timeout output with truthful incomplete status."

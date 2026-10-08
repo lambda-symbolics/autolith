@@ -6,6 +6,7 @@
 
 (define-test-suite shell-output
   test-shell-retained-preview-and-ranges
+  test-shell-prelaunch-failure
   test-shell-retained-timeout
   test-shell-log-export-boundary)
 
