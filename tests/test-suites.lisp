@@ -968,6 +968,7 @@
   test-environment-fixture-restoration
   test-environment-fixture-evaluation
   test-function-replacement-fixture-restoration
+  test-long-symbolic-link-fixture
   test-platform-copy-file-permissions)
 
 (define-test-suite test-runner

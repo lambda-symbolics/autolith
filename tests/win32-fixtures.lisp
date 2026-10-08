@@ -45,8 +45,14 @@
 
 (-> win32-fixture--native (string) string)
 (defun win32-fixture--native (namestring)
-  "Return NAMESTRING with Windows separators and no trailing separator."
-  (string-right-trim "\\" (substitute #\\ #\/ namestring)))
+  "Return native separators, using an extended path for long absolute local names."
+  (let ((native (string-right-trim "\\" (substitute #\\ #\/ namestring))))
+    (if (and (>= (length native) 260)
+             (alpha-char-p (char native 0))
+             (char= (char native 1) #\:)
+             (char= (char native 2) #\\))
+        (concatenate 'string "\\\\?\\" native)
+        native)))
 
 (-> win32-fixture--unavailable (test-fixture-kind) nil)
 (defun win32-fixture--unavailable (fixture)
@@ -87,7 +93,7 @@
                                             target link)
   "Create LINK with CreateSymbolicLinkW, as a directory link when TARGET is one."
   (declare (ignore platform))
-  (let* ((link-pathname (uiop:parse-native-namestring (win32-fixture--native link)))
+  (let* ((link-pathname (uiop:parse-native-namestring link))
          (target-pathname
            (merge-pathnames (uiop:parse-native-namestring target)
                             (uiop:pathname-directory-pathname link-pathname)))
@@ -106,7 +112,7 @@
   "Delete LINK through the entry point for its kind, leaving its target alone."
   (declare (ignore platform))
   (let* ((native (win32-fixture--native link))
-         (pathname (uiop:parse-native-namestring native))
+         (pathname (uiop:parse-native-namestring link))
          (attributes (win32--get-file-attributes native)))
     (when (= attributes *win32-invalid-file-attributes*)
       (win32--fail ':unlink pathname))

@@ -244,6 +244,30 @@
       (fmakunbound name)))
   nil)
 
+(-> test-long-symbolic-link-fixture () null)
+(defun test-long-symbolic-link-fixture ()
+  "Create and remove a relative-target symbolic link beyond the Windows path limit."
+  (with-test-fixture (':symbolic-links "long symbolic-link paths")
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let* ((directory (loop repeat 6
+                             for path = root then (merge-pathnames
+                                                   (format nil "~A/" (make-string 50 :initial-element #\x))
+                                                   path)
+                             finally (return path)))
+             (target (merge-pathnames "target.txt" directory))
+             (link (merge-pathnames "link.txt" directory)))
+        (ensure-directories-exist target)
+        (with-open-file (stream target :direction ':output)
+          (write-string "long-link-target" stream))
+        (test-fixture-make-symbolic-link *platform* "target.txt" (namestring link))
+        (test-assert (string= "long-link-target" (uiop:read-file-string link))
+                     "A long link resolves its relative target")
+        (test-fixture-remove-link *platform* (namestring link))
+        (test-assert (and (not (probe-file link)) (probe-file target))
+                     "Removing a long link preserves its target"))))
+  nil)
+
 (-> test-platform-copy-file-permissions () null)
 (defun test-platform-copy-file-permissions ()
   "Copy ordinary and special POSIX permission bits through the host adapter."
