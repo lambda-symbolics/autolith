@@ -53,7 +53,9 @@
   test-lsp-semantic-stale-and-approval
   test-lsp-semantic-conversation-bounds
   test-lsp-semantic-tool-workflow
-  test-lsp-semantic-authority-and-validation)
+  test-lsp-semantic-authority-and-validation
+  test-lsp-semantic-owned-snapshots
+  test-lsp-semantic-snapshot-budgets)
 
 (define-test-suite workspace-change
   test-workspace-change-publication

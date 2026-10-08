@@ -226,23 +226,102 @@
              (test-assert (lsp-semantic-tests--rejected
                            (lambda () (lsp-semantic--find state first :identifier id :kind ':proposal))) "oldest proposal evicted")
              (test-assert (eq two (lsp-semantic--find state first :identifier (lsp-semantic-entry-identifier two) :kind ':proposal)) "latest retained")
-             (let* ((path (lsp-semantic-tests--write configuration "expired.txt" "old"))
-                    (uri (cl-lsp:lsp-path-uri path))
-                    (entry (lsp-semantic-tests--proposal
-                            first client (json-object "changes"
-                                                      (json-object uri (vector (lsp-semantic-tests--text-edit 0 3 "new"))))))
-                    (alias (second (gethash uri (lsp-semantic-entry-snapshots entry)))))
-               (fifo-cache-delete-first-if
-                (lambda (candidate state)
-                  (declare (ignore state))
-                  (equal candidate alias))
-                (conversation-resource-observations (tool-context-conversation first)))
-               (test-assert (lsp-semantic-tests--rejected
-                             (lambda () (lsp-semantic--apply first entry #()))) "expired resource revision cannot be applied")
-               (test-assert (equal "old" (uiop:read-file-string path)) "expired proposal writes nothing"))
              (let ((*lsp-semantic-maximum-characters* 1))
                (test-assert (lsp-semantic-tests--rejected
                              (lambda () (lsp-semantic--store state first two))) "oversized choices rejected")))
+        (tool-registry-close-runtime-state registry))))
+  nil)
+
+
+(-> test-lsp-semantic-owned-snapshots () null)
+(defun test-lsp-semantic-owned-snapshots ()
+  "Apply a large proposal after cache pressure and reject subsequent conflicting edits."
+  (with-test-configuration (configuration)
+    (setf configuration (lsp-semantic-tests--workspace configuration))
+    (let* ((registry (make-default-tool-registry :configuration configuration))
+           (context (lsp-semantic-tests--context configuration registry "semantic-snapshots"))
+           (client (lsp-client-tests--client (config :working-directory configuration)))
+           (state (make-instance 'lsp-semantic-state))
+           (changes (json-object))
+           (paths (loop for index below 17
+                        collect (lsp-semantic-tests--write configuration (format nil "file-~D.txt" index) "old"))))
+      (unwind-protect
+           (progn
+             (dolist (path paths)
+               (setf (gethash (cl-lsp:lsp-path-uri path) changes)
+                     (vector (lsp-semantic-tests--text-edit 0 3 "new"))))
+             (let* ((entry (lsp-semantic-tests--proposal context client (json-object "changes" changes)))
+                    (identifier (lsp-semantic--store state context entry)))
+               (dotimes (index 24)
+                 (let* ((path (lsp-semantic-tests--write configuration (format nil "read-~D.txt" index) "read"))
+                        (resource (lsp-semantic--resource context (cl-lsp:lsp-path-uri path))))
+                   (resource-observation-state-ensure
+                    (tool-context-conversation context) (resource-observe resource context) :visible-ranges nil)))
+               (test-assert (= 17 (length (lsp-semantic--apply
+                                          context (lsp-semantic--find state context :identifier identifier :kind ':proposal) #())))
+                            "a seventeen-file proposal applies after unrelated observations evict the ordinary cache")
+               (test-assert (every (lambda (path) (equal "new" (uiop:read-file-string path))) paths)
+                            "every proposed file receives its intended content"))
+             (dolist (path paths)
+               (setf (gethash (cl-lsp:lsp-path-uri path) changes)
+                     (vector (lsp-semantic-tests--text-edit 0 3 "again"))))
+             (let ((entry (lsp-semantic-tests--proposal context client (json-object "changes" changes))))
+               (workspace-resource-tests--write-text (first paths) "external")
+               (test-assert (lsp-semantic-tests--rejected (lambda () (lsp-semantic--apply context entry #())))
+                            "a changed proposal-owned snapshot rejects the complete change set")
+               (test-assert (and (equal "external" (uiop:read-file-string (first paths)))
+                                 (every (lambda (path) (equal "new" (uiop:read-file-string path))) (rest paths)))
+                            "stale proposal validation precedes all file writes")))
+        (tool-registry-close-runtime-state registry))))
+  nil)
+
+(-> test-lsp-semantic-snapshot-budgets () null)
+(defun test-lsp-semantic-snapshot-budgets ()
+  "Bound captured snapshots and evict oldest choices by resource count and UTF-8 bytes."
+  (with-test-configuration (configuration)
+    (setf configuration (lsp-semantic-tests--workspace configuration))
+    (let* ((registry (make-default-tool-registry :configuration configuration))
+           (context (lsp-semantic-tests--context configuration registry "semantic-budget"))
+           (client (lsp-client-tests--client (config :working-directory configuration)))
+           (paths (loop for index below 3
+                        collect (lsp-semantic-tests--write configuration (format nil "unicode-~D.txt" index) "😀")))
+           (edits (loop for path in paths
+                        collect (json-object "changes"
+                                             (json-object (cl-lsp:lsp-path-uri path)
+                                                          (vector (lsp-semantic-tests--text-edit 0 2 "x"))))))
+           (combined (json-object "changes" (json-object))))
+      (unwind-protect
+           (progn
+             (loop for path in (subseq paths 0 2)
+                   do (setf (gethash (cl-lsp:lsp-path-uri path) (json-get combined "changes"))
+                            (vector (lsp-semantic-tests--text-edit 0 2 "x"))))
+             (dolist (limits '((1 128) (128 4)))
+               (let ((*lsp-semantic-maximum-snapshots-per-entry* (first limits))
+                     (*lsp-semantic-maximum-snapshot-bytes* (second limits)))
+                 (test-assert (lsp-semantic-tests--rejected
+                               (lambda () (lsp-semantic-tests--proposal context client combined)))
+                              "proposal capture rejects a resource-count or UTF-8 byte overflow")))
+             (dolist (limits '((2 128) (128 8)))
+               (let* ((*lsp-semantic-maximum-snapshots* (first limits))
+                      (*lsp-semantic-maximum-snapshot-bytes* (second limits))
+                      (state (make-instance 'lsp-semantic-state))
+                      (entries (mapcar (lambda (edit) (lsp-semantic-tests--proposal context client edit)) edits)))
+                 (dolist (entry entries) (lsp-semantic--store state context entry))
+                 (test-assert (lsp-semantic-tests--rejected
+                               (lambda () (lsp-semantic--find state context
+                                                             :identifier (lsp-semantic-entry-identifier (first entries))
+                                                             :kind ':proposal)))
+                              "snapshot count and byte budgets evict the oldest retained choice")
+                 (test-assert (= 2 (length (gethash (tool-context-conversation context)
+                                                   (lsp-semantic-state-entries state))))
+                              "the newest fitting choices occupy the retained budget")
+                 (test-assert (eq (third entries)
+                                  (lsp-semantic--find state context
+                                                      :identifier (lsp-semantic-entry-identifier (third entries))
+                                                      :kind ':proposal))
+                              "the newest bounded choice is available for application")))
+             (test-assert (every (lambda (path) (equal "😀" (uiop:read-file-string path))) paths)
+                          "snapshot capture and eviction do not modify workspace files"))
         (tool-registry-close-runtime-state registry))))
   nil)
 

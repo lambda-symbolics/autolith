@@ -5,6 +5,15 @@
 (defparameter *lsp-semantic-maximum-entries* 32
   "Maximum retained proposals and action choices per conversation.")
 
+(defparameter *lsp-semantic-maximum-snapshots-per-entry* 128
+  "Maximum resource snapshots retained by one semantic choice.")
+
+(defparameter *lsp-semantic-maximum-snapshots* 512
+  "Maximum resource snapshots retained by all choices in one conversation.")
+
+(defparameter *lsp-semantic-maximum-snapshot-bytes* (* 16 1024 1024)
+  "Maximum UTF-8 snapshot bytes retained by semantic choices per conversation.")
+
 (defparameter *lsp-semantic-maximum-characters* 240000
   "Maximum encoded characters in a semantic proposal or action choice.")
 
@@ -29,7 +38,7 @@
    (kind :initarg :kind :reader lsp-semantic-entry-kind
          :documentation "Either :proposal or :action.")
    (snapshots :initarg :snapshots :reader lsp-semantic-entry-snapshots
-              :documentation "URI-keyed resource, retained revision alias and exact document version."))
+              :documentation "URI-keyed resource, proposal-owned observation state and exact document version."))
   (:documentation "An immutable proposed transformation against exact retained snapshots."))
 
 (-> lsp-semantic--fail (string) null)
@@ -56,15 +65,22 @@
 
 (-> lsp-semantic--observation (tool-context list) workspace-file-observation)
 (defun lsp-semantic--observation (context record)
-  "Resolve a retained revision without extending the resource snapshot lifetime."
-  (resource-observation-state-observation
-   (workspace-file--find-observation-state
-    (tool-context-conversation context) (resource-uri (first record)) (second record))))
+  "Return the immutable observation owned by a proposal snapshot."
+  (declare (ignore context))
+  (resource-observation-state-observation (second record)))
+
+(-> lsp-semantic--snapshot-bytes (hash-table) (integer 0))
+(defun lsp-semantic--snapshot-bytes (snapshots)
+  "Return the total UTF-8 bytes owned by SNAPSHOTS."
+  (loop for record being the hash-values of snapshots
+        sum (workspace-file--observation-retained-bytes
+             (resource-observation-state-observation (second record)))))
 
 (-> lsp-semantic--snapshot-function (tool-context lsp-client hash-table) function)
 (defun lsp-semantic--snapshot-function (context client snapshots)
-  "Capture exact authorized resources and synchronized versions before normalization."
-  (let ((versions (make-hash-table :test #'equal)))
+  "Capture bounded authorized resources and synchronized versions before normalization."
+  (let ((versions (make-hash-table :test #'equal))
+        (bytes (lsp-semantic--snapshot-bytes snapshots)))
     (with-lock-held ((cl-lsp:lsp-client-lock client))
       (maphash (lambda (uri document)
                  (setf (gethash uri versions)
@@ -73,14 +89,20 @@
     (lambda (uri)
       (let ((record (gethash uri snapshots)))
         (unless record
+          (when (>= (hash-table-count snapshots)
+                    (min *lsp-semantic-maximum-snapshots-per-entry* *lsp-semantic-maximum-snapshots*))
+            (lsp-semantic--fail "Semantic proposal addresses too many resources; narrow the request."))
           (let* ((resource (lsp-semantic--resource context uri))
                  (observation
                    (workspace-file--call-with-authorized-access
                     resource context ':read (lambda () (resource-observe resource context))))
                  (kind (workspace-file-observation-kind observation))
-                 (version (gethash uri versions)))
+                 (version (gethash uri versions))
+                 (weight (workspace-file--observation-retained-bytes observation)))
             (unless (member kind '(:file :missing))
               (lsp-semantic--fail "Semantic edits do not support directories or service resources."))
+            (when (> (+ bytes weight) *lsp-semantic-maximum-snapshot-bytes*)
+              (lsp-semantic--fail "Semantic snapshots exceed the retained byte limit; narrow the request."))
             (when (and version
                        (not (and (eq kind ':file)
                                  (equal (first version) (resource-observation-content observation)))))
@@ -91,11 +113,12 @@
                          (lsp-semantic--fail "A proposal addresses one resource through multiple URI aliases.")))
                      snapshots)
             (setf record (list resource
-                               (resource-observation-state-alias
-                                (resource-observation-state-ensure
-                                 (tool-context-conversation context) observation :visible-ranges nil))
+                               (make-instance 'workspace-file-observation-state
+                                              :alias (format nil "P~A" (daemon-random-token))
+                                              :observation observation :visible-ranges nil)
                                (rest version))
-                  (gethash uri snapshots) record)))
+                  (gethash uri snapshots) record)
+            (incf bytes weight)))
         (let ((observation (lsp-semantic--observation context record)))
           (values (and (eq (workspace-file-observation-kind observation) ':file)
                        (resource-observation-content observation))
@@ -103,14 +126,27 @@
 
 (-> lsp-semantic--store (lsp-semantic-state tool-context lsp-semantic-entry) string)
 (defun lsp-semantic--store (state context entry)
-  "Retain a bounded choice for this conversation, evicting oldest entries."
+  "Retain the newest choices within entry, snapshot-count and UTF-8 byte budgets."
   (when (> (length (json-encode (lsp-semantic-entry-value entry)))
            *lsp-semantic-maximum-characters*)
     (lsp-semantic--fail "Semantic proposal exceeds the retained choice limit; narrow the request."))
-  (let* ((conversation (tool-context-conversation context))
+  (let* ((snapshots (lsp-semantic-entry-snapshots entry))
+         (conversation (tool-context-conversation context))
          (entries (cons entry (gethash conversation (lsp-semantic-state-entries state)))))
+    (when (or (> (hash-table-count snapshots)
+                 (min *lsp-semantic-maximum-snapshots-per-entry* *lsp-semantic-maximum-snapshots*))
+              (> (lsp-semantic--snapshot-bytes snapshots) *lsp-semantic-maximum-snapshot-bytes*))
+      (lsp-semantic--fail "Semantic snapshots exceed the retained resource budget; narrow the request."))
     (setf (gethash conversation (lsp-semantic-state-entries state))
-          (subseq entries 0 (min (length entries) *lsp-semantic-maximum-entries*))))
+          (loop for candidate in entries
+                for index from 0
+                for snapshots = (lsp-semantic-entry-snapshots candidate)
+                sum (hash-table-count snapshots) into count
+                sum (lsp-semantic--snapshot-bytes snapshots) into bytes
+                while (and (< index *lsp-semantic-maximum-entries*)
+                           (<= count *lsp-semantic-maximum-snapshots*)
+                           (<= bytes *lsp-semantic-maximum-snapshot-bytes*))
+                  collect candidate)))
   (lsp-semantic-entry-identifier entry))
 
 (-> lsp-semantic--find
@@ -125,27 +161,24 @@
 
 (-> lsp-semantic--validate (tool-context lsp-semantic-entry) null)
 (defun lsp-semantic--validate (context entry)
-  "Reauthorize every snapshot and reject disk, retained-revision or server-version drift."
+  "Reauthorize every snapshot and reject disk or server-version drift."
   (let ((client (lsp-semantic-entry-client entry)))
     (unless (eq (lsp-semantic-entry-transport entry) (lsp-client-transport client))
       (lsp-semantic--fail "Language server restarted; request a fresh proposal."))
     (maphash
      (lambda (uri record)
-       (destructuring-bind (resource alias version) record
-         (workspace-file--call-with-authorized-access
-          resource context ':edit
-          (lambda ()
-            (let* ((retained (workspace-file--find-observation-state
-                              (tool-context-conversation context) (resource-uri resource)
-                              alias))
-                   (base (resource-observation-state-observation retained))
-                   (current (resource-observe resource context)))
-              (unless (workspace-file--same-observation-p base current)
-                (workspace-file--signal-stale resource base current)))))
-         (with-lock-held ((cl-lsp:lsp-client-lock client))
-           (let ((document (gethash uri (cl-lsp:lsp-client-documents client))))
-             (unless (eql version (and document (cl-lsp:lsp-document-version document)))
-               (lsp-semantic--fail "Document version changed; request a fresh proposal."))))))
+       (destructuring-bind (resource state version) record
+         (let ((observation (resource-observation-state-observation state)))
+           (workspace-file--call-with-authorized-access
+            resource context ':edit
+            (lambda ()
+              (let ((current (resource-observe resource context)))
+                (unless (workspace-file--same-observation-p observation current)
+                  (workspace-file--signal-stale resource observation current)))))
+           (with-lock-held ((cl-lsp:lsp-client-lock client))
+             (let ((document (gethash uri (cl-lsp:lsp-client-documents client))))
+               (unless (eql version (and document (cl-lsp:lsp-document-version document)))
+                 (lsp-semantic--fail "Document version changed; request a fresh proposal.")))))))
      (lsp-semantic-entry-snapshots entry)))
   nil)
 
@@ -246,7 +279,7 @@
                   (lsp-semantic--fail "Unsupported semantic resource operation."))))
       (loop for uri in (nreverse order)
             for record = (gethash uri snapshots)
-            for alias = (second record)
+            for revision = (resource-observation-state-alias (second record))
             for base = (lsp-semantic--observation context record)
             for before = (and (eq (workspace-file-observation-kind base) ':file)
                               (resource-observation-content base))
@@ -255,7 +288,7 @@
             for moved-p = (and donor-uri (not (equal uri donor-uri)))
             unless (and (equal before after) (not moved-p))
               collect (cl-resources:make-resource-change
-                       (first record) :base-revision alias
+                         (first record) :base-revision revision
                        :operations
                        (list (make-instance
                               'workspace-content-operation :content after
@@ -297,6 +330,17 @@
          (lsp-semantic--fail
           (format nil "Permission to apply annotation ~A was denied." identifier)))))
    (json-get (lsp-semantic-entry-value entry) "annotations"))
-  (with-recursive-lock-held (*workspace-file-mutation-lock*)
-    (lsp-semantic--validate context entry)
-    (workspace-change-set-apply context (lsp-semantic--requests context entry))))
+  (let ((*workspace-file-proposal-observations* (make-hash-table :test #'equal)))
+    (maphash
+     (lambda (uri record)
+       (declare (ignore uri))
+       (destructuring-bind (resource state version) record
+         (declare (ignore version))
+         (setf (gethash (list (tool-context-conversation context)
+                             (resource-uri resource) (resource-observation-state-alias state))
+                       *workspace-file-proposal-observations*)
+               state)))
+     (lsp-semantic-entry-snapshots entry))
+    (with-recursive-lock-held (*workspace-file-mutation-lock*)
+      (lsp-semantic--validate context entry)
+      (workspace-change-set-apply context (lsp-semantic--requests context entry)))))

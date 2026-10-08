@@ -396,16 +396,21 @@ Return NIL when NAME disappears during enumeration."
   state)
 
 
+(defparameter *workspace-file-proposal-observations* nil
+  "Conversation, URI and alias keyed snapshots owned by one guarded semantic apply.")
+
 (-> workspace-file--find-observation-state
     (conversation non-empty-string non-empty-string)
     workspace-file-observation-state)
 (defun workspace-file--find-observation-state (conversation uri alias)
   "Return CONVERSATION's exact URI observation ALIAS or signal stale revision."
-  (let ((state
-          (resource-observation-state-find
-           (conversation-resource-observations conversation)
-           alias
-           'workspace-file-observation-state)))
+  (let ((state (or (and *workspace-file-proposal-observations*
+                        (gethash (list conversation uri alias)
+                                 *workspace-file-proposal-observations*))
+                   (resource-observation-state-find
+                    (conversation-resource-observations conversation)
+                    alias
+                    'workspace-file-observation-state))))
     (unless (and state
                  (string= uri
                           (resource-observation-uri

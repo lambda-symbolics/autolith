@@ -886,10 +886,11 @@ before application. Resource revisions cover file kind and content; synchronized
 document versions must also match. Request a fresh proposal after a conflicting
 edit or server restart. Moves preserve the source permissions captured during
 staging, including edited multi-hop moves. Publication is atomic per file with
-change-set rollback on failure. Proposals
-and action choices are conversation-local, limited to 32 retained choices and
-240,000 encoded characters per choice, and depend on ordinary resource snapshot
-retention. Server commands are presented as data for separate explicit execution.
+change-set rollback on failure. Proposals and action choices own their exact
+snapshots and are conversation-local. Retain up to 32 choices, 240,000 encoded
+characters per choice, 128 resources per choice, and 512 resources or 16 MiB of
+UTF-8 snapshots per conversation. Older choices expire when those budgets fill.
+Server commands are presented as data for separate explicit execution.
 Use local =file:///= URIs; directories, service resources and URI authorities
 are unsupported.
 
