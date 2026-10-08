@@ -91,6 +91,19 @@
     (copilot-provider-mixin session-preserving-provider-mixin responses-api-provider) ()
   (:documentation "Copilot Responses account adapter without ChatGPT extensions."))
 
+(define-condition copilot-request-error (provider-error)
+  ((model
+    :initarg :model
+    :reader copilot-request-error-model
+    :type string
+    :documentation "The concrete Copilot model used for the failed request.")
+   (endpoint
+    :initarg :endpoint
+    :reader copilot-request-error-endpoint
+    :type string
+    :documentation "The credential-free URL of the failed inference request."))
+  (:documentation "A terminal Copilot failure with its resolved wire route."))
+
 (-> copilot-provider-protocol (copilot-provider-mixin) keyword)
 (defgeneric copilot-provider-protocol (provider)
   (:documentation "Return the wire protocol used by PROVIDER's account adapter."))
@@ -242,6 +255,47 @@
              :anthropic-version *anthropic-api-version*)
             (when session-token
               (list (cons "Copilot-Session-Token" session-token))))))
+
+(-> copilot--call-with-request-context
+    (copilot-provider-mixin function &key (:endpoint string) (:secrets list)) provider-result)
+(defun copilot--call-with-request-context (provider function &key endpoint secrets)
+  "Attach the concrete route to terminal failures while preserving retry conditions."
+  (let* ((*provider-active-credential-values*
+           (append secrets *provider-active-credential-values*))
+         (*provider-active-credential-redaction-marker*
+           (safe-redaction-marker *provider-credential-redaction-marker*
+                                  *provider-active-credential-values*)))
+    (handler-case (funcall function)
+      (provider-error (condition)
+        (unless (eq (type-of condition) 'provider-error)
+          (error condition))
+        (let ((model (provider--sanitize-wire-string
+                      (config :model (provider-configuration provider)))))
+          (error 'copilot-request-error
+                 :message (provider--sanitize-wire-string
+                           (format nil "~A~%Copilot request: ~A via ~A."
+                                   (cl-llm-provider-api:provider-api-error-message condition)
+                                   model endpoint))
+                 :model model :endpoint endpoint
+                 :status (provider-error-status condition)
+                 :code (provider--sanitize-wire-value (provider-error-code condition))
+                 :request-id (provider--sanitize-wire-value (provider-error-request-id condition))
+                 :response-id (provider--sanitize-wire-value (provider-error-response-id condition))
+                 :response (provider--sanitize-wire-value (provider-error-response condition))))))))
+
+(defmethod provider-call-with-request-adapter :around
+    ((provider copilot-provider-mixin) (credentials oauth-credentials) (function function)
+     &key conversation)
+  "Identify the resolved route in Copilot failures, including Auto's concrete adapter."
+  (call-next-method
+   provider credentials
+   (lambda (adapter secrets)
+     (copilot--call-with-request-context
+      adapter (lambda () (funcall function adapter secrets))
+      :endpoint (concatenate 'string (copilot--base-url credentials)
+                             (copilot-protocol-endpoint (copilot-provider-protocol adapter)))
+      :secrets secrets))
+   :conversation conversation))
 
 (defmethod provider-open-response-stream
     ((provider copilot-provider-mixin) (request hash-table) &key credentials conversation)

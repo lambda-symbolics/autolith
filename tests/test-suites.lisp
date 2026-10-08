@@ -298,7 +298,8 @@
   copilot-test--route-cache-validation
   copilot-test--authentication-repairs-route-cache
   copilot-test--auto-routing
-  copilot-test--auto-session-boundary)
+  copilot-test--auto-session-boundary
+  copilot-test--request-failure-context)
 
 (define-test-suite fireworks-provider
   fireworks-provider-test--selection

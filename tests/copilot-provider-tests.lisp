@@ -661,3 +661,64 @@
                        (not (test-object-contains-string-p condition "session-secret")))))
               "Auto session transport failures discard secret-bearing bodies")))))))
   nil)
+
+(-> copilot-test--request-failure-context () null)
+(defun copilot-test--request-failure-context ()
+  "Expose resolved Auto routes without secrets or changes to retry condition identity."
+  (with-test-environment (("AUTOLITH_COPILOT_DOMAIN" nil))
+    (with-test-configuration (configuration)
+      (let* ((configuration (configuration-copy configuration :model "copilot/auto"
+                                                             :provider-validation-p nil))
+             (credentials (copilot-test--credentials configuration))
+             (manager (copilot-credential-manager-create configuration))
+             (auto (copilot-provider--make configuration manager "session" :protocol ':auto))
+             (conversation (conversation-create configuration)))
+        (conversation-append-user-message conversation "hello")
+        (snapshot-write (copilot--catalog-path configuration)
+                        (list :domain "github.com"
+                              :document "{\"data\":[{\"id\":\"concrete\",\"model_picker_enabled\":false,\"supported_endpoints\":[\"/responses\"]}]}")
+                        :mode #o600)
+        (test-call-with-function-replacements
+         (list (list 'copilot-auto--session
+                     (lambda (provider credentials)
+                       (declare (ignore provider credentials))
+                       (json-object "selected_model" "concrete" "session_token" "session-secret"))))
+         (lambda ()
+           (let ((failure
+                   (handler-case
+                       (provider-call-with-request-adapter
+                        auto credentials
+                        (lambda (adapter secrets)
+                          (declare (ignore adapter secrets))
+                          (error 'provider-error :message "Unsupported session-secret"
+                                                 :status 400 :code "model_not_supported"
+                                                 :request-id "request-42" :response-id "response-42"
+                                                 :response "session-secret"))
+                        :conversation conversation)
+                     (copilot-request-error (condition) condition))))
+             (test-assert
+              (and (typep failure 'copilot-request-error)
+                   (equal (copilot-request-error-model failure) "copilot/concrete")
+                   (equal (copilot-request-error-endpoint failure)
+                          "https://api.individual.githubcopilot.com/responses")
+                   (= (provider-error-status failure) 400)
+                   (equal (provider-error-code failure) "model_not_supported")
+                   (equal (provider-error-request-id failure) "request-42")
+                   (equal (provider-error-response-id failure) "response-42"))
+              "terminal errors retain the concrete Auto route and structured provider identifiers")
+             (test-assert (not (test-object-contains-string-p failure "session-secret"))
+                          "the complete failure condition discards Auto session credentials"))
+           (dolist (class '(provider-unauthorized provider-retryable-error))
+             (let* ((original (make-condition class :message "retry" :status 401))
+                    (observed
+                      (handler-case
+                          (provider-call-with-request-adapter
+                           auto credentials
+                           (lambda (adapter secrets)
+                             (declare (ignore adapter secrets))
+                             (error original))
+                           :conversation conversation)
+                        (provider-error (condition) condition))))
+               (test-assert (eq original observed)
+                            "credential recovery and retry failures propagate unchanged"))))))))
+  nil)
