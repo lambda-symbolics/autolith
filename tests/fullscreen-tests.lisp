@@ -356,3 +356,44 @@
       (test-assert (and leave advice (< leave advice))
                    "the epilogue is written after the alternate buffer is restored")))
   nil)
+
+
+(-> test-terminal-fullscreen-forced-exit-resume () null)
+(defun test-terminal-fullscreen-forced-exit-resume ()
+  "Test forced Ctrl-C restores fullscreen before printing the resume command."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation (conversation-create configuration :identifier "fullscreen-force-resume"))
+         (terminal (make-instance 'recording-terminal :columns 40 :rows 12))
+         (ui (fullscreen-test--ui terminal))
+         (application (make-instance 'application
+                                      :configuration configuration
+                                      :conversation conversation
+                                      :ui ui))
+         (forced-status nil)
+         (controller nil))
+    (unwind-protect
+         (progn
+           (conversation-append-user-message conversation "keep this conversation")
+           (setf controller
+                 (make-instance 'application-input-controller
+                                :application application
+                                :main-thread (current-thread)
+                                :interrupt-clock-function (lambda () 10)
+                                :forced-exit-function (lambda (status)
+                                                        (setf forced-status status))))
+           (setf (application-input-controller application) controller
+                 (application-input-controller-active-p controller) t)
+           (with-terminal-ui (active-ui ui)
+             (declare (ignore active-ui))
+             (application-input-controller--process-event controller ':interrupt)
+             (application-input-controller--process-event controller ':interrupt))
+           (let* ((output (recording-terminal-output terminal))
+                  (leave (search (format nil "~C[?1049l" #\Escape) output))
+                  (resume (search "autolith resume fullscreen-force-resume" output)))
+             (test-assert (= forced-status *application-forced-interrupt-status*)
+                          "fullscreen forced interruption exits with status 130")
+             (test-assert (and leave resume (< leave resume))
+                          "fullscreen forced interruption restores the screen before its resume command")))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))
+    nil))

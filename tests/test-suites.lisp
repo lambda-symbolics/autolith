@@ -44,7 +44,8 @@
   test-terminal-fullscreen-clicks
   test-localgroup-click-events
   test-terminal-fullscreen-message-jumps
-  test-terminal-fullscreen-exit-epilogue)
+  test-terminal-fullscreen-exit-epilogue
+  test-terminal-fullscreen-forced-exit-resume)
 
 (define-test-suite hyperlinks
   test-hyperlinked-rendering)

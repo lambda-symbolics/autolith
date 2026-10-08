@@ -328,20 +328,17 @@
     null)
 (defun application-input-controller--force-interrupt-exit (controller)
   "Restore the terminal, emit the prepared notice, and force CONTROLLER to exit.
-
-This emergency path deliberately avoids the terminal UI and its presentation
-lock because ordinary shutdown may be blocked while either is unavailable."
+Fullscreen restoration bypasses the UI lock, which may be held during shutdown."
   (unwind-protect
-       (let* ((application
-                (application-input-controller-application controller))
-              (terminal
-                (terminal-ui-terminal (application-ui application))))
-         (ignore-errors
-           (terminal-stop terminal))
+       (let* ((application (application-input-controller-application controller))
+              (ui (application-ui application))
+              (terminal (terminal-ui-terminal ui)))
+         (when (typep ui 'fullscreen-terminal-ui)
+           (ignore-errors (terminal-ui-fullscreen-leave ui)))
+         (ignore-errors (terminal-stop terminal))
          (ignore-errors
            (terminal--write-safe-text
-            terminal
-            (application-input-controller-forced-exit-message controller))
+            terminal (application-input-controller-forced-exit-message controller))
            (terminal-flush terminal)))
     (funcall (application-input-controller-forced-exit-function controller)
              *application-forced-interrupt-status*))
