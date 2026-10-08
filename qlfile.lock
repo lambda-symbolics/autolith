@@ -180,8 +180,8 @@
   :version "git-df5128f03e60fe3ab1b8740b6f6555f402623148"))
 ("sexp-config" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-config.git" :ref "09e0b86650d08d98c7624ec525d346a41b98323c")
-  :version "git-09e0b86650d08d98c7624ec525d346a41b98323c"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-config.git" :ref "a7802a9365b5171e78251f7dc296372fe9cdb297")
+  :version "git-a7802a9365b5171e78251f7dc296372fe9cdb297"))
 ("sexp-store" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-store.git" :ref "4d38e6544d87412d99acef9f097272df41359eff")
