@@ -36,8 +36,9 @@
       (multiple-value-bind (body status)
           (provider-call-with-response-deadline
            30 (lambda ()
-                (dexador:post
+                (dexador:request
                  (concatenate 'string (copilot--base-url credentials) "/models/session")
+                 :method ':post
                  :headers (append
                            (copilot--headers (oauth-credentials-access-token credentials))
                            (list (cons "Content-Type" "application/json")

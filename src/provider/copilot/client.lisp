@@ -20,8 +20,9 @@
       (multiple-value-bind (body status)
           (provider-call-with-response-deadline
            10 (lambda ()
-                (dexador:post
+                (dexador:request
                  (format nil "~A/models/~A/policy" base-url (quri:url-encode model))
+                 :method ':post
                  :headers (append (copilot--headers token)
                                   (list (cons "Content-Type" "application/json")
                                         (cons "openai-intent" "chat-policy")

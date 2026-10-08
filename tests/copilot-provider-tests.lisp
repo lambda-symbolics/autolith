@@ -2,6 +2,15 @@
 
 ;;;; -- Copilot Subscription Checks --
 
+(-> copilot-test--http-backend-request () symbol)
+(defun copilot-test--http-backend-request ()
+  "Return the transport entry point, preserving Dexador's public argument validation."
+  (uiop:find-symbol*
+   "REQUEST"
+   (ecase dexador:*dexador-backend*
+     (:usocket '#:dexador.backend.usocket)
+     (:winhttp '#:dexador.backend.winhttp))))
+
 (-> copilot-test--credentials (configuration &key (:expired-p boolean)) oauth-credentials)
 (defun copilot-test--credentials (configuration &key expired-p)
   "Save deterministic Copilot credentials in an isolated private store."
@@ -247,9 +256,11 @@
                                     (json-object "id" "claude-test"
                                                  "model_picker_enabled" (if picker t (json-false))
                                                  "policy" (json-object "state" state))))) 200 nil)))
-          (list 'dexador:post
+          (list (copilot-test--http-backend-request)
                 (lambda (url &rest arguments)
                   (test-assert (and (search "/models/claude-test/policy" url)
+                                    (eq (getf arguments :method) ':post)
+                                    (eql (getf arguments :max-redirects) 0)
                                     (equal (getf arguments :content) "{\"state\":\"enabled\"}"))
                                "login enables only the selected policy endpoint")
                   (incf posts)
@@ -315,7 +326,7 @@
                                    "{\"data\":[{\"id\":\"chat-test\",\"model_picker_enabled\":true},{\"id\":\"other-test\",\"model_picker_enabled\":true}]}"
                                    "{\"data\":[]}")
                                200 nil)))
-               (list 'dexador:post
+               (list (copilot-test--http-backend-request)
                      (lambda (url &rest arguments)
                        (declare (ignore arguments))
                        (test-assert (search "githubcopilot.com/models/session" url)
@@ -512,11 +523,14 @@
                                               "expires_at" (+ (- (get-universal-time) 2208988800) 3600))))
                               catalog)
                           200 nil)))
-                 (list 'dexador:post
+                 (list (copilot-test--http-backend-request)
                        (lambda (url &rest arguments)
                          (incf sessions)
                          (test-assert (uiop:string-suffix-p url "/models/session")
                                       "Auto uses the session endpoint")
+                         (test-assert (and (eq (getf arguments :method) ':post)
+                                           (eql (getf arguments :max-redirects) 0))
+                                      "Auto session credentials are sent by POST without following redirects")
                          (test-assert (equalp (json-decode (getf arguments :content))
                                              (copilot-auto-session-request))
                                       "the account authorizes automatic model selection")
@@ -633,7 +647,7 @@
                         ("{\"session_token\":\"session-secret\",\"expires_at\":1}" 200 configuration-error)
                         ("{\"session_token\":\"session-secret\"}" 404 provider-error)))
           (test-call-with-function-replacements
-           (list (list 'dexador:post
+           (list (list (copilot-test--http-backend-request)
                        (lambda (&rest ignored)
                          (declare (ignore ignored))
                          (values (first spec) (second spec) nil))))

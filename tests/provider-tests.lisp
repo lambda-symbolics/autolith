@@ -1912,13 +1912,13 @@
 
 (-> provider-tests--dexador-call-p (t) boolean)
 (defun provider-tests--dexador-call-p (form)
-  "Return true when FORM is a direct Dexador GET or POST call."
+  "Return true when FORM is a direct Dexador request call."
   (and (consp form)
        (symbolp (first form))
        (let ((package (symbol-package (first form))))
          (and package
               (string= (package-name package) "DEXADOR")
-              (member (symbol-name (first form)) '("GET" "POST")
+              (member (symbol-name (first form)) '("GET" "POST" "REQUEST")
                       :test #'string=)))
        t))
 
