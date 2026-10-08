@@ -771,9 +771,10 @@
                                   (lambda (command directory)
                                     (declare (ignore command directory))
                                     ':sandboxed)))))
-                          (test-assert
-                           (tool-result-success-p result)
-                           "an authorized shell command runs inside the sandbox")
+                           (test-assert
+                            (tool-result-success-p result)
+                            (format nil "an authorized shell command runs inside the sandbox: ~A"
+                                    (tool-result-content result)))
                           (test-assert (probe-file inside)
                                        "the command sandbox permits workspace writes")
                           (let* ((home (platform-truename *platform* (user-homedir-pathname)))

@@ -347,6 +347,8 @@
        (task-worktree-tests--git configuration path '("commit" "-m" "child"))
        (let ((result (task-worktree-tests--publish job ':success))
              (id (task-job-execution-identifier job)))
+          (test-assert (getf result :worktree-artifact-path)
+                       (format nil "Commit-range extraction succeeds: ~S" result))
          (test-assert (eq ':commit-range (cl-worktree:artifact-kind
                                              (task-worktree--read-artifact (getf result :worktree))))
                       "Selected artifact retains committed engineering changes.")
