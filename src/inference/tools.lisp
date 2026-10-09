@@ -84,7 +84,7 @@
      "label" (tool-string-property "Optional short view name.")
      "text" (tool-string-property "Literal view content.")
      "uri" (tool-string-property
-            "Resource whose observation becomes the view, for example workspace:src/main.lisp; it must lie inside the workspace roots.")
+            "Resource whose observation becomes the view, for example workspace:src/main.lisp. A path outside the workspace needs full access, as for any tool.")
      "object" (tool-string-property
                "Stored context object reference: context:<sha256> or the bare digest.")))))
 

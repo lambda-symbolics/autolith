@@ -732,6 +732,15 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
           (let ((*workspace-tool-readable-roots* (cons path roots)))
             (funcall function))))))
 
+(defmethod resource-observe :around
+    ((resource workspace-file-resource) (context tool-context))
+  "Authorize an out-of-root workspace RESOURCE for every observer, not only resource.read.
+
+Tools such as rlm.map observe resources directly. An enclosing authorization
+already admits the path to the readable roots, so it is not asked again."
+  (workspace-file--call-with-authorized-access
+   resource context ':read (lambda () (call-next-method))))
+
 (defmethod resource-tool-read :around
     ((resource workspace-file-resource) (tool resource-read-tool)
      (context tool-context) (arguments hash-table))

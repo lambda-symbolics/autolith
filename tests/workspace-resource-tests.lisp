@@ -521,6 +521,19 @@
                    (and (tool-result-success-p result)
                         (search "secret" (tool-result-content result)))
                    "resource.read accepts full-access approval for out-of-root paths"))
+                (flet ((observe (context)
+                         (resource-observation-content
+                          (resource-observe
+                           (resource-registry-resolve
+                            (tool-registry-resource-registry registry) outside-uri context)
+                           context))))
+                  (test-assert
+                   (search "secret" (observe full-access-context))
+                   "direct resource observers such as rlm.map read out-of-root paths with full access")
+                  (test-assert
+                   (handler-case (progn (observe first-context) nil)
+                     (tool-error () t))
+                   "direct resource observers still refuse unapproved out-of-root paths"))
                 (with-test-fixture (':symbolic-links
                                     "out-of-root resources reached through symlinks")
                   (let ((escape (merge-pathnames "escape" workspace)))
