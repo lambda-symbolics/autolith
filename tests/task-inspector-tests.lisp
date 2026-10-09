@@ -122,7 +122,13 @@
                           "A long live progress record fits the compact inspector boundary")))
          (test-assert
           (equal "short" (task--artifact-field "short" ':progress-output :preview-limit 10))
-          "Short progress is readable inline"))
+          "Short progress is readable inline")
+         (test-assert
+          (string= (task--write-readable-sexp
+                    (list :id (coerce "exec:1" 'base-string)
+                          :pair (cons 1 (coerce "x" 'base-string))))
+                   "(:ID \"exec:1\" :PAIR (1 . \"x\"))")
+          "Native records print base strings as plain strings"))
        (test-assert (= 1 (length (task-inspector-rows context orchestrator)))
                     "A live job and durable record merge into one inspector row")
         (let* ((application (mission-test--application (agent-configuration parent)))

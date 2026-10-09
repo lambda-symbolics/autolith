@@ -276,11 +276,29 @@
     (cl-llm-provider-api:output-value-error (condition)
       (error 'task-error :tool-name "task.run"
              :message (cl-llm-provider-api:provider-api-error-message condition)))))
+
+(-> task--character-strings (t) t)
+(defun task--character-strings (value)
+  "Return VALUE with every base string in its conses copied as a character string.
+
+A readable base string prints as #A((LENGTH) BASE-CHAR . \"TEXT\"), which spends
+model tokens on array syntax. A character string reads back equal."
+  (typecase value
+    (base-string
+     (coerce value '(simple-array character (*))))
+    (cons
+     (loop for tail = value then (rest tail)
+           while (consp tail)
+           collect (task--character-strings (first tail)) into items
+           finally (return (nconc items (task--character-strings tail)))))
+    (t
+     value)))
+
 (-> task--write-readable-sexp (t &key (:pretty-p boolean)) string)
 (defun task--write-readable-sexp (value &key pretty-p)
   "Return VALUE as one portable readable s-expression."
   (with-standard-io-syntax
-    (write-to-string value
+    (write-to-string (task--character-strings value)
                      :readably t
                      :escape t
                      :circle nil
