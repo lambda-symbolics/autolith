@@ -3619,8 +3619,13 @@
                     text)
             (search "defun      alpha-wrapper" text)
             (search "defmethod  tool-execute :around (shell-run-tool t t)" text)
-            (search "self.commit drops the rest" text))
+            (search "self.commit drops any still skipped" text))
        "the notice names the commit, revisions, and every skipped definition")
+      (test-assert
+       (let ((command (find "(fix-skipped-definitions)" entry
+                            :key #'terminal-span-text :test #'string=)))
+         (and command (eq (terminal-span-style command) ':code)))
+       "the notice offers the repair operation as a Lisp command")
       (test-assert
        (and changed-title moved-title (< changed-title moved-title)
             (< (search "alpha-wrapper" text) (search "zeta-wrapper" text)))

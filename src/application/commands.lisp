@@ -1154,9 +1154,11 @@ skipped definition grouped by reason."
                                          (format nil "~%  ~A~%" title))
                           (loop for skip in group
                                 append (application--replay-skip-row skip))))
-     (list (terminal-span
+     (list (terminal-span ':hint (format nil "~%  "))
+           (terminal-span ':code "(fix-skipped-definitions)")
+           (terminal-span
             ':hint
-            (format nil "~%  reapply a definition against the current source to keep it · the next self.commit drops the rest~%"))))))
+            (format nil " rebuilds or drops them in one model turn · the next self.commit drops any still skipped~%"))))))
 
 (-> application--replay-lineage-source-commit (application) (option string))
 (defun application--replay-lineage-source-commit (application)
