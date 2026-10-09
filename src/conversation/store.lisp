@@ -6,6 +6,9 @@
 (defgeneric resource-observation-state-weight (alias state)
   (:documentation "Return STATE's retained byte weight under opaque ALIAS."))
 
+(defparameter *conversation-input-history-limit* 100
+  "Maximum editable inputs carried into each self-contained conversation chunk.")
+
 (defparameter *conversation-title-maximum-characters* 64
   "The maximum number of characters retained in one session title.")
 
@@ -335,6 +338,16 @@ not yet been told that work from the previous process is gone.")
     :type deque
     :documentation
     "Recent bounded local user operations in chronological durable order.")
+   (input-history
+    :initform (make-deque :maximum-count *conversation-input-history-limit*)
+    :reader conversation-input-history-entries
+    :type deque
+    :documentation "Recent editable inputs carried across compaction checkpoints.")
+   (prompt-cache-usage
+    :initform nil
+    :accessor conversation-prompt-cache-usage
+    :type list
+    :documentation "Newest numeric prompt and cached-input usage, or NIL when unknown.")
    (pending-async-lisp-events
     :initform (make-deque)
     :accessor conversation-pending-async-lisp-events
@@ -367,6 +380,62 @@ not yet been told that work from the previous process is gone.")
   (with-recursive-lock-held ((conversation-append-lock conversation))
     (clinker-transcript:projection-replace (conversation-projection conversation) items))
   items)
+
+(-> conversation-input-history (conversation) list)
+(defun conversation-input-history (conversation)
+  "Return a chronological snapshot of CONVERSATION's checkpointed editable inputs."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (mapcar #'copy-seq
+            (deque->list (conversation-input-history-entries conversation)))))
+
+(-> conversation--note-input-history (conversation list) null)
+(defun conversation--note-input-history (conversation record)
+  "Retain RECORD's editable user input in the bounded checkpoint state."
+  (let* ((properties (rest record))
+         (input
+           (case (first record)
+             (:message
+              (when (and (eq (getf properties :role) ':user)
+                         (not (getf properties :automatic-p)))
+                (getf properties :content)))
+             (:user-operation
+              (when (member (getf properties :kind) '(:command :lisp))
+                (getf properties :source))))))
+    (when (non-empty-string-p input)
+      (deque-push-back (conversation-input-history-entries conversation)
+                       (copy-seq input))))
+  nil)
+
+(-> conversation--note-prompt-cache-usage (conversation list) null)
+(defun conversation--note-prompt-cache-usage (conversation record)
+  "Retain the newest valid numeric provider usage for startup without history scans."
+  (when (eq (first record) ':provider)
+    (let* ((usage (getf (getf (rest record) :metadata) :usage))
+           (prompt-tokens (conversation--usage-field usage "input_tokens"))
+           (cached-tokens (conversation--usage-field usage "cached_input_tokens")))
+      (when (typep prompt-tokens '(integer 0))
+        (setf (conversation-prompt-cache-usage conversation)
+              (list (list "input_tokens" prompt-tokens)
+                    (list "cached_input_tokens"
+                          (and (typep cached-tokens '(integer 0)) cached-tokens)))))))
+  nil)
+
+(-> conversation--prompt-cache-usage-p (t) boolean)
+(defun conversation--prompt-cache-usage-p (usage)
+  "Recognize the bounded portable numeric usage stored in a chunk header."
+  (handler-case
+      (and (listp usage)
+           (eql (list-length usage) 2)
+           (every (lambda (entry)
+                    (and (listp entry) (eql (list-length entry) 2)))
+                  usage)
+           (equal (first (first usage)) "input_tokens")
+           (typep (second (first usage)) '(integer 0))
+           (equal (first (second usage)) "cached_input_tokens")
+           (or (null (second (second usage)))
+               (typep (second (second usage)) '(integer 0)))
+           t)
+    (type-error () nil)))
 
 (-> conversation-input-item-families (conversation) hash-table)
 (defun conversation-input-item-families (conversation)
@@ -664,7 +733,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
 
 (-> conversation--note-activity (conversation list) null)
 (defun conversation--note-activity (conversation record)
-  "Project RECORD's activity metadata into CONVERSATION."
+  "Project RECORD's activity and startup metadata into CONVERSATION."
   (multiple-value-bind (working-seconds user-turn-count last-activity-at)
       (conversation--activity-after-record
        record
@@ -674,6 +743,8 @@ a crash may leave one that a later lease acquisition can reuse safely."
     (setf (conversation-working-seconds conversation) working-seconds
           (conversation-user-turn-count conversation) user-turn-count
           (conversation-last-activity-at conversation) last-activity-at))
+  (conversation--note-input-history conversation record)
+  (conversation--note-prompt-cache-usage conversation record)
   nil)
 
 (-> conversation--header-record
@@ -707,6 +778,8 @@ a crash may leave one that a later lease acquisition can reuse safely."
         :user-operation-records
         (copy-tree (deque->list
                     (conversation-user-operation-records conversation)))
+        :input-history (conversation-input-history conversation)
+        :prompt-cache-usage (copy-tree (conversation-prompt-cache-usage conversation))
         :pending-async-lisp-events
         (copy-tree (deque->list
                     (conversation-pending-async-lisp-events conversation)))
@@ -1692,10 +1765,11 @@ copied."
 (-> conversation-append-user-message
     (conversation (or string user-message-input)
      &key (:pending-input-identifier (option non-empty-string))
-          (:automatic-p boolean))
+           (:automatic-p boolean)
+           (:job-completion (option list)))
     (values json-object list))
 (defun conversation-append-user-message
-    (conversation input &key pending-input-identifier automatic-p)
+    (conversation input &key pending-input-identifier automatic-p job-completion)
   "Persist user INPUT and return its provider item and sequenced record."
   (when (and (stringp input)
              (not (non-empty-string-p input)))
@@ -1737,6 +1811,8 @@ copied."
                        (when pending-input-identifier
                          (list :pending-input-identifier
                                (copy-seq pending-input-identifier)))
+                       (when job-completion
+                         (list :job-completion (copy-tree job-completion)))
                        (when attachments
                          (list :images
                                (mapcar #'image-attachment-record attachments)))
@@ -2187,10 +2263,25 @@ translating a condition signaled by the record visitor."
   (mapcar #'copy-seq
           (conversation-durable-pending-input-identifiers conversation)))
 
+(-> conversation--map-picker-records (pathname function) (values boolean integer))
+(defun conversation--map-picker-records (pathname function)
+  "Map only PATHNAME's active checkpoint chunk, or its legacy storage."
+  (let* ((identity (conversation-storage-identity-pathname pathname))
+         (active (conversation-storage-active-pathname identity))
+         (header (and active (conversation--peek-segment-header active))))
+    (if (eql (getf (rest header) :version) 2)
+        (progn
+          (funcall function header)
+          (multiple-value-bind (position incomplete-p count start next)
+              (conversation--map-segment-records identity active function)
+            (declare (ignore position start next))
+            (values incomplete-p count)))
+        (conversation--map-storage-records identity function))))
+
 (-> conversation-picker-metadata-scan (pathname)
     (option conversation-picker-metadata))
 (defun conversation-picker-metadata-scan (pathname)
-  "Scan PATHNAME's segments once to create exact resume-picker metadata."
+  "Rebuild resume-picker metadata from the active checkpoint chunk or legacy storage."
   (let ((working-seconds 0)
         (user-turn-count 0)
          (title
@@ -2206,7 +2297,7 @@ translating a condition signaled by the record visitor."
             (conversation--file-identity pathname)
           (let ((initial-revision (conversation-picker-revision-read pathname)))
             (multiple-value-bind (incomplete-tail-p record-count)
-                (conversation--map-storage-records
+                (conversation--map-picker-records
                  pathname
                  (lambda (record)
                    (multiple-value-setq
@@ -2218,6 +2309,13 @@ translating a condition signaled by the record visitor."
                       :last-activity-at last-activity-at))
                    (case (first record)
                      (:conversation
+                      (when (eql (getf (rest record) :version) 2)
+                        (setf working-seconds (getf (rest record) :working-seconds)
+                              user-turn-count (getf (rest record) :user-turn-count)
+                              last-activity-at (getf (rest record) :last-activity-at)
+                              search-message-count
+                              (getf (rest record) :picker-search-message-count)
+                              preview (getf (rest record) :picker-preview)))
                       (let ((candidate (getf (rest record) :title)))
                         (when (conversation-title-valid-p candidate)
                           (setf title candidate))))
@@ -2784,7 +2882,13 @@ later picker searches read it without scanning the log."
                  nil))
            (latest-goal-record
              (and (= version 2)
-                  (getf properties :latest-goal-record))))
+                  (getf properties :latest-goal-record)))
+           (input-history-present-p
+             (and (= version 2)
+                  (conversation--property-present-p properties :input-history)))
+           (input-history (and input-history-present-p (getf properties :input-history)))
+           (prompt-cache-usage
+             (and (= version 2) (getf properties :prompt-cache-usage))))
       (unless (or (and (null title) (null title-source))
                   (and normalized-title
                        (member title-source '(:initial :generated))))
@@ -2820,6 +2924,12 @@ later picker searches read it without scanning the log."
                         user-operation-records ':user-operation)
                        (conversation--header-record-list-p
                         pending-async-lisp-events ':async-lisp-event)
+                       (or (not input-history-present-p)
+                           (and (conversation--header-string-list-p input-history)
+                                (<= (length input-history)
+                                    *conversation-input-history-limit*)))
+                       (or (null prompt-cache-usage)
+                           (conversation--prompt-cache-usage-p prompt-cache-usage))
                        (or (null latest-goal-record)
                            (and (conversation--record-form-p latest-goal-record)
                                 (eq (first latest-goal-record) :goal))))
@@ -2857,9 +2967,16 @@ later picker searches read it without scanning the log."
                 (mapcar #'copy-seq pending-identifiers)
                 (conversation-latest-goal-record conversation)
                 (copy-tree latest-goal-record))
+          (dolist (input input-history)
+            (deque-push-back (conversation-input-history-entries conversation)
+                             (copy-seq input)))
+          (setf (conversation-prompt-cache-usage conversation)
+                (copy-tree prompt-cache-usage))
           (dolist (record user-operation-records)
             (conversation--project-record
-             ':user-operation conversation (rest record)))
+             ':user-operation conversation (rest record))
+            (unless input-history-present-p
+              (conversation--note-input-history conversation record)))
           (dolist (record pending-async-lisp-events)
             (conversation--project-record
              ':async-lisp-event conversation (rest record))))

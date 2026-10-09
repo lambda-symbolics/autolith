@@ -80,12 +80,19 @@
   "Return RECORD's bounded replay form, or NIL when it has no replay event."
   (case (first record)
     (:message
-     (list ':message
-           :seq (getf (rest record) :seq)
-           :time (getf (rest record) :time)
-           :role (getf (rest record) :role)
-           :automatic-p (getf (rest record) :automatic-p)
-           :content (getf (rest record) :content)))
+     (let ((properties (rest record)))
+       (append
+        (list ':message
+              :seq (getf properties :seq)
+              :time (getf properties :time)
+              :role (getf properties :role)
+              :automatic-p (getf properties :automatic-p)
+              :content (getf properties :content))
+        (when (getf properties :pending-input-identifier)
+          (list :pending-input-identifier
+                (getf properties :pending-input-identifier)))
+        (when (getf properties :job-completion)
+          (list :job-completion (copy-tree (getf properties :job-completion)))))))
     (:provider-item
      (conversation-replay--project-provider-item record))
     (:tool-result

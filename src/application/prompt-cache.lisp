@@ -70,21 +70,11 @@
     (conversation)
     (option prompt-cache-baseline))
 (defun prompt-cache-baseline-from-conversation (conversation)
-  "Return the baseline primed by CONVERSATION's newest persisted provider request.
+  "Return the baseline from CONVERSATION's checkpointed provider usage.
 
 Persisted usage carries neither time nor model, so a miss against this baseline
 is attributed to resuming the conversation."
-  (let ((baseline nil))
-    (conversation-map-records
-     conversation
-     (lambda (record)
-       (when (eq (first record) :provider)
-         (let ((candidate
-                 (prompt-cache-baseline-create
-                  (getf (getf (rest record) :metadata) :usage))))
-           (when candidate
-             (setf baseline candidate))))))
-    baseline))
+  (prompt-cache-baseline-create (conversation-prompt-cache-usage conversation)))
 
 (-> prompt-cache--miss-cause
     (&key (:model-changed-p boolean)

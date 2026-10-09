@@ -49,7 +49,10 @@
   "Persist outcomes before delivery and retain exactly-once receipts through compaction."
   (job-completion-tests--fixture
    (lambda (parent runtime configuration)
-     (let* ((job (job-completion-tests--start parent runtime))
+     (let* ((job (job-completion-tests--start
+                  parent runtime
+                  :operation (lambda ()
+                               (tool-success (make-string 1200 :initial-element #\x)))))
             (identifier (session-job-execution-identifier job))
             (fresh (job-completion-tests--fresh-agent parent configuration)))
        (unwind-protect
@@ -61,6 +64,46 @@
                            "restored outcome reaches durable conversation history")
               (test-assert (task-completion--delivered-p (agent-conversation fresh) identifier)
                            "delivery stores a stable execution receipt")
+              (let* ((conversation (agent-conversation fresh))
+                     (record (first (conversation-records-newest conversation 1)))
+                     (properties (rest record))
+                     (compact (application-tests--ui-application :columns 100))
+                     (expanded (application-tests--ui-application
+                                :columns 100 :compact-view-p nil))
+                     (entry (conversation-record-entry compact record))
+                     (text (test-terminal-row-text entry)))
+                (test-assert
+                 (and (getf properties :automatic-p)
+                      (equal identifier
+                             (getf (getf properties :job-completion) :execution-id)))
+                 "completion delivery persists structured provenance for transcript replay")
+                (test-assert
+                 (and (eq (terminal-span-style (first entry)) ':notice)
+                      (< (length text) 200)
+                      (not (find #\Newline text)))
+                 "compact completion output is one automated status row without its payload")
+                (test-assert
+                 (< (length (test-terminal-row-text
+                             (conversation-record-entry expanded record))) 650)
+                 "expanded completion output bounds its readable summary")
+                (test-assert
+                 (equal (conversation-input-history conversation)
+                        '("Start asynchronous work."))
+                 "automatic completion input is not editable user history")
+                (let ((older (copy-tree record)))
+                  (remf (rest older) :job-completion)
+                  (test-assert
+                   (eq (terminal-span-style
+                        (first (conversation-record-entry compact older))) ':notice)
+                   "older completion receipts retain automated attribution without body parsing"))
+                (let ((user (copy-tree record)))
+                  (remf (rest user) :automatic-p)
+                  (remf (rest user) :pending-input-identifier)
+                  (remf (rest user) :job-completion)
+                  (test-assert
+                   (eq (terminal-span-style
+                        (first (conversation-record-entry compact user))) ':user)
+                   "a real user message with the same text retains user attribution")))
               (test-assert (null (task-completion-deliver fresh))
                            "repeated wakeups do not append duplicate messages")
               (conversation-append-summary (agent-conversation fresh) "Completed the asynchronous work.")
@@ -164,8 +207,14 @@
                    :operation-function (lambda () (tool-success "event delivered"))
                    :detached-p t)))
          (task-completion-watch job parent)
-         (with-lock-held (lock)
-           (unless woken-p (condition-wait condition lock :timeout 5)))
+          (let ((deadline (+ (get-internal-real-time)
+                             (* 5 internal-time-units-per-second))))
+            (with-lock-held (lock)
+              (loop until woken-p
+                    for remaining = (- deadline (get-internal-real-time))
+                    while (plusp remaining)
+                    do (condition-wait condition lock
+                                       :timeout (/ remaining internal-time-units-per-second)))))
          (test-assert woken-p "completion publication signals a waiting controller")
          (test-assert (= 1 (length (task-completion-pending parent)))
                       "wakeup follows durable pending event publication")

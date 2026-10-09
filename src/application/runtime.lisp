@@ -1661,24 +1661,9 @@ command replaced the active conversation."
     list)
 (defun application--conversation-input-history
     (conversation &key (limit *terminal-history-limit*))
-  "Return bounded editable input history recovered from durable CONVERSATION."
-  (let ((entries (make-deque :maximum-count limit)))
-    (conversation-map-records
-     conversation
-     (lambda (record)
-       (let ((properties (rest record)))
-         (case (first record)
-           (:message
-            (let ((content (getf properties :content)))
-              (when (and (eq (getf properties :role) ':user)
-                         (non-empty-string-p content))
-                (deque-push-back entries (copy-seq content)))))
-           (:user-operation
-            (let ((source (getf properties :source)))
-              (when (and (member (getf properties :kind) '(:command :lisp))
-                         (non-empty-string-p source))
-                (deque-push-back entries (copy-seq source)))))))))
-    (deque->list entries)))
+  "Return the newest LIMIT editable inputs from CONVERSATION's checkpoint state."
+  (let ((history (conversation-input-history conversation)))
+    (nthcdr (max 0 (- (length history) limit)) history)))
 
 
 (-> application--install-owned-conversation
@@ -2236,20 +2221,59 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
       (t
        nil))))
 
+(-> application--job-completion-message-p (list) boolean)
+(defun application--job-completion-message-p (properties)
+  "Recognize automatic completion input by durable metadata or an older receipt."
+  (let ((receipt (getf properties :pending-input-identifier)))
+    (and (getf properties :automatic-p)
+         (or (getf properties :job-completion)
+             (and (stringp receipt)
+                  (uiop:string-prefix-p "completion:" receipt)))
+         t)))
+
+(-> application--job-completion-entry (application list) list)
+(defun application--job-completion-entry (application properties)
+  "Show a bounded job notice without the model-facing completion envelope."
+  (let* ((completion (getf properties :job-completion))
+         (outcome (getf completion :outcome))
+         (identifier (getf completion :job-id))
+         (summary (getf completion :summary))
+         (status (case outcome
+                   (:success "completed")
+                   (:failure "failed")
+                   (:cancelled "cancelled")
+                   (otherwise "result received"))))
+    (application--transcript-entry
+     application
+     :style (if (eq outcome ':failure) ':failure ':notice)
+     :header (format nil "▸ job ~A" status)
+     :detail (when (stringp identifier) identifier)
+     :timestamp (getf properties :time)
+     :body (when (and (not (application-compact-view-p application))
+                      (non-empty-string-p summary))
+             (if (> (length summary) 500)
+                 (concatenate 'string (subseq summary 0 500) "…")
+                 summary)))))
+
 (-> conversation-record-entry (application list) (option list))
 (defun conversation-record-entry (application record)
   "Return the styled transcript entry represented by durable RECORD."
   (case (first record)
     (:message
-     (when (eq (getf (rest record) :role) :user)
-       (let ((content (getf (rest record) :content)))
-         (if (application--goal-continuation-message-p content)
-             (list (terminal-span ':hint "∙ goal continues"))
-             (application--transcript-entry application
-                                            :style ':user
-                                            :header "❯ you"
-                                            :timestamp (getf (rest record) :time)
-                                            :body content)))))
+     (let ((properties (rest record)))
+       (when (eq (getf properties :role) :user)
+         (let ((content (getf properties :content)))
+           (cond
+             ((application--job-completion-message-p properties)
+              (application--job-completion-entry application properties))
+             ((application--goal-continuation-message-p content)
+              (list (terminal-span ':hint "∙ goal continues")))
+             (t
+              (application--transcript-entry application
+                                             :style ':user
+                                             :header "❯ you"
+                                             :timestamp (getf properties :time)
+                                             :body content)))))))
     (:provider-item
      (let ((wire-json (getf (rest record) :wire-json)))
        (and (stringp wire-json)

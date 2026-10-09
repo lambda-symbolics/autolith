@@ -2296,11 +2296,11 @@ assistant needle"))
                    (find-with-scan-count)
                  (test-assert
                   (and index
-                       (= scan-count 4)
+                       (= scan-count 3)
                        (equal
                         (conversation-picker-search-index-messages index)
                         expected))
-                  "an incomplete active tail rebuilds metadata and search across both chunks"))
+                  "tail recovery scans active metadata once and both chunks for requested search"))
                (let ((reloaded (conversation-load pathname)))
                  (test-assert
                   (and (conversation-incomplete-tail-p reloaded)

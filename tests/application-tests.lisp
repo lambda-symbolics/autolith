@@ -5874,7 +5874,8 @@
 (-> test-application-conversation-input-history () null)
 (defun test-application-conversation-input-history ()
   "Test durable editable history filtering, order, and bounds."
-  (let* ((configuration (test-configuration))
+  (let* ((*conversation-input-history-limit* 3)
+         (configuration (test-configuration))
          (root (test-configuration-root configuration))
          (conversation
            (conversation-create configuration :identifier "input-history")))
@@ -5890,6 +5891,9 @@
             :source "/help"
             :status ':ok
             :result "shown")
+           (conversation-append-provider-metadata
+            conversation
+            '(:usage (("input_tokens" 3000) ("cached_input_tokens" 1400))))
            (conversation-append-summary conversation "ignored summary")
            (conversation-append-user-operation
             conversation
@@ -5898,11 +5902,69 @@
             :status ':ok
             :result "3")
            (conversation-append-user-message conversation "last user")
-           (test-assert
-            (equal
-             (application--conversation-input-history conversation :limit 3)
-             '("/help" "(+ 1 2)" "last user"))
-            "editable history keeps only bounded user inputs in durable order"))
+           (let ((retired (first (conversation-storage-pathnames
+                                  (conversation-pathname conversation)))))
+             (with-open-file (stream retired :direction ':output
+                                     :if-exists ':supersede)
+               (write-string "(" stream)))
+           (let* ((loaded (conversation-load-by-id configuration "input-history"))
+                  (baseline (prompt-cache-baseline-from-conversation loaded))
+                  (metadata (conversation-picker-metadata-scan
+                             (conversation-pathname loaded))))
+             (test-assert
+              (equal
+               (application--conversation-input-history loaded :limit 3)
+               '("/help" "(+ 1 2)" "last user"))
+              "editable history restores bounded inputs without reading retired chunks")
+             (test-assert
+              (null (application--conversation-input-history loaded :limit 0))
+              "a disabled editor history returns no inputs")
+             (test-assert
+              (and baseline
+                   (= (prompt-cache-baseline-prompt-tokens baseline) 3000)
+                   (= (prompt-cache-baseline-cached-tokens baseline) 1400))
+              "prompt-cache startup uses checkpointed usage without retired chunks")
+             (test-assert
+              (and metadata
+                   (= (conversation-picker-metadata-user-turn-count metadata) 2)
+                   (equal (conversation-picker-metadata-preview metadata) "last user"))
+              "a missing picker sidecar rebuilds from the self-contained active chunk")
+             (conversation-append-provider-metadata loaded '(:usage nil))
+             (conversation-append-summary loaded "second checkpoint")
+             (let* ((reloaded (conversation-load-by-id configuration "input-history"))
+                    (identity (conversation-pathname reloaded))
+                    (active (conversation-log-pathname reloaded))
+                    (header (conversation-peek-header active)))
+               (test-assert
+                (equal (conversation-input-history reloaded)
+                       '("/help" "(+ 1 2)" "last user"))
+                "bounded editable inputs survive repeated rotation without duplication")
+               (test-assert
+                (= (prompt-cache-baseline-prompt-tokens
+                    (prompt-cache-baseline-from-conversation reloaded)) 3000)
+                "a provider response without usage preserves the previous checkpoint")
+               (let ((older-header (copy-tree header)))
+                 (remf (rest older-header) :input-history)
+                 (remf (rest older-header) :prompt-cache-usage)
+                 (let ((older (conversation--from-header identity active older-header)))
+                   (test-assert
+                    (and (equal (conversation-input-history older)
+                                '("/help" "(+ 1 2)"))
+                         (null (prompt-cache-baseline-from-conversation older)))
+                    "older headers recover available local inputs without archived replay")))
+               (dolist (case '((:input-history (nil))
+                               (:input-history ("one" "two" "three" "four"))
+                               (:prompt-cache-usage (("input_tokens" -1)
+                                                     ("cached_input_tokens" 0)))
+                               (:prompt-cache-usage (("input_tokens" 1)
+                                                     ("cached_input_tokens" "invalid")))))
+                 (let ((malformed (copy-tree header)))
+                   (setf (getf (rest malformed) (first case)) (second case))
+                   (test-assert
+                    (handler-case
+                        (progn (conversation--from-header identity active malformed) nil)
+                      (conversation-invariant-error () t))
+                    "malformed startup checkpoint state signals a typed corruption error"))))))
       (platform-delete-directory-tree
        *platform*
        root :validate t :if-does-not-exist :ignore)))
