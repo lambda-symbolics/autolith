@@ -414,6 +414,16 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
 (defgeneric terminal--write (terminal text)
   (:documentation "Write trusted renderer TEXT through the terminal transport."))
 
+(defgeneric terminal-plain-output-p (terminal)
+  (:documentation
+   "Return whether non-interactive TERMINAL is a plain output sink.
+A fullscreen UI writes its transcript there as text, because no alternate
+screen will ever show it."))
+
+(defmethod terminal-plain-output-p ((terminal terminal))
+  "Treat an ordinary non-interactive transport as plain output."
+  t)
+
 
 
 

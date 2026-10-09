@@ -88,6 +88,15 @@ only dimension writer that keeps both in step and repaints."
 (defmethod image-daemon:transport-flush ((terminal stream-terminal))
   (terminal-flush terminal))
 
+(defmethod terminal-plain-output-p ((terminal localgroup-terminal))
+  "Defer to the direct terminal; without one the relay awaits a client.
+The relay retains its output for the attaching client, which enters the
+alternate screen and receives a complete repaint, so retained transcript text
+would only spill into its normal buffer."
+  (let ((direct (with-lock-held ((image-daemon:relay-lock terminal))
+                  (image-daemon:relay-direct-terminal terminal))))
+    (and direct (terminal-plain-output-p direct))))
+
 (defmethod terminal-flush ((terminal localgroup-terminal))
   (image-daemon:transport-flush terminal))
 

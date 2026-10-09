@@ -206,6 +206,36 @@
   nil)
 
 
+(-> test-terminal-fullscreen-relay-startup-output () null)
+(defun test-terminal-fullscreen-relay-startup-output ()
+  "Test a detached fullscreen relay keeps transcript text out of its retained output."
+  (let* ((terminal (localgroup-terminal-create))
+         (output (make-string-output-stream))
+         (attachment (make-instance 'image-daemon:attachment
+                                    :socket nil :mode ':control
+                                    :stream (make-two-way-stream
+                                             (make-string-input-stream "") output)))
+         (ui (fullscreen-test--ui terminal)))
+    (unwind-protect
+         (with-terminal-ui (active ui)
+           (terminal-ui-append-finalized-batch
+            active (loop for index below 30 collect (list index (format nil "row ~D" index))))
+           (test-assert (not (search "row 29" (image-daemon:relay-history-text terminal)))
+                        "a transcript appended before any client attaches is not retained as text")
+           (image-daemon:relay-attach terminal attachment
+                                      :rows 12 :columns 40 :styled-p nil
+                                      :session-id "startup-test")
+           (terminal-ui-open-prompt-block active)
+           (let* ((history (image-daemon:relay-history-text terminal))
+                  (alternate (search (alternate-screen-enter-sequence) history))
+                  (row (search "row 29" history)))
+             (test-assert (and alternate row (< alternate row))
+                          "the attached client sees the transcript only in its fullscreen paint")))
+      (ignore-errors (image-daemon:relay-detach terminal attachment))
+      (terminal-ui-stop ui)))
+  nil)
+
+
 ;;;; -- Transcript Clicks --
 
 (-> test-terminal-fullscreen-clicks () null)

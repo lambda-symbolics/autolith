@@ -391,7 +391,8 @@ lock, because copying and browser launches present notices of their own."
                              (terminal-ui-fullscreen-paint
                               ui :rows rows :cursor-row cursor-row :cursor-column cursor-column))
                            (terminal-ui--note-command-paint ui (terminal-ui--command-visible-activities ui))))
-                       (when (plusp (length display))
+                       (when (and (plusp (length display))
+                                  (terminal-plain-output-p terminal))
                          (terminal--write-safe-text terminal display)
                          (terminal-flush terminal))))
                  (setf (terminal-ui-deferred-live-appended-text ui) ""
