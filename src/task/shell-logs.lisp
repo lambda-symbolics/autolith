@@ -151,7 +151,9 @@ Disable measurement until resource resolution has checked ancestor ownership."
             (getf metadata :status) ':interrupted))
     (when measure-p
       (setf (getf metadata :accounted-bytes)
-            (max (getf metadata :reserved-bytes 0)
+            (max (if (member (getf metadata :state) '(:closed :pruned))
+                     0
+                     (getf metadata :reserved-bytes 0))
                  (shell-log--measure-captures configuration directory metadata))))
     metadata))
 

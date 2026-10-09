@@ -152,6 +152,11 @@
                    (slot-value job 'parent-call-id) "expected-shell-call")
              (let* ((artifact (shell-log-allocate context :job job))
                     (metadata (shell-log-tests--finish artifact (utf8-string-to-octets "x"))))
+              (test-assert
+               (= 1 (getf (shell-log--read-manifest
+                           configuration (shell-log-capture-directory artifact))
+                          :accounted-bytes))
+               "Closed captures account for retained bytes, not their launch reservation")
                (test-assert (not (shell-log--prunable-p configuration
                                                        (shell-log-capture-directory artifact) metadata))
                             "Closing a synchronous job does not prove delivery")
@@ -363,7 +368,8 @@
            (search "stderr failure" (tool-result-content
                                       (shell-log-tests--read reopened context (json-object))))
            "Restart inspection recovers the separated error stream from its manifest")))
-      (let ((replacement (shell-log-allocate context)))
+      (let* ((*shell-log-retention-byte-limit* 48)
+             (replacement (shell-log-allocate context)))
         (test-assert (string= reference (shell-log-reference artifact)) "Pruning does not change stable references")
         (test-assert (eq ':pruned (getf (shell-log--read-manifest configuration
                                                                (shell-log-capture-directory artifact)) :state))
