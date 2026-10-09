@@ -640,15 +640,12 @@ lock."
     (string
      (copy-seq input))
     (user-message-input
-     (append
-      (list :user-message-input
-            :version 1
-            :text (copy-seq (user-message-input-text input))
-            :image-pathnames
-            (mapcar #'namestring
-                    (user-message-input-image-pathnames input)))
-      (let ((summary (user-message-input-summary input)))
-        (and summary (list :summary (copy-seq summary))))))))
+     (list :user-message-input
+           :version 1
+           :text (copy-seq (user-message-input-text input))
+           :image-pathnames
+           (mapcar #'namestring
+                   (user-message-input-image-pathnames input))))))
 
 (-> application-input--restore-pending-form
     (t)
@@ -662,19 +659,16 @@ lock."
           (eq (first form) ':user-message-input)
           (= (or (getf (rest form) :version) 0) 1))
      (let ((text (getf (rest form) :text))
-           (image-names (getf (rest form) :image-pathnames))
-           (summary (getf (rest form) :summary)))
+           (image-names (getf (rest form) :image-pathnames)))
        (when (and (stringp text)
                   (listp image-names)
-                  (every #'stringp image-names)
-                  (or (null summary) (stringp summary)))
+                  (every #'stringp image-names))
          (handler-case
              (let ((image-pathnames (mapcar #'pathname image-names)))
                (when (every #'uiop:absolute-pathname-p image-pathnames)
                  (user-message-input-create
                   :text (copy-seq text)
-                  :image-pathnames image-pathnames
-                  :summary (and summary (copy-seq summary)))))
+                  :image-pathnames image-pathnames)))
            (error ()
              nil)))))
     (t

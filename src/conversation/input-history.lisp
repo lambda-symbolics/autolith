@@ -27,13 +27,12 @@ sidecar and, after an interrupted append, the active segment."
 
 (-> conversation-input-history--record-input (list) (option non-empty-string))
 (defun conversation-input-history--record-input (record)
-  "Return RECORD's editable text, excluding automatic, summarized and assistant messages."
+  "Return RECORD's editable text, excluding automatic messages and assistant output."
   (let* ((properties (rest record))
          (input (case (first record)
                   (:message
                    (when (and (eq (getf properties :role) ':user)
-                              (not (getf properties :automatic-p))
-                              (null (getf properties :summary)))
+                              (not (getf properties :automatic-p)))
                      (getf properties :content)))
                   (:user-operation
                    (when (member (getf properties :kind) '(:command :lisp))

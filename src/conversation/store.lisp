@@ -1773,21 +1773,16 @@ copied."
            (conversation--prepare-images
             conversation
             (user-message-input-image-pathnames input)))
-         (item (user-message-item content attachments))
-         (summary (user-message-input-summary input)))
+         (item (user-message-item content attachments)))
     (with-recursive-lock-held ((conversation-append-lock conversation))
       (let* ((initial-title
                (and (not automatic-p)
                     (zerop (conversation-user-turn-count conversation))
                     (null (conversation-title conversation))
                     (conversation-title-derive
-                     (cond
-                       (summary
-                        summary)
-                       ((non-empty-string-p content)
-                        content)
-                       (t
-                        *conversation-image-only-title*)))))
+                     (if (non-empty-string-p content)
+                         content
+                         *conversation-image-only-title*))))
              (previous-title (conversation-title conversation))
              (previous-title-source (conversation-title-source conversation))
              (record nil)
@@ -1811,8 +1806,6 @@ copied."
                                (copy-seq pending-input-identifier)))
                        (when job-completion
                          (list :job-completion (copy-tree job-completion)))
-                       (when summary
-                         (list :summary (copy-seq summary)))
                        (when attachments
                          (list :images
                                (mapcar #'image-attachment-record attachments)))

@@ -1284,8 +1284,6 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
              (application-input-controller-submit-primary-prompt
               controller
               (user-message-input-create
-               :summary (format nil "Rebuild or drop the ~D private definition~:P skipped at startup."
-                                (length skips))
                :text (application--skipped-definitions-prompt
                       skips
                       :configuration (application-configuration application)
