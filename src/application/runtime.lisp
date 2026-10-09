@@ -2283,6 +2283,12 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
               (application--job-completion-entry application properties))
              ((application--goal-continuation-message-p content)
               (list (terminal-span ':hint "∙ goal continues")))
+             ((stringp (getf properties :summary))
+              (application--transcript-entry application
+                                             :style ':user
+                                             :header "❯ you"
+                                             :timestamp (getf properties :time)
+                                             :body (getf properties :summary)))
              (t
               (application--transcript-entry application
                                              :style ':user

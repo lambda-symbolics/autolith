@@ -92,7 +92,9 @@
           (list :pending-input-identifier
                 (getf properties :pending-input-identifier)))
         (when (getf properties :job-completion)
-          (list :job-completion (copy-tree (getf properties :job-completion)))))))
+          (list :job-completion (copy-tree (getf properties :job-completion))))
+        (when (stringp (getf properties :summary))
+          (list :summary (getf properties :summary))))))
     (:provider-item
      (conversation-replay--project-provider-item record))
     (:tool-result

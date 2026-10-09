@@ -8,6 +8,10 @@
 (defgeneric user-message-input-image-pathnames (input)
   (:documentation "Return the absolute local image pathnames attached to user INPUT."))
 
+(defgeneric user-message-input-summary (input)
+  (:documentation
+   "Return the line the transcript shows for user INPUT in place of its text, or NIL."))
+
 (defclass user-message-input ()
   ((text
     :initarg :text
@@ -19,11 +23,19 @@
     :initform nil
     :reader user-message-input-image-pathnames
     :type list
-    :documentation "Absolute local image pathnames attached to this submission."))
+    :documentation "Absolute local image pathnames attached to this submission.")
+   (summary
+    :initarg :summary
+    :initform nil
+    :reader user-message-input-summary
+    :type (option string)
+    :documentation
+    "The line shown in place of generated text the user did not type, or NIL."))
   (:documentation "One user submission containing text and local image attachments."))
 
 (-> user-message-input-text ((or string user-message-input)) string)
 (-> user-message-input-image-pathnames ((or string user-message-input)) list)
+(-> user-message-input-summary ((or string user-message-input)) (option string))
 
 (defmethod user-message-input-text ((input string))
   input)
@@ -31,11 +43,16 @@
 (defmethod user-message-input-image-pathnames ((input string))
   (declare (ignore input)))
 
+(defmethod user-message-input-summary ((input string))
+  (declare (ignore input)))
+
 (-> user-message-input-create
-    (&key (:text string) (:image-pathnames list))
+    (&key (:text string) (:image-pathnames list) (:summary (option string)))
     user-message-input)
-(defun user-message-input-create (&key (text "") image-pathnames)
-  "Create one validated user submission from TEXT and IMAGE-PATHNAMES."
+(defun user-message-input-create (&key (text "") image-pathnames summary)
+  "Create one validated user submission from TEXT and IMAGE-PATHNAMES.
+
+SUMMARY, for generated TEXT the user did not type, is what the transcript shows."
   (unless (or (non-empty-string-p text) image-pathnames)
     (error 'configuration-error
            :message "A user submission requires text or an image."))
@@ -45,9 +62,13 @@
   (unless (every #'uiop:absolute-pathname-p image-pathnames)
     (error 'configuration-error
            :message "Every attached image pathname must be absolute."))
+  (unless (or (null summary) (non-empty-string-p summary))
+    (error 'configuration-error
+           :message "A user submission summary must be non-empty text."))
   (make-instance 'user-message-input
                  :text text
-                 :image-pathnames (copy-list image-pathnames)))
+                 :image-pathnames (copy-list image-pathnames)
+                 :summary summary))
 
 (-> user-message-input-copy ((or string user-message-input))
     (or string user-message-input))
@@ -61,7 +82,9 @@
   (make-instance 'user-message-input
                  :text (copy-seq (user-message-input-text input))
                  :image-pathnames
-                 (copy-list (user-message-input-image-pathnames input))))
+                 (copy-list (user-message-input-image-pathnames input))
+                 :summary (let ((summary (user-message-input-summary input)))
+                            (and summary (copy-seq summary)))))
 
 
 ;;;; -- Prepared Attachments --
