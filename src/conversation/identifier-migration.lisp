@@ -527,7 +527,12 @@ large conversations that contain no legacy reference."
                   source target)
           :pathname source)))
       (conversation-identifier-migration--validate-target-storage
-       configuration target new)))
+       configuration target new)
+      (let ((source-history (conversation-input-history-pathname source)))
+        (when (probe-file source-history)
+          (conversation-identifier-migration--rewrite-text-file
+           source-history (conversation-input-history-pathname target) entries
+           :write-date (file-write-date source-history))))))
   (let ((root (configuration-conversation-root configuration))
         (source-pathnames
           (mapcan

@@ -1224,7 +1224,7 @@
 
 (-> test-conversation-concurrent-appends () null)
 (defun test-conversation-concurrent-appends ()
-  "Test concurrent writers retain one contiguous durable sequence."
+  "Test concurrent writers retain one contiguous sequence and matching input history."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (conversation
@@ -1237,7 +1237,9 @@
                     (dotimes (index 25)
                       (conversation-append-record
                        conversation
-                       (list :goal
+                       (list :message
+                             :role ':user
+                             :content (format nil "writer ~D input ~D" writer index)
                              :writer writer
                              :index index))))
                   :name (format nil
@@ -1260,7 +1262,13 @@
                      (equal sequences
                             (loop for sequence from 1 to 100
                                   collect sequence)))
-                "concurrent appends preserve every unique sequence in order"))))
+                "concurrent appends preserve every unique sequence in order")
+               (test-assert
+                (equal (conversation-input-history
+                        (conversation-load (conversation-pathname conversation)))
+                       (mapcar (lambda (record) (getf (rest record) :content))
+                               (rest records)))
+                "the input sidecar preserves the durable order of concurrent submissions"))))
       (dolist (thread threads)
         (when (thread-alive-p thread)
           (join-thread thread)))

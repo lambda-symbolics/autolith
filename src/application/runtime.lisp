@@ -1661,7 +1661,7 @@ command replaced the active conversation."
     list)
 (defun application--conversation-input-history
     (conversation &key (limit *terminal-history-limit*))
-  "Return the newest LIMIT editable inputs from CONVERSATION's checkpoint state."
+  "Return the newest LIMIT editable inputs from CONVERSATION's complete sidecar."
   (let ((history (conversation-input-history conversation)))
     (nthcdr (max 0 (- (length history) limit)) history)))
 

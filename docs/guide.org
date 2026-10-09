@@ -231,6 +231,12 @@ Because the viewport owns the mouse, hold =Shift= while dragging to select text
 with the terminal emulator. Fullscreen history lives in the application rather
 than the terminal emulator's native scrollback.
 
+Input recall includes every user message, command, and Lisp submission in the
+conversation. Automatic messages and assistant output are excluded. On first use,
+the complete input-only sidecar is built from the conversation records; later
+submissions are appended to it. Resuming reads this sidecar instead of replaying
+archived transcript chunks.
+
 Clicking a web address in the fullscreen transcript opens it in the default
 browser, and every fenced code block ends with a =⧉ copy= label that copies the
 block's source. Copies go to the host clipboard through wl-clipboard, xclip or

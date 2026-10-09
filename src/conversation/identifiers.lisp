@@ -216,6 +216,15 @@ would let a second allocation in the same second choose the same identifier."
      (merge-pathnames "conversation-picker/" data-root))))
 
 
+(-> conversation-input-history-pathname (pathname) pathname)
+(defun conversation-input-history-pathname (conversation-pathname)
+  "Return the complete input-only sidecar owned by CONVERSATION-PATHNAME."
+  (let ((metadata-pathname
+          (conversation-picker-metadata-pathname conversation-pathname)))
+    (make-pathname :name (format nil "~A.inputs" (pathname-name metadata-pathname))
+                   :type "sexp"
+                   :defaults metadata-pathname)))
+
 (-> conversation-picker-source-lock-pathname (pathname) pathname)
 (defun conversation-picker-source-lock-pathname (conversation-pathname)
   "Return the persistent lock shared by source appends and picker reconstruction."
@@ -251,11 +260,12 @@ would let a second allocation in the same second choose the same identifier."
 
 (-> conversation-picker-sidecar-pathnames (pathname) list)
 (defun conversation-picker-sidecar-pathnames (conversation-pathname)
-  "Return every picker sidecar pathname owned by CONVERSATION-PATHNAME."
+  "Return every picker and input-history sidecar owned by CONVERSATION-PATHNAME."
   (list (conversation-picker-metadata-pathname conversation-pathname)
         (conversation-picker-revision-pathname conversation-pathname)
         (conversation-picker-search-pathname conversation-pathname)
-        (conversation-picker-search-revision-pathname conversation-pathname)))
+        (conversation-picker-search-revision-pathname conversation-pathname)
+        (conversation-input-history-pathname conversation-pathname)))
 
 (-> conversation-picker-sidecars-delete (pathname) null)
 (defun conversation-picker-sidecars-delete (conversation-pathname)

@@ -158,6 +158,11 @@ holds the same file lock as source invalidation and writes.
   repairs before publishing a self-contained checkpoint, then installs the
   replacement projection. =:cutoff-seq= identifies the request snapshot;
   =:through-seq= covers every record before checkpoint publication.
+- =src/conversation/input-history.lisp= maintains complete editable input recall in
+  =conversation-picker/<id>.inputs.sexp=. Missing or invalid indices rebuild from
+  authoritative records once. Each new input appends one indexed sequence;
+  compaction flushes the index before retiring the active segment. Checkpoints
+  carry the last input sequence, not the input strings.
 
 ** Configuration
 

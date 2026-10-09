@@ -229,6 +229,16 @@ match a new library version is never the correct repair."
               "conversation replacement preserves chunk identity and activity time")
              (test-assert (notany #'probe-file old-sidecars)
                           "migration removes picker sidecars under the legacy identifier")
+             (test-call-with-function-replacements
+              (list (list 'conversation--map-storage-records
+                          (lambda (&rest arguments)
+                            (declare (ignore arguments))
+                            (error "Migrated input history must not rebuild."))))
+              (lambda ()
+                (test-assert
+                 (equal (conversation-input-history (conversation-load new-path))
+                        (list (format nil "related conversation ~A" other-new)))
+                 "migration preserves the input sidecar and rewrites its references")))
              (test-assert
               (string= (conversation-identifier
                         (conversation-load-by-id

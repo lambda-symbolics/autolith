@@ -6,9 +6,6 @@
 (defgeneric resource-observation-state-weight (alias state)
   (:documentation "Return STATE's retained byte weight under opaque ALIAS."))
 
-(defparameter *conversation-input-history-limit* 100
-  "Maximum editable inputs carried into each self-contained conversation chunk.")
-
 (defparameter *conversation-title-maximum-characters* 64
   "The maximum number of characters retained in one session title.")
 
@@ -339,10 +336,25 @@ not yet been told that work from the previous process is gone.")
     :documentation
     "Recent bounded local user operations in chronological durable order.")
    (input-history
-    :initform (make-deque :maximum-count *conversation-input-history-limit*)
-    :reader conversation-input-history-entries
+    :initform (make-deque)
+    :accessor conversation-input-history-entries
     :type deque
-    :documentation "Recent editable inputs carried across compaction checkpoints.")
+    :documentation "Complete chronological editable inputs loaded from the sidecar.")
+   (input-history-loaded-p
+    :initform nil
+    :accessor conversation-input-history-loaded-p
+    :type boolean
+    :documentation "Whether the complete input-only sidecar is loaded into this heap.")
+   (input-history-indexed-sequence
+    :initform 0
+    :accessor conversation-input-history-indexed-sequence
+    :type (integer 0)
+    :documentation "Newest editable input durably indexed in the sidecar.")
+   (input-history-last-sequence
+    :initform 0
+    :accessor conversation-input-history-last-sequence
+    :type (integer 0)
+    :documentation "Newest editable input observed in authoritative conversation records.")
    (prompt-cache-usage
     :initform nil
     :accessor conversation-prompt-cache-usage
@@ -380,31 +392,6 @@ not yet been told that work from the previous process is gone.")
   (with-recursive-lock-held ((conversation-append-lock conversation))
     (clinker-transcript:projection-replace (conversation-projection conversation) items))
   items)
-
-(-> conversation-input-history (conversation) list)
-(defun conversation-input-history (conversation)
-  "Return a chronological snapshot of CONVERSATION's checkpointed editable inputs."
-  (with-recursive-lock-held ((conversation-append-lock conversation))
-    (mapcar #'copy-seq
-            (deque->list (conversation-input-history-entries conversation)))))
-
-(-> conversation--note-input-history (conversation list) null)
-(defun conversation--note-input-history (conversation record)
-  "Retain RECORD's editable user input in the bounded checkpoint state."
-  (let* ((properties (rest record))
-         (input
-           (case (first record)
-             (:message
-              (when (and (eq (getf properties :role) ':user)
-                         (not (getf properties :automatic-p)))
-                (getf properties :content)))
-             (:user-operation
-              (when (member (getf properties :kind) '(:command :lisp))
-                (getf properties :source))))))
-    (when (non-empty-string-p input)
-      (deque-push-back (conversation-input-history-entries conversation)
-                       (copy-seq input))))
-  nil)
 
 (-> conversation--note-prompt-cache-usage (conversation list) null)
 (defun conversation--note-prompt-cache-usage (conversation record)
@@ -778,7 +765,10 @@ a crash may leave one that a later lease acquisition can reuse safely."
         :user-operation-records
         (copy-tree (deque->list
                     (conversation-user-operation-records conversation)))
-        :input-history (conversation-input-history conversation)
+        :input-history-last-sequence
+        (if (= chunk-start-sequence 1)
+            0
+            (conversation-input-history-last-sequence conversation))
         :prompt-cache-usage (copy-tree (conversation-prompt-cache-usage conversation))
         :pending-async-lisp-events
         (copy-tree (deque->list
@@ -1200,6 +1190,8 @@ a crash may leave one that a later lease acquisition can reuse safely."
                              :time (get-universal-time)
                              (rest record)))
            (picker-search-message (conversation--record-preview sequenced)))
+      (when (conversation--compaction-record-p sequenced)
+        (conversation-input-history--ensure-current conversation))
       ;; Invalidate under the shared source lock before changing durable bytes.
       ;; Cache reconstruction holds this same lock through publication.
       (when picker-search-message
@@ -1242,6 +1234,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
            conversation picker-search-message))
         (when (eq (first sequenced) :goal)
           (setf (conversation-latest-goal-record conversation) sequenced)))
+      (conversation-input-history--publish conversation sequenced)
       (conversation-picker-metadata-publish conversation)
       sequenced)))
 
@@ -2883,10 +2876,8 @@ later picker searches read it without scanning the log."
            (latest-goal-record
              (and (= version 2)
                   (getf properties :latest-goal-record)))
-           (input-history-present-p
-             (and (= version 2)
-                  (conversation--property-present-p properties :input-history)))
-           (input-history (and input-history-present-p (getf properties :input-history)))
+           (input-history-last-sequence
+             (if (= version 2) (getf properties :input-history-last-sequence 0) 0))
            (prompt-cache-usage
              (and (= version 2) (getf properties :prompt-cache-usage))))
       (unless (or (and (null title) (null title-source))
@@ -2924,10 +2915,8 @@ later picker searches read it without scanning the log."
                         user-operation-records ':user-operation)
                        (conversation--header-record-list-p
                         pending-async-lisp-events ':async-lisp-event)
-                       (or (not input-history-present-p)
-                           (and (conversation--header-string-list-p input-history)
-                                (<= (length input-history)
-                                    *conversation-input-history-limit*)))
+                       (typep input-history-last-sequence '(integer 0))
+                       (< input-history-last-sequence chunk-start-sequence)
                        (or (null prompt-cache-usage)
                            (conversation--prompt-cache-usage-p prompt-cache-usage))
                        (or (null latest-goal-record)
@@ -2967,16 +2956,13 @@ later picker searches read it without scanning the log."
                 (mapcar #'copy-seq pending-identifiers)
                 (conversation-latest-goal-record conversation)
                 (copy-tree latest-goal-record))
-          (dolist (input input-history)
-            (deque-push-back (conversation-input-history-entries conversation)
-                             (copy-seq input)))
           (setf (conversation-prompt-cache-usage conversation)
-                (copy-tree prompt-cache-usage))
+                (copy-tree prompt-cache-usage)
+                (conversation-input-history-last-sequence conversation)
+                input-history-last-sequence)
           (dolist (record user-operation-records)
             (conversation--project-record
-             ':user-operation conversation (rest record))
-            (unless input-history-present-p
-              (conversation--note-input-history conversation record)))
+             ':user-operation conversation (rest record)))
           (dolist (record pending-async-lisp-events)
             (conversation--project-record
              ':async-lisp-event conversation (rest record))))

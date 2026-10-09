@@ -280,6 +280,14 @@
   test-conversation-initial-publication-serialization
   test-conversation-deletion)
 
+(define-test-suite conversation-input-history
+  test-conversation-input-history-complete
+  test-conversation-input-history-rebuild
+  test-conversation-input-history-append-failures
+  test-conversation-input-history-rotation-failure
+  test-conversation-input-history-recovery
+  test-conversation-input-history-interruption)
+
 (define-test-suite conversation-replay
   test-conversation-replay-navigation
   test-conversation-replay-projection
