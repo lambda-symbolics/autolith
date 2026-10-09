@@ -21,10 +21,102 @@ temporary_root=
 publish_command_p=true
 musl_requested_p=false
 
+# The Autolith palette on a terminal, unless NO_COLOR asks for plain text.
+style_brand=
+style_dim=
+style_good=
+style_bar=
+style_failure=
+style_code=
+style_reset=
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  style_brand=$(printf '\033[35;1m')
+  style_dim=$(printf '\033[2m')
+  style_good=$(printf '\033[32m')
+  style_bar=$(printf '\033[35m')
+  style_failure=$(printf '\033[31;1m')
+  style_code=$(printf '\033[36m')
+  style_reset=$(printf '\033[0m')
+fi
+progress_p=false
+if [ -t 1 ]; then
+  progress_p=true
+fi
+
 fail()
 {
-  printf 'Autolith installation failed: %s\n' "$1" >&2
+  printf '%sAutolith installation failed:%s %s\n' \
+    "$style_failure" "$style_reset" "$1" >&2
   exit 1
+}
+
+say_section()
+{
+  printf '\n%s%s%s\n' "$style_brand" "$1" "$style_reset"
+}
+
+say_note()
+{
+  printf '%s│%s %s\n' "$style_dim" "$style_reset" "$1"
+}
+
+say_done()
+{
+  printf '%s%s%s\n' "$style_good" "$1" "$style_reset"
+}
+
+# Redraw the download row: a bar for a known PERCENT, otherwise the BYTES so far.
+progress_row()
+{
+  awk -v percent="$1" -v bytes="$2" -v width=32 \
+      -v dim="$style_dim" -v bar="$style_bar" -v reset="$style_reset" 'BEGIN {
+    if (percent == "") {
+      printf "\r%s│%s downloading %s%.1f MB%s\033[K", dim, reset, dim, bytes / 1048576, reset
+      exit
+    }
+    if (percent > 100) percent = 100
+    split("▏ ▎ ▍ ▌ ▋ ▊ ▉", partial, " ")
+    eighths = int(percent * width * 8 / 100)
+    full = int(eighths / 8)
+    rest = eighths % 8
+    filled = ""
+    for (i = 0; i < full; i++) filled = filled "█"
+    if (rest > 0) filled = filled partial[rest]
+    track = ""
+    for (i = full + (rest > 0); i < width; i++) track = track "─"
+    printf "\r%s│%s downloading %s%s%s%s%s %5.1f%%  %s%.1f MB%s\033[K", \
+      dim, reset, bar, filled, dim, track, reset, percent, dim, bytes / 1048576, reset
+  }'
+}
+
+# Download URL to PATHNAME, drawing Autolith's own progress row on a terminal.
+download()
+{
+  if [ "$progress_p" != true ]; then
+    curl --fail --location --show-error --silent --retry 3 \
+      --proto '=https' --tlsv1.2 --output "$2" "$1"
+    return
+  fi
+  download_meter=$temporary_root/.download-meter
+  curl --fail --location --show-error --retry 3 --progress-bar \
+    --proto '=https' --tlsv1.2 --output "$2" "$1" 2> "$download_meter" &
+  download_pid=$!
+  while kill -0 "$download_pid" 2>/dev/null; do
+    progress_row \
+      "$(tr '\r' '\n' < "$download_meter" |
+           sed -n 's/.* \([0-9][0-9]*\.[0-9]\)%.*/\1/p' | tail -n 1)" \
+      "$(wc -c 2>/dev/null < "$2" || printf '0')"
+    sleep 0.1
+  done
+  if wait "$download_pid"; then
+    progress_row 100 "$(wc -c < "$2")"
+    printf '\n'
+  else
+    download_status=$?
+    printf '\r\033[K'
+    tr '\r' '\n' < "$download_meter" | grep -v '^[#=O -]*\( [0-9.]*%\)\{0,1\}$' >&2 || true
+    return "$download_status"
+  fi
 }
 
 cleanup()
@@ -269,11 +361,11 @@ chmod 700 "$install_root" "$releases_root"
 if release_installed_p "$qualified_target" "$requested_tag" "$platform"; then
   target=$qualified_target
   publish_links "$target"
-  printf 'Autolith %s is already installed.\n' "${requested_tag#v}"
+  say_done "Autolith ${requested_tag#v} is already installed."
 elif release_installed_p "$legacy_target" "$requested_tag" "$platform"; then
   target=$legacy_target
   publish_links "$target"
-  printf 'Autolith %s is already installed.\n' "${requested_tag#v}"
+  say_done "Autolith ${requested_tag#v} is already installed."
 else
   temporary_root=$(mktemp -d "$releases_root/.install.XXXXXX")
   archive=$temporary_root/$archive_name
@@ -282,15 +374,16 @@ else
   archive_url=$release_base_url/$requested_tag/$archive_name
   checksum_url=$release_base_url/$requested_tag/$checksum_name
 
-  printf 'Downloading Autolith %s.\n' "${requested_tag#v}"
-  curl --fail --location --show-error --retry 3 --progress-bar \
-    --proto '=https' --tlsv1.2 --output "$archive" "$archive_url"
+  say_section "Autolith ${requested_tag#v}"
+  say_note "$platform release from $release_base_url"
+  download "$archive_url" "$archive"
   curl --fail --location --show-error --retry 3 --silent \
     --proto '=https' --tlsv1.2 --output "$checksum" "$checksum_url"
   (
     cd -- "$temporary_root"
     check_sha256 "$checksum_name" "$archive_name"
   ) || fail "the release archive has the wrong SHA-256 identity."
+  say_note "verified the SHA-256 checksum"
   tar -xzf "$archive" -C "$temporary_root"
   release_installed_p "$extracted" "$requested_tag" "$platform" ||
     fail "the release archive has an unexpected platform identity or layout."
@@ -315,7 +408,8 @@ else
     chmod -R u+w "$stale_target" 2>/dev/null || true
     rm -rf -- "$stale_target"
   fi
-  printf 'Installed Autolith %s.\n' "${requested_tag#v}"
+  say_note "installed in $target"
+  say_done "Installed Autolith ${requested_tag#v}."
 fi
 
 if [ "$publish_command_p" = true ]; then
@@ -323,10 +417,10 @@ if [ "$publish_command_p" = true ]; then
     *:"$bin_directory":*) ;;
     *)
       printf 'Add %s to PATH to run Autolith:\n' "$bin_directory"
-      printf '  export PATH="%s:$PATH"\n' "$bin_directory"
+      printf '  %sexport PATH="%s:$PATH"%s\n' "$style_code" "$bin_directory" "$style_reset"
       ;;
   esac
 fi
 if [ "$publish_command_p" = true ]; then
-  printf 'Run: autolith\n'
+  printf 'Run: %sautolith%s\n' "$style_code" "$style_reset"
 fi
