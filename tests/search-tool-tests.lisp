@@ -59,6 +59,12 @@
                        '("src/main.lisp" "main.lisp" "*.lisp" "!main.lisp" "v2.0" "src/"))
                '(t t nil nil nil nil)))
    "search constraints classify directory and file path filters as fff does")
+  (test-assert
+   (and (string= (search-tool--escape-earmuffed-names "src/  *limit* (setf *x*")
+                 "src/  \\*limit* (setf \\*x*")
+        (string= (search-tool--escape-earmuffed-names "*.lisp *test.* * ** *a/b* symbol")
+                 "*.lisp *test.* * ** *a/b* symbol"))
+   "query special variable names are escaped while path globs are kept")
   (let* ((default-configuration
            (configuration-create
             :source-root (asdf:system-source-directory :autolith)
@@ -100,6 +106,9 @@
            (search-tests--write-file
             (merge-pathnames "docs/search-guide.org" workspace-root)
             (format nil "AUTOLITH_FFF_SECONDARY~%"))
+           (search-tests--write-file
+            (merge-pathnames "src/specials.lisp" workspace-root)
+            (format nil "(defvar *autolith-fff-special* 1)~%"))
            (setf configuration (search-tests--configuration workspace-root)
                  registry (make-default-tool-registry))
             (let* ((conversation
@@ -232,6 +241,14 @@
                   (test-assert (and (not (tool-result-success-p two-directories))
                                     (search "must all hold" (tool-result-content two-directories)))
                                "two directory constraints fail instead of matching nothing"))
+                (let ((special (search-tests--call registry context
+                                                   "search" "content"
+                                                   "query" "*autolith-fff-special* src/")))
+                  (test-assert (and (tool-result-success-p special)
+                                    (search "src/specials.lisp:1:"
+                                            (tool-result-content special)))
+                               (format nil "a special variable name with a path filter is searched as text: ~S"
+                                       (tool-result-content special))))
                 (dolist (case
                           (list
                            (list "missing selector" nil

@@ -214,6 +214,7 @@ was built from and may no longer exist."
               (tool-context-configuration context)
               :operation ':content
               :arguments (append (list (search-tool--query-with-constraints
-                                        query constraints)
+                                        (search-tool--escape-earmuffed-names query)
+                                        constraints)
                                        :mode mode)
                                  (search-tool--common-content-options arguments))))))))

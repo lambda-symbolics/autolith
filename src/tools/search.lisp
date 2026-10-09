@@ -100,6 +100,46 @@ AUTOLITH_FFF_LIBRARY names a library to use instead, as the Nix package does."
         query
         (format nil "~A ~A" filters query))))
 
+(-> search-tool--blank-p (character) boolean)
+(defun search-tool--blank-p (character)
+  "Return true when CHARACTER separates fff query tokens."
+  (and (member character '(#\Space #\Tab #\Newline #\Return)) t))
+
+(-> search-tool--earmuffed-name-p (string) boolean)
+(defun search-tool--earmuffed-name-p (token)
+  "Return true when TOKEN reads as a Lisp special variable name such as *limit*.
+
+fff's agent query parser takes a token that starts and ends with an asterisk as
+a path glob, so such a name would filter paths instead of being searched."
+  (let ((length (length token)))
+    (and (>= length 3)
+         (char= (char token 0) #\*)
+         (char= (char token (1- length)) #\*)
+         (notany (lambda (character) (find character "*?[{/."))
+                 (subseq token 1 (1- length)))
+         t)))
+
+(-> search-tool--escape-earmuffed-names (string) string)
+(defun search-tool--escape-earmuffed-names (query)
+  "Return QUERY with each earmuffed name escaped so fff searches it as text.
+
+fff reads a token after a backslash as literal text and drops the backslash."
+  (with-output-to-string (stream)
+    (loop with length = (length query)
+          with start = 0
+          while (< start length)
+          do (let* ((token-start (or (position-if-not #'search-tool--blank-p query
+                                                      :start start)
+                                     length))
+                    (token-end (or (position-if #'search-tool--blank-p query
+                                                :start token-start)
+                                   length)))
+               (write-string query stream :start start :end token-start)
+               (when (search-tool--earmuffed-name-p (subseq query token-start token-end))
+                 (write-char #\\ stream))
+               (write-string query stream :start token-start :end token-end)
+               (setf start token-end)))))
+
 (-> search-tool--constraint-tokens (string) list)
 (defun search-tool--constraint-tokens (constraints)
   "Return the whitespace-separated filter tokens of CONSTRAINTS."

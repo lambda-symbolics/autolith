@@ -435,7 +435,7 @@
                  (tool-object-schema
                   (json-object
                    "query" (tool-string-property
-                              "Search text. Optional path filters may be included inline, for example '*.lisp symbol'.")
+                              "Search text. Optional path filters may be included inline, for example '*.lisp symbol'. A Lisp special variable name such as *limit* is searched as text.")
                    "patterns" (json-object
                                "type" "array"
                                "description" "Non-empty literal alternatives searched in one pass."
