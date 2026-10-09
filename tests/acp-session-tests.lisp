@@ -493,3 +493,86 @@
                              (agentcomms:json-get (first updates) "content"))))
                 "the client handles the final thought batch before the terminal reply"))))))))
   nil)
+
+
+(-> test-acp-session-replay-metadata-and-tool-statuses () null)
+(defun test-acp-session-replay-metadata-and-tool-statuses ()
+  "Exercise replay filtering at the ACP update boundary, including tool outcomes."
+  (with-test-configuration (configuration root)
+    (let ((identifier nil))
+      (acp-session-test--call-with-client
+       configuration
+       (lambda (service client)
+         (setf identifier (agentcomms:client-new-session client (namestring root)))
+         (let ((conversation
+                 (application-conversation
+                  (acp-session-application (acp-service--session service identifier)))))
+           (dolist (record
+                     (list
+                      (list :message :role ':user
+                            :content "literal (:message :automatic-p t)")
+                      (list :message :role ':user :automatic-p t
+                            :content "(:message :automatic-p t)")
+                      (list :provider-item
+                            :wire-json
+                            "{\"type\":\"function_call\",\"call_id\":\"ok-call\",\"name\":\"resource.read\",\"arguments\":\"{}\"}")
+                      (list :provider-item
+                            :wire-json
+                            "{\"type\":\"function_call\",\"call_id\":\"legacy-call\",\"name\":\"resource.read\",\"arguments\":\"{}\"}")
+                      (list :provider-item
+                            :wire-json
+                            "{\"type\":\"function_call\",\"call_id\":\"bad-call\",\"name\":\"shell.run\",\"arguments\":\"{}\"}")
+                      (list :tool-result :call-id "ok-call" :status ':ok
+                            :output "completed output")
+                      (list :tool-result :call-id "legacy-call" :status ':success
+                            :output "legacy output")
+                      (list :tool-result :call-id "bad-call" :status ':failure
+                            :output "failed output")))
+             (conversation-append-record
+              conversation
+              (if (eq (first record) ':tool-result)
+                  (append record
+                          (list :wire-json
+                                (json-encode
+                                 (function-call-output-item
+                                  (getf (rest record) :call-id) (getf (rest record) :output)))))
+                  record))))
+         (agentcomms:client-close-session client identifier))
+       :results nil)
+      (acp-session-test--call-with-client
+       configuration
+       (lambda (service client)
+         (agentcomms:client-load-session client identifier (namestring root))
+         (let* ((updates (reverse (acp-session-test-updates client)))
+                (user-messages
+                  (loop for update in updates
+                        when (eq ':user-message-chunk (agentcomms:acp-update-kind update))
+                          collect (agentcomms:acp-content-text
+                                   (agentcomms:json-get update "content"))))
+                (tool-calls
+                  (remove-if-not
+                   (lambda (update) (eq ':tool-call (agentcomms:acp-update-kind update)))
+                   updates))
+                (tool-updates
+                  (remove-if-not
+                   (lambda (update)
+                     (eq ':tool-call-update (agentcomms:acp-update-kind update)))
+                   updates)))
+           (test-assert (equal '("literal (:message :automatic-p t)") user-messages)
+                        "metadata, not internal-looking text, suppresses automatic messages")
+           (test-assert
+              (equal '("2:ok-call" "2:legacy-call" "2:bad-call")
+                     (mapcar (lambda (update) (agentcomms:json-get update "toolCallId"))
+                             tool-calls))
+            "automatic turns advance the replay tool identity sequence")
+           (test-assert
+              (equal '("2:ok-call" "2:legacy-call" "2:bad-call")
+                     (mapcar (lambda (update) (agentcomms:json-get update "toolCallId"))
+                             tool-updates))
+            "replayed tool results refer to their declared calls")
+           (test-assert
+              (equal '("completed" "completed" "failed")
+                     (mapcar (lambda (update) (agentcomms:json-get update "status"))
+                             tool-updates))
+            "ok and legacy success statuses complete tools while failures fail")))
+       :results nil))))

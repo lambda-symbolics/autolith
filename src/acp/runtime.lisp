@@ -109,11 +109,12 @@
             (when (eq (getf fields :role) ':user)
               (setf turn-sequence (getf fields :seq)
                     (acp-observer-turn-sequence observer) turn-sequence))
-            (acp-observer--send
-             observer
-             (funcall (if (eq (getf fields :role) ':user)
-                          #'agentcomms:acp-update-user-message #'agentcomms:acp-update-agent-message)
-                      (agentcomms:acp-text-content (getf fields :content)))))
+            (unless (getf fields :automatic-p)
+              (acp-observer--send
+               observer
+               (funcall (if (eq (getf fields :role) ':user)
+                            #'agentcomms:acp-update-user-message #'agentcomms:acp-update-agent-message)
+                        (agentcomms:acp-text-content (getf fields :content))))))
            (:provider-item
             (let* ((item (json-decode (getf fields :wire-json)))
                    (type (json-get item "type")))
@@ -143,7 +144,7 @@
              (agentcomms:acp-update-tool-call-progress
               (agentcomms:acp-tool-call-update
                (acp-tool-identifier turn-sequence (getf fields :call-id))
-               :status (if (eq (getf fields :status) ':success) ':completed ':failed)
+               :status (if (member (getf fields :status) '(:ok :success)) ':completed ':failed)
                :raw-output (getf fields :output)
                :content (list (agentcomms:acp-tool-call-content
                                (agentcomms:acp-text-content (getf fields :output))))))))))))

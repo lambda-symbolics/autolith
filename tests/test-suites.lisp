@@ -1014,6 +1014,7 @@
   test-acp-session-cwd-mode-and-unsupported-content
   test-acp-session-disconnect-releases-lease
   test-acp-session-live-and-replayed-tool-identities
+  test-acp-session-replay-metadata-and-tool-statuses
   test-acp-session-close-timeout-retains-ownership
   test-acp-session-delayed-cancel-during-finalization
   test-acp-session-flushes-thoughts-on-prompt-exit
