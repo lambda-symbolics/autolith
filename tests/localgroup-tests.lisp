@@ -1078,11 +1078,11 @@
                       "only the controlling terminal exits with the session's status")
          (test-assert (= 2 (count #\Newline report))
                       "every attached terminal reports the session's exit message")))))
-  (dolist (case '((:update 76 "update to 1.2.3")
-                  (:rollback 75 "retained generation G1")
-                  (:fatal 70 "Capsule: ")))
-    (destructuring-bind (kind status text) case
-      (multiple-value-bind (actual-status message)
+  (dolist (case '((:update 76 "update to 1.2.3" :notice)
+                  (:rollback 75 "retained generation G1" :notice)
+                  (:fatal 70 "Capsule: " :failure)))
+    (destructuring-bind (kind status text style) case
+      (multiple-value-bind (actual-status message actual-style)
           (main--launcher-exit
            (ecase kind
              (:update (make-condition 'update-requested :message "Update." :tag "v1.2.3"))
@@ -1092,6 +1092,8 @@
                                      :message "Fatal."
                                      :cause (make-condition 'simple-error)
                                      :capsule-pathname #P"/tmp/capsule.sexp"))))
-        (test-assert (and (= actual-status status) (search text message))
-                     (format nil "a ~(~A~) exit maps to launcher status ~D" kind status)))))
+        (test-assert (and (= actual-status status) (search text message)
+                          (eq actual-style style))
+                     (format nil "a ~(~A~) exit maps to launcher status ~D in ~(~A~) style"
+                             kind status style)))))
   nil)

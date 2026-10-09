@@ -564,25 +564,43 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
 
 (defgeneric main--launcher-exit (condition)
   (:documentation
-   "Return the launcher status for session-ending CONDITION and the message announcing it."))
+   "Return the launcher status for session-ending CONDITION, the message announcing
+it, and the terminal style that message is shown in."))
 
 (defmethod main--launcher-exit ((condition update-requested))
   "Ask the packaged outer launcher to install the requested release."
   (values *main-update-request-status*
           (format nil "Autolith will update to ~A after restoring the terminal."
-                  (subseq (update-requested-tag condition) 1))))
+                  (subseq (update-requested-tag condition) 1))
+          ':notice))
 
 (defmethod main--launcher-exit ((condition rollback-requested))
   "Ask the stable launcher to start the selected retained generation."
   (values *main-rollback-recovery-status*
           (format nil "Autolith is rolling back to retained generation ~A."
-                  (rollback-requested-generation-id condition))))
+                  (rollback-requested-generation-id condition))
+          ':notice))
 
 (defmethod main--launcher-exit ((condition fatal-control-path-error))
   "Ask the stable launcher to boot recovery after a fatal error."
   (values *main-fatal-recovery-status*
           (format nil "Autolith entered recovery after a fatal error. Capsule: ~A"
-                  (fatal-control-path-error-capsule-pathname condition))))
+                  (fatal-control-path-error-capsule-pathname condition))
+          ':failure))
+
+(-> main--launcher-exit-text (condition) (values integer string))
+(defun main--launcher-exit-text (condition)
+  "Return CONDITION's launcher status and its message styled for the session terminal.
+
+The message is printed after the terminal UI is gone, so it is rendered for the
+active application's terminal, plain when that terminal is not styled."
+  (multiple-value-bind (status message style) (main--launcher-exit condition)
+    (values status
+            (if *active-application*
+                (terminal--render-spans
+                 (terminal-ui-terminal (application-ui *active-application*))
+                 (list (terminal-span style message)))
+                message))))
 
 (-> main--authentication-provider (configuration (option string)) model-provider)
 (defun main--authentication-provider (configuration selection)
@@ -894,7 +912,7 @@ dependencies."
           (handler-bind ((main-launcher-exit-condition
                            (lambda (condition)
                              (multiple-value-bind (status message)
-                                 (main--launcher-exit condition)
+                                 (main--launcher-exit-text condition)
                                (localgroup-finish-attachments *active-application*
                                                               :status  status
                                                               :message message)))))
@@ -910,7 +928,7 @@ dependencies."
              :recovery-diagnosis recovery-diagnosis
              :resume-offer-p resume-command-p))
         (main-launcher-exit-condition (condition)
-          (multiple-value-bind (status message) (main--launcher-exit condition)
+          (multiple-value-bind (status message) (main--launcher-exit-text condition)
             (format *error-output* "~A~%" message)
             (uiop:quit status))))))
   nil)
