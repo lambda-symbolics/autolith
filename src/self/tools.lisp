@@ -797,6 +797,64 @@ authoritative; entries without the record are judged by source revision."
     :documentation "The complete tracked source text of the definition."))
   (:documentation "One tracked top-level definition exposed for safe self inspection."))
 
+(defclass tracked-definition-snapshot ()
+  ((source-root
+    :initarg :source-root
+    :reader tracked-definition-snapshot-source-root
+    :type pathname
+    :documentation "The source root whose tracked definitions the snapshot holds.")
+   (table
+    :initform nil
+    :accessor tracked-definition-snapshot--table
+    :type (option hash-table)
+    :documentation "Tracked definitions by name, read on first use.")
+   (failure
+    :initform nil
+    :accessor tracked-definition-snapshot--failure
+    :type (option condition)
+    :documentation "The error that prevented reading the tracked source, if any."))
+  (:documentation
+   "Tracked definitions read once for a batch of lookups that leaves source unchanged."))
+
+(defvar *tracked-definition-snapshot* nil
+  "The TRACKED-DEFINITION-SNAPSHOT of the batch lookup in progress, or NIL.")
+
+(defmacro with-tracked-definition-snapshot ((configuration) &body body)
+  "Evaluate BODY while tracked definition lookups read CONFIGURATION's source once.
+
+CONFIGURATION is evaluated once before BODY. An enclosing snapshot of the same
+source root is reused. BODY must not edit tracked source, or later lookups in it
+see the source as it was when first read."
+  `(call-with-tracked-definition-snapshot ,configuration (lambda () ,@body)))
+
+(-> call-with-tracked-definition-snapshot (configuration function) t)
+(defun call-with-tracked-definition-snapshot (configuration function)
+  "Call FUNCTION with one tracked definition snapshot of CONFIGURATION's source root."
+  (let ((source-root (config :source-root configuration))
+        (snapshot *tracked-definition-snapshot*))
+    (if (and snapshot
+             (uiop:pathname-equal (tracked-definition-snapshot-source-root snapshot)
+                                  source-root))
+        (funcall function)
+        (let ((*tracked-definition-snapshot*
+                (make-instance 'tracked-definition-snapshot
+                               :source-root source-root)))
+          (funcall function)))))
+
+(-> self-source--tracked-definition
+    (pathname string source-form &key (:root pathname) (:path-prefix string))
+    tracked-definition)
+(defun self-source--tracked-definition
+    (pathname source source-form &key root (path-prefix ""))
+  "Return the tracked definition SOURCE-FORM spans in PATHNAME's SOURCE text."
+  (make-instance 'tracked-definition
+                 :relative-pathname
+                 (format nil "~A~A" path-prefix (enough-namestring pathname root))
+                 :source-form source-form
+                 :source (subseq source
+                                 (source-form-start source-form)
+                                 (source-form-end source-form))))
+
 (-> self-source--definitions
     (list &key (:root pathname)
                (:package package)
@@ -814,16 +872,52 @@ authoritative; entries without the record are judged by source revision."
               when (and (definition-form-p form)
                         (equal (second form) symbol))
                 collect
-                (make-instance
-                 'tracked-definition
-                 :relative-pathname
-                 (format nil "~A~A"
-                         path-prefix
-                         (enough-namestring pathname root))
-                 :source-form source-form
-                 :source (subseq source
-                                 (source-form-start source-form)
-                                 (source-form-end source-form))))))
+                (self-source--tracked-definition pathname source source-form
+                                                 :root        root
+                                                 :path-prefix path-prefix))))
+
+(-> self-source--definition-table (list &key (:root pathname) (:package package))
+    hash-table)
+(defun self-source--definition-table (pathnames &key root package)
+  "Return every definition read from PATHNAMES in PACKAGE, grouped by name.
+
+The EQUAL table maps each definition name to its definitions in the order
+SELF-SOURCE--DEFINITIONS returns them."
+  (let ((table (make-hash-table :test 'equal)))
+    (loop for pathname in (sort (copy-list pathnames) #'string< :key #'namestring)
+          for source = (uiop:read-file-string pathname)
+          do (loop for source-form in (source-read-forms source :package package)
+                   for form = (source-form-form source-form)
+                   when (definition-form-p form)
+                     do (push (self-source--tracked-definition pathname source source-form
+                                                               :root root)
+                              (gethash (second form) table))))
+    (maphash (lambda (name definitions)
+               (setf (gethash name table) (nreverse definitions)))
+             table)
+    table))
+
+(-> tracked-definition-snapshot--definitions
+    (tracked-definition-snapshot configuration t)
+    list)
+(defun tracked-definition-snapshot--definitions (snapshot configuration name)
+  "Return NAME's tracked definitions from SNAPSHOT, reading the source on first use.
+
+A failed read is remembered and signaled again for every later lookup."
+  (let ((failure (tracked-definition-snapshot--failure snapshot)))
+    (when failure
+      (error failure)))
+  (unless (tracked-definition-snapshot--table snapshot)
+    (handler-case
+        (setf (tracked-definition-snapshot--table snapshot)
+              (self-source--definition-table
+               (self--tracked-source-pathnames configuration)
+               :root    (config :source-root configuration)
+               :package (find-package '#:autolith)))
+      (error (condition)
+        (setf (tracked-definition-snapshot--failure snapshot) condition)
+        (error condition))))
+  (values (gethash name (tracked-definition-snapshot--table snapshot))))
 
 (-> self-source--component-pathnames (t) list)
 (defun self-source--component-pathnames (component)
@@ -952,18 +1046,29 @@ Files shared with a loaded system are available through that system."
 (defun self-tracked-definitions (configuration symbol)
   "Return complete tracked top-level definitions whose name is SYMBOL.
 
+Files belonging only to unloaded optional systems or withheld features are left out.
+Inside WITH-TRACKED-DEFINITION-SNAPSHOT the source is read once for all lookups."
+  (let ((snapshot *tracked-definition-snapshot*))
+    (if (and snapshot
+             (uiop:pathname-equal (tracked-definition-snapshot-source-root snapshot)
+                                  (config :source-root configuration)))
+        (tracked-definition-snapshot--definitions snapshot configuration symbol)
+        (self-source--definitions (self--tracked-source-pathnames configuration)
+                                  :root    (config :source-root configuration)
+                                  :package (find-package '#:autolith)
+                                  :symbol  symbol))))
+
+(-> self--tracked-source-pathnames (configuration) list)
+(defun self--tracked-source-pathnames (configuration)
+  "Return CONFIGURATION's tracked src/ files this image loads.
+
 Files belonging only to unloaded optional systems or withheld features are left out."
   (let* ((source-root (config :source-root configuration))
-         (editable-root (merge-pathnames "src/" source-root))
          (withheld (self-source--withheld-files :root source-root)))
-    (self-source--definitions
-     (remove-if (lambda (pathname)
-                  (member (enough-namestring pathname source-root) withheld
-                          :test #'string=))
-                (source-lisp-pathnames editable-root))
-     :root source-root
-     :package (find-package '#:autolith)
-     :symbol symbol)))
+    (remove-if (lambda (pathname)
+                 (member (enough-namestring pathname source-root) withheld
+                         :test #'string=))
+               (source-lisp-pathnames (merge-pathnames "src/" source-root)))))
 
 (-> self-tracked-definition (configuration list) (option tracked-definition))
 (defun self-tracked-definition (configuration definition)

@@ -955,11 +955,12 @@ the failure stays diagnosable after the tool call ends."
          (manifest-pathname (merge-pathnames "manifest.sexp" directory))
          (record-entries (mapcar #'image-commit--record->entry
                                  mutation-records))
-         (entries (mapcar (lambda (entry)
-                            (image-commit--complete-entry configuration entry))
-                          (image-commit--merge-entries
-                           (image-commit-base-entries configuration)
-                           (append record-entries additional-entries))))
+         (entries (with-tracked-definition-snapshot (configuration)
+                    (mapcar (lambda (entry)
+                              (image-commit--complete-entry configuration entry))
+                            (image-commit--merge-entries
+                             (image-commit-base-entries configuration)
+                             (append record-entries additional-entries)))))
          (mutation-identifiers
            (append (and parent
                         (copy-list
@@ -1070,14 +1071,16 @@ the failure stays diagnosable after the tool call ends."
 Stale definitions are judged against CONFIGURATION's tracked source, the source
 revision COMMIT's lineage was published against, and the revision this image
 runs, then skipped into *IMAGE-REPLAY-SKIPS*. Startup and the clean replay probe
-both replay through this function, so a commit the probe accepts boots."
+both replay through this function, so a commit the probe accepts boots. The
+tracked source is read once for the whole replay."
   (let ((*package* (find-package '#:autolith))
         (*image-replay-context*
           (make-instance 'image-replay-context
                          :configuration configuration
                          :lineage-source-commit (image-commit-source-commit commit)
                          :image-source-commit (image-commit--base-source-commit nil))))
-    (load (image-commit-script-pathname commit)))
+    (with-tracked-definition-snapshot (configuration)
+      (load (image-commit-script-pathname commit))))
   nil)
 
 (-> image-state-load (configuration &key (:pristine-p boolean)) list)

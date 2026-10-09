@@ -1840,7 +1840,41 @@
                        (= (funcall 'test-self-target) 7)
                        (null *image-replay-skips*)
                        (= (length (image-commit-base-entries configuration)) 1))
-                  "startup replays the override while tracked source matches"))))
+                  "startup replays the override while tracked source matches"))
+               (self-install-definition configuration fresh-source)
+               (let* ((reads 0)
+                      (read-file-string (symbol-function 'uiop:read-file-string))
+                      (counting-read
+                        (list 'uiop:read-file-string
+                              (lambda (pathname &rest arguments)
+                                (when (string= (file-namestring pathname)
+                                               "definitions.lisp")
+                                  (incf reads))
+                                (apply read-file-string pathname arguments))))
+                      (publication-reads
+                        (test-call-with-function-replacements
+                         (list counting-read)
+                         (lambda ()
+                           (image-commit-publish
+                            configuration
+                            :title "Add a private definition"
+                            :mutation-records
+                            (image-commit-effective-pending-records configuration))
+                           (shiftf reads 0)))))
+                 (reset)
+                 (test-call-with-function-replacements
+                  (list counting-read)
+                  (lambda ()
+                    (image-state-load configuration)))
+                 (test-assert
+                  (and (= (funcall 'test-self-target) 7)
+                       (= (funcall 'test-self-replay-fresh) 11)
+                       (null *image-replay-skips*))
+                  "startup replays every definition of a multi-definition commit")
+                 (test-assert (= publication-reads 1)
+                              "publication reads the tracked source once")
+                 (test-assert (= reads 1)
+                              "startup replay reads the tracked source once"))))
         (reset)
         (setf *image-state-initialized-p* previous-state-initialized-p
               *active-image-commit-identifier* previous-commit-identifier

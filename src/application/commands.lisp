@@ -1252,10 +1252,15 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
             (application--short-revision commit-identifier)
             (application--short-revision lineage-source-commit)
             (application--short-revision image-source-commit))
-    (loop for skip in skips
-          for index from 1
-          do (application--skipped-definition-section
-              stream skip index configuration))))
+    (flet ((write-sections ()
+             (loop for skip in skips
+                   for index from 1
+                   do (application--skipped-definition-section
+                       stream skip index configuration))))
+      (if configuration
+          (with-tracked-definition-snapshot (configuration)
+            (write-sections))
+          (write-sections)))))
 
 (-> application-fix-skipped-definitions (application) null)
 (defun application-fix-skipped-definitions (application)
