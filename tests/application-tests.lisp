@@ -2126,6 +2126,110 @@
      "post-cancellation idle Ctrl-C does not arm a force window"))
   nil)
 
+(-> test-tool-execution-handoff-presentation () null)
+(defun test-tool-execution-handoff-presentation ()
+  "Present actual tool handoffs and their durable replay as bounded background state."
+  (job-completion-tests--fixture
+   (lambda (parent runtime configuration)
+     (declare (ignore configuration))
+     (let ((lock (make-lock "Handoff presentation gate"))
+           (gate (make-condition-variable))
+           (released-p nil)
+           (compact (application-tests--ui-application :columns 100))
+           (expanded (application-tests--ui-application
+                      :columns 100 :compact-view-p nil)))
+       (unwind-protect
+            (loop for async-p in '(t nil)
+                  for reason in '(:requested :grace-expired)
+                  do
+                  (let* ((*tool-execution-blocking-grace-seconds* 0)
+                         (result
+                           (tool-execution-invoke
+                            runtime parent
+                            :tool-name "shell.run"
+                            :description "Run repository checks"
+                            :summary "check"
+                            :operation-function
+                            (lambda ()
+                              (with-lock-held (lock)
+                                (loop until released-p
+                                      do (condition-wait gate lock)))
+                              (tool-success "checks passed"))
+                            :async-p async-p))
+                         (details (tool-result-details result))
+                         (identifier (getf (getf (rest details) :job) :id))
+                         (conversation (agent-conversation parent)))
+                    (test-assert
+                     (eq reason (getf (rest details) :handoff-reason))
+                     "explicit async and expired blocking waits produce native handoffs")
+                    (conversation-append-tool-result
+                     conversation identifier :tool-name "shell.run"
+                     :output (tool-result-content result) :details details
+                     :success-p t :cpu-microseconds 2000 :real-microseconds 1000)
+                    (let* ((loaded (conversation-load (conversation-pathname conversation)))
+                           (record (first (conversation-records-newest loaded 1)))
+                           (entry (conversation-record-entry compact record))
+                           (text (test-terminal-row-text entry)))
+                      (test-assert
+                       (and (eq (terminal-span-style (first entry)) ':notice)
+                            (search identifier text)
+                            (search "background" text)
+                            (< (length text) 200)
+                            (not (find #\Newline text)))
+                       "durable handoffs show background state and job identity in one compact row")
+                      (test-assert
+                       (search "Run repository checks"
+                               (test-terminal-row-text
+                                (conversation-record-entry expanded record)))
+                       "expanded handoffs show the submitted task description")
+                      (when (eq reason ':grace-expired)
+                        (test-assert
+                         (search "blocking wait expired"
+                                 (test-terminal-row-text
+                                  (conversation-record-entry expanded record)))
+                         "an expired blocking wait explains why execution moved to the background"))
+                      (dolist (tool-name '("shell.run" "lisp.load-system" "unregistered.run"))
+                        (dolist (case '((:queued "queued" :notice)
+                                        (:running "running" :notice)
+                                        (:completed "result ready" :notice)
+                                        (:failed "failed" :failure)
+                                        (:cancelled "cancelled" :notice)))
+                          (let* ((variant (copy-tree record))
+                                 (job (getf (rest (getf (rest variant) :details)) :job)))
+                            (setf (getf (rest variant) :tool) tool-name
+                                  (getf job :state) (first case)
+                                  (getf job :description) (make-string 4000 :initial-element #\x))
+                            (let* ((entry (conversation-record-entry compact variant))
+                                   (text (test-terminal-row-text entry)))
+                              (test-assert
+                               (and (application--record-visible-p compact variant)
+                                    (eq (terminal-span-style (first entry)) (third case))
+                                    (search (second case) text)
+                                    (search identifier text)
+                                    (< (length text) 200)
+                                    (not (find #\Newline text)))
+                               "background status is visible for specialized, normally hidden and missing tools"))
+                            (test-assert
+                             (< (length (test-terminal-row-text
+                                         (conversation-record-entry expanded variant))) 400)
+                             "expanded handoff metadata is bounded independently of its serialized payload"))))
+                      (let ((text-only (copy-tree record)))
+                        (remf (rest text-only) :details)
+                        (test-assert
+                         (null (application--tool-execution-handoff text-only))
+                         "ordinary output that resembles an envelope is not decoded as orchestration metadata"))
+                      (dolist (invalid '((:tool-execution :handed-off-p nil :job (:id "exec:1"))
+                                         (:tool-execution :handed-off-p t :job 7)))
+                        (let ((malformed (copy-tree record)))
+                          (setf (getf (rest malformed) :details) invalid)
+                          (test-assert
+                           (null (application--tool-execution-handoff malformed))
+                           "invalid or non-handoff metadata uses the ordinary output renderer"))))))
+         (with-lock-held (lock)
+           (setf released-p t)
+           (task--condition-broadcast gate))))))
+  nil)
+
 (-> test-transcript-entries () null)
 (defun test-transcript-entries ()
   "Test styled transcript entry construction, wrapping, and output bounds."

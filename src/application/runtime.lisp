@@ -2005,6 +2005,21 @@ the fence's raw source; that span becomes a widget copying the source."
 (defgeneric application-tool-result-entry (tool application record)
   (:documentation "Return the styled transcript entry for one tool result RECORD."))
 
+(-> application--tool-execution-handoff (list) (option list))
+(defun application--tool-execution-handoff (record)
+  "Return RECORD's native background handoff metadata, without reading its output."
+  (let ((details (getf (rest record) :details)))
+    (handler-case
+        (when (and (eq (getf (rest record) :status) ':ok)
+                   (consp details)
+                   (eq (first details) ':tool-execution)
+                   (getf (rest details) :handed-off-p)
+                   (non-empty-string-p
+                    (getf (getf (rest details) :job) :id)))
+          details)
+      (type-error ()
+        nil))))
+
 (-> application--find-tool (application string) (option tool))
 (defun application--find-tool (application canonical-name)
   "Return APPLICATION's registered tool named CANONICAL-NAME, when available."
@@ -2283,10 +2298,7 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
     (:tool-result
      (let* ((canonical-name (getf (rest record) :tool))
             (tool (application--find-tool application canonical-name)))
-       (when (or (not (application-compact-view-p application))
-                 (not (eq (getf (rest record) :status) ':ok))
-                 (application--compact-tool-result-visible-p
-                  application canonical-name))
+       (when (application--record-visible-p application record)
          (application-tool-result-entry tool application record))))
     (:summary
      (list (terminal-span
@@ -2415,6 +2427,7 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
      (let ((canonical-name (getf (rest record) :tool)))
        (or (not (application-compact-view-p application))
            (not (eq (getf (rest record) :status) ':ok))
+           (not (null (application--tool-execution-handoff record)))
            (application--compact-tool-result-visible-p
             application canonical-name))))
     (:summary

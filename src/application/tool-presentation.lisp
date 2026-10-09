@@ -1949,6 +1949,48 @@ re-emitting untrusted serialized JSON."
                (application--structured-output-rows application output)
                (application--failure-result-rows output)))))
 
+(-> application--tool-execution-handoff-entry (application list list) list)
+(defun application--tool-execution-handoff-entry (application record handoff)
+  "Present a background handoff as job state and identity rather than serialized output."
+  (let* ((job (getf (rest handoff) :job))
+         (state (getf job :state))
+         (reason (getf (rest handoff) :handoff-reason))
+         (description (getf job :description))
+         (status (case state
+                   (:queued "queued in background")
+                   (:running
+                    (if (eq reason ':grace-expired)
+                        "still running in background"
+                        "running in background"))
+                   (:completed "result ready")
+                   (:failed "failed")
+                   ((:cancelled :aborted) "cancelled")
+                   (otherwise "background handoff"))))
+    (application--tool-entry
+     application
+     :style (if (eq state ':failed) ':failure ':notice)
+     :header (format nil "↪ ~A" (getf (rest record) :tool))
+     :detail (format nil "~A · ~A" status (getf job :id))
+     :rows (unless (application-compact-view-p application)
+             (application--tool-field-rows
+              application
+              (append
+               (when (non-empty-string-p description)
+                 (list (list :label "task"
+                             :value (bounded-string description :limit 200))))
+               (when (eq reason ':grace-expired)
+                 (list (list :label "handoff"
+                             :value "blocking wait expired")))))))))
+
+(defmethod application-tool-result-entry :around
+    (tool (application application) record)
+  "Present native background handoffs before any tool-specific output renderer."
+  (declare (ignore tool))
+  (let ((handoff (application--tool-execution-handoff record)))
+    (if handoff
+        (application--tool-execution-handoff-entry application record handoff)
+        (call-next-method))))
+
 (defmethod application-tool-result-entry
     ((tool tool) (application application) record)
   "Present RECORD using the generic readable result layout."

@@ -819,6 +819,7 @@
   test-cancellation-completion-clears-interrupt-state
   test-failed-turn-publishes-durable-wreckage
   test-transcript-entries
+  test-tool-execution-handoff-presentation
   test-recovery-cursor-normalization
   test-recovery-diagnosis-prompt
   test-recovery-application-construction
