@@ -2209,6 +2209,30 @@ log references and byte counts are for the model."
                                 section (and (rest (getf parts :sections)) t))))))
         (call-next-method))))
 
+(-> application--first-line-summary (string) string)
+(defun application--first-line-summary (output)
+  "Return OUTPUT's first line without its final period, for a result header detail."
+  (string-right-trim "." (or (first (application--display-lines output)) "")))
+
+(defmethod application-tool-result-entry
+    ((tool resource-edit-tool) (application application) record)
+  "Present a successful edit as its one-line outcome and any delimiter warning.
+
+The call entry already shows the change. The revision, anchors and line window
+that follow are the model's next observation, not something the user reads."
+  (if (application--tool-result-success-p record)
+      (let* ((output (or (getf (rest record) :output) ""))
+             (warning (search "WARNING: " output)))
+        (application--tool-result-entry
+         application
+         record
+         :detail (application--first-line-summary output)
+         :rows (when warning
+                 (application--preview-rows (subseq output warning)
+                                            ':failure
+                                            *application-tool-output-lines*))))
+      (call-next-method)))
+
 (defmethod application-tool-result-entry
     ((tool lisp-tool) (application application) record)
   "Present successful worker evaluations as separate output and values areas."
