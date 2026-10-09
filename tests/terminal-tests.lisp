@@ -476,7 +476,7 @@
 
 (-> test-terminal-history-replacement () null)
 (defun test-terminal-history-replacement ()
-  "Test bounded history loading preserves the active draft and cursor."
+  "Test history loading preserves drafts and retains an unbounded input history."
   (let* ((terminal (make-instance 'recording-terminal :columns 40))
          (editor
            (line-editor-create
@@ -505,6 +505,32 @@
     (test-assert
      (equalp (line-editor-history editor) #("beta" "draft"))
      "replacement history remains extendable and bounded"))
+  (let* ((terminal (make-instance 'recording-terminal :columns 40))
+         (editor (line-editor-create))
+         (ui (terminal-ui-create :terminal terminal :editor editor))
+         (entries (loop for index from 0 below 101
+                        collect (format nil "history ~D" index))))
+    (terminal-ui-load-history ui entries)
+    (test-assert
+     (= (length (line-editor-history editor)) 101)
+     "the default editor retains more than one hundred restored inputs")
+    (terminal-ui-process-event ui :history-previous)
+    (test-assert
+     (string= (line-editor-text editor) "history 100")
+     "history navigation reaches the newest restored input")
+    (loop repeat 100 do (terminal-ui-process-event ui :history-previous))
+    (test-assert
+     (string= (line-editor-text editor) "history 0")
+     "history navigation reaches the oldest restored input")
+    (terminal-ui-process-event ui :history-next)
+    (test-assert
+     (string= (line-editor-text editor) "history 1")
+     "history navigation advances after crossing one hundred inputs")
+    (terminal-ui-set-input ui "new input")
+    (terminal-ui-process-event ui :submit)
+    (test-assert
+     (string= (aref (line-editor-history editor) 101) "new input")
+     "a newly submitted input follows the complete restored history"))
   nil)
 
 

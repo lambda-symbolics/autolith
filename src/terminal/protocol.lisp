@@ -1,8 +1,8 @@
 (in-package #:autolith)
 
 ;;;; -- Terminal Defaults --
-(defparameter *terminal-history-limit* 100
-  "The maximum number of submitted inputs retained by a line editor.")
+(defparameter *terminal-history-limit* most-positive-fixnum
+  "The practical maximum retained by the line editor, effectively unlimited.")
 
 (defparameter *terminal-ui-visible-completions* 6
   "The maximum number of candidate rows painted at once.")
