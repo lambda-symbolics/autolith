@@ -2635,6 +2635,17 @@
                         (not (search "Revision" text))
                         (not (search "AB12" text)))
                    "resource.edit results show the outcome and warnings, not the next observation"))
+    (let* ((entry (conversation-record-entry
+                   (application-tests--ui-application :columns 100 :compact-view-p nil)
+                   (list :tool-result :seq 9 :time 0 :call-id "parens"
+                         :tool "lisp.paren-check" :status ':ok
+                         :output (format nil "Path: src/~%Checked 1,204 of 1,204 recognized ~
+                                              Lisp-family files.~%No unmatched or mismatched ~
+                                              delimiters found."))))
+           (text (test-terminal-row-text entry)))
+      (test-assert (and (search "1,204 files balanced" text)
+                        (not (find #\Newline text)))
+                   "a clean paren check is one line"))
     (let ((rule (conversation-record-entry
                  application
                  (list :summary :seq 10 :time 0 :through-seq 9 :summary "older work"))))

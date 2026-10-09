@@ -2234,6 +2234,24 @@ that follow are the model's next observation, not something the user reads."
       (call-next-method)))
 
 (defmethod application-tool-result-entry
+    ((tool lisp-paren-check-tool) (application application) record)
+  "Present a clean delimiter check as one line; problems keep the full report."
+  (if (application--tool-result-success-p record)
+      (let* ((output (or (getf (rest record) :output) ""))
+             (checked (find-if (lambda (line) (uiop:string-prefix-p "Checked " line))
+                               (application--display-lines output)))
+             (count (and checked
+                         (parse-integer (remove #\, checked)
+                                        :start (length "Checked ") :junk-allowed t))))
+        (application--tool-result-entry
+         application
+         record
+         :detail (if count
+                     (format nil "~:D file~:P balanced" count)
+                     "balanced")))
+      (call-next-method)))
+
+(defmethod application-tool-result-entry
     ((tool lisp-tool) (application application) record)
   "Present successful worker evaluations as separate output and values areas."
   (if (application--tool-result-success-p record)
