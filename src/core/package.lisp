@@ -1268,6 +1268,7 @@
                 #:fifo-cache-delete-first-if
                 #:fifo-cache-find-if
                 #:fifo-cache-get
+                #:fifo-cache-move-to-back
                 #:fifo-cache-put
                 #:fifo-cache-total-weight
                 #:make-fifo-cache

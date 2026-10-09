@@ -118,7 +118,10 @@
     (conversation resource-observation &rest t)
     resource-observation-state)
 (defun resource-observation-state-ensure (conversation observation &rest initargs)
-  "Return or retain CONVERSATION's exact OBSERVATION with family INITARGS."
+  "Return or retain CONVERSATION's exact OBSERVATION with family INITARGS.
+
+An equivalent retained observation keeps its alias and becomes the newest, so
+the revision just handed to the model is the last one its family evicts."
   (with-recursive-lock-held
       ((conversation-resource-observation-lock conversation))
     (multiple-value-bind (family key)
@@ -139,6 +142,8 @@
                                  (resource-observation-state-observation state))))))
                  states))))
         (when matching
+          ;; A reread is the model's newest view; keep it from being evicted next.
+          (fifo-cache-move-to-back states (resource-observation-state-alias matching))
           (return-from resource-observation-state-ensure
             (apply #'resource-observation-state-merge
                    matching observation initargs)))

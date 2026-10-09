@@ -300,6 +300,31 @@
                                  (not (structlisp:integer-interval-set-contains-p
                                        (workspace-file-observation-state-visible-ranges state) 2))))
                        "equivalent workspace reads reuse state and merge visible ranges")))))
+              (let ((*workspace-file-resource-maximum-observations* 2))
+                (dolist (name '("reused-a.txt" "reused-b.txt" "reused-c.txt"))
+                  (workspace-resource-tests--write-text
+                   (merge-pathnames name workspace) name))
+                (multiple-value-bind (first-result uri alias)
+                    (read-resource first-context "workspace:reused-a.txt")
+                  (declare (ignore first-result))
+                  (multiple-value-bind (other-result other-uri other-alias)
+                      (read-resource first-context "workspace:reused-b.txt")
+                    (declare (ignore other-result))
+                    (let ((reread-alias (nth-value 2 (read-resource first-context
+                                                                    "workspace:reused-a.txt"))))
+                      (read-resource first-context "workspace:reused-c.txt")
+                      (test-assert
+                       (and (string= alias reread-alias)
+                            (workspace-file--find-observation-state
+                             first-conversation uri alias)
+                            (handler-case
+                                (progn
+                                  (workspace-file--find-observation-state
+                                   first-conversation other-uri other-alias)
+                                  nil)
+                              (resource-revision-stale ()
+                                t)))
+                       "a reread revision becomes the newest retained observation")))))
              (let* ((path (merge-pathnames "heterogeneous.txt" workspace))
                     (other-observation
                       (make-instance 'resource-observation
