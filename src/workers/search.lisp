@@ -189,7 +189,8 @@ was built from and may no longer exist."
               (tool-context-configuration context)
               :operation ':multi-content
               :arguments
-              (append (list patterns :constraints constraints)
+              (append (list patterns
+                            :constraints (search-tool--fff-constraints constraints))
                       (search-tool--common-content-options arguments)))))
           (let* ((query (search-tool--string-argument tool arguments "query"
                                                       :required t))
@@ -215,6 +216,6 @@ was built from and may no longer exist."
               :operation ':content
               :arguments (append (list (search-tool--query-with-constraints
                                         (search-tool--escape-earmuffed-names query)
-                                        constraints)
+                                        (search-tool--fff-constraints constraints))
                                        :mode mode)
                                  (search-tool--common-content-options arguments))))))))

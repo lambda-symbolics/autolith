@@ -65,6 +65,12 @@
         (string= (search-tool--escape-earmuffed-names "*.lisp *test.* * ** *a/b* symbol")
                  "*.lisp *test.* * ** *a/b* symbol"))
    "query special variable names are escaped while path globs are kept")
+  (test-assert
+   (and (string= (search-tool--fff-constraints "*.lisp src/ docs/a,b.org !tests/ /lib/")
+                 "*.lisp !tests/ {**/src/**,**/docs/a\\,b.org,**/lib/**}")
+        (string= (search-tool--fff-constraints "*.lisp src/ !tests/")
+                 "*.lisp src/ !tests/"))
+   "several directories and file paths become one alternative glob")
   (let* ((default-configuration
            (configuration-create
             :source-root (asdf:system-source-directory :autolith)
@@ -225,11 +231,7 @@
                       (missing (search-tests--call registry context
                                                    "search" "content"
                                                    "query" "AUTOLITH_FFF_PRIMARY"
-                                                   "constraints" "src/absent.lisp"))
-                      (two-directories (search-tests--call registry context
-                                                           "search" "content"
-                                                           "patterns" #("AUTOLITH_FFF_PRIMARY")
-                                                           "constraints" "src/ docs/")))
+                                                   "constraints" "src/absent.lisp")))
                   (test-assert (and (tool-result-success-p existing)
                                     (search "src/model-selection.lisp"
                                             (tool-result-content existing)))
@@ -237,18 +239,28 @@
                   (test-assert (and (not (tool-result-success-p missing))
                                     (search "No indexed file matches the constraint src/absent.lisp"
                                             (tool-result-content missing)))
-                               "a file path constraint naming no file fails instead of widening")
-                  (test-assert (and (not (tool-result-success-p two-directories))
-                                    (search "must all hold" (tool-result-content two-directories)))
-                               "two directory constraints fail instead of matching nothing"))
-                (let ((two-files (search-tests--call registry context
-                                                     "search" "content"
-                                                     "patterns" #("AUTOLITH_FFF_PRIMARY")
-                                                     "constraints"
-                                                     "src/model-selection.lisp docs/search-guide.org")))
-                  (test-assert (and (not (tool-result-success-p two-files))
-                                    (search "must all hold" (tool-result-content two-files)))
-                               "two file path constraints fail instead of matching nothing"))
+                               "a file path constraint naming no file fails instead of widening"))
+                (dolist (case
+                          (list (list "patterns" #("AUTOLITH_FFF_PRIMARY" "AUTOLITH_FFF_SECONDARY")
+                                      "src/ docs/" t t)
+                                (list "query" "AUTOLITH_FFF_"
+                                      "src/model-selection.lisp docs/search-guide.org" t t)
+                                (list "patterns" #("AUTOLITH_FFF_PRIMARY" "AUTOLITH_FFF_SECONDARY")
+                                      "*.lisp src/ docs/" t nil)
+                                (list "query" "AUTOLITH_FFF_"
+                                      "src/ docs/ !docs/" t nil)))
+                  (destructuring-bind (selector value constraints source-p documentation-p) case
+                    (let* ((result (search-tests--call registry context
+                                                       "search" "content"
+                                                       selector value
+                                                       "constraints" constraints))
+                           (content (tool-result-content result)))
+                      (test-assert
+                       (and (tool-result-success-p result)
+                            (eq (and (search "src/model-selection.lisp" content) t) source-p)
+                            (eq (and (search "docs/search-guide.org" content) t) documentation-p))
+                       (format nil "constraints ~S treat locations as alternatives that other filters narrow: ~S"
+                               constraints content)))))
                 (let ((special (search-tests--call registry context
                                                    "search" "content"
                                                    "query" "*autolith-fff-special* src/")))

@@ -430,12 +430,12 @@
         (list
          'search-content-tool
          "search" "content"
-           "Search indexed workspace contents. Provide exactly one of query or patterns. Path filters go in constraints, for example '*.lisp src/ !tests/', or inline in query."
+           "Search indexed workspace contents. Provide exactly one of query or patterns. Path filters go in constraints, for example '*.lisp src/ docs/ !tests/'."
          (let ((schema
                  (tool-object-schema
                   (json-object
                    "query" (tool-string-property
-                              "Search text. Optional path filters may be included inline, for example '*.lisp symbol'. A Lisp special variable name such as *limit* is searched as text.")
+                              "Search text. One path filter may be written inline, for example '*.lisp symbol'; put several in constraints. A Lisp special variable name such as *limit* is searched as text.")
                    "patterns" (json-object
                                "type" "array"
                                "description" "Non-empty literal alternatives searched in one pass."
@@ -447,7 +447,7 @@
                            "enum" #("plain" "regex" "fuzzy")
                            "description" "Single-query matching mode; default plain.")
                    "constraints" (tool-string-property
-                                    "Optional space-separated path filters such as '*.lisp src/ !tests/'. Every filter must hold, except that several *.ext filters match any of them; name at most one directory and one file per call. A file path filter must name an existing file. Valid with query or patterns.")
+                                    "Optional space-separated path filters. Directories and file paths are alternatives, as are *.ext filters, and !filters exclude, so '*.lisp src/ tests/ !tests/fixtures/' searches Lisp files under src/ or tests/ outside tests/fixtures/. A file path must name an existing file. Valid with query or patterns.")
                    "file-offset" (tool-integer-property
                                   "Pagination cursor from next-file-offset; default 0.")
                    "max-results" (tool-integer-property

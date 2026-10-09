@@ -190,36 +190,55 @@ digits."
          (every #'alphanumericp extension)
          t)))
 
+(-> search-tool--location-glob (string) string)
+(defun search-tool--location-glob (token)
+  "Return a glob alternative selecting the files of directory or file path TOKEN.
+
+Commas, closing braces and backslashes are escaped for fff's brace expansion."
+  (let ((path (with-output-to-string (stream)
+                (loop for character across (string-left-trim "/" token)
+                      do (when (find character ",}\\")
+                           (write-char #\\ stream))
+                         (write-char character stream)))))
+    (if (search-tool--directory-constraint-p token)
+        (format nil "**/~A**" path)
+        (format nil "**/~A" path))))
+
+(-> search-tool--fff-constraints (string) string)
+(defun search-tool--fff-constraints (constraints)
+  "Return CONSTRAINTS with several directories and file paths joined as alternatives.
+
+fff requires every filter to hold, so src/ and docs/ together would select no
+file. Several locations become one brace glob that any of them satisfies, while
+the other filters still apply to it."
+  (let* ((tokens (search-tool--constraint-tokens constraints))
+         (locations (remove-if-not (lambda (token)
+                                     (or (search-tool--directory-constraint-p token)
+                                         (search-tool--file-path-constraint-p token)))
+                                   tokens)))
+    (if (rest locations)
+        (format nil "~{~A ~}{~{~A~^,~}}"
+                (remove-if (lambda (token) (member token locations :test #'string=))
+                           tokens)
+                (mapcar #'search-tool--location-glob locations))
+        constraints)))
+
 (-> search-tool--check-constraints (search-tool configuration string) null)
 (defun search-tool--check-constraints (tool configuration constraints)
-  "Refuse CONSTRAINTS that fff would silently satisfy with no files or with every file.
+  "Refuse a file path in CONSTRAINTS that names no indexed file.
 
-Filters combine with AND, so two positive directories or two file paths select
-no file, and fff drops a file path filter matching no file and searches the whole
-workspace instead. Both read as successful searches, so they fail here."
-  (let* ((tokens (search-tool--constraint-tokens constraints))
-         (directories (remove-if-not #'search-tool--directory-constraint-p tokens))
-         (files (remove-if-not #'search-tool--file-path-constraint-p tokens)))
-    (when (rest directories)
+fff drops a lone file path filter matching no file and searches the whole
+workspace instead, and among several locations a mistyped one would silently
+contribute nothing. Both read as successful searches, so they fail here."
+  (dolist (token (remove-if-not #'search-tool--file-path-constraint-p
+                                (search-tool--constraint-tokens constraints)))
+    (when (zerop (search-worker-file-count (search-tool-engine tool) configuration
+                                           (format nil "**/~A" token)))
       (error 'tool-error
              :message
-             (format nil "search.content constraints must all hold, so no file lies under ~{~A~^ and ~} at once. Search a common parent directory, or make one call per directory."
-                     directories)
-             :tool-name (tool-canonical-name tool)))
-    (when (rest files)
-      (error 'tool-error
-             :message
-             (format nil "search.content constraints must all hold, so no file is ~{~A~^ and ~} at once. Make one call per file, or search their common directory."
-                     files)
-             :tool-name (tool-canonical-name tool)))
-    (dolist (token files)
-      (when (zerop (search-worker-file-count (search-tool-engine tool) configuration
-                                             (format nil "**/~A" token)))
-        (error 'tool-error
-               :message
-               (format nil "No indexed file matches the constraint ~A; check the path, or search its directory instead."
-                       token)
-               :tool-name (tool-canonical-name tool)))))
+             (format nil "No indexed file matches the constraint ~A; check the path, or search its directory instead."
+                     token)
+             :tool-name (tool-canonical-name tool))))
   nil)
 
 (-> search-tool--bounded-integer
