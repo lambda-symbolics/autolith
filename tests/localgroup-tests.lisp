@@ -48,18 +48,18 @@
       (error "The localgroup attachment closed before its next packet.")))
 
 (-> test-localgroup--attach
-    (localgroup-session keyword)
+    (localgroup-session keyword &key (:styled-p boolean))
     (values sb-bsd-sockets:socket stream list))
 
-(defun test-localgroup--attach (session mode)
-  "Open one test attachment to SESSION with MODE."
+(defun test-localgroup--attach (session mode &key styled-p)
+  "Open one test attachment to SESSION with MODE from a STYLED-P client."
   (multiple-value-bind (socket stream)
       (daemon-connect (image-daemon:daemon-runtime-port session))
     (daemon-write-packet stream
                          (list :localgroup-request :version *daemon-protocol-version*
                                :token (image-daemon:daemon-runtime-token session)
                                :operation ':attach :arguments
-                               (list :mode mode :rows 31 :columns 91 :styled-p nil)))
+                               (list :mode mode :rows 31 :columns 91 :styled-p styled-p)))
     (values socket stream (test-localgroup--read-packet stream))))
 
 (defun test-localgroup-orphan-reconciliation ()
@@ -978,7 +978,8 @@
              (conversation-append-user-message conversation "keep this conversation")
              (terminal-ui-start ui)
              (multiple-value-setq (socket stream)
-               (test-localgroup--attach (localgroup-start application) ':control))
+               (test-localgroup--attach (localgroup-start application) ':control
+                                        :styled-p t))
              (test-assert (application--present-resume-instruction application)
                           "a durable detached conversation has resume advice")
              (let ((exit (loop for ready-p = (task-tests--wait-until
@@ -992,7 +993,9 @@
                      (eql (getf (rest exit) :status) 0)
                      (search (application--resume-command application)
                              (getf (rest exit) :message)))
-                "the relaying terminal receives the resume command as its exit message")))
+                "the relaying terminal receives the resume command as its exit message")
+               (test-assert (and exit (find #\Escape (getf (rest exit) :message)))
+                            "a styled relaying terminal receives the styled resume advice")))
         (when stream (ignore-errors (close stream)))
         (when (and socket (null stream))
           (ignore-errors (sb-bsd-sockets:socket-close socket)))
