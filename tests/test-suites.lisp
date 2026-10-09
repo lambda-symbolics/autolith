@@ -789,6 +789,7 @@
 (when (test-fixture-available-p *platform* ':posix-shell)
   (define-test-suite release-script
     test-build-sandbox-packaged-helpers
+    test-release-runtime-openbsd-linker
     test-image-manifest-relocation
     test-installer-checksum-verification
     test-release-scripts))

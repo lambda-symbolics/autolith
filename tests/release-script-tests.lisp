@@ -62,6 +62,87 @@
                                (not (eq process-group ':existing))))
                "Packaged helper detection respects platform requirements"))))))))
 
+(-> test-release-runtime-openbsd-linker () null)
+(defun test-release-runtime-openbsd-linker ()
+  "Evaluate the runtime linker flags at the OpenBSD release build boundary."
+  (with-test-configuration (configuration)
+    (let* ((root (test-configuration-root configuration))
+           (source (merge-pathnames "source/" root))
+           (temporary (merge-pathnames "temporary/" root))
+           (installation (merge-pathnames "installation/" root))
+           (bootstrap (merge-pathnames "bootstrap/" root))
+           (runtime-source (merge-pathnames "sbcl-2.6.6/" temporary))
+           (runtime-config
+             (merge-pathnames "src/runtime/Config.generic-openbsd" runtime-source))
+           (script (asdf:system-relative-pathname
+                    :autolith "script/build-release-runtime.lisp"))
+           (digest (make-string 64 :initial-element #\0))
+           (run-program (symbol-function 'uiop:run-program))
+           (make (or (release-archive--command-pathname "gmake")
+                     (release-archive--command-pathname "make"))))
+      (release-script-tests--write-file
+       (merge-pathnames "sbcl.version" source) "2.6.6")
+      (release-script-tests--write-file
+       (merge-pathnames "sbcl-source.sha256" source) digest)
+      (dolist (platform '("OpenBSD" "FreeBSD"))
+        (release-script-tests--write-file
+         runtime-config (format nil "LINKFLAGS = -Wl,-z,wxneeded~%"))
+        (let ((build-flags nil)
+              (installed-p nil))
+          (sb-ext:without-package-locks
+            (test-call-with-function-replacements
+             (list
+              (list 'software-type (lambda () platform))
+              (list 'machine-type (lambda () "x86-64"))
+              (list 'uiop:command-line-arguments
+                    (lambda ()
+                      (mapcar #'namestring
+                              (list source installation temporary bootstrap))))
+              (list 'uiop:run-program
+                    (lambda (command &rest options &key &allow-other-keys)
+                      (declare (ignore options))
+                      (cond
+                        ((member (first command) '("sha256sum" "shasum" "sha256")
+                                 :test #'string=)
+                         digest)
+                        ((equal (subseq command 0 (min 2 (length command)))
+                                '("sh" "make.sh"))
+                         (setf build-flags
+                               (uiop:split-string
+                                (funcall run-program
+                                         (list (namestring make) "-s"
+                                               "-f" (namestring runtime-config) "-f" "-")
+                                         :input (make-string-input-stream
+                                                 (format nil "flags:~%~C@printf '%s\\n' '$(LINKFLAGS)'~%"
+                                                         #\Tab))
+                                         :output ':string)
+                                :separator '(#\Space #\Newline))))
+                        ((member "install.sh" command :test #'string=)
+                         (setf installed-p t))
+                        ((member "(write-string (lisp-implementation-version))"
+                                 command :test #'string=)
+                         (if installed-p "2.6.6" "2.4.0"))
+                        ((member "(write (and (find :sb-thread *features*) t))"
+                                 command :test #'string=)
+                         "T"))))
+              (list 'uiop:quit
+                    (lambda (status &rest options)
+                      (declare (ignore options))
+                      (error "Runtime builder exited with status ~D." status))))
+             (lambda ()
+               (let ((*package* (find-package '#:cl-user)))
+                 (with-test-environment (("AUTOLITH_HOST_BOOTSTRAP" nil)
+                                         ("AUTOLITH_STATIC_MUSL" nil))
+                   (load script))))))
+          (test-assert installed-p "The release runtime reaches installation")
+          (test-assert (member "-Wl,-z,wxneeded" build-flags :test #'string=)
+                       "Runtime configuration retains the W^X linker setting")
+          (test-assert
+           (eq (not (null (member "-Wl,-z,nobtcfi" build-flags :test #'string=)))
+               (string= platform "OpenBSD"))
+           "Only OpenBSD release builds opt generated Lisp code out of IBT")))))
+  nil)
+
 (-> release-script-tests--run
     (list &key (:directory (option pathname)) (:environment list)
                (:ignore-error-status boolean) (:output t))

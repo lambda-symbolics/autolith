@@ -178,6 +178,17 @@
             (check-archive runtime-archive runtime-sha256)
             (run (list "tar" "-xjf" (namestring runtime-archive)
                        "-C" (namestring temporary-root)))
+            (when (string-equal (software-type) "OpenBSD")
+              ;; Match lang/sbcl's USE_NOBTCFI: indirect branches into generated
+              ;; Lisp code otherwise raise SIGILL (ILL_BTCFI) on CET-capable CPUs.
+              ;; Building also requires a filesystem mounted with wxallowed.
+              (with-open-file
+                  (stream (merge-pathnames "src/runtime/Config.generic-openbsd"
+                                           runtime-source)
+                          :direction ':output
+                          :if-exists ':append
+                          :if-does-not-exist ':error)
+                (format stream "~%LINKFLAGS += -Wl,-z,nobtcfi~%")))
             (run
              (list "sh" "make.sh"
                    "--with-sb-thread"
