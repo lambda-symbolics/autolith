@@ -233,23 +233,18 @@ the workspace and temporary directories.
 
 ** Jobs
 
-| Tool                | Use                                  |
-|---------------------+--------------------------------------|
-| =shell.run=           | =async: true= for immediate inspection |
-| =lisp.eval=           | #ERROR                               |
-| =lisp.load-system=    | =async: true= for immediate inspection |
-| =lisp.run-tests=      | =async: true= for immediate inspection |
-| =lisp.scratchpad-run= | =async: true= for immediate inspection |
-| =rlm.infer=           | =async: true= for immediate inspection |
-| =rlm.map=             | =async: true= for immediate inspection |
-| =rlm.complete=        | =async: true= for immediate inspection |
-| =rlm.distill=         | =async: true= for immediate inspection |
-| =job.wait=            | Keep the returned ID                 |
-| =job.cancel=          | Keep the returned ID                 |
-#+TBLFM: $2=async: true= for immediate inspection
+=shell.run=, =lisp.eval=, =lisp.load-system=, =lisp.run-tests=,
+=lisp.scratchpad-run= and the =rlm= tools accept =async: true= to start
+a background job at once. Without it, fast operations return normally;
+after the default 10s grace, the job is handed off instead of rerun.
 
-Without async, fast operations return normally; after the default 10s
-grace, the job is handed off instead of rerun.
+In the primary session a finished job wakes you: its result preview
+arrives as new input and the turn continues. After starting one,
+continue independent work or end your turn; never poll it with
+=job.get= or =job.wait=. Read =job.get= or the job's logs only when the
+preview is not enough. The handoff result says when a session has no
+automatic wakeup; there, use =job.wait= when you need the result.
+=job.cancel= stops a job.
 
 ** Memory
 
