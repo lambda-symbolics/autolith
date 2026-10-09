@@ -166,7 +166,26 @@
                     (job (handoff-job result)))
                (test-assert (eq ':notify (session-job-completion-policy job))
                             "shell execution transports completion policy")
+               (test-assert (search "use job.wait" (tool-result-content result))
+                            "without a controller wakeup the handoff says to wait for the result")
                (session-job-await job 5))
+             (task-completion-connect primary (lambda ()))
+             (unwind-protect
+                  (dolist (case '(("continue" "wakes you as new input; do not poll")
+                                  ("notify" "arrives with your next turn; do not poll")))
+                    (destructuring-bind (policy expected) case
+                      (let ((result
+                              (tool-execute
+                               (tool-registry-find registry "shell" "run") context
+                               (json-object
+                                "command" (test-fixture-shell-command
+                                           *platform* "printf policy" "[Console]::Write('policy')")
+                                "async" t "completion-policy" policy))))
+                        (test-assert (search expected (tool-result-content result))
+                                     (format nil "a connected ~A handoff tells the model not to poll"
+                                             policy))
+                        (session-job-await (handoff-job result) 5))))
+               (task-completion-disconnect primary))
              (let* ((*tool-execution-blocking-grace-seconds* 0)
                     (barrier
                       (make-instance 'task-test-blocking-tool

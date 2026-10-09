@@ -682,7 +682,10 @@ Only the current primary conversation's artifact root is searched."
     (tool-execution-job agent keyword)
     task-tool-result)
 (defun task--tool-execution-handoff-result (job viewer reason)
-  "Detach JOB and return its inspectable identity with handoff REASON."
+  "Detach JOB and return its inspectable identity with handoff REASON.
+
+The content opens with how the result will reach VIEWER, so the model does not
+poll a job whose completion will wake it."
   (task-completion-watch job viewer)
   (let ((snapshot (session-job-snapshot job)))
     (multiple-value-bind (form content)
@@ -694,7 +697,24 @@ Only the current primary conversation's artifact root is searched."
                  :handed-off-p t
                  :handoff-reason reason
                  :job record)))
-      (task-tool-result content form))))
+      (task-tool-result
+       (format nil "~A~%~A" (task--handoff-guidance job viewer) content)
+       form))))
+
+(-> task--handoff-guidance (session-job agent) string)
+(defun task--handoff-guidance (job viewer)
+  "Return one sentence telling VIEWER how detached JOB's result will arrive."
+  (let ((identifier (session-job-identifier job)))
+    (cond
+      ((not (task-completion-wakeup-connected-p viewer))
+       (format nil "Job ~A runs in the background. Continue independent work, then use job.wait when you need its result."
+               identifier))
+      ((eq (session-job-completion-policy job) ':notify)
+       (format nil "Job ~A runs in the background. Its completion notice arrives with your next turn; do not poll it."
+               identifier))
+      (t
+       (format nil "Job ~A runs in the background. When it finishes, its result preview wakes you as new input; do not poll it with job.get or job.wait. Continue independent work or end your turn."
+               identifier)))))
 
 (defmethod tool-execution-invoke
     ((runtime task-orchestrator) parent

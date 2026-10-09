@@ -119,7 +119,7 @@
   (list
    "async"
    (tool-boolean-property
-    "Run as an inspectable background job; defaults to false.")
+    "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false.")
    "completion-policy" (tool-completion-policy-property)))
 
 (-> rlm--shared-frame-parameters (&optional boolean) list)

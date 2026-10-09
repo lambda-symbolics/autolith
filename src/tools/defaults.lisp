@@ -41,7 +41,7 @@
             "host-tools" (default-tools--worker-host-tools-property)
            "completion-policy" (tool-completion-policy-property)
            "async" (tool-boolean-property
-                    "Run as an inspectable background job; defaults to false."))))
+                    "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false."))))
     (tool-object-schema properties '("forms"))))
 
 (-> default-tools--lisp-repl-control-schema
@@ -367,7 +367,7 @@
                           "Capture stdout/stderr separately; defaults to false (merged output). Separate streams have no reconstructed interleaving.")
       "completion-policy" (tool-completion-policy-property)
       "async" (tool-boolean-property
-               "Run as an inspectable background job; defaults to false."))
+               "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false."))
      '("command"))))
   registry)
 
@@ -583,7 +583,7 @@
              "host-tools" (default-tools--worker-host-tools-property)
              "completion-policy" (tool-completion-policy-property)
              "async" (tool-boolean-property
-                      "Run as an inspectable background job; defaults to false."))
+                      "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false."))
             '("path")))
           (list
            'lisp-paren-check-tool
@@ -607,7 +607,7 @@
                      "The persistent REPL name; defaults to default.")
              "completion-policy" (tool-completion-policy-property)
              "async" (tool-boolean-property
-                      "Run as an inspectable background job; defaults to false."))
+                      "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false."))
             '("system")))
           (list
            'lisp-describe-tool
@@ -677,7 +677,7 @@
                      "The persistent REPL name; defaults to default.")
              "completion-policy" (tool-completion-policy-property)
              "async" (tool-boolean-property
-                      "Run as an inspectable background job; defaults to false."))
+                      "Run as a background job and return at once. In the primary session its completion wakes you, so do not poll it. Defaults to false."))
             '("system")))
           (list
            'lisp-reset-tool
