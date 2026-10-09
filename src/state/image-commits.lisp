@@ -456,6 +456,16 @@ running image holds their tracked definitions, so the next commit drops them."
                  :test #'string=)
          t)))
 
+(-> image-commit--skipped-entry-count (configuration) (integer 0))
+(defun image-commit--skipped-entry-count (configuration)
+  "Return how many current private commit entries this image skipped at replay.
+
+The next commit leaves them out, so dropping them is a change worth committing."
+  (let ((current (image-commit-current configuration)))
+    (if current
+        (count-if #'image-commit--entry-skipped-p (image-commit-entries current))
+        0)))
+
 (-> image-commit--entry-definition-target (list) (option string))
 (defun image-commit--entry-definition-target (entry)
   "Return the definition target represented by replay ENTRY, when any."
@@ -1280,7 +1290,10 @@ the actual proposed sources instead. PATHNAME only labels failures."
 (defmethod tool-execute ((tool self-commit-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Check and privately commit the running image's pending mutations."
+  "Check and privately commit the running image's pending mutations.
+
+Definitions the startup replay skipped are left out of the new commit, so a
+commit with nothing pending still drops them."
   (declare (ignore tool))
   (with-live-mutation
     (let* ((configuration (tool-context-configuration context))
@@ -1288,17 +1301,18 @@ the actual proposed sources instead. PATHNAME only labels failures."
                    (tool-argument arguments "title" :required t)))
            (records (image-commit-pending-records configuration))
            (effective (image-commit-effective-diff-records configuration))
+           (dropped (image-commit--skipped-entry-count configuration))
            (identifier (make-identifier))
            (mutation-identifiers
              (mapcar (lambda (record) (getf (rest record) :id)) records)))
       (tuning-experiment-assert-settled configuration "self.commit")
-      (unless records
+      (unless (or records (plusp dropped))
         (error 'image-commit-error
                :message "The active image has no reconstructible mutations to commit."
                :tool-name "self.commit"
                :pathname (configuration-image-commit-root configuration)
                :stage ':validation))
-      (unless effective
+      (unless (or effective (plusp dropped))
         (error 'image-commit-error
                :message
                "The pending mutations produce no effective change; discard them instead of creating an empty private commit."
@@ -1341,8 +1355,9 @@ the actual proposed sources instead. PATHNAME only labels failures."
                      :result ':committed))
               (tool-success
                (format nil
-                       "Committed ~D live mutation~:P as private image commit ~A.~%Private Git commit: ~A~%Replay script: ~A"
+                       "Committed ~D live mutation~:P~[~:; and dropped ~:*~D skipped definition~:P~] as private image commit ~A.~%Private Git commit: ~A~%Replay script: ~A"
                        (length records)
+                       dropped
                        identifier
                        (image-commit-history-commit commit)
                        (namestring (image-commit-script-pathname commit))))))

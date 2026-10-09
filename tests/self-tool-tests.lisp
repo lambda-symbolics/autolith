@@ -1874,7 +1874,33 @@
                  (test-assert (= publication-reads 1)
                               "publication reads the tracked source once")
                  (test-assert (= reads 1)
-                              "startup replay reads the tracked source once"))))
+                              "startup replay reads the tracked source once"))
+               (write-tracked moved-source)
+               (reset)
+               (image-state-load configuration)
+               (test-assert (= (length *image-replay-skips*) 1)
+                            "startup skips the override once tracked source moves again")
+               (let* ((registry (make-default-tool-registry))
+                      (result (tool-execute
+                               (tool-registry-find registry "self" "commit")
+                               (make-instance 'tool-context
+                                              :configuration configuration
+                                              :worker nil
+                                              :conversation
+                                              (conversation-create configuration))
+                               (json-object "title" "Drop stale private definitions"))))
+                 (test-assert (and (tool-result-success-p result)
+                                   (search "dropped 1 skipped definition"
+                                           (tool-result-content result)))
+                              "a commit with nothing pending drops the skipped definition")
+                 (test-assert (null (manifest-entry (image-commit-current configuration)))
+                              "the new private commit omits the stale override"))
+               (reset)
+               (test-assert (and (null (image-state-load configuration))
+                                 (null *image-replay-skips*)
+                                 (= (funcall 'test-self-target) 0)
+                                 (= (funcall 'test-self-replay-fresh) 11))
+                            "the next start replays the rest without skipping anything")))
         (reset)
         (setf *image-state-initialized-p* previous-state-initialized-p
               *active-image-commit-identifier* previous-commit-identifier
