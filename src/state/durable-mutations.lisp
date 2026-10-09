@@ -271,22 +271,23 @@ so it is opt-in rather than the default commit gate."))
        (eq (getf (rest record) :kind) :durable-definition)
        t))
 
-(-> durable-mutation-record-p (configuration t) boolean)
-(defun durable-mutation-record-p (configuration record)
+(-> durable-mutation-record-p
+    (configuration t &key (:source-root pathname))
+    boolean)
+(defun durable-mutation-record-p
+    (configuration record &key (source-root (config :source-root configuration)))
   "Return true when RECORD is a valid durable-definition journal state.
 
-Historical journals may name tracked src/ files or retired overlay paths."
+Historical journals may name tracked src/ files or retired overlay paths.
+SOURCE-ROOT is CONFIGURATION's tracked source root, which a caller checking many
+records resolves once."
   (and (durable-mutation-journal-record-p record)
        (non-empty-string-p (getf (rest record) :id))
        (non-empty-string-p (getf (rest record) :target))
        (non-empty-string-p (getf (rest record) :pathname))
-       (let ((pathname (merge-pathnames
-                        (getf (rest record) :pathname)
-                        (config :source-root configuration))))
-         (or (uiop:subpathp pathname
-                            (merge-pathnames
-                             "src/"
-                             (config :source-root configuration)))
+       (let ((pathname (merge-pathnames (getf (rest record) :pathname)
+                                        source-root)))
+         (or (uiop:subpathp pathname (merge-pathnames "src/" source-root))
              (uiop:subpathp pathname
                             (configuration-image-commit-root configuration))
              ;; Journals may be replayed under a different data root, so a
@@ -324,46 +325,48 @@ Historical journals may name tracked src/ files or retired overlay paths."
 (defun durable-mutations-load (configuration)
   "Reconstruct durable mutation state from CONFIGURATION's append-only journal."
   (clrhash *durable-mutations*)
-  (dolist (record (mutation-journal-read-records configuration))
-    (when (durable-mutation-journal-record-p record)
-      (unless (durable-mutation-record-p configuration record)
-        (error 'source-mutation-error
-               :message "A durable mutation journal record is invalid."
-               :tool-name "self.status"
-               :pathname (configuration-journal-path configuration)))
-      (let* ((properties (rest record))
-             (identifier (getf properties :id))
-             (phase (getf properties :result))
-             (existing (gethash identifier *durable-mutations*)))
-        (if existing
-            (progn
-              (unless (and (durable-mutation-record-matches-p existing properties)
-                           (durable-mutation-transition-allowed-p
-                            (durable-mutation-phase existing)
-                            phase))
-                (error 'source-mutation-error
-                       :message "A durable mutation journal transition is invalid."
-                       :tool-name "self.status"
-                       :pathname (configuration-journal-path configuration)))
-              (setf (durable-mutation-phase existing) phase
-                    (durable-mutation-git-commit existing)
-                    (getf properties :git-commit)))
-            (progn
-              (unless (eq phase :pending)
-                (error 'source-mutation-error
-                       :message "A durable mutation journal begins after its pending state."
-                       :tool-name "self.status"
-                       :pathname (configuration-journal-path configuration)))
-              (let ((mutation
-                      (make-instance 'durable-mutation
-                                     :identifier identifier
-                                     :target (getf properties :target)
-                                     :pathname (getf properties :pathname)
-                                     :previous-source (getf properties :previous)
-                                     :proposed-source (getf properties :proposed)
-                                     :base-commit (getf properties :base-commit)
-                                     :phase phase)))
-                (setf (gethash identifier *durable-mutations*) mutation)))))))
+  (let ((source-root (config :source-root configuration)))
+    (dolist (record (mutation-journal-read-records configuration))
+      (when (durable-mutation-journal-record-p record)
+        (unless (durable-mutation-record-p configuration record
+                                           :source-root source-root)
+          (error 'source-mutation-error
+                 :message "A durable mutation journal record is invalid."
+                 :tool-name "self.status"
+                 :pathname (configuration-journal-path configuration)))
+        (let* ((properties (rest record))
+               (identifier (getf properties :id))
+               (phase (getf properties :result))
+               (existing (gethash identifier *durable-mutations*)))
+          (if existing
+              (progn
+                (unless (and (durable-mutation-record-matches-p existing properties)
+                             (durable-mutation-transition-allowed-p
+                              (durable-mutation-phase existing)
+                              phase))
+                  (error 'source-mutation-error
+                         :message "A durable mutation journal transition is invalid."
+                         :tool-name "self.status"
+                         :pathname (configuration-journal-path configuration)))
+                (setf (durable-mutation-phase existing) phase
+                      (durable-mutation-git-commit existing)
+                      (getf properties :git-commit)))
+              (progn
+                (unless (eq phase :pending)
+                  (error 'source-mutation-error
+                         :message "A durable mutation journal begins after its pending state."
+                         :tool-name "self.status"
+                         :pathname (configuration-journal-path configuration)))
+                (let ((mutation
+                        (make-instance 'durable-mutation
+                                       :identifier identifier
+                                       :target (getf properties :target)
+                                       :pathname (getf properties :pathname)
+                                       :previous-source (getf properties :previous)
+                                       :proposed-source (getf properties :proposed)
+                                       :base-commit (getf properties :base-commit)
+                                       :phase phase)))
+                  (setf (gethash identifier *durable-mutations*) mutation))))))))
   (durable-mutations-reconcile configuration)
   *durable-mutations*)
 
