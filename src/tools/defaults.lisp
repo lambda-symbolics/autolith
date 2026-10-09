@@ -453,7 +453,7 @@
                    "max-results" (tool-integer-property
                                   "Matches per page from 1 to 100; default 20. A page keeps one file's matches together, so it can exceed this by up to max-matches-per-file.")
                    "max-matches-per-file" (tool-integer-property
-                                           "Matches retained per file from 1 to 100; default 20.")
+                                           "Matches retained per file from 1 to 100; default 20. The result names files that had more.")
                    "context" (tool-integer-property
                               "Lines before and after each match from 0 to 10; default 0.")
                    "time-budget-ms" (tool-integer-property
