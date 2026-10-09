@@ -50,6 +50,6 @@ git sbcl-workers https://github.com/lambda-symbolics/sbcl-workers.git :ref b966b
 git surgeon https://github.com/lambda-symbolics/surgeon.git :ref 347e3a48f931c6ba178d0582fb8a79bd22a4ea6f
 git structlisp https://github.com/lambda-symbolics/structlisp.git :ref 66bbfbe947b69f3105f71f5e4293637decc91746
 git argo https://github.com/lambda-symbolics/argo.git :ref 3658b947372fb19ae07aca65a439b63b0685ae47
-git setinka https://github.com/lambda-symbolics/setinka.git :ref f896272b4bde04e09385a1f050604a4943525e74
+git setinka https://github.com/lambda-symbolics/setinka.git :ref f1a7e186ad217e08cf4045c938398a0860126851
 git lambda-debugger https://github.com/lambda-symbolics/lambda-debugger.git :ref 713c4a64ad109eb4f511426c21ae422b18674c77
 git yolokuva https://github.com/lambda-symbolics/yolokuva.git :ref 1a6e6e68b8d184496dbfda9defcac1f6dfaf18fe
