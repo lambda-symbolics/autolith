@@ -1280,31 +1280,29 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
          (unless controller
            (error 'configuration-error
                   :message "Only an interactive session can queue the repair turn."))
-         (multiple-value-bind (accepted-p delivery)
-             (application-input-controller-submit-primary-prompt
-              controller
-              (user-message-input-create
-               :text (application--skipped-definitions-prompt
-                      skips
-                      :configuration (application-configuration application)
-                      :commit-identifier *active-image-commit-identifier*
-                      :lineage-source-commit
-                      (application--replay-lineage-source-commit application)
-                      :image-source-commit
-                      (image-commit--base-source-commit nil)))
-              :prefer-steering-p nil)
-           (unless accepted-p
-             (error 'configuration-error
-                    :message
-                    (format nil "The repair turn was not accepted: ~(~A~)."
-                            delivery)))
-           (application-present
-            application
-            (list (terminal-span
-                   ':hint
-                   (format nil "Queued ~D skipped definition~:[s~;~] for the model to rebuild on the current source."
-                           (length skips)
-                           (= (length skips) 1))))))))))
+         (unless (application-input-controller-enqueue-operation-request
+                  controller
+                  (application--skipped-definitions-prompt
+                   skips
+                   :configuration (application-configuration application)
+                   :commit-identifier *active-image-commit-identifier*
+                   :lineage-source-commit
+                   (application--replay-lineage-source-commit application)
+                   :image-source-commit
+                   (image-commit--base-source-commit nil))
+                  (list :operation "fix-skipped-definitions"
+                        :summary
+                        (format nil "Rebuild or drop the ~D private definition~:P skipped at startup."
+                                (length skips))))
+           (error 'configuration-error
+                  :message "The repair turn was not accepted: the session is stopping."))
+         (application-present
+          application
+          (list (terminal-span
+                 ':hint
+                 (format nil "Queued ~D skipped definition~:[s~;~] for the model to rebuild on the current source."
+                         (length skips)
+                         (= (length skips) 1)))))))))
   nil)
 
 

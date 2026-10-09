@@ -8659,3 +8659,58 @@
                              (format nil "intro~%```sh~%ls~%```~%outro")))
                    "finalized markdown bodies carry copy widgets")))
   nil)
+
+(-> test-operation-request-turn () null)
+(defun test-operation-request-turn ()
+  "Test an operation's generated request reaches the model but shows as its notice."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let* ((conversation (conversation-create configuration))
+           (terminal (make-instance 'recording-terminal :columns 100))
+           (ui (terminal-ui-create :terminal terminal))
+           (provider (make-instance 'scripted-provider
+                                    :results (list (agent-test-result
+                                                    "repair"
+                                                    (list (agent-test-message "Dropped."))
+                                                    :turn-completion ':end))))
+           (registry (make-instance 'tool-registry))
+           (agent (agent-create :configuration configuration :provider provider
+                                :conversation conversation :tool-registry registry
+                                :worker t))
+           (application (make-instance 'application
+                                       :configuration configuration
+                                       :conversation conversation
+                                       :provider provider
+                                       :tool-registry registry
+                                       :worker t
+                                       :agent agent
+                                       :ui ui))
+           (text "Generated repair instructions the user never typed.")
+           (request (list :operation "fix-skipped-definitions"
+                          :summary "Rebuild or drop the 1 private definition skipped at startup.")))
+      (conversation-append-user-message conversation "typed by the user")
+      (with-terminal-ui (active-ui ui)
+        (declare (ignore active-ui))
+        (recording-terminal-reset terminal)
+        (application--run-turn application text :operation-request request)
+        (let ((output (recording-terminal-output terminal))
+              (record (find-if (lambda (record)
+                                 (getf (rest record) :operation-request))
+                               (conversation--read-records
+                                (conversation-pathname conversation)))))
+          (test-assert (some (lambda (item) (search text (json-encode item)))
+                             (conversation-input-items conversation))
+                       "the model receives the generated text")
+          (test-assert (and (search "▸ fix-skipped-definitions" output)
+                            (search "Rebuild or drop the 1 private definition" output)
+                            (not (search text output)))
+                       "the live transcript shows the request notice, not its text")
+          (test-assert (and record (getf (rest record) :automatic-p))
+                       "the request is stored as an automatic message with its metadata")
+          (let ((shown (terminal--spans-text (conversation-record-entry application record))))
+            (test-assert (and (search "▸ fix-skipped-definitions" shown)
+                              (not (search text shown)))
+                         "a rendered transcript shows the same notice"))))
+      (test-assert (equal (conversation-input-history conversation) '("typed by the user"))
+                   "input history keeps only what the user typed")))
+  nil)

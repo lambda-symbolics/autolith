@@ -805,6 +805,7 @@
     test-release-server))
 
 (define-test-suite application
+  test-operation-request-turn
   test-application-transcript-actions
   test-application-command-tips
   test-application-banner-policy

@@ -1444,6 +1444,29 @@ The caller must hold CONTROLLER's publication lock."
     (application-input-controller--publish-counts controller)
     queued-p))
 
+(-> application-input-controller-enqueue-operation-request
+    (application-input-controller string list)
+    boolean)
+(defun application-input-controller-enqueue-operation-request
+    (controller text request)
+  "Queue one model turn for operation-generated TEXT and report acceptance.
+
+REQUEST is the portable metadata the transcript shows in place of TEXT. The
+turn runs as automatic work, like a job completion, so it never enters the
+user's input history, pending follow-ups, or recovery vault."
+  (let ((queued-p nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (unless (or (application-input-controller-stopping-p controller)
+                  (application-input-controller-localgroup-handoff-p controller))
+        (deque-push-back
+         (application-input-controller-work-items controller)
+         (list ':operation-request
+               (list :text (copy-seq text) :request (copy-tree request))))
+        (setf queued-p t)
+        (sb-thread:condition-broadcast
+         (application-input-controller-condition-variable controller))))
+    queued-p))
+
 (-> application-input-controller--queue-input
     (application-input-controller (or string user-message-input))
     boolean)
@@ -3753,6 +3776,21 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
                (when (eq result ':quit)
                  (application-input-controller--request-exit
                   controller ':quit))))
+            (:operation-request
+             (let ((request (second work)))
+               (application-input-controller-call-with-primary-steering
+                controller
+                (lambda (take acknowledge)
+                  (application--run-turn
+                   application
+                   (getf request :text)
+                   :operation-request (getf request :request)
+                   :steering-function take
+                   :steering-persisted-function acknowledge
+                   :pending-operations-function
+                   (lambda (owner)
+                     (application-input-controller--apply-pending-commands
+                      controller :agent owner)))))))
             (:project-adaptation-offer
              (application-maybe-offer-project-adaptation application))
             (:localgroup-handoff

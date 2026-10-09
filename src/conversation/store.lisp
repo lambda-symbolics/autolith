@@ -1759,11 +1759,16 @@ copied."
     (conversation (or string user-message-input)
      &key (:pending-input-identifier (option non-empty-string))
            (:automatic-p boolean)
-           (:job-completion (option list)))
+           (:job-completion (option list))
+           (:operation-request (option list)))
     (values json-object list))
 (defun conversation-append-user-message
-    (conversation input &key pending-input-identifier automatic-p job-completion)
-  "Persist user INPUT and return its provider item and sequenced record."
+    (conversation input
+     &key pending-input-identifier automatic-p job-completion operation-request)
+  "Persist user INPUT and return its provider item and sequenced record.
+
+JOB-COMPLETION and OPERATION-REQUEST are portable metadata that let the
+transcript show automatic INPUT as a short notice."
   (when (and (stringp input)
              (not (non-empty-string-p input)))
     (error 'configuration-error
@@ -1806,6 +1811,8 @@ copied."
                                (copy-seq pending-input-identifier)))
                        (when job-completion
                          (list :job-completion (copy-tree job-completion)))
+                       (when operation-request
+                         (list :operation-request (copy-tree operation-request)))
                        (when attachments
                          (list :images
                                (mapcar #'image-attachment-record attachments)))
