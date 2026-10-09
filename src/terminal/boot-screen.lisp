@@ -251,7 +251,7 @@ window instead of judging interactivity before it could possibly happen."
     (:gc-prime "[###...]  Priming the generational garbage collector.")
     (:cons-check "[####..]  Verifying cons cells are still pointy.")
     (:reader-sync "[#####.]  Synchronizing reader macros.")
-    (:listener-ready "[######]  World awake. Operator, the listener is yours."))
+    (:listener-ready "[######]  You are typing to Autolith Lisp Listener 1."))
   "The ordered (PHASE DETAIL) pairs painted across the boot sequence.")
 
 (-> terminal-ui-boot-sequence-duration () real)
