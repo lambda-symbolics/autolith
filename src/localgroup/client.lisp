@@ -57,9 +57,23 @@
              :session-id session-id))
     response))
 
+(-> localgroup--session-prefix-p (string string) boolean)
+(defun localgroup--session-prefix-p (prefix session-id)
+  "Return true when nonempty PREFIX matches SESSION-ID's canonical or displayed form."
+  (let ((prefix (if (legacy-session-identifier-p session-id)
+                    (string-downcase prefix)
+                    prefix))
+        (identifier (handler-case (session-identifier-normalize session-id)
+                      (localgroup-error () session-id))))
+    (and (non-empty-string-p prefix)
+         (or (uiop:string-prefix-p prefix identifier)
+             (uiop:string-prefix-p prefix (session-identifier-display identifier))))))
+
 (-> localgroup--find-record (configuration string) cons)
 (defun localgroup--find-record (configuration session-id)
-  "Return CONFIGURATION's unique endpoint record matching SESSION-ID."
+  "Return CONFIGURATION's unique endpoint matching SESSION-ID or its prefix.
+
+Prefer exact identifiers, then normalized identifiers, then unique prefixes."
   (let* ((records (localgroup-endpoint-records configuration))
          (exact (remove-if-not
                  (lambda (entry)
@@ -78,6 +92,11 @@
                         (localgroup--record-session-id (rest entry)))
                      (localgroup-error ()
                        (localgroup--record-session-id (rest entry))))))
+                records)
+               (remove-if-not
+                (lambda (entry)
+                  (localgroup--session-prefix-p
+                   session-id (localgroup--record-session-id (rest entry))))
                 records))))
     (cond ((null matches)
            (error 'localgroup-error
@@ -87,8 +106,14 @@
                   :session-id session-id))
           ((rest matches)
            (error 'localgroup-error
-                  :message (format nil "More than one localgroup session named ~A is registered."
-                                   (session-identifier-display session-id))
+                  :message
+                  (format nil "Localgroup session ID ~S is ambiguous. Matching sessions: ~{~A~^, ~}."
+                          session-id
+                          (sort (mapcar (lambda (entry)
+                                          (session-identifier-display
+                                           (localgroup--record-session-id (rest entry))))
+                                        matches)
+                                #'string<))
                   :operation ':discover
                   :session-id session-id))
           (t
