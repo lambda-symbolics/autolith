@@ -2585,6 +2585,14 @@
       (test-assert (and (search "exit 3" text)
                         (search "command output" text))
                    "shell.run results separate exit status from command output"))
+    (let ((rule (conversation-record-entry
+                 application
+                 (list :summary :seq 10 :time 0 :through-seq 9 :summary "older work"))))
+      (test-assert (and (= (terminal--spans-width rule) 39)
+                        (find (terminal-span ':failure " CONTEXT COMPACTED ") rule :test #'equal)
+                        (eq (terminal-span-style (first rule)) ':success)
+                        (not (search "9" (test-terminal-row-text rule))))
+                   "compaction is a terminal-wide cut line without sequence numbers"))
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 4 :time 0 :call-id 3
@@ -3124,7 +3132,7 @@
                        (search "active-full-one" output)
                        (search "active-full-two" output)
                        (= (terminal-tests--substring-count
-                           "context compacted through sequence"
+                           "CONTEXT COMPACTED"
                            output)
                           1))
                   "a full active chunk is the only segment scanned at startup"))
@@ -3139,7 +3147,7 @@
                            "after-runtime-rotation" output)
                           1)
                        (= (terminal-tests--substring-count
-                           "context compacted through sequence" output)
+                           "CONTEXT COMPACTED" output)
                           1)
                        (= (application-render-generation application)
                           (conversation-log-generation loaded))
@@ -3188,7 +3196,7 @@
                          (not (search "oldest-third-chunk" output))
                          (search "middle-chunk-message" output)
                          (= (terminal-tests--substring-count
-                             "context compacted through sequence" output)
+                             "CONTEXT COMPACTED" output)
                             2)
                          (not (search "/history loads an earlier page" output)))
                     "a short active chunk scans exactly one preceding segment"))
@@ -3221,7 +3229,7 @@
                       (and (equal (nreverse recovery-pathnames) (list active))
                            (not (search "middle-chunk-message" output))
                            (= (terminal-tests--substring-count
-                               "context compacted through sequence" output)
+                               "CONTEXT COMPACTED" output)
                               1))
                       "zero-cursor recovery scans only the active chunk")))
                  (recording-terminal-reset terminal)

@@ -2301,12 +2301,28 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
        (when (application--record-visible-p application record)
          (application-tool-result-entry tool application record))))
     (:summary
-     (list (terminal-span
-            ':hint
-            (format nil "∙ context compacted through sequence ~A"
-                    (getf (rest record) :through-seq)))))
+     (application--compaction-rule application))
     (otherwise
      nil)))
+
+(defparameter *application-compaction-label* " CONTEXT COMPACTED "
+  "The label centered in the transcript rule marking a context compaction.")
+
+(-> application--compaction-rule (application) terminal-styled-text)
+(defun application--compaction-rule (application)
+  "Return a transcript-wide cut line announcing that earlier context was compacted.
+
+The rule is laid out once at the current terminal width, like other transcript
+rows."
+  (let* ((label *application-compaction-label*)
+         (width (max (+ (length label) 2)
+                     (1- (terminal-columns
+                          (terminal-ui-terminal (application-ui application))))))
+         (left (floor (- width (length label)) 2))
+         (right (- width (length label) left)))
+    (list (terminal-span ':success (make-string left :initial-element #\━))
+          (terminal-span ':failure label)
+          (terminal-span ':success (make-string right :initial-element #\━)))))
 
 (-> application--command-presentation-entry
     (application-command-invocation (or string list))
