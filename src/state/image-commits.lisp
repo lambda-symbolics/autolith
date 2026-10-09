@@ -449,12 +449,34 @@ running image holds their tracked definitions, so the next commit drops them."
 (-> image-commit--entry-skipped-p (list) boolean)
 (defun image-commit--entry-skipped-p (entry)
   "Return true when replay ENTRY names a definition the running image skipped."
-  (let ((target (image-commit--entry-definition-target entry)))
-    (and target
-         (member target *image-replay-skips*
+  (let ((key (image-commit--entry-replay-key entry)))
+    (and key
+         (member key *image-replay-skips*
                  :key #'image-replay-skip-key
                  :test #'string=)
          t)))
+
+(-> image-commit--entry-replay-key (list) (option string))
+(defun image-commit--entry-replay-key (entry)
+  "Return definition ENTRY's key as replay computes it, or NIL for other entries.
+
+Journal targets may spell a symbol with its package while replay reads the
+source in the entry's package, so the key is rebuilt the same way. An entry
+whose source does not read keeps its recorded target; replay never skips it."
+  (let ((target (image-commit--entry-definition-target entry)))
+    (and target
+         (handler-case
+             (let* ((package (self-resolve-package
+                              (or (getf entry :package) "AUTOLITH")))
+                    (definition (self-read-form (getf entry :source)
+                                                :read-eval nil
+                                                :package package)))
+               (if (definition-form-p definition)
+                   (let ((*package* package))
+                     (definition-key definition))
+                   target))
+           (error ()
+             target)))))
 
 (-> image-commit--skipped-entry-count (configuration) (integer 0))
 (defun image-commit--skipped-entry-count (configuration)

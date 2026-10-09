@@ -2655,3 +2655,32 @@
     (test-assert (equalp (tool-parameters redefine) (tool-parameters define))
                  "self.define accepts the same arguments as self.redefine")
     nil))
+
+(-> test-image-commit-skipped-entry-key () null)
+(defun test-image-commit-skipped-entry-key ()
+  "Test a journal target spelled with its package still matches the replay skip key."
+  (let* ((package (find-package '#:autolith))
+         (source "(defun test-self-target () 7)")
+         (definition (self-read-form source :read-eval nil :package package))
+         (*image-replay-skips*
+           (list (make-instance 'image-replay-skip
+                                :definition definition
+                                :key (let ((*package* package))
+                                       (definition-key definition))
+                                :source source
+                                :tracked nil
+                                :tracked-recorded-p nil
+                                :reason ':revision-moved
+                                :message "skipped"))))
+    (dolist (case (list (list "(defun autolith::test-self-target)" source t)
+                        (list "(defun test-self-target)" source t)
+                        (list "(defun autolith::test-self-replay-fresh)"
+                              "(defun test-self-replay-fresh () 11)" nil)))
+      (destructuring-bind (target entry-source expected) case
+        (test-assert (eq expected
+                         (image-commit--entry-skipped-p
+                          (list :kind :definition :target target
+                                :package "AUTOLITH" :source entry-source)))
+                     (format nil "~A with source ~S ~:[is not~;is~] skipped"
+                             target entry-source expected)))))
+  nil)
