@@ -673,7 +673,7 @@ name. Path completions apply when no command prefix matches."
   "Return the searchable visible metadata carried by picker ENTRY."
   (format nil
           "~{~A~^ ~}"
-          (loop for key in '(:name :argument :group :tally :description)
+          (loop for key in '(:name :argument :group :tally :detail :description)
                 for value = (getf entry key)
                 when (stringp value)
                   collect value)))
@@ -697,8 +697,9 @@ name. Path completions apply when no command prefix matches."
   "Return styled candidate rows and nonselectable group headings.
 
 Descriptions start *TERMINAL-UI-CHOICE-COLUMN-GAP* cells after the widest
-visible label, and a :TALLY column appears when any visible candidate carries a
-non-empty tally string."
+visible label. A :TALLY column and then a :DETAIL column precede them when any
+visible candidate carries a non-empty string for that key, each aligned across
+the visible rows."
   (termdown:selector-table-rows
    selector row-width
    :label-function #'terminal-completion-label
@@ -707,6 +708,9 @@ non-empty tally string."
    (list (lambda (entry)
            (let ((tally (getf entry :tally)))
              (if (stringp tally) tally "")))
+         (lambda (entry)
+           (let ((detail (getf entry :detail)))
+             (if (stringp detail) detail "")))
          (lambda (entry)
            (or (getf entry :description-spans)
                (getf entry :description)

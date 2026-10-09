@@ -1308,3 +1308,23 @@ nil)
                             "startup persists the existing model selection"))
           (provider--registry-restore snapshot)))))
   nil)
+
+(-> test-application-grouped-settings () null)
+(defun test-application-grouped-settings ()
+  "Test every visible setting is listed once, each group in one contiguous run."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let* ((grouped (application--grouped-settings configuration))
+           (runs (loop for (setting next) on grouped
+                       when (or (null next)
+                                (not (eq (setting-group setting) (setting-group next))))
+                         collect (setting-group setting))))
+      (test-assert (equal (sort (mapcar #'setting-name grouped) #'string<)
+                          (sort (mapcar #'setting-name
+                                        (remove-if-not #'setting-visible-p
+                                                       (configuration-setting-list configuration)))
+                                #'string<))
+                   "every visible setting is listed once")
+      (test-assert (= (length runs) (length (remove-duplicates runs)))
+                   "each settings group forms one contiguous run")))
+  nil)

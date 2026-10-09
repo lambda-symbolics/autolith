@@ -228,6 +228,7 @@
   test-mcp-reload-transaction-boundary)
 
 (define-test-suite application-command
+  test-application-grouped-settings
   test-application-command-defining-form
   test-application-command-semantic-calls
   test-application-command-registry
@@ -747,6 +748,7 @@
   test-terminal-path-completion
   test-terminal-path-completion-history
   test-terminal-modal-selection
+  test-terminal-picker-detail-column
   test-terminal-application-read-resize
   test-terminal-non-tty-fallback)
 

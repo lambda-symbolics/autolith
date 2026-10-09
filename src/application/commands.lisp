@@ -2365,23 +2365,40 @@ the settings page and the slash commands behave identically."
        (setf (config name configuration) parsed))))
   nil)
 
+(-> application--grouped-settings (configuration) list)
+(defun application--grouped-settings (configuration)
+  "Return CONFIGURATION's visible settings with each group's settings together.
+
+Groups keep the order of their first definition and settings their definition
+order within a group, so every group heading appears once."
+  (let ((visible (remove-if-not #'setting-visible-p
+                                (configuration-setting-list configuration)))
+        (groups nil))
+    (dolist (setting visible)
+      (pushnew (setting-group setting) groups))
+    (loop for group in (reverse groups)
+          append (remove-if-not (lambda (setting)
+                                  (eq (setting-group setting) group))
+                                visible))))
+
 (-> application--setting-items (application) list)
 (defun application--setting-items (application)
-  "Return picker items for every visible setting, grouped in definition order."
+  "Return picker items for every visible setting under its group heading.
+
+The current value and its source sit in aligned columns of their own."
   (let ((configuration (application-configuration application)))
-    (loop for setting in (configuration-setting-list configuration)
-          when (setting-visible-p setting)
-            collect (list :name (setting-label setting)
-                          :value (string-downcase (symbol-name (setting-name setting)))
-                          :argument nil
-                          :description
-                          (format nil "~(~A~) · ~A (~A)~:[ · read-only~;~]"
-                                  (setting-group setting)
-                                  (setting-render-value
-                                   setting
-                                   (configuration-setting-value configuration setting))
-                                  (application--setting-source-text configuration setting)
-                                  (application--setting-adjustable-p setting))))))
+    (loop for setting in (application--grouped-settings configuration)
+          collect (list :name (setting-label setting)
+                        :value (string-downcase (symbol-name (setting-name setting)))
+                        :argument nil
+                        :group (string-downcase (symbol-name (setting-group setting)))
+                        :detail (setting-render-value
+                                 setting
+                                 (configuration-setting-value configuration setting))
+                        :description
+                        (format nil "~A~:[ · read-only~;~]"
+                                (application--setting-source-text configuration setting)
+                                (application--setting-adjustable-p setting))))))
 
 (-> application--setting-option-items (application setting) list)
 (defun application--setting-option-items (application setting)
@@ -2400,17 +2417,16 @@ the settings page and the slash commands behave identically."
   (let ((configuration (application-configuration application))
         (group nil))
     (with-output-to-string (out)
-      (dolist (setting (configuration-setting-list configuration))
-        (when (setting-visible-p setting)
-          (unless (eq group (setting-group setting))
-            (setf group (setting-group setting))
-            (format out "~:[~;~%~]~(~A~)~%" (plusp (file-position out)) group))
-          (format out "  ~(~A~) = ~A (~A)~%    ~A~%"
-                  (setting-name setting)
-                  (setting-render-value
-                   setting (configuration-setting-value configuration setting))
-                  (application--setting-source-text configuration setting)
-                  (setting-documentation setting)))))))
+      (dolist (setting (application--grouped-settings configuration))
+        (unless (eq group (setting-group setting))
+          (setf group (setting-group setting))
+          (format out "~:[~;~%~]~(~A~)~%" (plusp (file-position out)) group))
+        (format out "  ~(~A~) = ~A (~A)~%    ~A~%"
+                (setting-name setting)
+                (setting-render-value
+                 setting (configuration-setting-value configuration setting))
+                (application--setting-source-text configuration setting)
+                (setting-documentation setting))))))
 
 (-> application--settings-page (application) null)
 (defun application--settings-page (application)

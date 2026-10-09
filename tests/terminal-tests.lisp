@@ -2118,6 +2118,31 @@
 
 
 
+(-> test-terminal-picker-detail-column () null)
+(defun test-terminal-picker-detail-column ()
+  "Test picker details and descriptions align in columns under group headings."
+  (let ((selector (make-selector :visible-count 10 :arrangement ':vertical)))
+    (selector-set-items
+     selector
+     '((:name "Boot screen" :group "terminal" :detail "yes" :description "durable")
+       (:name "Boot screen duration" :group "terminal" :detail "3.5" :description "default")
+       (:name "Model" :group "model" :detail "gpt-6.1-sol" :description "environment")))
+    (let* ((rows (mapcar #'terminal--spans-text (terminal-ui--choice-rows selector 80)))
+           (row (lambda (label) (find-if (lambda (text) (search label text)) rows))))
+      (test-assert (and (find "terminal" rows :test #'search)
+                        (find "model" rows :test #'search))
+                   "each group is announced by a heading row")
+      (test-assert (= (search "yes" (funcall row "Boot screen "))
+                      (search "3.5" (funcall row "Boot screen duration"))
+                      (search "gpt-6.1-sol" (funcall row "Model")))
+                   "details start in one column")
+      (test-assert (= (search "durable" (funcall row "Boot screen "))
+                      (search "default" (funcall row "Boot screen duration"))
+                      (search "environment" (funcall row "Model")))
+                   "descriptions start in one column after the widest detail")))
+  nil)
+
+
 (-> terminal-tests--call-without-host-size (function) t)
 (defun terminal-tests--call-without-host-size (function)
   "Call FUNCTION with native geometry unavailable and noninteractive I/O.
