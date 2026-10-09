@@ -297,19 +297,24 @@
 (defun application--present-resume-instruction (application)
   "Present APPLICATION's exact resume command when its conversation is durable.
 
-The instruction goes through the UI's epilogue so a fullscreen session shows
-it on the normal screen after its alternate buffer closes."
+A detached session's relay closes before the terminal UI unwinds, so there the
+instruction is the relay's exit message, which the attached client prints after
+restoring its own terminal. A direct session puts it in the UI's epilogue so a
+fullscreen session shows it on the normal screen after its alternate buffer
+closes."
   (let ((conversation (application-conversation application)))
     (if (conversation-persisted-p conversation)
-        (progn
-          (terminal-ui-set-epilogue
-           (application-ui application)
-           (list
-            (terminal-span ':dim "To resume this conversation, run:")
-            (terminal-span ':plain (string #\Newline))
-            (terminal-span ':code
-                           (format nil "  ~A"
-                                   (application--resume-command application)))))
+        (let ((command (application--resume-command application)))
+          (unless (localgroup-finish-attachments
+                   application
+                   :status  0
+                   :message (format nil "To resume this conversation, run:~%  ~A" command))
+            (terminal-ui-set-epilogue
+             (application-ui application)
+             (list
+              (terminal-span ':dim "To resume this conversation, run:")
+              (terminal-span ':plain (string #\Newline))
+              (terminal-span ':code (format nil "  ~A" command)))))
           t)
         nil)))
 

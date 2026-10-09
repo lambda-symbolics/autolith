@@ -954,6 +954,54 @@
                                              ':ignore)))
   nil)
 
+(-> test-localgroup-resume-instruction-relay () null)
+(defun test-localgroup-resume-instruction-relay ()
+  "Test a detached session's resume advice reaches the terminal that relays it."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let* ((terminal (localgroup-terminal-create))
+           (ui (terminal-ui-create :terminal terminal))
+           (conversation (conversation-create configuration))
+           (application
+             (make-instance 'application :configuration configuration
+                                         :conversation conversation
+                                         :ui ui))
+           (controller
+             (make-instance 'application-input-controller :application application
+                                                          :main-thread (current-thread)))
+           (socket nil)
+           (stream nil))
+      (setf (application-input-controller application) controller)
+      (unwind-protect
+           (progn
+             (configuration-ensure-directories configuration)
+             (conversation-append-user-message conversation "keep this conversation")
+             (terminal-ui-start ui)
+             (multiple-value-setq (socket stream)
+               (test-localgroup--attach (localgroup-start application) ':control))
+             (test-assert (application--present-resume-instruction application)
+                          "a durable detached conversation has resume advice")
+             (let ((exit (loop for ready-p = (task-tests--wait-until
+                                              (lambda () (listen stream)) 10)
+                               for packet = (and ready-p (daemon-read-packet stream))
+                               while packet
+                               when (eq (first packet) ':exit)
+                                 return packet)))
+               (test-assert
+                (and exit
+                     (eql (getf (rest exit) :status) 0)
+                     (search (application--resume-command application)
+                             (getf (rest exit) :message)))
+                "the relaying terminal receives the resume command as its exit message")))
+        (when stream (ignore-errors (close stream)))
+        (when (and socket (null stream))
+          (ignore-errors (sb-bsd-sockets:socket-close socket)))
+        (when (application-localgroup-session application) (localgroup-stop application))
+        (application-input-controller-stop controller)
+        (ignore-errors (terminal-ui-stop ui))
+        (application-release-conversation-lease application))))
+  nil)
+
 (-> test-localgroup-session-exit-relay () null)
 (defun test-localgroup-session-exit-relay ()
   "Test a detached session's launcher exit reaches its controlling terminal."
