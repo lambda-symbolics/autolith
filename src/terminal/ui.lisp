@@ -2395,8 +2395,11 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
                           (return-from terminal-ui-select nil))
                         (setf base-title next-title)
                         (when hint-p (setf current-hint next-hint))
-                        (clinedi:selection-session-replace-items
-                         session next-items :selected-id (and value-p next-value))
+                        ;; Without an explicit VALUE, Clinedi keeps the current
+                        ;; selection; an explicit NIL would reset it to the top.
+                        (apply #'clinedi:selection-session-replace-items
+                               session next-items
+                               (and value-p (list :selected-id next-value)))
                         (publish))
                       ':continue)
                      ((or (null action) (eq action ':continue)

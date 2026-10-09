@@ -2111,7 +2111,20 @@
                        '(:replace "new title" ((:name "same" :description "" :value "old-value")
                                                 (:name "same" :description "" :value "new-value"))
                                   "new hint" "new-value")))))
-         "application callback replacement keeps title, hint and explicit identity semantics"))))
+         "application callback replacement keeps title, hint and explicit identity semantics"))
+      (setf (scripted-terminal-events terminal) '(:down :refresh :submit))
+      (test-assert
+       (string= "second"
+                (terminal-ui-select
+                 active-ui :items '((:name "first" :description "")
+                                    (:name "second" :description ""))
+                 :on-event
+                 (lambda (event selector)
+                   (declare (ignore selector))
+                   (when (eq event ':refresh)
+                     '(:replace "refreshed" ((:name "first" :description "")
+                                             (:name "second" :description "")))))))
+       "a replacement without an explicit identity keeps the moved selection")))
   nil)
 
 
