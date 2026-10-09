@@ -59,10 +59,66 @@ active_core=$data_home/autolith/active/autolith-active.core
 recovery_core=$data_home/autolith/recovery/autolith-recovery.core
 image_marker=$data_home/autolith/release-images
 
+style_brand=
+style_dim=
+style_good=
+style_notice=
+style_failure=
+style_reset=
+if [[ -t 2 && -z ${NO_COLOR:-} ]]; then
+  style_brand=$'\033[35;1m'
+  style_dim=$'\033[2m'
+  style_good=$'\033[32m'
+  style_notice=$'\033[33m'
+  style_failure=$'\033[31;1m'
+  style_reset=$'\033[0m'
+fi
+
 fail()
 {
-  printf 'Autolith release failed: %s\n' "$1" >&2
+  printf '%sAutolith release failed:%s %s\n' "$style_failure" "$style_reset" "$1" >&2
   exit 1
+}
+
+say_section()
+{
+  printf '\n%s%s%s\n' "$style_brand" "$1" "$style_reset" >&2
+}
+
+say_note()
+{
+  printf '%s│%s %s\n' "$style_dim" "$style_reset" "$1" >&2
+}
+
+say_notice()
+{
+  printf '%s%s%s\n' "$style_notice" "$1" "$style_reset" >&2
+}
+
+say_done()
+{
+  printf '%s%s%s\n' "$style_good" "$1" "$style_reset" >&2
+}
+
+# Rail every line of standard input under the current section, keeping only
+# the final redraw of carriage-return progress and dimming compiler notes.
+say_railed()
+{
+  local line
+
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line##*$'\r'}
+    case $line in
+      ''|';')
+        ;;
+      ';'*)
+        printf '%s│ %s%s\n' "$style_dim" "$line" "$style_reset" >&2
+        ;;
+      *)
+        printf '%s│%s %s\n' "$style_dim" "$style_reset" "$line" >&2
+        ;;
+    esac
+  done
 }
 
 release_field()
@@ -130,15 +186,14 @@ release_update()
 
   if [[ -z $requested_tag ]]; then
     if ! requested_tag=$(release_latest_tag); then
-      printf 'Autolith could not check the latest release. Keeping %s installed.\n' \
-        "$release_version" >&2
+      say_notice "Autolith could not check the latest release. Keeping $release_version installed."
       return 1
     fi
   fi
   release_tag_valid_p "$requested_tag" ||
     fail "the requested release tag is malformed."
   if ! semantic_version_newer_p "${requested_tag#v}" "$release_version"; then
-    printf 'Autolith %s is already the newest release.\n' "$release_version" >&2
+    say_done "Autolith $release_version is already the newest release."
     return 0
   fi
   install_arguments=(--without-command-link --version "$requested_tag")
@@ -147,15 +202,13 @@ release_update()
   fi
   if ! AUTOLITH_INSTALL_ROOT="$install_root" \
        "$source_root/script/install" "${install_arguments[@]}"; then
-    printf 'Autolith could not install %s. Keeping %s installed.\n' \
-      "${requested_tag#v}" "$release_version" >&2
+    say_notice "Autolith could not install ${requested_tag#v}. Keeping $release_version installed."
     return 1
   fi
 
   updated_launcher=$install_root/current/bin/autolith
   [[ -x $updated_launcher ]] ||
     fail "the updater did not publish a runnable release."
-  printf 'Autolith %s is installed.\n' "${requested_tag#v}" >&2
 }
 
 release_restart()
@@ -195,17 +248,19 @@ release_images_build()
   local marker_directory
   local temporary_marker
 
-  printf 'Building Autolith images for this machine. This happens once per release.\n' >&2
+  say_section "Autolith images"
+  say_note "building for this machine, once per release"
   "$sbcl_command" --script "$source_root/script/build-recovery.lisp" \
-    "$recovery_core"
+    "$recovery_core" 2>&1 | say_railed
   "$sbcl_command" --script "$source_root/script/build-active.lisp" \
-    "$active_core"
+    "$active_core" 2>&1 | say_railed
   marker_directory=$(dirname -- "$image_marker")
   mkdir -p -- "$marker_directory"
   temporary_marker=$marker_directory/.release-images.$$
   printf '%s:%s\n' "$release_tag" "$release_platform" > "$temporary_marker"
   chmod 600 "$temporary_marker"
   mv -f -- "$temporary_marker" "$image_marker"
+  say_done "Autolith images are ready."
 }
 
 [[ -n $home ]] || fail "HOME is not set."
