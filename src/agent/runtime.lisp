@@ -1496,14 +1496,16 @@ Return the number of requests issued so the turn's request count covers them."
   (let* ((conversation (agent-conversation agent))
          (compaction (conversation-compaction-capture conversation))
          (captured-view (conversation-compaction-view compaction))
-         (unfinished-work (task-unfinished-work-snapshot agent))
+         (unfinished-work nil)
          (*request-context-hurry-up-p* (agent-hurry-up-p agent))
          (issued 0)
          (native-usage nil))
+    ;; Announce compaction before reading job storage, which can take a while.
     (agent-observer-status
      observer
      :compaction-started
      (list :total-tokens (conversation-last-total-tokens conversation)))
+    (setf unfinished-work (task-unfinished-work-snapshot agent))
     (let* ((*provider-hosted-tools-enabled-p* (not tool-restriction-p))
            (provider (agent-provider agent))
            (native-item

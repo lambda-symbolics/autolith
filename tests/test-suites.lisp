@@ -927,6 +927,7 @@
   test-compaction-job-state-request-context
   test-compaction-unfinished-cutoff-replay
   test-compaction-unfinished-durable-repair
+  test-compaction-announced-before-job-state
   test-agent-compaction-unfinished-arrivals
   test-compaction-unfinished-failure-atomicity
   test-agent-compaction-live-child-shell

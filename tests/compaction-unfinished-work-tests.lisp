@@ -462,3 +462,36 @@
              (write-line "cleanup release" stream))
            (session-job-await job 10))))))
   nil)
+
+(-> test-compaction-announced-before-job-state () null)
+(defun test-compaction-announced-before-job-state ()
+  "Test compaction is announced before job storage, which may be large, is read."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let* ((conversation (conversation-create configuration))
+           (agent (agent-create :configuration configuration :conversation conversation
+                                :provider (compaction-tests--provider)
+                                :tool-registry (agent-test-registry) :worker nil))
+           (events nil)
+           (snapshot (symbol-function 'task-unfinished-work-snapshot)))
+      (conversation-append-user-message conversation "before compaction")
+      (test-call-with-function-replacements
+       (list (list 'task-unfinished-work-snapshot
+                   (lambda (&rest arguments)
+                     (push ':job-state events)
+                     (apply snapshot arguments))))
+       (lambda ()
+         (agent-compact-conversation
+          agent
+          (make-instance 'callback-agent-observer
+                         :status-callback (lambda (status details)
+                                            (declare (ignore details))
+                                            (push status events)
+                                            nil)))))
+      (let ((order (reverse events)))
+        (test-assert (and (member ':compaction-started order)
+                          (member ':job-state order)
+                          (< (position ':compaction-started order)
+                             (position ':job-state order)))
+                     "the compaction status precedes reading job state"))))
+  nil)
