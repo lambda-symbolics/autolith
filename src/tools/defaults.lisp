@@ -447,7 +447,7 @@
                            "enum" #("plain" "regex" "fuzzy")
                            "description" "Single-query matching mode; default plain.")
                    "constraints" (tool-string-property
-                                    "Optional space-separated path filters such as '*.lisp src/ !tests/'. Every filter must hold, except that several *.ext filters match any of them; name one directory per call. A file path filter must name an existing file. Valid with query or patterns.")
+                                    "Optional space-separated path filters such as '*.lisp src/ !tests/'. Every filter must hold, except that several *.ext filters match any of them; name at most one directory and one file per call. A file path filter must name an existing file. Valid with query or patterns.")
                    "file-offset" (tool-integer-property
                                   "Pagination cursor from next-file-offset; default 0.")
                    "max-results" (tool-integer-property

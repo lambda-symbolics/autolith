@@ -194,18 +194,25 @@ digits."
 (defun search-tool--check-constraints (tool configuration constraints)
   "Refuse CONSTRAINTS that fff would silently satisfy with no files or with every file.
 
-Filters combine with AND, so two positive directories select only files under
-both, and fff drops a file path filter matching no file and searches the whole
+Filters combine with AND, so two positive directories or two file paths select
+no file, and fff drops a file path filter matching no file and searches the whole
 workspace instead. Both read as successful searches, so they fail here."
   (let* ((tokens (search-tool--constraint-tokens constraints))
-         (directories (remove-if-not #'search-tool--directory-constraint-p tokens)))
+         (directories (remove-if-not #'search-tool--directory-constraint-p tokens))
+         (files (remove-if-not #'search-tool--file-path-constraint-p tokens)))
     (when (rest directories)
       (error 'tool-error
              :message
              (format nil "search.content constraints must all hold, so no file lies under ~{~A~^ and ~} at once. Search a common parent directory, or make one call per directory."
                      directories)
              :tool-name (tool-canonical-name tool)))
-    (dolist (token (remove-if-not #'search-tool--file-path-constraint-p tokens))
+    (when (rest files)
+      (error 'tool-error
+             :message
+             (format nil "search.content constraints must all hold, so no file is ~{~A~^ and ~} at once. Make one call per file, or search their common directory."
+                     files)
+             :tool-name (tool-canonical-name tool)))
+    (dolist (token files)
       (when (zerop (search-worker-file-count (search-tool-engine tool) configuration
                                              (format nil "**/~A" token)))
         (error 'tool-error

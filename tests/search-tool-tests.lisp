@@ -241,6 +241,14 @@
                   (test-assert (and (not (tool-result-success-p two-directories))
                                     (search "must all hold" (tool-result-content two-directories)))
                                "two directory constraints fail instead of matching nothing"))
+                (let ((two-files (search-tests--call registry context
+                                                     "search" "content"
+                                                     "patterns" #("AUTOLITH_FFF_PRIMARY")
+                                                     "constraints"
+                                                     "src/model-selection.lisp docs/search-guide.org")))
+                  (test-assert (and (not (tool-result-success-p two-files))
+                                    (search "must all hold" (tool-result-content two-files)))
+                               "two file path constraints fail instead of matching nothing"))
                 (let ((special (search-tests--call registry context
                                                    "search" "content"
                                                    "query" "*autolith-fff-special* src/")))
