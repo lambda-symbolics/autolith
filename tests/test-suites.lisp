@@ -965,6 +965,7 @@
   test-recovery-input-vault-discard
   test-recovery-input-vault-disabled-ingress
   test-recovery-input-vault-disabled-recalled-ingress
+  test-recovery-input-vault-startup-notice
   test-recovery-input-vault-recovery-startup
   test-recovery-input-vault-corrupt-startup
   test-recovery-input-vault-ordinary-startup

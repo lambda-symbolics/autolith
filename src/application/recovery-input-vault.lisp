@@ -838,7 +838,7 @@ The caller must hold CONTROLLER's lock."
             (application-recovery-input-vault--signal
              pending-pathname ':restore
              :message
-             "Recovered input storage is unavailable. Inspect /vault or use /vault-discard before restoring input."))
+             "Recovered input storage is unavailable. Inspect (vault) or use (vault-discard) before restoring input."))
           (let ((committed-p nil))
             (handler-case
                 (progn
@@ -937,7 +937,7 @@ The caller must hold CONTROLLER's lock."
                                 (make-condition
                                  'recovery-input-vault-error
                                  :message
-                                 "Recovery vault restore failed and its rollback could not be published. Use /vault to inspect the preserved state or /vault-discard to discard it."
+                                 "Vault restore and rollback failed. Use (vault) to inspect the saved input or (vault-discard) to discard it."
                                  :pathname pending-pathname
                                  :operation ':restore-rollback
                                  :cause (list condition rollback-condition))))
@@ -1005,17 +1005,20 @@ The caller must hold CONTROLLER's lock."
             text *application-recovery-input-vault-preview-width*)))
     (if (plusp (length visible)) visible "(empty input)")))
 
+(-> application-recovery-input-vault--input-count (list) (integer 0))
+(defun application-recovery-input-vault--input-count (captures)
+  "Count the saved messages across CAPTURES, including follow-ups and steering."
+  (reduce #'+ captures
+          :key (lambda (capture)
+                 (length
+                  (application-recovery-input-vault--capture-labeled-inputs capture)))
+          :initial-value 0))
+
 (-> application-recovery-input-vault-description (application list) string)
 (defun application-recovery-input-vault-description (application captures)
   "Return a bounded chronological description of validated CAPTURES."
   (with-output-to-string (stream)
-    (let ((input-count
-            (reduce #'+ captures
-                    :key (lambda (capture)
-                           (length
-                            (application-recovery-input-vault--capture-labeled-inputs
-                             capture)))
-                    :initial-value 0)))
+    (let ((input-count (application-recovery-input-vault--input-count captures)))
       (format stream
               "Recovery input vault for ~A: ~D capture~:P, ~D input~:P.~%"
               (conversation-identifier
@@ -1076,13 +1079,20 @@ The caller must hold CONTROLLER's lock."
         (return nil))
       (application-present
        application
-       (if failure
-           (format nil
-                   "Recovered input storage needs attention: ~A~%New submissions are blocked until the preserved recovery state is resolved.~%Nothing was submitted automatically.~%Use /vault to inspect, /vault-restore to restore, or /vault-discard to discard."
-                   failure)
-           (format nil
-                   "Recovered queued input is vaulted in ~D capture~:P.~%Nothing was submitted automatically.~%Use /vault to inspect, /vault-restore to restore, or /vault-discard to discard."
-                   (length captures))))
+       (list
+        (terminal-span
+         (if failure ':failure ':notice)
+         (if failure
+             (format nil "Vault storage error: ~A~%New submissions are blocked.~%" failure)
+             (format nil "~D follow-up/steer message~:P saved to vault.~%"
+                     (application-recovery-input-vault--input-count captures))))
+        (terminal-span ':dim "Use ")
+        (terminal-span ':code "(vault)")
+        (terminal-span ':dim " to inspect, ")
+        (terminal-span ':code "(vault-restore)")
+        (terminal-span ':dim " to restore, or ")
+        (terminal-span ':code "(vault-discard)")
+        (terminal-span ':dim " to discard.")))
       t)))
 
 (-> application-recovery-input-vault-present (application) null)
@@ -1100,7 +1110,7 @@ The caller must hold CONTROLLER's lock."
                      (application-recovery-input-vault-failure application)))
                (if failure
                    (format nil
-                           "No readable recovery input is vaulted. Storage warning: ~A~%Use /vault-discard to discard the preserved recovery state."
+                           "No readable input in the vault. Storage error: ~A~%Use (vault-discard) to discard the saved input."
                            failure)
                    "No recovered input is vaulted for this conversation.")))))
     (recovery-input-vault-error (condition)
@@ -1108,7 +1118,7 @@ The caller must hold CONTROLLER's lock."
       (application-present
        application
        (format nil
-               "Recovery input vault could not be read: ~A~%Nothing was submitted automatically. Use /vault-discard to discard this conversation's vault."
+               "Could not read vault: ~A~%Use (vault-discard) to discard this conversation's vault."
                condition))))
   nil)
 

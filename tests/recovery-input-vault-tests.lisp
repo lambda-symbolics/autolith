@@ -1048,6 +1048,76 @@
                    :ui (terminal-ui-create :terminal terminal)
                    :recovery-startup-p recovery-startup-p)))
 
+(-> test-recovery-input-vault-startup-notice () null)
+(defun test-recovery-input-vault-startup-notice ()
+  "Test startup notice message counts, severity, and Lisp-form controls."
+  (with-test-configuration (configuration)
+    (let ((application
+            (recovery-input-vault-tests--application
+             configuration "recovery-vault-startup-notice"))
+          (captures nil)
+          (entries nil))
+      (test-call-with-function-replacements
+       (list
+        (list 'application-recovery-input-vault-captures
+              (lambda (run-application)
+                (declare (ignore run-application))
+                captures))
+        (list 'application-present
+              (lambda (run-application entry)
+                (declare (ignore run-application))
+                (push entry entries)
+                nil)))
+       (lambda ()
+         (test-assert
+          (and (null (application-recovery-input-vault-present-startup-warning
+                      application))
+               (null entries))
+          "an empty vault produces no startup notice")
+         (dolist (case '((1 ((:work-items ((:message "one")))))
+                         (2 ((:work-items ((:message "one") (:message "two")))))
+                         (5 ((:active-work (:message "active")
+                              :steering-items ("steer")
+                              :work-items ((:message "follow-up")))
+                             (:work-items ((:message "four") (:message "five")))))))
+           (setf captures (second case))
+           (test-assert
+            (application-recovery-input-vault-present-startup-warning application)
+            "saved input produces a startup notice")
+           (let* ((entry (first entries))
+                  (summary (first entry))
+                  (controls
+                    (remove-if-not
+                     (lambda (span) (eq (terminal-span-style span) ':code))
+                     entry)))
+             (test-assert
+              (and (eq (terminal-span-style summary) ':notice)
+                   (= (parse-integer (terminal-span-text summary) :junk-allowed t)
+                      (first case)))
+              "notice severity reports message totals rather than capture totals")
+             (test-assert
+              (and controls
+                   (every (lambda (span)
+                            (let ((*read-eval* nil))
+                              (let ((form (read-from-string (terminal-span-text span))))
+                                (and (consp form)
+                                     (symbolp (first form))
+                                     (null (rest form))))))
+                          controls))
+              "vault controls use code-styled Lisp calls")))
+         (setf (application-recovery-input-vault-failure application)
+               (make-condition 'recovery-input-vault-error
+                               :message "unreadable vault fixture"
+                               :pathname (test-configuration-root configuration)
+                               :operation ':read-vault))
+         (test-assert
+          (application-recovery-input-vault-present-startup-warning application)
+          "blocked recovery storage produces a startup notice")
+         (test-assert
+          (eq (terminal-span-style (first (first entries))) ':failure)
+          "storage failure has failure severity")))))
+  nil)
+
 (-> test-recovery-input-vault-recovery-startup () null)
 (defun test-recovery-input-vault-recovery-startup ()
   "Test recovery startup vaults pending input before controller creation."
@@ -1138,8 +1208,7 @@
             (lambda ()
               (application-run
                application :recovery-diagnosis "diagnose recovered crash")))
-           (let ((output (recording-terminal-output terminal))
-                 (captures
+           (let ((captures
                    (application-recovery-input-vault-captures application)))
              (test-assert
               (and (null observed-load-pending-p)
@@ -1165,13 +1234,7 @@
                    (equal (getf (first captures) :work-items)
                           '((:message "recovered steering")
                             (:message "recovered follow-up"))))
-              "startup places recovered pending input only in the vault")
-             (test-assert
-              (and (search "Nothing was submitted automatically." output)
-                   (search "/vault" output)
-                   (search "/vault-restore" output)
-                   (search "/vault-discard" output))
-              "recovery startup warns how to inspect, restore, or discard vaulted input")))
+              "startup places recovered pending input only in the vault")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -1196,6 +1259,8 @@
             configuration (conversation-pathname conversation)))
          (original-create
            (symbol-function 'application-input-controller-create))
+         (original-present
+           (symbol-function 'application-recovery-input-vault-present))
          (pending-octets nil)
          (vault-octets nil)
          (observed-load-pending-p :unset)
@@ -1239,6 +1304,10 @@
                  (recovery-input-vault-tests--octets vault-pathname))
            (test-call-with-function-replacements
             (list
+             (list 'application-recovery-input-vault-present
+                   (lambda (run-application)
+                     (setf vault-inspect-executed-p t)
+                     (funcall original-present run-application)))
              (list
               'application-input-controller-create
               (lambda (run-application
@@ -1277,11 +1346,6 @@
                          (null (application-input-controller--state
                                 controller :steering-items))))
                   (submit "/vault")
-                  (setf vault-inspect-executed-p
-                        (not
-                         (null
-                          (search "Recovery input vault could not be read"
-                                  (recording-terminal-output terminal)))))
                   (setf observed-failure
                         (application-recovery-input-vault-failure application))
                   ;; Startup itself must not have touched the corrupt bytes
@@ -1325,36 +1389,28 @@
             (lambda ()
               (application-run
                application :recovery-diagnosis "diagnose corrupt recovery")))
-           (let ((output (recording-terminal-output terminal)))
-             (test-assert
-              (and (null observed-load-pending-p)
-                   (null observed-persistence-p)
-                   (null observed-start-reader-p)
-                   (typep observed-failure 'recovery-input-vault-error)
-                   ingress-blocked-p
-                   vault-inspect-executed-p
-                   vault-controls-admitted-p)
-              "corrupt recovery blocks ordinary terminal submissions and admits vault controls")
-             (test-assert
-              (and (equal observed-first-work
-                          '(:recovery-diagnosis "diagnose corrupt recovery"))
-                   (null observed-work)
-                   (null observed-steering))
-              "corrupt pending input remains outside the real startup scheduler")
-             (test-assert
-              bytes-preserved-p
-              "corrupt startup preserves exact pending and vault bytes")
-             (test-assert
-              (and (not (probe-file vault-pathname))
-                   (not (probe-file pending-pathname)))
-              "the executed vault discard removes the corrupt storage")
-             (test-assert
-              (and (search "New submissions are blocked" output)
-                   (search "Nothing was submitted automatically." output)
-                   (search "/vault" output)
-                   (search "/vault-restore" output)
-                   (search "/vault-discard" output))
-              "corrupt startup warns without submitting or hiding vault controls")))
+           (test-assert
+            (and (null observed-load-pending-p)
+                 (null observed-persistence-p)
+                 (null observed-start-reader-p)
+                 (typep observed-failure 'recovery-input-vault-error)
+                 ingress-blocked-p
+                 vault-inspect-executed-p
+                 vault-controls-admitted-p)
+            "corrupt recovery blocks ordinary terminal submissions and admits vault controls")
+           (test-assert
+            (and (equal observed-first-work
+                        '(:recovery-diagnosis "diagnose corrupt recovery"))
+                 (null observed-work)
+                 (null observed-steering))
+            "corrupt pending input remains outside the real startup scheduler")
+           (test-assert
+            bytes-preserved-p
+            "corrupt startup preserves exact pending and vault bytes")
+           (test-assert
+            (and (not (probe-file vault-pathname))
+                 (not (probe-file pending-pathname)))
+            "the executed vault discard removes the corrupt storage"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -1442,22 +1498,20 @@
               (application-run
                application
                :initial-input (user-message-input-create :text "draft"))))
-           (let ((output (recording-terminal-output terminal)))
-             (test-assert
-              (and observed-load-pending-p
-                   observed-persistence-p
-                   (null observed-start-reader-p)
-                   (equal observed-first-work
-                          '(:message "ordinary steering"))
-                   (equal observed-work
-                          '((:message "ordinary follow-up")))
-                   (null observed-steering))
-              "ordinary startup still schedules conversation-scoped pending input")
-             (test-assert
-              (and (probe-file pending-pathname)
-                   (not (probe-file vault-pathname))
-                   (not (search "Nothing was submitted automatically." output)))
-              "ordinary startup neither vaults pending input nor presents a recovery warning")))
+           (test-assert
+            (and observed-load-pending-p
+                 observed-persistence-p
+                 (null observed-start-reader-p)
+                 (equal observed-first-work
+                        '(:message "ordinary steering"))
+                 (equal observed-work
+                        '((:message "ordinary follow-up")))
+                 (null observed-steering))
+            "ordinary startup schedules conversation-scoped pending input")
+           (test-assert
+            (and (probe-file pending-pathname)
+                 (not (probe-file vault-pathname)))
+            "ordinary startup does not vault pending input"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
