@@ -721,6 +721,12 @@ autolith localgroup detach SESSION-ID
 autolith localgroup kill   SESSION-ID
 #+END_SRC
 
+Use a full =SESSION-ID= or a prefix that matches one session. Prefixes accept
+IDs with or without the display hyphen, for example =b=, =b-6=, or =b6= for
+=b-6uouHJ=. Full IDs take priority over prefix matches. If a prefix matches
+more than one session, the error lists the matching IDs; use a longer prefix.
+Current IDs are case-sensitive. Legacy hexadecimal IDs accept either case.
+
 =tell= uses input to tell something to a session and resumes a paused session.
 =pause= cancels active work and holds queued primary work.
 =kill= requests graceful shutdown.

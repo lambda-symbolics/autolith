@@ -228,6 +228,113 @@
                                                ':ignore))))
   nil)
 
+(-> test-localgroup-session-prefixes () null)
+(defun test-localgroup-session-prefixes ()
+  "Test CLI session selection by unique canonical, displayed, and legacy prefixes."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (configuration-ensure-directories configuration)
+    (let ((calls nil)
+          (*standard-output* (make-string-output-stream)))
+      (labels ((publish (session-id)
+                 "Publish a private discovery record for SESSION-ID."
+                 (snapshot-write
+                  (localgroup-registry-pathname configuration session-id)
+                  (list :localgroup-endpoint
+                        :version image-daemon:*daemon-registry-version*
+                        :session-id session-id :pid 1 :address "127.0.0.1"
+                        :port 1 :token "prefix-test-token"
+                        :created-at (get-universal-time))))
+
+               (invoke (arguments)
+                 "Run one CLI command and return its single endpoint call."
+                 (setf calls nil)
+                 (let ((command (parse-command-line (main-localgroup-command)
+                                                    arguments)))
+                   (funcall (command-handler command) command))
+                 (test-assert (= (length calls) 1)
+                              "a selected session receives exactly one operation")
+                 (first calls))
+
+               (select (selector session-id)
+                 "Verify SELECTOR routes a tell request to SESSION-ID."
+                 (test-assert
+                  (equal (invoke (list "tell" selector "message"))
+                         (list session-id ':tell '(:message "message")))
+                  "a unique selector routes the message to its session"))
+
+               (reject (selector candidates)
+                 "Verify SELECTOR fails before an endpoint call, naming CANDIDATES."
+                 (let ((condition
+                         (handler-case
+                             (progn
+                               (invoke (list "tell" selector "message"))
+                               nil)
+                           (localgroup-error (condition)
+                             condition))))
+                   (test-assert
+                    (and condition
+                         (eq (daemon-error-operation condition) ':discover)
+                         (string= (daemon-error-session-id condition) selector)
+                         (null calls)
+                         (every (lambda (session-id)
+                                  (search (session-identifier-display session-id)
+                                          (autolith-error-message condition)))
+                                candidates))
+                    "a failed selector reports discovery details without an endpoint call"))))
+        (test-call-with-function-replacements
+         (list
+          (list 'localgroup--client-configuration (lambda () configuration))
+          (list 'localgroup-query-record
+                (lambda (entry operation &optional arguments)
+                  (let ((session-id (localgroup--record-session-id (rest entry))))
+                    (push (list session-id operation arguments) calls)
+                    (list :ok :operation operation :session-id session-id))))
+          (list 'localgroup-attach-record
+                (lambda (client-configuration entry mode)
+                  (declare (ignore client-configuration))
+                  (push (list (localgroup--record-session-id (rest entry))
+                              ':attach mode)
+                        calls)
+                  nil)))
+         (lambda ()
+           (reject "b" nil)
+           (publish "b6uouHJ")
+           (dolist (selector '("b" "b-" "b6" "b-6" "b6uou" "b-6uou"
+                               "b6uouHJ" "b-6uouHJ"))
+             (select selector "b6uouHJ"))
+           (dolist (selector '("" "z" "B" "b--6" "b6uouHJx" "-"))
+             (reject selector nil))
+           (dolist (session-id '("b6uouHK" "c6uouHJ" "abcdef1"
+                                 "abcdef123456" "abcdef234567"))
+             (publish session-id))
+           (dolist (selector '("b" "b-" "b6" "b-6" "b6uouH" "b-6uouH"))
+             (reject selector '("b6uouHJ" "b6uouHK")))
+           (dolist (selector '("a" "abc" "ABC"))
+             (reject selector '("abcdef123456" "abcdef234567")))
+           (dolist (case '(("b6uouHJ" "b6uouHJ")
+                           ("b-6uouHJ" "b6uouHJ")
+                           ("abcdef1" "abcdef1")
+                           ("a-bcdef1" "abcdef1")
+                           ("a-b" "abcdef1")
+                           ("abcdef12" "abcdef123456")
+                           ("ABCDEF12" "abcdef123456")
+                           ("ABCDEF123456" "abcdef123456")))
+             (select (first case) (second case)))
+           (dolist (case '((("tell" "c" "message")
+                            ("c6uouHJ" :tell (:message "message")))
+                           (("pause" "c") ("c6uouHJ" :pause nil))
+                           (("detach" "c") ("c6uouHJ" :detach nil))
+                           (("kill" "c") ("c6uouHJ" :kill nil))
+                           (("attach" "c") ("c6uouHJ" :attach :control))
+                           (("attach" "c-6" "--read-only")
+                            ("c6uouHJ" :attach :read-only))
+                           (("attach" "c6" "--take-over")
+                            ("c6uouHJ" :attach :take-over))))
+             (test-assert (equal (invoke (first case)) (second case))
+                          "each CLI operation resolves its session prefix")))))))
+  nil)
+
 (-> test-localgroup-protocol () null)
 
 (defun test-localgroup-protocol ()
