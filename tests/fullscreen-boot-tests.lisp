@@ -139,6 +139,27 @@
   nil)
 
 
+(-> test-fullscreen-boot-disabled () null)
+(defun test-fullscreen-boot-disabled ()
+  "Open the listener at once when the boot screen is turned off."
+  (let ((terminal (make-instance 'recording-terminal :columns 80 :rows 24))
+        (waits 0))
+    (with-terminal-ui (ui (fullscreen-test--ui terminal))
+      (test-assert (eq ':start
+                       (terminal-ui-boot-sequence
+                        ui :screen-p nil :linger-p t
+                           :wait-function (lambda (seconds)
+                                            (declare (ignore seconds))
+                                            (incf waits))))
+                   "a disabled boot screen starts the listener")
+      (test-assert (zerop waits) "a disabled boot screen neither animates nor waits for Space")
+      (test-assert (fullscreen-terminal-ui-active-p ui) "the fullscreen terminal is still acquired")
+      (test-assert (not (search (second (first *terminal-ui-boot-sequence-phases*))
+                                (recording-terminal-output terminal)))
+                   "no boot phase is painted")))
+  nil)
+
+
 (-> test-fullscreen-boot-linger () null)
 (defun test-fullscreen-boot-linger ()
   "Hold the boot screen for Space, rotate tips on schedule, and report interrupts."

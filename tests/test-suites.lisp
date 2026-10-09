@@ -101,6 +101,7 @@
   test-terminal-fullscreen-failure-and-lifecycle
   test-fullscreen-boot-geometry
   test-fullscreen-boot-sequence
+  test-fullscreen-boot-disabled
   test-fullscreen-boot-cursor-lifecycle
   test-fullscreen-boot-linger
   test-fullscreen-boot-reader-diversion

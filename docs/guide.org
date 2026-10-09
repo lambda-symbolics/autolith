@@ -256,6 +256,10 @@ waiting boot screen halts the session. Turn the wait off for future launches
 with =(setf (config :boot-screen-linger-p) nil)= or for one launch with
 =AUTOLITH_BOOT_LINGER=off=, and change the rotation with
 =(setf (config :boot-screen-tip-seconds) 30)= or =AUTOLITH_BOOT_TIP_SECONDS=.
+The animation takes =(config :boot-screen-seconds)= in total, 3.5 by default
+and also set by =AUTOLITH_BOOT_DURATION=, shared evenly by its phases. Skip the
+boot screen entirely with =(setf (config :boot-screen-p) nil)= or
+=AUTOLITH_BOOT_SCREEN=off=; =(settings)= lists all four.
 
 ** Almighty theme
 

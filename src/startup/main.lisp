@@ -461,6 +461,10 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                     (localgroup-start application)
                     (when (eq (terminal-ui-boot-sequence
                                ui
+                               :screen-p (config :boot-screen-p
+                                                 (application-configuration application))
+                               :duration (config :boot-screen-seconds
+                                                 (application-configuration application))
                                :linger-p (config :boot-screen-linger-p
                                                  (application-configuration application))
                                :tip-seconds (config :boot-screen-tip-seconds

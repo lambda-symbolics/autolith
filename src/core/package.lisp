@@ -1111,6 +1111,7 @@
                 #:integer-setting
                 #:make-setting-registry
                 #:pathname-setting
+                #:real-setting
                 #:setting
                 #:setting-coerce
                 #:setting-default
