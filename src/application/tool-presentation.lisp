@@ -2071,27 +2071,143 @@ user sees the existing report rather than a new one."
          :rows rows))
       (call-next-method)))
 
+(-> application--shell-capture-header (string) (option list))
+(defun application--shell-capture-header (line)
+  "Return LINE's capture label, retained and observed bytes, and completeness.
+
+LINE is a shell.run capture header such as \"stdout: 12 bytes retained, 12 bytes
+observed; capture-complete yes; status complete\"; any other line returns NIL."
+  (let ((colon (search ": " line))
+        (retained-marker (search " bytes retained, " line))
+        (observed-marker (search " bytes observed; capture-complete " line)))
+    (when (and colon retained-marker observed-marker (< colon retained-marker observed-marker))
+      (let ((retained (parse-integer line :start (+ colon 2) :end retained-marker
+                                          :junk-allowed t))
+            (observed (parse-integer line :start (+ retained-marker
+                                                    (length " bytes retained, "))
+                                          :end observed-marker :junk-allowed t)))
+        (when (and retained observed)
+          (list :label (subseq line 0 colon)
+                :retained retained
+                :observed observed
+                :complete-p (and (search "capture-complete yes" line) t)))))))
+
+(-> application--shell-result-parts (string) list)
+(defun application--shell-result-parts (output)
+  "Split shell.run OUTPUT into its execution line, notes, and capture sections.
+
+Return a plist with :EXIT, :EXECUTION, :NOTES and :SECTIONS. Each section is a
+capture header plist extended with the :LINES of its preview. Log references
+and byte counts are kept for the model and are not part of any preview."
+  (let ((lines (application--display-lines output))
+        (exit nil)
+        (execution nil)
+        (notes nil)
+        (sections nil))
+    (when (and lines (uiop:string-prefix-p "exit " (first lines)))
+      (setf exit (pop lines)))
+    (when (and lines (uiop:string-prefix-p "Execution: " (first lines)))
+      (setf execution (pop lines)))
+    (loop while lines
+          do (let* ((line (pop lines))
+                    (header (application--shell-capture-header line)))
+               (cond
+                 (header
+                  (when (and lines (uiop:string-prefix-p "Log: " (first lines)))
+                    (pop lines))
+                  (push (append header (list :lines nil)) sections))
+                 ((or (uiop:string-prefix-p "Output capture unavailable." line)
+                      (search " preview unavailable: " line)
+                      (uiop:string-prefix-p "Log metadata diagnostic: " line))
+                  (push line notes)
+                  (when (and lines (uiop:string-prefix-p "Log: " (first lines)))
+                    (pop lines)))
+                 (t
+                  ;; Output before any capture header belongs to one plain section.
+                  (unless sections
+                    (push (list :label "output" :retained 0 :observed 0
+                                :complete-p t :lines nil)
+                          sections))
+                  (push line (getf (first sections) :lines))))))
+    (list :exit exit
+          :execution execution
+          :notes (nreverse notes)
+          :sections (loop for section in (nreverse sections)
+                          collect (let ((section-lines (getf section :lines)))
+                                    (loop while (and section-lines
+                                                     (string= (first section-lines) ""))
+                                          do (pop section-lines))
+                                    (setf (getf section :lines) (nreverse section-lines))
+                                    section)))))
+
+(-> application--shell-execution-rows ((option string)) list)
+(defun application--shell-execution-rows (execution)
+  "Return a highlighted row when EXECUTION reports a timeout or cancellation."
+  (when execution
+    (append
+     (when (search "timeout yes" execution)
+       (list (list (terminal-span ':failure "timed out"))))
+     (when (search "cancelled yes" execution)
+       (list (list (terminal-span ':notice "cancelled")))))))
+
+(-> application--shell-section-rows (list boolean) list)
+(defun application--shell-section-rows (section labeled-p)
+  "Return SECTION's preview rows, headed by its stream name when LABELED-P."
+  (let* ((lines (getf section :lines))
+         (stderr-p (string= (getf section :label) "stderr"))
+         (text (format nil "~{~A~^~%~}"
+                       (mapcar (lambda (line)
+                                 (if (and (uiop:string-prefix-p "[" line)
+                                          (search " retained bytes omitted from preview]" line))
+                                     "…"
+                                     line))
+                               lines))))
+    (append
+     (when labeled-p
+       (list (application--tool-section-row (getf section :label))))
+     (unless (getf section :complete-p)
+       (list (list (terminal-span
+                    ':notice
+                    (format nil "output truncated: ~:D of ~:D bytes kept"
+                            (getf section :retained)
+                            (getf section :observed))))))
+     (when lines
+       (application--preview-rows text
+                                  (if stderr-p ':failure ':dim)
+                                  *application-tool-output-lines*
+                                  :gutter "│ ")))))
+
 (defmethod application-tool-result-entry
     ((tool shell-run-tool) (application application) record)
-  "Present shell output beneath an exit-status detail."
-  (if (application--tool-result-success-p record)
-      (let* ((lines (application--display-lines
-                     (or (getf (rest record) :output) "")))
-             (status (and lines
-                          (uiop:string-prefix-p "exit " (first lines))
-                          (first lines)))
-             (output-lines (if status (rest lines) lines)))
-        (application--tool-result-entry
-         application
-         record
-         :detail status
-         :rows (when output-lines
-                 (application--preview-rows
-                  (format nil "~{~A~^~%~}" output-lines)
-                  ':dim
-                  *application-tool-output-lines*
-                  :gutter "│ "))))
-      (call-next-method)))
+  "Present a command's exit status and a short output preview.
+
+The exit status is highlighted in the header. Execution and capture metadata
+appear only when something went wrong, such as a timeout or truncated output;
+log references and byte counts are for the model."
+  (let ((output (or (getf (rest record) :output) "")))
+    (if (uiop:string-prefix-p "exit " output)
+        (let* ((parts (application--shell-result-parts output))
+               (exit (getf parts :exit))
+               (sections (remove-if (lambda (section)
+                                      (and (null (getf section :lines))
+                                           (getf section :complete-p)))
+                                    (getf parts :sections)))
+               (clean-p (and (string= exit "exit 0")
+                             (application--tool-result-success-p record))))
+          (application--tool-entry
+           application
+           :style (if clean-p ':success ':failure)
+           :header (format nil "~:[✗~;✓~] ~A ~A"
+                           clean-p (getf (rest record) :tool) exit)
+           :detail (application--tool-result-timing record)
+           :rows (append
+                  (application--shell-execution-rows (getf parts :execution))
+                  (loop for note in (getf parts :notes)
+                        collect (list (terminal-span ':notice note)))
+                  (loop for section in sections
+                        append (application--shell-section-rows
+                                section (and (rest (getf parts :sections)) t))))))
+        (call-next-method))))
 
 (defmethod application-tool-result-entry
     ((tool lisp-tool) (application application) record)

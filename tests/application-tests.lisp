@@ -2585,6 +2585,43 @@
       (test-assert (and (search "exit 3" text)
                         (search "command output" text))
                    "shell.run results separate exit status from command output"))
+    (dolist (case
+              (list
+               (list "a clean run" ':ok
+                     (format nil "exit 0~%Execution: exited; timeout no; cancelled no~%~
+                                  combined output: 12 bytes retained, 12 bytes observed; ~
+                                  capture-complete yes; status complete~%~
+                                  Log: shell-log:a/b/c/output~%hello world~%")
+                     ':success "✓ shell.run exit 0" '("hello world"))
+               (list "a failing exit" ':ok
+                     (format nil "exit 2~%Execution: exited; timeout no; cancelled no~%~
+                                  combined output: 4 bytes retained, 4 bytes observed; ~
+                                  capture-complete yes; status complete~%~
+                                  Log: shell-log:a/b/c/output~%oops~%")
+                     ':failure "✗ shell.run exit 2" '("oops"))
+               (list "a timeout with truncated separate streams" ':error
+                     (format nil "exit unavailable~%Execution: timed-out; timeout yes; cancelled no~%~
+                                  stdout: 10 bytes retained, 99 bytes observed; ~
+                                  capture-complete no; status truncated~%~
+                                  Log: shell-log:a/b/c/output~%partial~%~%~
+                                  stderr: 5 bytes retained, 5 bytes observed; ~
+                                  capture-complete yes; status complete~%~
+                                  Log: shell-log:a/b/c/error~%boom~%")
+                     ':failure "✗ shell.run exit unavailable"
+                     '("timed out" "output truncated: 10 of 99 bytes kept"
+                       "stdout" "partial" "stderr" "boom"))))
+      (destructuring-bind (label status output style header shown) case
+        (let* ((entry (conversation-record-entry
+                       application
+                       (list :tool-result :seq 7 :time 0 :call-id "shell"
+                             :tool "shell.run" :status status :output output)))
+               (text (test-terminal-row-text entry)))
+          (test-assert
+           (and (equal (first entry) (terminal-span style header))
+                (every (lambda (expected) (search expected text)) shown)
+                (notany (lambda (metadata) (search metadata text))
+                        '("Execution" "bytes retained" "shell-log:" "Log:")))
+           (format nil "shell.run shows ~A without capture metadata: ~S" label text)))))
     (let ((rule (conversation-record-entry
                  application
                  (list :summary :seq 10 :time 0 :through-seq 9 :summary "older work"))))
