@@ -2155,7 +2155,8 @@ removes it."
              :appended-regions regions)
             (progn
               (when (plusp (length display-output))
-                (terminal--write-safe-text terminal display-output))
+                (terminal-ui--append-output
+                 ui plain-output display-output :regions regions))
               (terminal-ui--paint-live ui)))
         (terminal-flush terminal))))
   ui)

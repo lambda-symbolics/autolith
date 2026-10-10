@@ -235,6 +235,89 @@
       (terminal-ui-stop ui)))
   nil)
 
+(-> test-detached-fullscreen-streaming () null)
+(defun test-detached-fullscreen-streaming ()
+  "Present a completed streamed answer exactly once after a late relay attach."
+  (dolist (initially-attached-p '(nil t))
+    (with-test-configuration (configuration)
+      (let* ((conversation (conversation-create configuration))
+             (terminal (localgroup-terminal-create))
+             (ui (fullscreen-test--ui terminal))
+             (application (make-instance 'application
+                                         :configuration configuration
+                                         :conversation conversation
+                                         :ui ui))
+             (observer (application-agent-observer application))
+             (send-text (callback-agent-observer-text-callback observer))
+             (send-status (callback-agent-observer-status-callback observer))
+             (question "May I proceed with the startup wrapper?")
+             (answer (format nil "The patch is verified.~%~A" question))
+             (attachment nil))
+        (labels ((attach ()
+                   "Attach a fresh terminal client and apply its repaint dimensions."
+                   (setf attachment
+                         (make-instance 'image-daemon:attachment
+                                        :socket nil :mode ':control
+                                        :stream (make-two-way-stream
+                                                 (make-string-input-stream "")
+                                                 (make-string-output-stream))))
+                   (image-daemon:relay-attach terminal attachment
+                                              :rows 36 :columns 67 :styled-p nil
+                                              :session-id "detached-stream-test")
+                   (terminal-ui-resize ui 67 :rows 36))
+
+                 (transcript ()
+                   "Return the fullscreen transcript's plain committed rows."
+                   (let ((viewport (fullscreen-terminal-ui-viewport ui)))
+                     (format nil "~{~A~^~%~}"
+                             (loop for index below
+                                   (clinedi:transcript-viewport-row-count viewport)
+                                   collect (fullscreen-test--row-text ui index))))))
+          (unwind-protect
+               (with-terminal-ui (active ui)
+                 (application-render-records application)
+                 (when initially-attached-p
+                   (attach))
+                 (funcall send-status :provider-request-started nil)
+                 (funcall send-text (format nil "The patch is verified.~%"))
+                 (when initially-attached-p
+                   (image-daemon:relay-detach terminal attachment)
+                   (setf attachment nil)
+                   (terminal-ui-detach active))
+                 (funcall send-text question)
+                 (conversation-append-provider-item
+                  conversation
+                  (json-object "type" "message"
+                               "role" "assistant"
+                               "status" "completed"
+                               "phase" "final_answer"
+                               "content" (json-array
+                                          (json-object "type" "output_text"
+                                                       "text" answer))))
+                 (funcall send-status :provider-request-completed nil)
+                 (application-render-records application)
+                 (test-assert
+                  (= 1 (terminal-tests--substring-count question (transcript)))
+                  "Durable reconciliation retains the detached final answer once")
+                 (test-assert
+                  (not (search question (image-daemon:relay-history-text terminal)))
+                  "Detached fullscreen streaming does not spill into normal-screen relay text")
+                 (attach)
+                 (let ((frame (fullscreen-test--frame active)))
+                   (test-assert
+                    (= 1 (count-if (lambda (row)
+                                     (search question (clinedi:ansi-strip row)))
+                                   frame))
+                    "A late client receives the final permission question in its fullscreen frame"))
+                 (application-render-records application)
+                 (terminal-ui-resize active 50 :rows 20)
+                 (test-assert
+                  (= 1 (terminal-tests--substring-count question (transcript)))
+                  "Reconciliation and reflow present the completed answer without duplication"))
+            (when attachment
+              (ignore-errors (image-daemon:relay-detach terminal attachment))))))))
+  nil)
+
 
 ;;;; -- Transcript Clicks --
 

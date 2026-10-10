@@ -107,6 +107,7 @@
   test-fullscreen-boot-reader-diversion
   test-terminal-fullscreen-relayed-wheel
   test-terminal-fullscreen-relay-startup-output
+  test-detached-fullscreen-streaming
   test-fullscreen-authentication-lifecycle
   test-terminal-fullscreen-clicks
   test-localgroup-click-events
