@@ -2368,17 +2368,33 @@ rows."
            (if invocation
                (application--command-presentation-entry invocation entry)
                entry)))
-    (with-terminal-ui-locked (ui)
-      (let* ((identifier
-               (incf (application-presentation-counter application)))
-             (emitted-p
-               (terminal-ui-append-finalized
-                ui
-                (list :presentation identifier)
-                presented-entry)))
-        (when (and invocation emitted-p)
-          (setf *application-command-presentation-pending-p* nil))
-        emitted-p))))
+    (when (and *application-command-presentation-capture-p*
+               (not (null entry)))
+      (let ((text (if ui
+                      (nth-value 0 (terminal-ui--finalized-content ui entry))
+                      (concatenate
+                       'string
+                       (if (stringp entry)
+                           entry
+                           (terminal--spans-text entry))
+                       (string #\Newline)))))
+        (push text *application-command-presentation-text*)))
+    (if (null ui)
+        (progn
+          (when invocation
+            (setf *application-command-presentation-pending-p* nil))
+          t)
+        (with-terminal-ui-locked (ui)
+          (let* ((identifier
+                   (incf (application-presentation-counter application)))
+                 (emitted-p
+                   (terminal-ui-append-finalized
+                    ui
+                    (list :presentation identifier)
+                    presented-entry)))
+            (when (and invocation emitted-p)
+              (setf *application-command-presentation-pending-p* nil))
+            emitted-p)))))
 
 (-> application--assistant-message-record-text (list) (option string))
 (defun application--assistant-message-record-text (record)

@@ -731,6 +731,12 @@ without changing the registry."
 (defvar *application-command-presentation-pending-p* nil
   "Whether the current command invocation still needs its presentation heading.")
 
+(defvar *application-command-presentation-text* nil
+  "The reverse-ordered finalized text captured from command presentations.")
+
+(defvar *application-command-presentation-capture-p* nil
+  "Whether finalized command presentations should be collected for ACP output.")
+
 (defvar *application-command-interactive-p* nil
   "Whether the current local command call may acquire omitted arguments interactively.")
 
