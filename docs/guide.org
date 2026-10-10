@@ -1631,6 +1631,11 @@ Idle completions within a one-second window share one automatic turn through the
 ordinary controller. Busy turns receive results at their next safe request
 boundary. With =notify=, receive results on the next ordinary turn instead.
 
+An active goal or mission does not urge the model on while a job that will wake
+it is queued, running or undelivered. Its automatic continuations wait, the
+goal stays active, and the transcript shows =∙ continuing with job results=
+when the wakeup arrives. The goal's continuations resume after that turn.
+
 Delivery receipts survive restart and conversation compaction. Notification
 reconstruction reads terminal artifacts without repeating job effects. Cancellation,
 paused or terminal missions, spent budgets, and conversation ownership constrain
