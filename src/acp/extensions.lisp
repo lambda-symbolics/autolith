@@ -15,7 +15,7 @@
     ("_autolith/models" acp-extension-models :read)
     ("_autolith/set-setting" acp-extension-set-setting :write)
     ("_autolith/operations" acp-extension-operations :read)
-    ("_autolith/invoke" acp-extension-invoke :write)
+    ("_autolith/invoke" acp-extension-invoke :read)
     ("_autolith/conversations" acp-extension-conversations :read)
     ("_autolith/jobs" acp-extension-jobs :read)
     ("_autolith/job" acp-extension-job :read)

@@ -30,8 +30,8 @@
            (test-assert (equal "ok" (agentcomms:json-get catalog "outcome")) "the catalog is readable")
            (test-assert (and supported (eq t (agentcomms:json-get supported "admitted")))
                         "idle tools are admitted even when held during an active turn")
-           (test-assert (and terminal (eq t (agentcomms:json-get terminal "terminalOwning")))
-                        "the settings picker requires a terminal"))
+            (test-assert (and terminal (eq t (agentcomms:json-get terminal "terminalWithoutArguments")))
+                         "the settings picker requires arguments for headless use"))
          (acp-service--call-with-operation
           service session
           (lambda ()
@@ -62,7 +62,39 @@
                         "JSON member names retain their case")
            (test-assert (null (gethash "CamelCase" (gethash "nested" decoded))) "JSON null is not false")
            (test-assert (json-false-p (gethash "false" (gethash "nested" decoded))) "JSON false is distinct"))
-         (acp-session-test-check-turns client '("invoke") '("end-turn"))
+         (dolist (request (list
+                             (agentcomms:json-object "operation" "skills")
+                             (agentcomms:json-object "operation" "skills")
+                             (agentcomms:json-object "operation" "hurry-up"
+                                                    "arguments"
+                                                    (agentcomms:json-object "input" "on"))
+                             (agentcomms:json-object "operation" "hurry-up"
+                                                    "arguments"
+                                                    (agentcomms:json-object "text" "off"))))
+           (setf (gethash "sessionId" request) identifier)
+           (let* ((result (agentcomms:client-agent-request client "_autolith/invoke" request))
+                  (value (agentcomms:json-get result "value"))
+                  (text (and value (agentcomms:json-get value "text"))))
+             (test-assert (equal "ok" (agentcomms:json-get result "outcome"))
+                          "ordinary application commands invoke through ACP")
+             (test-assert
+              (or (not (string= "skills" (agentcomms:json-get request "operation")))
+                  (and (stringp text) (plusp (length text))))
+                "ordinary command invocation returns presented text when it presents")))
+         (let ((request (agentcomms:json-object
+                         "sessionId" identifier
+                         "operation" "permissions"
+                         "arguments" (agentcomms:json-object "input" "auto"))))
+           (let ((result (agentcomms:client-agent-request client "_autolith/invoke" request)))
+             (test-assert (equal "ok" (agentcomms:json-get result "outcome"))
+                          "exclusive-without-arguments command accepts supplied arguments")
+             (test-assert (plusp (length (agentcomms:json-get
+                                          (agentcomms:json-get result "value") "text")))
+                          "argument-bearing command returns presented text")))
+         (acp-session-test-check-turns
+          client
+          '("invoke" "invoke" "invoke" "invoke" "invoke" "invoke")
+          '("end-turn" "end-turn" "end-turn" "end-turn" "end-turn" "end-turn"))
          (dolist (request (list (agentcomms:json-object "operation" "settings")
                                 (agentcomms:json-object "operation" "missing-operation")))
            (setf (gethash "sessionId" request) identifier)
