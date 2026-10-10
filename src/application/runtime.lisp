@@ -3346,7 +3346,7 @@ continuation turns, so the notice names what woke the model."
                  application
                  (list (terminal-span
                         ':dim
-                        (format nil "~D relevant memor~:@P exist~:[~;s~]"
+                        (format nil "@ ~D relevant memor~:@P exist~:[~;s~]"
                                 count (= count 1)))))
                 (setf related-memories-shown-p t))))
            (:provider-progress

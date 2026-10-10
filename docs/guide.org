@@ -360,7 +360,7 @@ Because the viewport owns the mouse, hold =Shift= while dragging to select text
 with the terminal emulator. Fullscreen history lives in the application rather
 than the terminal emulator's native scrollback.
 
-For input with matching saved memories, a dim =N relevant memories exist= line
+For input with matching saved memories, a dim =@ N relevant memories exist= line
 appears below your message. Its count is the number offered to the model for that
 request. Each input gets one notice across tool calls and provider retries.
 
