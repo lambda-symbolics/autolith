@@ -283,6 +283,10 @@ buffer you are editing:
 (load "/path/to/autolith/emacs/autolith.el")
 #+END_SRC
 
+Optional Sly contribs need their Lisp dependencies in Autolith's image. For
+=sly-stepper=, install =agnostic-lizard= in a persistent ASDF source registry
+visible to the Autolith process before Slynk starts.
+
 =autolith-ide= starts the Emacs server if needed and launches =autolith acp=
 through agent-shell with three environment variables:
 
