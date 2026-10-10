@@ -515,6 +515,14 @@
   test-management-repl-unix-lifecycle
   test-management-repl-tcp-lifecycle)
 
+(define-test-suite slynk
+  test-slynk-start-uses-configured-directory
+  test-slynk-start-without-directory
+  test-slynk-start-failure-reports-port-file
+  test-slynk-missing-system-fails
+  test-slynk-quiesce-restarts-same-port
+  test-slynk-real-server)
+
 (define-test-suite active-image
   test-active-image-build-record
   test-active-image-process-command

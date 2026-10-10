@@ -367,6 +367,7 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                "Close APPLICATION's external runtimes at most once."
                (ignore-errors (localgroup-stop application))
                (ignore-errors (management-repl-stop application))
+               (ignore-errors (slynk-stop))
                (unless tool-runtimes-closed-p
                  (unwind-protect
                       (ignore-errors
@@ -486,6 +487,8 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                       (application-input-controller--request-exit
                        input-controller ':interrupt))
                     (management-repl-start application)
+                    (slynk-start (application-configuration application)
+                                 :background-p t)
                     (application-input-controller--open-prompt-if-ready
                      input-controller)
                     (application-input-controller--start-reader
@@ -502,7 +505,9 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                                   application
                                   (lambda ()
                                     (application-call-with-management-repl-quiesced
-                                     application function)))))))
+                                     application
+                                     (lambda ()
+                                       (slynk-call-quiesced function)))))))))
                           (*debugger-hook*
                             (lambda (condition hook)
                               (declare (ignore hook))

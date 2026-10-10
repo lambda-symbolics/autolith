@@ -2525,6 +2525,44 @@ The current value and its source sit in aligned columns of their own."
                                 (and value (if (stringp value) value (string-downcase (string value)))))
   ':continue)
 
+(-> application-slynk-command (application (option string)) null)
+(defun application-slynk-command (application action)
+  "Report APPLICATION's Slynk endpoint, starting it, or stopping it when ACTION is \"stop\"."
+  (let ((configuration (application-configuration application)))
+    (cond
+      ((equal action "stop")
+       (slynk-stop)
+       (application-present application "Slynk stopped. sly connections to this image are closed."))
+      (action
+       (application-present application "Use (slynk) to start or show Slynk and (slynk \"stop\") to stop it."))
+      ((null (config :slynk-directory configuration))
+       (application-present
+        application
+        "Slynk is unavailable: set AUTOLITH_SLYNK_DIRECTORY or (setf (config :slynk-directory) ...) to your sly installation's slynk/ directory, or start Autolith from M-x autolith-ide."))
+      (t
+       (slynk-start configuration)
+       (destructuring-bind (&key state port message &allow-other-keys) (slynk-status)
+         (application-present
+          application
+          (if (eq state ':running)
+              (format nil "Slynk serves this image on ~A:~D. In Emacs: M-x sly-connect RET ~A RET ~D."
+                      *slynk-interface* port *slynk-interface* port)
+              (format nil "Slynk is ~(~A~)~@[: ~A~]." state message)))))))
+  nil)
+
+(define-application-command application--builtin-slynk-command
+    (:name "/slynk"
+     :argument "[stop]"
+     :description "serve this image to sly"
+     :tip "starts Slynk from your sly installation and shows the port for M-x sly-connect; (slynk \"stop\") closes it."
+     :busy-behavior :apply
+     :terminal-behavior :shared
+     :callable t)
+    (application &optional action)
+  (application-slynk-command application
+                             (and action (string-downcase (string action))))
+  ':continue)
+
 ;;;; -- Installed Release Update --
 
 (-> application-update (application) null)

@@ -438,8 +438,9 @@
             (image-state-load configuration :pristine-p pristine-p)
             (application--load-extension-configuration configuration :pristine-p pristine-p)
             (setf configuration (provider-bootstrap-configuration configuration))
-            (acp-service-serve (make-instance 'acp-service :configuration configuration
-                                              :permission-mode permission-mode)
-                               channel)))
+            (with-slynk-endpoint (configuration)
+              (acp-service-serve (make-instance 'acp-service :configuration configuration
+                                                :permission-mode permission-mode)
+                                 channel))))
       (agentcomms:channel-close channel)))
   nil)
