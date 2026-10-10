@@ -112,3 +112,4 @@ Or do *autolith update* in your shell.
 - [[https://github.com/sm-th/oh-my-lisp][oh-my-lisp]]
 - [[https://github.com/ghuntley/jiti][jiti]]
 - [[https://github.com/1hachem/lisptc][lisptc]]
+- [[https://github.com/mattneel/elixos][elixos]]
