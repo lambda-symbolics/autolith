@@ -64,9 +64,10 @@
 (defgeneric application-operation-immediate-arguments-p (operation argument-forms)
   (:documentation "Return whether OPERATION may inspect ARGUMENT-FORMS immediately."))
 
-(-> application-operation-invoke (application-operation application list) t)
-(defgeneric application-operation-invoke (operation application arguments)
-  (:documentation "Invoke OPERATION for APPLICATION with evaluated ARGUMENTS."))
+(-> application-operation-invoke
+    (application-operation application (or list hash-table) &key (:context (option tool-context))) t)
+(defgeneric application-operation-invoke (operation application arguments &key context)
+  (:documentation "Invoke OPERATION with evaluated arguments or a tool's JSON object and explicit CONTEXT."))
 
 (-> application-operation-binding-eligible-p (application-operation) boolean)
 (defgeneric application-operation-binding-eligible-p (operation)
@@ -924,8 +925,9 @@ wait for the serialized application boundary."
      (application-authorize-tool application tool arguments))))
 
 (defmethod application-operation-invoke
-    ((operation application-command-operation) application arguments)
+    ((operation application-command-operation) application arguments &key context)
   "Invoke a command through its existing handler without duplicating Lisp source."
+  (declare (ignore context))
   (let* ((command (application-operation-backend operation))
          (invocation
            (application-operation--command-invocation command arguments))
@@ -939,11 +941,13 @@ wait for the serialized application boundary."
        (error 'application-operation-loop-action :action ':quit)))))
 
 (defmethod application-operation-invoke
-    ((operation application-tool-operation) application arguments)
-  "Invoke a tool through its existing decoder and execution method."
+    ((operation application-tool-operation) application arguments &key context)
+  "Invoke a tool through its decoder, execution method, and caller's explicit capabilities."
   (let* ((tool (application-operation-backend operation))
          (canonical-name (tool-canonical-name tool))
-         (json-arguments (application-operation--tool-arguments arguments))
+         (json-arguments (if (hash-table-p arguments)
+                             arguments
+                             (application-operation--tool-arguments arguments)))
          (decoded-arguments
            (tool-decode-arguments tool (json-encode json-arguments))))
     (unless (json-object-p decoded-arguments)
@@ -962,7 +966,7 @@ wait for the serialized application boundary."
                        application (format nil "running ~A" canonical-name)))
                     (tool-execute
                      tool
-                     (application-operation--tool-context application)
+                     (or context (application-operation--tool-context application))
                      decoded-arguments))
                (when ui
                  (application-set-local-activity application previous-activity)))))
@@ -973,9 +977,9 @@ wait for the serialized application boundary."
       (tool-result-content result))))
 
 (defmethod application-operation-invoke
-    ((operation application-local-operation) application arguments)
+    ((operation application-local-operation) application arguments &key context)
   "Reject indirect invocation of a local special form."
-  (declare (ignore application arguments))
+  (declare (ignore application arguments context))
   (error 'configuration-error
          :message
          (format nil "Local form ~A must be submitted directly."
