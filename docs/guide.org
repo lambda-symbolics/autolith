@@ -202,7 +202,43 @@ Client-supplied stdio and HTTP MCP servers are merged with native registrations
 for that session. Literal environment values and headers are ephemeral and
 redacted from server output. Cancel a prompt to stop its provider, tools, and
 owned jobs; close the session or disconnect to release its resources and lease.
-One primary prompt or session setup runs at a time in each ACP process.
+One primary prompt, setting mutation, tool invocation, or session setup runs at a
+time in each ACP process. Catalog reads and owned-job controls can run alongside it.
+
+** Typed client extensions
+
+Request =_autolith/capabilities= to discover installed methods and schema version.
+Include =sessionId= in every other extension request. Responses contain =outcome=
+(=ok=, =condition=, =busy=, =unsupported=, or =cancelled=), with =value= on success
+and a bounded =report= on failure. Unknown measurements are JSON null.
+
+| Method suffix | Value or action |
+|---------------+-----------------|
+| =state= | Session, turn, model, permission, usage, plan and health snapshot |
+| =settings=, =models=, =operations= | Typed catalog =items= |
+| =set-setting= | Set =name= to =value=; return the updated setting row |
+| =invoke= | Invoke =operation= with JSON =arguments=; return presented =text= |
+| =conversations= | Page durable conversations using =limit= and =cursor=; optionally filter =cwd= |
+| =jobs=, =job= | Page owned jobs or inspect one =jobId= |
+| =job-transcript= | Read =jobId= with character =offset= and =limit= |
+| =job-send=, =job-cancel= | Send =text= to or cancel an owned =jobId= |
+| =resource= | Read bounded =workspace:= lines or =shell-log:= bytes from =uri= |
+
+Prefix these suffixes with =_autolith/=. Catalog operations expose admission and
+availability; tools use their native decoders and ACP approval callbacks.
+Terminal-only operations return an explicit unsupported outcome. Workspace resource
+windows use =startLine= and =lineCount= and include the observed revision. Shell-log
+windows use =byteOffset= and =byteCount= and require session ownership.
+
+Treat =_autolith/event= state and catalog notifications as invalidation hints.
+Refetch the affected snapshot after a sequence gap. Events with kind =turn= are
+ordered lifecycle boundaries: =data= contains =state= (=running= or =idle=), an
+integer =epoch=, =source= (=prompt=, =completion=, or =invoke=), and a terminal
+=outcome= (=end-turn=, =cancelled=, or =condition=; null while running). Match the
+epoch when handling approvals, cancellation and transcript boundaries.
+
+Automatic job continuations stream through ordinary ACP updates. Cancellation or
+an inference failure pauses continuation; submit an explicit prompt to resume.
 
 * Fullscreen terminal
 
@@ -1569,7 +1605,8 @@ paused or terminal missions, spent budgets, and conversation ownership constrain
 automatic turns. Inspect retained results with =job.get=, =job.continuity= or =/tasks=.
 Child-owned outcomes are inspection-only outside their exact conversation; completing
 a child does not reopen it or redirect descendant results into the primary context.
-ACP and other interfaces without a primary input controller deliver results on
+ACP sessions also own a completion controller and stream automatic turns to the
+connected client. Interfaces without an input controller deliver results on
 subsequent ordinary turns. Use =job.wait= when deliberate waiting is appropriate.
 
 ** Task inspection and continuity

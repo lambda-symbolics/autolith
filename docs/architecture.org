@@ -125,6 +125,12 @@ operations. =observer.lisp= projects native streaming/tool events and editor
 permissions. =mcp.lisp= builds session-local client declarations through the native
 MCP manager and credential scopes. =runtime.lisp= supplies the agent methods,
 chronological replay, bootstrap, and disconnect cleanup.
+=extensions.lisp= owns typed dispatch, bounded JSON projection, advisory events,
+and session-scoped read/write admission. The =extension-*.lisp= adapters project
+native settings, model/operation catalogs, conversations, owned jobs and structured
+resource windows. =completions.lisp= owns the condition-variable controller for
+receipt-backed automatic turns, sharing prompt admission, observer projection,
+cancellation and shutdown with explicit prompts.
 
 The source entry and stable launcher route ACP diagnostics to stderr and avoid
 interactive recovery. The serving lifetime holds the secret-use guard while
