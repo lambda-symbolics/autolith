@@ -279,20 +279,40 @@
 
 (-> task--character-strings (t) t)
 (defun task--character-strings (value)
-  "Return VALUE with every base string in its conses copied as a character string.
+  "Copy string leaves in a bounded acyclic cons tree into fresh character strings.
 
-A readable base string prints as #A((LENGTH) BASE-CHAR . \"TEXT\"), which spends
-model tokens on array syntax. A character string reads back equal."
-  (typecase value
-    (base-string
-     (coerce value '(simple-array character (*))))
-    (cons
-     (loop for tail = value then (rest tail)
-           while (consp tail)
-           collect (task--character-strings (first tail)) into items
-           finally (return (nconc items (task--character-strings tail)))))
-    (t
-     value)))
+Fresh strings avoid implementation array syntax and shared-string reader labels.
+Repeated subtrees are copied independently; cyclic conses signal TASK-ERROR."
+  (let ((active (make-hash-table :test #'eq))
+        (nodes 0))
+    (labels ((reject ()
+               "Reject data outside the portable task result's structural bounds."
+               (error 'task-error :tool-name "task.run"
+                      :message "Task result data is cyclic or exceeds its structural bounds."))
+
+             (walk (item depth)
+               "Copy ITEM while tracking only the active cons ancestry."
+               (when (or (> depth 128) (> (incf nodes) 262144))
+                 (reject))
+               (typecase item
+                 (string
+                  (make-array (length item) :element-type 'character :initial-contents item))
+                 (cons
+                  (let ((tails nil))
+                    (unwind-protect
+                         (loop for tail = item then (rest tail)
+                               while (consp tail)
+                               do (when (or (gethash tail active) (> (incf nodes) 262144))
+                                    (reject))
+                                  (setf (gethash tail active) t)
+                                  (push tail tails)
+                               collect (walk (first tail) (1+ depth)) into items
+                               finally (return (nconc items (walk tail depth))))
+                      (dolist (tail tails)
+                        (remhash tail active)))))
+                 (t
+                  item))))
+      (walk value 0))))
 
 (-> task--write-readable-sexp (t &key (:pretty-p boolean)) string)
 (defun task--write-readable-sexp (value &key pretty-p)

@@ -589,9 +589,10 @@ candidates."
                  (let ((*print-readably* t)
                        (*print-pretty* t)
                        (*print-circle* t))
-                   (prin1 result stream)
+                   (prin1 (task--character-strings result) stream)
                    (terpri stream)
                    (finish-output stream))))
+             (task--read-result-artifact temporary)
              (when (probe-file target)
                (error 'task-error
                       :message

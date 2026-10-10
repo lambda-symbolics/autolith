@@ -114,17 +114,38 @@
                     (getf fixture :job) (agent-test-result "engineering-result" nil)
                     (getf fixture :child) (getf fixture :conversation)
                     (getf fixture :completion)))
-                 (pathname (task--write-result-artifact (getf fixture :job) durable))
-                 (restored
-                   (with-open-file (stream pathname :external-format ':utf-8)
-                     (let ((*read-eval* nil)) (read stream)))))
-            (test-assert
-             (and (getf restored :structured-output-present-p)
-                  (equal (getf restored :structured-output) (task-json->sexp data))
-                  (task-output-schema-valid-p
-                   (task-sexp->json (getf restored :structured-output))
-                   (task-agent-definition-output definition)))
-             "engineering data survives the existing durable task artifact boundary"))))
+                 (shared (make-array 5 :element-type 'character :initial-contents "child"))
+                 (base (coerce "base text" 'base-string)))
+            (setf (getf durable :id) shared
+                  (getf durable :name) shared
+                  (getf durable :assignment) base
+                  (getf durable :label) "Příliš žluťoučký")
+            (let* ((pathname (task--write-result-artifact (getf fixture :job) durable))
+                   (restored (task--read-result-artifact pathname)))
+              (test-assert
+               (and (getf restored :structured-output-present-p)
+                    (equal (getf restored :structured-output) (task-json->sexp data))
+                    (task-output-schema-valid-p
+                     (task-sexp->json (getf restored :structured-output))
+                     (task-agent-definition-output definition)))
+               "engineering data survives the strict durable task artifact boundary")
+              (test-assert
+               (and (string= (getf restored :id) shared)
+                    (string= (getf restored :name) shared)
+                    (string= (getf restored :assignment) base)
+                    (string= (getf restored :label) "Příliš žluťoučký"))
+               "shared strings, native base strings and Unicode survive durable lookup")))))
+      (let* ((fixture (task-tests--yield-fixture configuration definition "engineering-cyclic"))
+             (cycle (list "cycle")))
+        (setf (rest cycle) cycle)
+        (test-assert
+         (handler-case
+             (progn
+               (task--write-result-artifact (getf fixture :job)
+                                            (list :status ':failed :output cycle))
+               nil)
+           (task-error () t))
+         "cyclic results fail before artifact publication"))
       (let ((fixture (task-tests--yield-fixture
                       configuration definition "engineering-no-artifact")))
         (test-assert
