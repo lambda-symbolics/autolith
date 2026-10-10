@@ -136,6 +136,20 @@ BODY never waits for it to compile, and stops when BODY exits by any means."
   `(call-with-slynk-endpoint ,configuration (lambda () ,@body)))
 
 
+;;;; -- Request Context --
+
+(define-context-contributor slynk-shared-image (request)
+  "Tell the agent, while Slynk serves, that a person develops in this same image."
+  (declare (ignore request))
+  (destructuring-bind (&key state port &allow-other-keys) (slynk-status)
+    (when (eq state ':running)
+      (make-context-contribution
+       :identifier "slynk-shared-image"
+       :instruction "A person is connected to this very image through sly over Slynk. Their packages, definitions and state live in the active image, beside yours: inspect them with lisp.describe, lisp.source and lisp.apropos using target \"self\", or with self.eval, never in a worker. Checkpoints and restarts drop their sly connection, so avoid them unless asked."
+       :evidence (format nil "Slynk listens on ~A:~D." *slynk-interface* port)
+       :priority 40))))
+
+
 ;;;; -- Serving --
 
 (-> slynk--serve (slynk-endpoint) null)

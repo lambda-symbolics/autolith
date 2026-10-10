@@ -204,3 +204,27 @@ AUTOLITH_TEST_SLYNK_DIRECTORY wins; otherwise the newest Quicklisp sly release."
               (slynk-stop))
             (test-assert (eq (getf (slynk-status) :state) ':stopped)
                          "Stopping reports stopped."))))))
+
+
+;;;; -- Request Context --
+
+(defun test-slynk-context-note ()
+  "The agent hears about the shared image only while Slynk serves."
+  (with-test-configuration (base root)
+    (declare (ignore base))
+    (let* ((*slynk-endpoint* nil)
+           (directory (slynk-test-write-stub root))
+           (configuration (slynk-test-configuration root directory)))
+      (test-assert (null (slynk-shared-image nil))
+                   "No note while Slynk is stopped.")
+      (slynk-start configuration)
+      (let ((note (slynk-shared-image nil)))
+        (test-assert (equal (context-contribution-identifier note) "slynk-shared-image")
+                     "A note appears while Slynk serves.")
+        (test-assert (search "127.0.0.1:4711" (context-contribution-evidence note))
+                     "The note names the Slynk port.")
+        (test-assert (search "target \"self\"" (context-contribution-instruction note))
+                     "The note points at the active-image tools."))
+      (slynk-stop)
+      (test-assert (null (slynk-shared-image nil))
+                   "The note disappears once Slynk stops."))))

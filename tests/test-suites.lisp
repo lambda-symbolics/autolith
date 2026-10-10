@@ -521,7 +521,8 @@
   test-slynk-start-failure-reports-port-file
   test-slynk-missing-system-fails
   test-slynk-quiesce-restarts-same-port
-  test-slynk-real-server)
+  test-slynk-real-server
+  test-slynk-context-note)
 
 (define-test-suite emacs
   test-emacs-server-quoting
