@@ -197,6 +197,16 @@
     (format nil "workspace:~A"
             (workspace-file--encode-identifier identifier))))
 
+(defmethod resource-resolver-read-documentation ((resolver workspace-file-resolver))
+  "Document workspace: reads."
+  (declare (ignore resolver))
+  "workspace: URIs return bounded, line-windowed file or directory observations. Identifiers are workspace-relative or absolute paths inside the workspace roots, for example workspace:src/main.lisp, workspace:src/ for a directory listing, and workspace:. for the workspace root; spaces may stay literal or be percent-encoded.")
+
+(defmethod resource-resolver-edit-documentation ((resolver workspace-file-resolver))
+  "Document workspace: edits."
+  (declare (ignore resolver))
+  "workspace: files accept structured original-line operations with optional anchors from resource.read; anchors validate exact lines or correct only a small line-number transcription offset. Workspace directories are read-only. Successful source-file edits may append a non-fatal delimiter warning.")
+
 (defmethod resource-resolver-resolve
     ((resolver workspace-file-resolver) identifier context)
   "Resolve IDENTIFIER without granting authority to the resulting workspace path."

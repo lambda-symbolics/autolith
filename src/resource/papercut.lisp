@@ -131,6 +131,16 @@
                  :identifier identifier
                  :workspace  workspace))
 
+(defmethod resource-resolver-read-documentation ((resolver papercut-resolver))
+  "Document papercut: reads."
+  (declare (ignore resolver))
+  "papercut: exposes revisioned papercut reports, always read in full: papercut:current or a canonical papercut:id/<percent-encoded-stable-id> URI.")
+
+(defmethod resource-resolver-edit-documentation ((resolver papercut-resolver))
+  "Document papercut: edits."
+  (declare (ignore resolver))
+  "papercut:current accepts papercut-report, and canonical exact papercut:id/<percent-encoded-stable-id> resources accept papercut-assess or papercut-close.")
+
 (defmethod resource-resolver-resolve
     ((resolver papercut-resolver) identifier (context tool-context))
   "Resolve CURRENT or one canonical exact active-report identifier."

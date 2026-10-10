@@ -58,6 +58,11 @@ readable context object instead of being cut.")
 
 ;;;; -- URI Resolution --
 
+(defmethod resource-resolver-read-documentation ((resolver conversation-resolver))
+  "Document conversation: reads."
+  (declare (ignore resolver))
+  "conversation:current exposes durable records, paginated by start-sequence/record-count or searched with query. conversation:id/<id> names another conversation.")
+
 (defmethod resource-resolver-resolve
     ((resolver conversation-resolver) identifier (context tool-context))
   "Resolve conversation:current or one named conversation:id/<id>."

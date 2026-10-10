@@ -91,6 +91,16 @@
                            (config :working-directory configuration)
                            :require-existing-p t)))
 
+(defmethod resource-resolver-read-documentation ((resolver agenda-resolver))
+  "Document agenda: reads."
+  (declare (ignore resolver))
+  "agenda:current exposes the revisioned workspace agenda, always read in full.")
+
+(defmethod resource-resolver-edit-documentation ((resolver agenda-resolver))
+  "Document agenda: edits."
+  (declare (ignore resolver))
+  "agenda:current accepts one agenda operation.")
+
 (defmethod resource-resolver-resolve
     ((resolver agenda-resolver) identifier (context tool-context))
   "Resolve only CURRENT without granting access to another workspace agenda."

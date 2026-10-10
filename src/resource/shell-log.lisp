@@ -41,6 +41,11 @@ A descendant cannot inspect its ancestor's or a sibling's captures."
   (declare (ignore resolver context))
   t)
 
+(defmethod resource-resolver-read-documentation ((resolver shell-log-resolver))
+  "Document shell-log: reads."
+  (declare (ignore resolver))
+  "shell-log: reads execution-owned retained raw output as bounded UTF-8 text: use byte-offset/byte-count for ranges, or query with byte-offset/max-results for paginated literal search. Logs are authorized by session and task ownership; a missing or pruned artifact returns a diagnostic. Reads never load an entire log into conversation or context storage.")
+
 (defmethod resource-resolver-resolve
     ((resolver shell-log-resolver) identifier (context tool-context))
   "Resolve opaque identity segments, refusing traversal and foreign sessions first."

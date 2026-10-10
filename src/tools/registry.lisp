@@ -721,6 +721,20 @@ spilling is unavailable, in which case the tail is discarded as before.")
 
 ;;;; -- Resource Tool Dispatch --
 
+(defmethod tool-description ((tool resource-read-tool))
+  "Follow TOOL's lead sentence with the read documentation of each registered scheme."
+  (format nil "~A ~A"
+          (call-next-method)
+          (resource-registry-documentation (resource-tool-resource-registry tool)
+                                           #'resource-resolver-read-documentation)))
+
+(defmethod tool-description ((tool resource-edit-tool))
+  "Follow TOOL's lead sentence with the edit documentation of each editable scheme."
+  (format nil "~A ~A"
+          (call-next-method)
+          (resource-registry-documentation (resource-tool-resource-registry tool)
+                                           #'resource-resolver-edit-documentation)))
+
 (-> resource-tool-read
     (resource resource-read-tool tool-context json-object)
     tool-result)

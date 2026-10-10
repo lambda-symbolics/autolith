@@ -208,6 +208,39 @@ often base strings while the same text built elsewhere is not."
   (declare (ignore resolver context))
   nil)
 
+(-> resource-resolver-read-documentation (resource-resolver) (option non-empty-string))
+(defgeneric resource-resolver-read-documentation (resolver)
+  (:documentation
+   "Return the resource.read sentences documenting RESOLVER's scheme, or NIL."))
+
+(defmethod resource-resolver-read-documentation ((resolver resource-resolver))
+  "Document nothing for a scheme without model-facing reads."
+  (declare (ignore resolver))
+  nil)
+
+(-> resource-resolver-edit-documentation (resource-resolver) (option non-empty-string))
+(defgeneric resource-resolver-edit-documentation (resolver)
+  (:documentation
+   "Return the resource.edit sentences documenting RESOLVER's scheme, or NIL."))
+
+(defmethod resource-resolver-edit-documentation ((resolver resource-resolver))
+  "Document nothing for a read-only scheme."
+  (declare (ignore resolver))
+  nil)
+
+(-> resource-registry-documentation (resource-registry function) string)
+(defun resource-registry-documentation (registry documentation-function)
+  "Join DOCUMENTATION-FUNCTION's sentences for REGISTRY's resolvers in scheme order.
+
+Resource tool descriptions are composed this way, so they name exactly the
+schemes their registry resolves."
+  (format nil "~{~A~^ ~}"
+          (loop for scheme in (cl-resources:resource-registry-schemes registry)
+                for text = (funcall documentation-function
+                                    (cl-resources:resource-registry-find registry scheme))
+                when text
+                  collect text)))
+
 (-> resource-registry-resolve (resource-registry t t) resource)
 (defun resource-registry-resolve (registry uri context)
   "Resolve URI after enforcing Autolith's scheme and child authority policy."

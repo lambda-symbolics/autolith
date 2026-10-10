@@ -45,6 +45,11 @@
                 (or (alphanumericp character) (char= character #\-)))
               identifier)))
 
+(defmethod resource-resolver-read-documentation ((resolver inference-trace-resolver))
+  "Document inference: reads."
+  (declare (ignore resolver))
+  "inference: exposes bounded, line-windowed inference frame traces: inference:index lists them.")
+
 (defmethod resource-resolver-resolve
     ((resolver inference-trace-resolver) identifier (context tool-context))
   "Resolve one exact inference trace identifier or the reserved index."
@@ -375,6 +380,11 @@ requested window rather than the complete trace."
 (defclass context-object-index-resource (resource)
   ()
   (:documentation "The bounded newest-first index of stored context objects."))
+
+(defmethod resource-resolver-read-documentation ((resolver context-object-resolver))
+  "Document context: reads."
+  (declare (ignore resolver))
+  "context: exposes bounded, line-windowed stored context objects by digest: context:index lists them.")
 
 (defmethod resource-resolver-resolve
     ((resolver context-object-resolver) identifier (context tool-context))

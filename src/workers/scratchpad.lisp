@@ -129,6 +129,16 @@
   (declare (ignore resolver context))
   t)
 
+(defmethod resource-resolver-read-documentation ((resolver scratchpad-resolver))
+  "Document scratchpad: reads."
+  (declare (ignore resolver))
+  "scratchpad: URIs return bounded, line-windowed file or directory observations of the conversation's scratchpad, for example scratchpad:. or scratchpad:program.lisp.")
+
+(defmethod resource-resolver-edit-documentation ((resolver scratchpad-resolver))
+  "Document scratchpad: edits."
+  (declare (ignore resolver))
+  "scratchpad: files accept the same original-line operations as workspace: files, and scratchpad: resources also accept scratchpad-delete.")
+
 (defmethod resource-resolver-resolve
     ((resolver scratchpad-resolver) identifier (context tool-context))
   "Resolve IDENTIFIER beneath CONTEXT's conversation scratchpad."

@@ -288,13 +288,13 @@
           (list
            'resource-read-tool
            "resource" "read"
-            "Read a model-addressable resource. workspace: and scratchpad: URIs return bounded file or directory observations. agenda:, memory:, and papercut: expose revisioned workspace state. inference: and context: expose bounded trace and context windows. conversation:current exposes durable records, paginated by start-sequence/record-count or searched with query. conversation:id/<id> names another conversation. shell-log: reads execution-owned retained raw output as bounded UTF-8 text: use byte-offset/byte-count for ranges, or query with byte-offset/max-results for paginated literal search. Logs are authorized by session and task ownership; a missing or pruned artifact returns a diagnostic. Reads never load an entire log into conversation or context storage."
+           "Read a model-addressable resource."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "The resource URI; a bare path without a scheme is rejected. workspace: identifiers are workspace-relative or absolute paths inside the workspace roots, for example workspace:src/main.lisp, workspace:src/ for a directory listing, and workspace:. for the workspace root; spaces may stay literal or be percent-encoded. Other examples: scratchpad:., scratchpad:program.lisp, agenda:current, memory:relevant, memory:all, papercut:current, or a canonical memory:id/<percent-encoded-stable-id> or papercut:id/<percent-encoded-stable-id> URI.")
+                    "The resource URI, SCHEME:IDENTIFIER with a scheme this description lists; a bare path without a scheme is rejected.")
              "start-line" (tool-integer-property
-                           "The first line to return, starting at 1. Line windows apply only to workspace:, scratchpad:, inference:, and context: resources; agenda:, memory:, and papercut: resources are always returned in full and reject start-line and line-count.")
+                           "The first line to return, starting at 1. Only line-windowed resources accept start-line and line-count; the others reject them.")
              "line-count" (tool-integer-property
                            "How many lines to return; default 400, maximum 1000. Accepted only where start-line is.")
              "byte-offset" (tool-integer-property
@@ -314,7 +314,7 @@
           (list
            'resource-edit-tool
            "resource" "edit"
-             "Edit a model-addressable resource at an exact observed revision. workspace: and scratchpad: files accept structured original-line operations with optional anchors from resource.read; anchors validate exact lines or correct only a small line-number transcription offset. scratchpad: resources additionally accept scratchpad-delete, agenda:current accepts one agenda operation, memory:workspace and memory:global create with memory-remember, canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget, papercut:current accepts papercut-report, and canonical exact papercut:id/<percent-encoded-stable-id> resources accept papercut-assess or papercut-close. Workspace directories are read-only, and memory:relevant is read-only. Stale or expired revisions require a reread. Successful source-file edits may append a non-fatal delimiter warning."
+           "Edit a model-addressable resource at an exact revision observed by resource.read. Stale or expired revisions require a reread."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
@@ -324,7 +324,7 @@
              "operations" (json-object
                            "type" "array"
                            "description"
-                           "Resource-specific operations. Agenda, memory, and papercut resources accept exactly one; workspace: files and observed missing targets accept non-overlapping original-line operations; scratchpad: resources additionally accept one scratchpad-delete operation."
+                           "Resource-specific operations. Agenda, memory, and papercut resources accept exactly one; line-edited text and observed missing files accept non-overlapping original-line operations; scratchpad: resources additionally accept one scratchpad-delete operation."
                            "minItems" 1
                            "items" (default-tools--resource-operation-schema)))
             '("uri" "base-revision" "operations"))

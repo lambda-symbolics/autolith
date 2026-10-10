@@ -124,6 +124,16 @@
                  :uri        (resource-item-uri "memory" identifier)
                  :identifier identifier))
 
+(defmethod resource-resolver-read-documentation ((resolver memory-resolver))
+  "Document memory: reads."
+  (declare (ignore resolver))
+  "memory: exposes revisioned persistent memories, always read in full: memory:relevant, memory:all, or a canonical memory:id/<percent-encoded-stable-id> URI.")
+
+(defmethod resource-resolver-edit-documentation ((resolver memory-resolver))
+  "Document memory: edits."
+  (declare (ignore resolver))
+  "memory:workspace and memory:global create with memory-remember, canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget, and memory:relevant is read-only.")
+
 (defmethod resource-resolver-resolve
     ((resolver memory-resolver) identifier (context tool-context))
   "Resolve reserved collections or one canonical or compatible exact identifier."

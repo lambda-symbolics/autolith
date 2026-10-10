@@ -438,7 +438,8 @@
 
 (define-test-suite resource
   test-resource-protocol
-  test-resource-edit-operation-schema)
+  test-resource-edit-operation-schema
+  test-resource-tool-descriptions-follow-registry)
 
 (define-test-suite workspace-resource
   test-workspace-file-resources)

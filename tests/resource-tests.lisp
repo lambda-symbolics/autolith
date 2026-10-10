@@ -176,3 +176,41 @@ variant must therefore declare its object type explicitly."
     (test-assert (= anyof-count 3)
                  "the agenda-update operation requires one of text, status, or memory-ids"))
   nil)
+
+(defun test-resource-tool-descriptions-follow-registry ()
+  "Resource tool descriptions document exactly the schemes their registry resolves."
+  (let* ((registry (make-resource-registry))
+         (schema   (tool-object-schema (json-object) '()))
+         (read     (make-instance 'resource-read-tool
+                                  :namespace         "resource"
+                                  :name              "read"
+                                  :description       "Read a model-addressable resource."
+                                  :parameters        schema
+                                  :resource-registry registry))
+         (edit     (make-instance 'resource-edit-tool
+                                  :namespace         "resource"
+                                  :name              "edit"
+                                  :description       "Edit a model-addressable resource."
+                                  :parameters        schema
+                                  :resource-registry registry)))
+    (resource-registry-register
+     registry (make-instance 'workspace-file-resolver :scheme "workspace"))
+    (resource-registry-register
+     registry (make-instance 'conversation-resolver :scheme "conversation"))
+    (test-assert (uiop:string-prefix-p "Read a model-addressable resource. "
+                                       (tool-description read))
+                 "the read description keeps its lead sentence")
+    (test-assert (and (search "workspace:src/main.lisp" (tool-description read))
+                      (search "conversation:current" (tool-description read)))
+                 "the read description documents every registered scheme")
+    (test-assert (not (search "agenda:" (tool-description read)))
+                 "the read description omits unregistered schemes")
+    (test-assert (and (search "workspace: files accept" (tool-description edit))
+                      (not (search "conversation:" (tool-description edit))))
+                 "the edit description documents only editable schemes")
+    (resource-registry-register
+     registry (make-instance 'agenda-resolver :scheme "agenda"))
+    (test-assert (and (search "agenda:current" (tool-description read))
+                      (search "agenda:current accepts" (tool-description edit)))
+                 "a scheme registered later joins both descriptions"))
+  nil)
