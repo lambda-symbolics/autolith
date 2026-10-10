@@ -891,7 +891,8 @@
 (defun make-default-tool-registry (&key immutable-p configuration)
   "Create Autolith's tool registry, omitting mutable self tools when requested.
 
-LSP tools register only when CONFIGURATION enables a language server."
+LSP tools register only when CONFIGURATION enables a language server, and the
+emacs.* tools only when it names a reachable Emacs server socket."
   (let ((registry (make-instance 'tool-registry))
         (search-worker (search-worker-create :configuration configuration)))
     (default-tools--register-workspace registry)
@@ -904,6 +905,8 @@ LSP tools register only when CONFIGURATION enables a language server."
     (default-tools--register-lisp registry)
     (when (and configuration (lsp-configuration-enabled-p configuration))
       (lsp-register-tools registry))
+    (when (emacs-server-available-p configuration)
+      (emacs-register-tools registry))
     (default-tools--register-self registry)
     (refinement-register-tools registry)
     (rlm-register-tools registry)

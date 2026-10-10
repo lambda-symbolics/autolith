@@ -523,6 +523,12 @@
   test-slynk-quiesce-restarts-same-port
   test-slynk-real-server)
 
+(define-test-suite emacs
+  test-emacs-server-quoting
+  test-emacs-server-fake-replies
+  test-emacs-tools-registration
+  test-emacs-tools-real-daemon)
+
 (define-test-suite active-image
   test-active-image-build-record
   test-active-image-process-command
