@@ -214,6 +214,61 @@
 
 ;;;; -- Real Emacs --
 
+(-> emacs-test-resource-authority (pathname configuration &key (:file pathname) (:outside pathname)) null)
+(defun emacs-test-resource-authority (socket configuration &key file outside)
+  "Exercise filtered snapshots, region authorization and retargeted edits in real Emacs."
+  (let* ((sandbox (emacs-test-context configuration :authorization ':sandboxed))
+         (full (emacs-test-context configuration))
+         (outside-name (file-namestring outside))
+         (outside-uri (emacs-buffer-uri outside-name)))
+    (emacs-server-evaluate
+     socket
+     (format nil "(progn (make-frame-visible (selected-frame)) (switch-to-buffer ~S) (auto-save-mode -1) (erase-buffer) (insert \"OUTSIDE-REGION-SECRET\") (goto-char (point-min)) (set-mark (point-max)) (setq transient-mark-mode t mark-active t autolith-secret-reads 0) (advice-add 'buffer-substring-no-properties :before (lambda (&rest ignored) (when (equal (buffer-name) ~S) (setq autolith-secret-reads (1+ autolith-secret-reads))))))"
+             outside-name outside-name))
+    (let ((text (emacs-test-read sandbox "emacs:current")))
+      (test-assert (search "notes.lisp" text) "Workspace buffers are listed without full access.")
+      (test-assert (not (search outside-name text)) "Outside buffer names are filtered.")
+      (test-assert (not (search (uiop:native-namestring outside) text)) "Outside paths are filtered.")
+      (test-assert (not (search "OUTSIDE-REGION-SECRET" text)) "An unauthorized selected region is filtered."))
+    (test-assert (not (tool-result-success-p
+                       (emacs-test-invoke sandbox "resource" "read" (json-object "uri" outside-uri))))
+                 "Outside buffer reads require full access.")
+    (test-assert (equal "0" (emacs-server-evaluate socket "autolith-secret-reads"))
+                 "Denied region and buffer reads never retrieve outside text.")
+    (let ((text (emacs-test-read full "emacs:current")))
+      (test-assert (search (uiop:native-namestring outside) text) "Full access includes outside paths.")
+      (test-assert (search "OUTSIDE-REGION-SECRET" text) "Full access includes the selected outside region."))
+    (emacs-server-evaluate
+     socket "(progn (switch-to-buffer \"*autolith notes*\") (goto-char (point-min)) (set-mark (point-max)) (setq mark-active t))")
+    (let ((text (emacs-test-read sandbox "emacs:current")))
+      (test-assert (not (search "autolith%20notes" text)) "Non-file window names require full access.")
+      (test-assert (not (search "scratch" text)) "Non-file selected regions require full access."))
+    (test-assert (not (tool-result-success-p
+                       (emacs-test-invoke sandbox "resource" "read"
+                                          (json-object "uri" (emacs-buffer-uri "*autolith notes*")))))
+                 "Non-file buffer reads require full access.")
+    (test-assert (search "scratch" (emacs-test-read full "emacs:current"))
+                 "Full access includes non-file selected regions.")
+    (emacs-server-evaluate
+     socket "(progn (switch-to-buffer \"notes.lisp\") (goto-char (point-min)) (set-mark (point-max)) (setq mark-active t))")
+    (test-assert (search "λ unsaved" (emacs-test-read sandbox "emacs:current"))
+                 "Workspace selected regions are usable without full access.")
+    (let* ((text (emacs-test-read sandbox "emacs:buffer/notes.lisp"))
+           (revision (emacs-test-revision text)))
+      (emacs-server-evaluate
+       socket (format nil "(with-current-buffer \"notes.lisp\" (setq buffer-file-name ~S))"
+                      (uiop:native-namestring outside)))
+      (let ((result (emacs-test-replace-line sandbox "emacs:buffer/notes.lisp" revision
+                                             1 "unauthorized edit")))
+        (test-assert (not (tool-result-success-p result)) "Retargeting a buffer invalidates its edit authority.")
+        (test-assert (not (search "unauthorized edit"
+                                  (emacs-server-evaluate socket "(with-current-buffer \"notes.lisp\" (buffer-string))")))
+                     "A retargeted edit does not modify the buffer."))
+      (emacs-server-evaluate
+       socket (format nil "(with-current-buffer \"notes.lisp\" (setq buffer-file-name ~S))"
+                      (uiop:native-namestring file)))))
+  nil)
+
 (defun test-emacs-tools-real-daemon ()
   "emacs: resources and emacs.* tools work against a real Emacs daemon."
   (let ((emacs (emacs-test-executable)))
@@ -241,6 +296,7 @@
                     socket
                     (format nil "(progn (with-current-buffer (find-file-noselect ~S) (goto-char (point-max)) (insert \"; λ unsaved\\n\")) (find-file-noselect ~S) (with-current-buffer (get-buffer-create \"*autolith notes*\") (insert \"scratch\")))"
                             (uiop:native-namestring file) (uiop:native-namestring outside)))
+                   (emacs-test-resource-authority socket configuration :file file :outside outside)
                    (let ((context (emacs-test-context configuration))
                          (uri "emacs:buffer/notes.lisp"))
                      (test-assert (search "- emacs:buffer/notes.lisp, visiting"

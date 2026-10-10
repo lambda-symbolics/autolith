@@ -92,18 +92,24 @@
   (list :windows (vconcat (nreverse windows))
         :buffers (vconcat (nreverse buffers))
         :buffer-count count
-        :region (with-current-buffer (window-buffer selected)
-                  (if (use-region-p)
-                      (let* ((start (region-beginning))
-                             (end (region-end))
-                             (limit (string-to-number a0)))
-                        (list :buffer (buffer-name)
-                              :start-line (line-number-at-pos start t)
-                              :end-line (line-number-at-pos end t)
-                              :truncated (if (> (- end start) limit) t :false)
-                              :text (buffer-substring-no-properties start (min end (+ start limit)))))
-                    :null))))"
-  "Elisp describing visible windows, the region of at most A0 characters and A1 file buffers.")
+        :region :null))"
+  "Elisp describing visible windows and at most A1 file buffers, without buffer text.")
+
+(defparameter *emacs-current-region-elisp*
+  "(with-current-buffer (window-buffer (selected-window))
+  (if (and (string= (buffer-name) a0)
+           (string= (or buffer-file-name \"\") a1)
+           (use-region-p))
+      (let* ((start (region-beginning))
+             (end (region-end))
+             (limit (string-to-number a2)))
+        (list :buffer (buffer-name)
+              :start-line (line-number-at-pos start t)
+              :end-line (line-number-at-pos end t)
+              :truncated (if (> (- end start) limit) t :false)
+              :text (buffer-substring-no-properties start (min end (+ start limit)))))
+    :null))"
+  "Elisp reading a region only while the selected buffer still has authorized identity A0/A1.")
 
 (defparameter *emacs-buffer-snapshot-elisp*
   "(if (> (buffer-size) ~D)
@@ -116,6 +122,14 @@
          :text (buffer-substring-no-properties (point-min) (point-max))))"
   "A FORMAT control producing elisp that snapshots the current, widened buffer.")
 
+(defparameter *emacs-buffer-metadata-elisp*
+  "(let ((buffer (get-buffer a0)))
+  (if buffer
+      (list :status \"ok\"
+            :file (or (buffer-local-value 'buffer-file-name buffer) :null))
+    (list :status \"missing\")))"
+  "Elisp retrieving buffer A0's file identity without its text.")
+
 (defparameter *emacs-buffer-read-elisp*
   "(let ((buffer (get-buffer a0)))
   (if (null buffer)
@@ -123,8 +137,10 @@
     (with-current-buffer buffer
       (save-restriction
         (widen)
-        ~A))))"
-  "A FORMAT control producing elisp that snapshots buffer A0.")
+        (if (not (string= (or buffer-file-name \"\") a1))
+            (list :status \"stale\")
+          ~A)))))"
+  "A FORMAT control snapshotting buffer A0 only while its visited file equals authorized A1.")
 
 (defparameter *emacs-buffer-replace-elisp*
   "(let ((buffer (get-buffer a0)))
@@ -135,7 +151,8 @@
     (with-current-buffer buffer
       (save-restriction
         (widen)
-        (if (not (string= (buffer-substring-no-properties (point-min) (point-max)) a1))
+        (if (or (not (string= (or buffer-file-name \"\") a3))
+                (not (string= (buffer-substring-no-properties (point-min) (point-max)) a1)))
             (list :status \"stale\")
           (let ((target (current-buffer)))
             (with-temp-buffer
@@ -144,7 +161,7 @@
                 (with-current-buffer target
                   (replace-buffer-contents source 1.0 100)))))
           ~A))))))"
-  "A FORMAT control producing elisp that replaces buffer A0's text A1 with A2.
+  "A FORMAT control replacing buffer A0's text A1 with A2 while its visited file equals A3.
 
 The comparison and the replacement run in one server request, which Emacs
 evaluates without interleaving the person's commands.")
@@ -155,7 +172,7 @@ evaluates without interleaving the person's commands.")
 (defmethod resource-resolver-read-documentation ((resolver emacs-resolver))
   "Document emacs: reads."
   (declare (ignore resolver))
-  "emacs:current shows what the person sees in Emacs: visible windows with point, the active region, and open file buffers, each with its emacs:buffer/ URI; read it before advising about \"this code\". emacs:buffer/<percent-encoded-buffer-name> returns a live buffer's line-windowed text, unsaved edits included, so prefer it over workspace: for files with unsaved changes.")
+  "emacs:current shows authorized visible windows with point, the active region, and open file buffers, each with its emacs:buffer/ URI; read it before advising about \"this code\". Files outside readable roots and non-file buffers require full-access approval. emacs:buffer/<percent-encoded-buffer-name> returns a live buffer's line-windowed text, unsaved edits included, so prefer it over workspace: for files with unsaved changes.")
 
 (defmethod resource-resolver-edit-documentation ((resolver emacs-resolver))
   "Document emacs: edits."
@@ -200,24 +217,57 @@ evaluates without interleaving the person's commands.")
   (let* ((snapshot (emacs-resource--call context "resource.read" *emacs-current-elisp*
                                          (princ-to-string *emacs-current-region-characters*)
                                          (princ-to-string *emacs-current-maximum-buffers*)))
-         (content (emacs-current--render snapshot)))
-    (make-instance 'resource-observation
-                   :uri      (resource-uri resource)
-                   :revision (resource-snapshot-digest *emacs-resource-digest-key* content)
-                   :content  content)))
+         (allowed (make-hash-table :test #'equal)))
+    (dolist (key '("windows" "buffers"))
+      (setf (gethash key snapshot)
+            (map 'vector #'identity
+                 (remove-if-not
+                  (lambda (entry)
+                    (let* ((name (json-get entry "buffer"))
+                           (file (emacs-current--file entry))
+                           (identity (list name file)))
+                      (multiple-value-bind (value present-p) (gethash identity allowed)
+                        (if present-p
+                            value
+                            (setf (gethash identity allowed)
+                                  (emacs-buffer--authorized-p context name
+                                                              :file file :tool-name "resource.read"))))))
+                  (coerce (json-get snapshot key) 'list)))))
+    (setf (gethash "buffer-count" snapshot) (length (json-get snapshot "buffers")))
+    (let ((selected (find-if (lambda (entry) (eq (json-get entry "selected") t))
+                             (coerce (json-get snapshot "windows") 'list))))
+      (when selected
+        (setf (gethash "region" snapshot)
+              (emacs-resource--call context "resource.read" *emacs-current-region-elisp*
+                                    (json-get selected "buffer")
+                                    (or (emacs-current--file selected) "")
+                                    (princ-to-string *emacs-current-region-characters*)))))
+    (let ((content (emacs-current--render snapshot)))
+      (make-instance 'resource-observation
+                     :uri      (resource-uri resource)
+                     :revision (resource-snapshot-digest *emacs-resource-digest-key* content)
+                     :content  content))))
 
 (defmethod resource-observe ((resource emacs-buffer-resource) (context tool-context))
-  "Observe RESOURCE's whole live text, authorizing a visited file outside the roots."
-  (let ((observation
-          (emacs-buffer--observation
-           resource
-           (emacs-resource--call context "resource.read"
-                                 (format nil *emacs-buffer-read-elisp*
-                                         (emacs-buffer--snapshot-elisp))
-                                 (emacs-buffer-resource-name resource))
-           "resource.read")))
-    (emacs-buffer--authorize context observation "resource.read")
-    observation))
+  "Authorize the buffer's current identity before retrieving its text."
+  (let* ((name (emacs-buffer-resource-name resource))
+         (metadata (emacs-resource--call
+                    context "resource.read"
+                    *emacs-buffer-metadata-elisp*
+                    name))
+         (file (emacs-current--file metadata)))
+    (when (equal (json-get metadata "status") "missing")
+      (error 'tool-error :message "The requested Emacs buffer does not exist."
+                        :tool-name "resource.read"))
+    (unless (emacs-buffer--authorized-p context name :file file :tool-name "resource.read")
+      (error 'tool-error :message "Reading this Emacs buffer requires full-access approval."
+                        :tool-name "resource.read"))
+    (emacs-buffer--observation
+     resource
+     (emacs-resource--call context "resource.read"
+                           (format nil *emacs-buffer-read-elisp* (emacs-buffer--snapshot-elisp))
+                           name (or file ""))
+     "resource.read")))
 
 (defmethod resource-apply-operations
     ((resource emacs-buffer-resource) (context tool-context) &key base-revision operations)
@@ -366,6 +416,9 @@ Return the new observation and the normalized operations."
   (let ((status (json-get snapshot "status"))
         (name   (emacs-buffer-resource-name resource)))
     (cond
+      ((equal status "stale")
+       (error 'resource-revision-stale :uri (resource-uri resource)
+                                      :expected-revision nil :actual-revision nil))
       ((equal status "missing")
        (error 'tool-error
               :message (format nil "Emacs has no buffer named ~S; read emacs:current for the open buffers."
@@ -382,7 +435,7 @@ Return the new observation and the normalized operations."
                      :uri             (resource-uri resource)
                      :revision        (resource-snapshot-digest
                                        *emacs-resource-digest-key*
-                                       (format nil "~A~C~A" name #\Null text))
+                                       (format nil "~S" (list name file text)))
                      :content         text
                      :metadata        (list ':buffer name)
                      :kind            ':file
@@ -393,18 +446,34 @@ Return the new observation and the normalized operations."
                      :modified-p      (eq (json-get snapshot "modified") t)
                      :read-only-p     (eq (json-get snapshot "read-only") t)))))
 
+(-> emacs-buffer--authorized-p
+    (tool-context string &key (:file (option string)) (:tool-name non-empty-string))
+    boolean)
+(defun emacs-buffer--authorized-p (context name &key file tool-name)
+  "Return whether CONTEXT may access NAME visiting FILE, canonicalizing file paths."
+  (if file
+      (let ((path (workspace-tool-resolve-path context file)))
+        (or (workspace-tool--read-path-allowed-p path (workspace-tool-readable-roots context))
+            (workspace-tool-authorize-outside-path context path tool-name)))
+      (handler-case
+          (eq (tool-context-authorize-command
+               context
+               (format nil "~A -- ~A" tool-name (uiop:escape-shell-token (emacs-buffer-uri name)))
+               (config :working-directory (tool-context-configuration context)))
+              ':full-access)
+        (command-authorization-unavailable ()
+          nil))))
+
 (-> emacs-buffer--authorize (tool-context emacs-buffer-observation non-empty-string) null)
 (defun emacs-buffer--authorize (context observation tool-name)
-  "Require authorization for TOOL-NAME when OBSERVATION's buffer visits a file outside the roots."
-  (let ((file (emacs-buffer-observation-file observation)))
-    (when (and file
-               (not (workspace-tool--read-path-allowed-p
-                     file (workspace-tool-readable-roots context)))
-               (not (workspace-tool-authorize-outside-path context file tool-name)))
-      (error 'tool-error
-             :message (format nil "~A requires full-access approval for buffer ~A, which visits ~A outside the workspace and source roots."
-                              tool-name (resource-observation-uri observation) file)
-             :tool-name tool-name)))
+  "Require full access for non-file buffers and files outside the readable roots."
+  (unless (emacs-buffer--authorized-p
+           context (getf (resource-observation-metadata observation) :buffer)
+           :file (let ((file (emacs-buffer-observation-file observation)))
+                   (and file (uiop:native-namestring file)))
+           :tool-name tool-name)
+    (error 'tool-error :message "Access to this Emacs buffer requires full-access approval."
+                      :tool-name tool-name))
   nil)
 
 (-> emacs-buffer--replace
@@ -422,7 +491,9 @@ Return the new observation and the normalized operations."
                                                (emacs-buffer--snapshot-elisp))
                                        (emacs-buffer-resource-name resource)
                                        (resource-observation-content base)
-                                       content))
+                                      content
+                                      (let ((file (emacs-buffer-observation-file base)))
+                                        (if file (uiop:native-namestring file) ""))))
          (status (json-get reply "status")))
     (cond
       ((equal status "stale")

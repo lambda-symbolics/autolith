@@ -306,9 +306,10 @@ The agent reaches your definitions with =lisp.describe=, =lisp.source= and
 context note tells it so. Your Emacs appears to the agent only while the
 configured server socket exists:
 
-- =emacs:current=, read with =resource.read=, lists the visible windows with
-  point, the active region and the open file buffers, each by its
-  =emacs:buffer/NAME= URI.
+- =emacs:current=, read with =resource.read=, lists authorized visible windows
+  with point, the active region and open file buffers, each by its
+  =emacs:buffer/NAME= URI. Outside-root files and non-file buffers require
+  full-access approval; denied buffers are omitted from this snapshot.
 - =emacs:buffer/NAME= is a live buffer's text, unsaved edits included, with the
   buffer name percent-encoded. =resource.edit= applies line operations to the
   buffer itself: the change stays unsaved and undoable, and is refused as stale
