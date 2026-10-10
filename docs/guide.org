@@ -293,22 +293,27 @@ through agent-shell with three environment variables:
   =error: REASON= when it cannot start. =autolith-ide= waits for it, up to
   =autolith-slynk-timeout= seconds, and connects sly.
 - =AUTOLITH_EMACS_SERVER= is this Emacs's server socket and enables the
-  =emacs.*= tools.
+  =emacs:= resources and =emacs.*= tools.
 
-=M-x autolith-agent-shell= starts only the conversation, with the Emacs tools
-and without Slynk. The same variables, or the =:slynk-directory=,
+=M-x autolith-agent-shell= starts only the conversation, with Emacs access and
+without Slynk. The same variables, or the =:slynk-directory=,
 =:slynk-port-file= and =:emacs-server-socket= settings, work outside Emacs. In
 the terminal, =(slynk)= starts Slynk and shows the port for =M-x sly-connect=,
 and =(slynk "stop")= closes it.
 
 The agent reaches your definitions with =lisp.describe=, =lisp.source= and
 =lisp.apropos= using target =self=, or with =self.eval=. While Slynk serves, a
-context note tells it so. The Emacs tools appear only while the configured
-server socket exists:
+context note tells it so. Your Emacs appears to the agent only while the
+configured server socket exists:
 
-- =emacs.context= lists the visible windows, their buffers, files, point and
-  unsaved state, and the active region.
-- =emacs.read-buffer= reads lines of a live buffer, unsaved edits included.
+- =emacs:current=, read with =resource.read=, lists the visible windows with
+  point, the active region and the open file buffers, each by its
+  =emacs:buffer/NAME= URI.
+- =emacs:buffer/NAME= is a live buffer's text, unsaved edits included, with the
+  buffer name percent-encoded. =resource.edit= applies line operations to the
+  buffer itself: the change stays unsaved and undoable, and is refused as stale
+  when you edited the buffer since the agent read it. A buffer visiting a file
+  outside the workspace and source roots asks the same permission as that path.
 - =emacs.visit= shows a file position in a file window of the selected frame.
 - =emacs.eval= evaluates Emacs Lisp. It asks command authorization for
   =emacs.eval -- FORM= and runs only with full access.

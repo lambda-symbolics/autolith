@@ -222,6 +222,10 @@ observations, revision guards, operation discovery, typed conditions and staged
 change-set lifecycles. Autolith registers product resolvers and retains
 conversation-local observation aliases in =src/resource/protocol.lisp=.
 Caller authorization and resource-specific storage policies belong to Autolith.
+Each resolver documents its own scheme for reading and editing, and the
+=resource.read= and =resource.edit= descriptions are composed from the resolvers
+of their registry, so a scheme registered only in some sessions appears only
+there.
 
 =src/resource/workspace-changes.lisp= adapts staged changes to exact UTF-8 file
 snapshots. Cooperating operations share the workspace mutation lock. Publication
@@ -333,8 +337,15 @@ and serve the same port again. Slynk's global debugger, stream redirection and
 log output stay off, so Autolith's threads never report into a sly connection.
 =src/emacs/server.lisp= speaks the Emacs server line protocol over the
 configured Unix socket, with base64 arguments and JSON results.
-=src/emacs/tools.lisp= registers the =emacs.*= tools only while that socket
-exists. =emacs/autolith.el= wires both from Emacs.
+=src/emacs/resource.lisp= resolves the =emacs:= scheme: =emacs:current= renders
+the visible windows, region and file buffers, and =emacs:buffer/NAME= snapshots a
+whole widened buffer as a workspace-style observation. Edits reuse the
+original-line operations and observation state of workspace files, but publish
+by one Emacs request that compares the buffer with the observed text and calls
+=replace-buffer-contents=, so concurrent typing makes the edit stale and never
+lost. =src/emacs/tools.lisp= holds the action tools, =emacs.visit= and
+=emacs.eval=, and registers them with the scheme only while that socket exists.
+=emacs/autolith.el= wires both from Emacs.
 
 * Terminal
 

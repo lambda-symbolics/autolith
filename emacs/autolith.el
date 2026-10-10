@@ -21,8 +21,8 @@
 ;;   AUTOLITH_SLYNK_DIRECTORY  this sly's own slynk/ directory, so the
 ;;                             server matches the client exactly
 ;;   AUTOLITH_SLYNK_PORT_FILE  where Autolith writes the Slynk port
-;;   AUTOLITH_EMACS_SERVER     this Emacs's server socket, which enables
-;;                             Autolith's emacs.* tools
+;;   AUTOLITH_EMACS_SERVER     this Emacs's server socket, which lets
+;;                             Autolith read and edit your buffers
 ;;
 ;; Requires sly and agent-shell.  `autolith-agent-shell' starts only the
 ;; conversation, with the Emacs tools but without Slynk.
