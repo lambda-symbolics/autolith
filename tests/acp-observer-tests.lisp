@@ -177,7 +177,7 @@
 
 (-> test-acp-observer-batches-thoughts-before-permission () null)
 (defun test-acp-observer-batches-thoughts-before-permission ()
-  "Coalesce thoughts while preserving message and editor-approval ordering."
+  "Coalesce fragments across response boundaries while preserving approval ordering."
   (with-test-configuration (configuration)
     (let* ((service (acp-observer-test-service configuration))
            (session (make-instance 'acp-session :service service :identifier "thoughts"
@@ -192,7 +192,12 @@
                (agentcomms:client-initialize client)
                (agent-observer-reasoning observer "first ")
                (agent-observer-reasoning observer "thought")
+               (agent-observer-status observer ':provider-request-started nil)
+               (agent-observer-reasoning observer "")
+               (agent-observer-reasoning observer "next ")
+               (agent-observer-reasoning observer "thought")
                (agent-observer-text observer "answer")
+               (agent-observer-status observer ':provider-request-started nil)
                (agent-observer-reasoning observer "before ")
                (agent-observer-reasoning observer "approval")
                (test-assert
@@ -204,7 +209,7 @@
                          (mapcar #'agentcomms:acp-update-kind updates))
                   "thought batches precede the next message and permission request")
                  (test-assert
-                  (equal '("first thought" "answer" "before approval")
+                  (equal (list (format nil "first thought~2%next thought") "answer" "before approval")
                          (mapcar (lambda (update)
                                    (agentcomms:acp-content-text (agentcomms:json-get update "content")))
                                  updates))

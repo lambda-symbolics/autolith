@@ -17,6 +17,9 @@
                   :documentation "Text already emitted for the current provider response.")
    (update-buffer :reader acp-observer-update-buffer :type agentcomms:acp-update-buffer
                   :documentation "The ordered buffer coalescing visible thought fragments.")
+   (thought-state :initform nil :accessor acp-observer-thought-state
+                  :type (member nil :streaming :boundary)
+                  :documentation "Whether contiguous thoughts continue or cross a provider response boundary.")
    (lock :initform (make-lock "Autolith ACP updates") :reader acp-observer-lock
          :documentation "The lock serializing short presentation updates, never permission waits."))
   (:documentation "An incremental ACP presentation sink with editor authorization."))
@@ -40,7 +43,9 @@
   "Send one update, including terminal tool outcomes during cancellation."
   (let ((session (acp-observer-session observer)))
     (unless (acp-service-closed-p (acp-session-service session))
-      (agentcomms:update-buffer-send (acp-observer-update-buffer observer) update)))
+      (agentcomms:update-buffer-send (acp-observer-update-buffer observer) update)
+      (setf (acp-observer-thought-state observer)
+            (when (eq ':agent-thought-chunk (agentcomms:acp-update-kind update)) ':streaming))))
   nil)
 
 (-> acp-observer-flush (acp-observer) null)
@@ -141,10 +146,18 @@
   nil)
 
 (defmethod agent-observer-reasoning ((observer acp-observer) text)
-  "Stream visible reasoning, never private provider reasoning tokens."
+  "Stream visible reasoning, separating contiguous summaries from distinct responses."
   (acp-session-check-cancelled (acp-observer-session observer))
-  (acp-observer--send observer
-                      (agentcomms:acp-update-agent-thought (agentcomms:acp-text-content text))))
+  (when (plusp (length text))
+    (with-lock-held ((acp-observer-lock observer))
+      (acp-observer--send
+       observer
+       (agentcomms:acp-update-agent-thought
+        (agentcomms:acp-text-content
+         (if (eq ':boundary (acp-observer-thought-state observer))
+             (format nil "~2%~A" text)
+             text))))))
+  nil)
 
 (-> acp-observer--plan (acp-observer) null)
 (defun acp-observer--plan (observer)
@@ -175,7 +188,9 @@
       (:user-message-persisted
        (setf (acp-observer-turn-sequence observer) (getf details :sequence)))
       (:provider-request-started
-       (text-buffer-clear (acp-observer-streamed-text observer)))
+       (text-buffer-clear (acp-observer-streamed-text observer))
+       (when (acp-observer-thought-state observer)
+         (setf (acp-observer-thought-state observer) ':boundary)))
       (:assistant-response-persisted
        (let ((text (getf details :text)) (streamed (acp-observer-streamed-text observer)))
          (when (and (stringp text) (uiop:string-prefix-p streamed text)
