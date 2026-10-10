@@ -324,6 +324,8 @@
              :message (format nil "Command authorization returned invalid decision ~S."
                               decision)
              :tool-name "shell.run"))
+    (when (eq decision ':deny)
+      (setf *telemetry-tool-denied-p* t))
     decision))
 
 (-> tool-context-authorize-tool
@@ -341,6 +343,8 @@
              (format nil "Tool authorization returned invalid decision ~S."
                      decision)
              :tool-name (tool-canonical-name tool)))
+    (when (eq decision ':deny)
+      (setf *telemetry-tool-denied-p* t))
     decision))
 
 (defclass tool-result ()

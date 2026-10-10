@@ -1059,6 +1059,8 @@ newly acquired lease."
                         (application-connect-task-presentation application)
                         (application--load-goal application)
                         (application-publish-recovery-session application)
+                        (telemetry--call-safely
+                         (lambda () (telemetry-attach configuration)))
                         (setf completed-p t)
                         application)))
                (unless completed-p
@@ -1279,6 +1281,9 @@ newly acquired lease."
                         (context-runtime-reset)
                         (application-publish-recovery-session new-application)
                         (management-repl-transfer application new-application)
+                        (telemetry--call-safely
+                         (lambda () (telemetry-attach
+                                     (application-configuration new-application))))
                         (setf completed-p t)
                         (when (and retained-conversation-lease
                                    (not
@@ -1397,6 +1402,7 @@ newly acquired lease."
           (application-conversation application) active-conversation
           (application-provider application) provider
           (application-agent application) agent))
+  (telemetry--call-safely (lambda () (telemetry-attach configuration)))
   (application-refresh-context-meter application)
   nil)
 

@@ -66,7 +66,11 @@
 (-> acp-extension--setting-item (application configuration setting) hash-table)
 (defun acp-extension--setting-item (application configuration setting)
   "Return the JSON object describing SETTING in CONFIGURATION."
-  (let* ((value (configuration-setting-value configuration setting))
+  (let* ((configuration (if (member (setting-name setting)
+                                  '(:telemetry-enabled-p :telemetry-diagnostics-p))
+                            (telemetry-consent-configuration configuration)
+                            configuration))
+         (value (configuration-setting-value configuration setting))
          (adjustable-p (acp-extension--setting-adjustable-p application setting)))
     (agentcomms:json-object
      "name" (string-downcase (symbol-name (setting-name setting)))

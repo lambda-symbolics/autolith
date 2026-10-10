@@ -403,6 +403,7 @@
               (remhash (acp-session-identifier session) (acp-service-sessions service))))
         (serious-condition ()
           (setf failed-p t))))
+    (telemetry--call-safely #'telemetry-shutdown)
     (when failed-p
       (error 'agentcomms:acp-state-error :message "ACP session cleanup failed.")))
   nil)

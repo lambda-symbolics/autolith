@@ -317,6 +317,7 @@
           (application-tool-registry application))
      (and (slot-boundp application 'worker)
           (application-worker application)))
+    (telemetry--call-safely #'telemetry-shutdown)
     (application-release-conversation-lease application))
   nil)
 

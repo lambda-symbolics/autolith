@@ -528,6 +528,12 @@ papercut of the workspace, that existing papercut and T without recording."
               configuration :title validated-title :content validated-content
                             :source-conversation source-conversation
                             :active active))))
+      (when (and *telemetry-run* (not duplicate-p))
+        (telemetry--call-safely
+         (lambda ()
+           (telemetry-note-report
+            :run *telemetry-run* :issue-kind "other"
+            :summary-function (lambda () (papercut-title papercut))))))
       (values papercut duplicate-p))))
 
 (-> papercut--assess-unlocked
@@ -575,13 +581,24 @@ papercut of the workspace, that existing papercut and T without recording."
   (let ((validated-note
           (papercut--validate-text
            note "assessment note" *papercut-assessment-note-limit*)))
-    (with-lock-held (*papercut-lock*)
-      (papercut--transact
-       configuration
-       (lambda (active)
-         (papercut--assess-unlocked
-          configuration identifier :active active :verdict verdict
-                                   :note validated-note))))))
+    (prog1
+        (with-lock-held (*papercut-lock*)
+          (papercut--transact
+           configuration
+           (lambda (active)
+             (papercut--assess-unlocked
+              configuration identifier :active active :verdict verdict
+                                       :note validated-note))))
+      (when *telemetry-run*
+        (telemetry--call-safely
+         (lambda ()
+           (telemetry-note-repair
+            :run *telemetry-run* :repair-kind "other"
+            :outcome (case verdict
+                       (:improved "applied")
+                       (:worse "failed")
+                       (otherwise "proposed"))
+            :verified nil :summary-function (lambda () validated-note))))))))
 
 (-> papercut--mark-closed-unlocked
     (configuration non-empty-string non-empty-string &key (:active list))
@@ -627,12 +644,19 @@ papercut of the workspace, that existing papercut and T without recording."
   (let ((validated-resolution
           (papercut--validate-text
            resolution "closure resolution" *papercut-resolution-limit*)))
-    (with-lock-held (*papercut-lock*)
-      (papercut--transact
-       configuration
-       (lambda (active)
-         (papercut--mark-closed-unlocked
-          configuration identifier validated-resolution :active active))))))
+    (prog1
+        (with-lock-held (*papercut-lock*)
+          (papercut--transact
+           configuration
+           (lambda (active)
+             (papercut--mark-closed-unlocked
+              configuration identifier validated-resolution :active active))))
+      (when *telemetry-run*
+        (telemetry--call-safely
+         (lambda ()
+           (telemetry-note-repair
+            :run *telemetry-run* :repair-kind "other" :outcome "applied"
+            :verified nil :summary-function (lambda () validated-resolution))))))))
 
 
 ;;;; -- Presentation Values --

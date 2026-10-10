@@ -404,13 +404,15 @@ structured type and message survive the round trip."
 (-> checkpoint--call-with-fork-guard (t function) t)
 (defun checkpoint--call-with-fork-guard (worker thunk)
   "Call THUNK exclusively and detach inherited WORKER state in its forked child."
-  (let ((parent-pid (checkpoint--process-identifier)))
-    (call-with-secret-use-quiescence
-     (lambda ()
-       (with-live-mutation
-         (multiple-value-prog1 (funcall thunk)
-           (unless (= parent-pid (checkpoint--process-identifier))
-             (checkpoint--detach-worker worker))))))))
+  (telemetry-call-with-quiescence
+   (lambda ()
+     (let ((parent-pid (checkpoint--process-identifier)))
+       (call-with-secret-use-quiescence
+        (lambda ()
+          (with-live-mutation
+            (multiple-value-prog1 (funcall thunk)
+              (unless (= parent-pid (checkpoint--process-identifier))
+                (checkpoint--detach-worker worker))))))))))
 
 (-> checkpoint--prepare-saver (t t) null)
 (defun checkpoint--prepare-saver (worker generation)

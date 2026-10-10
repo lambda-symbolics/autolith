@@ -998,6 +998,13 @@ restricted turn cannot discover tools outside its allowlist."
     (let* ((call      (getf plan :call))
            (call-id   (json-get call "call_id"))
            (tool-name (function-call-canonical-name call)))
+      (when *telemetry-run*
+        (telemetry--call-safely
+         (lambda ()
+           (telemetry-note-tool :run *telemetry-run*
+                                :tool tool-name
+                                :arguments (json-get call "arguments")
+                                :outcome "error" :duration-ms 0))))
       (conversation-append-tool-result
        (agent-conversation agent)
        call-id
@@ -1048,6 +1055,8 @@ restricted turn cannot discover tools outside its allowlist."
              (agent-configuration agent))))
          (*resource-readable-schemes*
            (and tool-restriction-p '("workspace")))
+         (*telemetry-tool-denied-p* nil)
+         (*telemetry-tool-name* (function-call-canonical-name call))
          (real-start (get-internal-real-time))
          (cpu-start  (get-internal-run-time))
          (result nil)
@@ -1076,6 +1085,8 @@ restricted turn cannot discover tools outside its allowlist."
      :plan plan
      :result result
      :condition condition
+     :telemetry-denied-p *telemetry-tool-denied-p*
+     :telemetry-duration-ms (telemetry--elapsed-milliseconds real-start)
      :cpu-microseconds
      (and record-timings-p
           (round (* (- (get-internal-run-time) cpu-start) 1000000)
@@ -1144,6 +1155,19 @@ worker results become explicit unknown outcomes so provider history stays valid.
                (if result
                    (agent--tool-retry-output plan result)
                    *conversation-interrupted-tool-output*)))
+        (when *telemetry-run*
+          (telemetry--call-safely
+           (lambda ()
+             (telemetry-note-tool
+              :run *telemetry-run*
+              :tool tool-name
+              :arguments (json-get call "arguments")
+              :outcome (cond
+                         ((getf execution :telemetry-denied-p) "permission_denied")
+                         ((typep condition 'application-turn-cancelled) "cancelled")
+                         ((tool-result-success-p effective-result) "success")
+                         (t "error"))
+              :duration-ms (getf execution :telemetry-duration-ms)))))
         (conversation-append-tool-result
          (agent-conversation agent)
          call-id
@@ -1180,10 +1204,12 @@ worker results become explicit unknown outcomes so provider history stays valid.
 (defun agent--tool-thread-function (function)
   "Return FUNCTION wrapped with the current turn-scoped tool bindings."
   (let ((skill-logical-turn-state *skill-logical-turn-state*)
-        (worker-host-tool-policy (copy-tree *worker-host-tool-policy*)))
+        (worker-host-tool-policy (copy-tree *worker-host-tool-policy*))
+        (telemetry-run *telemetry-run*))
     (lambda ()
       (let ((*skill-logical-turn-state* skill-logical-turn-state)
-            (*worker-host-tool-policy* worker-host-tool-policy))
+            (*worker-host-tool-policy* worker-host-tool-policy)
+            (*telemetry-run* telemetry-run))
         (funcall function)))))
 
 (-> agent--run-tool-wave

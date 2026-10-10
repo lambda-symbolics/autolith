@@ -2335,7 +2335,9 @@ are forwarded to TERMINAL-UI-SELECT."
 Settings with runtime consequences, such as the provider's reasoning
 summaries or the transcript pagination, go through their dedicated setters so
 the settings page and the slash commands behave identically."
-  (let* ((configuration (application-configuration application))
+  (let* ((configuration (if (member name '(:telemetry-enabled-p :telemetry-diagnostics-p))
+                            (telemetry-consent-configuration (application-configuration application))
+                            (application-configuration application)))
          (setting (configuration-setting configuration name))
          (parsed (setting-parse setting value configuration)))
     (unless (application--setting-adjustable-p setting)

@@ -4,6 +4,25 @@
 
 (setf *test-suites* nil)
 
+(define-test-suite telemetry-hooks
+  test-telemetry-provider-retry-hooks
+  test-telemetry-provider-failure-hooks
+  test-telemetry-provider-fallback-hooks
+  test-telemetry-tool-denial-hooks
+  test-telemetry-parallel-tool-hooks
+  test-telemetry-repair-hook-projections
+  test-telemetry-configuration-owner-hook
+  test-telemetry-secondary-root-settings)
+
+(define-test-suite telemetry
+  test-telemetry-default-off
+  test-telemetry-schema-and-runs
+  test-telemetry-revocation
+  test-telemetry-redaction-failures
+  test-telemetry-subprocess-deadlines
+  test-telemetry-token-boundary
+  test-telemetry-real-redactor)
+
 (define-test-suite shell-output
   test-shell-retained-preview-and-ranges
   test-shell-prelaunch-failure

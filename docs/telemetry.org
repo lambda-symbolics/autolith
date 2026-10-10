@@ -1,0 +1,126 @@
+#+title: Consent-gated Seismograph telemetry
+
+* Enable telemetry
+
+Telemetry and diagnostic text have separate persisted consent settings, both
+initially =nil=. Configure the destination and any public model aliases before
+enabling telemetry:
+
+#+begin_src lisp
+(setf (autolith::config :telemetry-endpoint configuration)
+      "https://collector.example.org/v1/traces"
+      (autolith::config :telemetry-model-aliases configuration)
+      '(("local-private-model" . "public-model-alias"))
+      (autolith::config :telemetry-enabled-p configuration) t)
+#+end_src
+
+Use HTTPS, or HTTP to exactly =localhost=, =127.0.0.1= or =::1=. The path must
+be =/v1/traces=, without URL credentials, query or fragment. Uploads refuse
+redirects and verify HTTPS certificates. Set =:telemetry-token-file= to an
+absolute, private, owner-controlled regular file when the collector requires a
+bearer token. Write only the token into this file, optionally followed by a
+newline. The upload subprocess reads it immediately before the request.
+
+Enable =:telemetry-diagnostics-p= separately to export short report and repair
+summaries after local redaction. The trusted absolute shared-library path comes
+from =AUTOLITH_DEFINGERPRINTER_LIBRARY=. At process attach, capture that trusted
+path; pass it explicitly to each redaction child, which resolves and verifies
+an absolute regular library file before loading it. Nix provides immutable model
+and ONNX Runtime defaults. For explicit artifacts, configure both
+=:telemetry-model-directory= and =:telemetry-runtime-library=. Model weights are
+external artifacts, never repository contents.
+
+Application consent guards every native operation. Each one-shot worker uses the
+published 0.2 create/protect/close interface; model initialization is lazy.
+
+Set either consent setting to =nil= to synchronously invalidate all active run
+snapshots, terminate their subprocesses and discard queued spans. Re-enabling
+consent admits fresh runs; old contexts are invalid. Copied child and inference
+configurations cannot override the process owner's consent or destination.
+
+* Exported metadata
+
+The exporter sends OTLP/HTTP JSON schema 1 with fresh random trace, span and
+report IDs. Each logical root carries its outcome and actual model/tool attempt
+counts. Model spans contain a fixed provider category, trusted configured public
+model aliases, duration and bounded normalized input/output/cache token counts.
+Unmapped models become =custom=; missing models become =unknown=. Tool spans
+contain the exact Seismograph catalog name or =unknown= for external names,
+completion sequence, outcome, duration, correction flag and a consecutive
+argument-equality boolean. The local argument digest is discarded at run end
+and during checkpoint quiescence.
+
+Reports and repairs carry fixed issue/repair enums and public tool categories.
+Diagnostic consent gates the summary thunk before reading it. Deterministic
+credential/path/host masking surrounds Defingerprinter's full pinned Rampart
+model. Only successful native output of at most 1024 characters enters the
+queue, with the =rampart= engine and pinned upstream revision marker. Unsupported
+languages/scripts, missing artifacts, redaction failures and deadlines discard
+text while numerical telemetry remains available. Supported languages are
+English, Spanish, French, German, Italian, Portuguese and Dutch.
+
+Prompts, tool arguments/results, credentials, raw conditions, stacks, source,
+workspace paths and local identifiers are outside the wire projection. Backend
+response bodies and error diagnostics are discarded.
+
+* Runtime bounds
+
+=:telemetry-queue-limit= bounds the in-memory FIFO to 1 through 512 spans
+(default 128); overflow discards the oldest span. Root completion flushes one
+snapshot without retries. =:telemetry-timeout-ms= bounds each native redaction
+operation and the complete upload (default 3000, maximum 10000 milliseconds).
+Each operation uses a supervised one-shot SBCL subprocess, booted from the
+configured matching =:active-image-core=. The deadline supervisor terminates
+and reaps the process. Revocation terminates registered workers synchronously.
+The main image never loads native redactor handles or token contents. Worker
+failures are isolated from the user's values, errors and cancellation exits.
+
+* Hook and checkpoint interfaces
+
+After constructing the owning application configuration, call
+=telemetry-attach=. Secondary application roots receive revocation-only listeners;
+attaching a default-off root does not revoke or transfer ownership. Route interactive
+reads and writes of both consent settings through
+=(telemetry-consent-configuration configuration)=. A secondary root can revoke
+and synchronize the durable owner; only the canonical owner can enable consent.
+At service shutdown, call =telemetry-shutdown=. An explicit owner replacement
+requires shutdown followed by attach of the new configuration.
+
+Wrap a logical turn with =(telemetry-call-with-run configuration function)=.
+Nested provider requests reuse =*telemetry-run*=. Independent child turns create
+fresh roots. Pass the captured run explicitly to completion callbacks in other
+threads. Emit =telemetry-note-model= once per actual provider attempt, including
+authentication recovery and retries, with normalized provider usage. Emit
+=telemetry-note-tool= once per completed attempt with the typed outcome and
+monotonic duration. =telemetry-note-report= and =telemetry-note-repair= accept a
+=summary-function= thunk; acquire raw text only inside that thunk.
+
+Before a checkpoint fork, enclose the entire fork admission interval in
+=telemetry-call-with-quiescence=. It excludes diagnostic acquisition, discards
+queued/active runs and terminates children while holding the privacy guard.
+Call =telemetry-detach= in the fork child before saving the core; this removes
+inherited process-owned controller/listener state without signalling parent
+processes. The parent resumes fresh admissions after the wrapper returns.
+One-shot =telemetry-quiesce= is also available for shutdown-style callers.
+
+* Tests
+
+Run the registered suite with:
+
+#+begin_src sh
+./script/check --suite telemetry --jobs 1
+#+end_src
+
+All ordinary tests mock uploads or supervised worker launches. The actual-model
+case requires explicit opt-in and an installed trusted library; uploads are
+mocked even in that case:
+
+#+begin_src sh
+AUTOLITH_TEST_TELEMETRY_MODEL=1 \
+  ./script/check --test test-telemetry-real-redactor --jobs 1
+#+end_src
+
+Reference contracts were inspected in =chakanysystems/seismograph=
+=src/otlp.rs= and =client/index.js=. Defingerprinter is pinned through =qlfile=
+to =38a1643dd818e1487d64d116c3453b2429aa7ffa=; model revision is
+=b1993e4e68b082835b80ffc65acc03325ea2e501=.

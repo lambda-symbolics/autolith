@@ -381,6 +381,7 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                         (lisp-worker-manager-stop worker))
                    (setf worker-stopped-p t)))
                (ignore-errors (rlm-environment-pool-flush))
+               (telemetry--call-safely #'telemetry-shutdown)
                (conversation-picker-search-close
                 (application-conversation application))
                (application-release-conversation-lease application)
@@ -1348,6 +1349,8 @@ autolith uninstall removes the installation and keeps user data."
                    *image-commit-replay-probe-argument*))
      (image-commit-replay-probe-main (second arguments)
                                      (third arguments)))
+    ((equal arguments '("--telemetry-worker"))
+     (telemetry--worker-main))
     ((equal arguments '("--worker"))
      (worker-main))
     (t

@@ -132,6 +132,7 @@ symbol itself."
                       (rest record))))
     (ensure-directories-exist pathname)
     (log-append pathname entry)
+    (telemetry-note-mutation-journal entry)
     entry))
 
 

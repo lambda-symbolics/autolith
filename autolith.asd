@@ -40,6 +40,7 @@
                #:colordiff
                #:closer-mop
                #:dexador
+               #:defingerprinter
                #:fetch-gist
                #:flexi-streams
                #:idsmall
@@ -89,6 +90,7 @@
                              (:file "core/text-buffer")
                              (:file "configuration/settings")
                              (:file "configuration/configuration")
+                             (:file "telemetry/configuration")
                              (:file "provider/registry")
                              (:file "configuration/workspace")
                              (:file "conversation/image-input")
@@ -109,6 +111,9 @@
                              (:file "provider/nous/authentication")
                              (:file "provider/nous/device-authentication")
                              (:file "provider/copilot/authentication")
+                             (:file "telemetry/runtime")
+                             (:file "telemetry/exporter")
+                             (:file "telemetry/hook-protocol")
                              (:file "conversation/identifiers")
                              (:file "conversation/identifier-migration")
                              (:file "conversation/store")
@@ -284,6 +289,7 @@
                              (:file "acp/extension-jobs")
                              (:file "acp/extension-resources")
                              (:file "acp/completions")
+                             (:file "telemetry/hooks")
                              (:file "startup/main")
                              (:file "startup/active-image"))))
   :in-order-to ((asdf:test-op (asdf:test-op #:autolith/tests))))
@@ -447,6 +453,8 @@
                              (:file "test-runner")
                              (:file "fixture-tests")
                              (:file "test-runner-tests")
+                             (:file "telemetry-tests")
+                             (:file "telemetry-hook-tests")
                              (:file "test-suites"))))
   :perform (asdf:test-op (operation component)
              (declare (ignore operation component))
