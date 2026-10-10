@@ -356,11 +356,15 @@ configurations read; launchers under test keep their own core selection."
         (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))))
 
 (defun check--committed-version (source-root)
-  "Return the version of HEAD, which pristine recovery uses for source fallback."
+  "Return the parent/HEAD version used by pristine source fallback."
   (let ((source (uiop:run-program
-                 (list "git" "-C" (namestring source-root)
-                       "show" "HEAD:autolith.asd")
-                 :output ':string)))
+                 (if (probe-file (merge-pathnames ".jj/" source-root))
+                     (list "jj" "--no-pager" "--color" "never"
+                           "--repository" (namestring source-root)
+                           "file" "show" "-r" "@-" "autolith.asd")
+                     (list "git" "-C" (namestring source-root)
+                           "show" "HEAD:autolith.asd"))
+                 :directory source-root :output ':string)))
     (with-input-from-string (stream source)
       (let* ((*read-eval* nil)
              (definition (read stream))

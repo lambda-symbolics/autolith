@@ -505,6 +505,62 @@ exit 64
                                       :if-does-not-exist ':ignore)))
   nil)
 
+(-> recovery-tests--jj-source-checkout (pathname) null)
+(defun recovery-tests--jj-source-checkout (root)
+  "Exercise an unexported committed parent from a dirty non-colocated workspace."
+  (let* ((source (merge-pathnames "jj-source/" root))
+         (worktrees (merge-pathnames "jj-checkouts/" root))
+         (state (merge-pathnames "jj-state/" root))
+         (marker (merge-pathnames "fixture.txt" source))
+         (executable (merge-pathnames "fixture.sh" source))
+         (link (merge-pathnames "fixture-link" source))
+         (context (make-instance 'recovery-context
+                                :source-root source :worktree-root worktrees
+                                :generation-root worktrees :state-root state
+                                :current-pathname (merge-pathnames "current.sexp" state))))
+    (uiop:run-program (list "jj" "git" "init" "--no-colocate" (namestring source))
+                      :output ':string :error-output ':string)
+    (recovery-tests--write-form marker :committed)
+    (recovery-tests--write-form executable :executable)
+    (sb-posix:chmod executable #o755)
+    (sb-posix:symlink "fixture.txt" link)
+    (recovery-jj-output source '("new" "-m" "dirty recovery fixture"))
+    (let* ((commit (recovery-source-commit context))
+           (operation (recovery-jj-output source '("--ignore-working-copy" "op" "log"
+                                                   "--no-graph" "--limit" "1" "-T" "id"))))
+      ;; Leave this edit unsnapshotted: recovery must not update the source repo.
+      (recovery-tests--write-form marker :dirty)
+      (test-assert (not (probe-file (merge-pathnames ".git/" source)))
+                   "fixture has jj metadata without a Git worktree")
+      (let* ((checkout (recovery-source-checkout context commit "fixture"))
+             (private-marker (merge-pathnames "fixture.txt" checkout)))
+        (test-assert (recovery-source-checkout-valid-p checkout commit)
+                     "unexported parent yields a validated isolated checkout")
+        (test-assert (eq :committed (uiop:read-file-form private-marker))
+                     "source fallback excludes uncommitted workspace edits")
+        (test-assert (logtest #o111 (sb-posix:stat-mode
+                                   (sb-posix:stat (merge-pathnames "fixture.sh" checkout))))
+                     "isolated checkout preserves executable modes")
+        (test-assert (string= "fixture.txt"
+                             (sb-posix:readlink (merge-pathnames "fixture-link" checkout)))
+                     "isolated checkout preserves symbolic links")
+        (test-assert (equal checkout (recovery-source-checkout context commit "fixture"))
+                     "validated checkout can be reused")
+        (recovery-tests--write-form private-marker :tampered)
+        (test-assert (not (recovery-source-checkout-valid-p checkout commit))
+                     "checkout validation rejects edited committed files")
+        (recovery-source-checkout context commit "fixture")
+        (test-assert (eq :committed (uiop:read-file-form private-marker))
+                     "recovery replaces a tampered private checkout"))
+      (test-assert (and (eq :dirty (uiop:read-file-form marker))
+                        (string= commit (recovery-source-commit context))
+                        (string= operation
+                                 (recovery-jj-output
+                                  source '("--ignore-working-copy" "op" "log"
+                                           "--no-graph" "--limit" "1" "-T" "id"))))
+                   "recovery leaves source edits, committed parent and operation untouched")))
+  nil)
+
 (-> test-recovery-generation-revision-boundary () null)
 (defun test-recovery-generation-revision-boundary ()
   "Test automatic recovery revision matching and explicit rollback exceptions."
@@ -523,6 +579,8 @@ exit 64
          (generations (list stale current-a current-b)))
     (unwind-protect
          (let ((*error-output* (make-broadcast-stream)))
+           (when (recovery-jj-p (asdf:system-source-directory :autolith))
+             (recovery-tests--jj-source-checkout root))
            (test-call-with-function-replacements
             (list
              (list 'recovery-generation-compatible-p

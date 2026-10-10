@@ -10,6 +10,25 @@
   "--autolith-internal-active-image-probe"
   "The private argument requesting active-image validation, which the launchers pass.")
 
+;;; The pinned image library has no provenance callback. Adapt only its Git
+;;; command boundary, so its install, fresh saver and saved-core probes share
+;;; the same jj identities without changing the build-record protocol.
+(eval-when (:load-toplevel :execute)
+  (load (asdf:system-relative-pathname :autolith "script/source-provenance.lisp")))
+
+(defvar *active-image-git-provenance-function*
+  (symbol-function 'sbcl-generations::image--git-output)
+  "The image library's unmodified provenance implementation.")
+
+(defun active-image--source-command (source-root arguments)
+  "Use jj provenance in jj workspaces and the original library otherwise."
+  (cl-user::autolith-source-command source-root arguments
+                                   *active-image-git-provenance-function*))
+
+(eval-when (:load-toplevel :execute)
+  (setf (symbol-function 'sbcl-generations::image--git-output)
+        #'active-image--source-command))
+
 (-> active-image-source-paths (pathname) list)
 (defun active-image-source-paths (source-root)
   "Return sorted repository-relative inputs compiled into an active image."
@@ -25,6 +44,7 @@
                     "script/build-active"
                     "script/build-active.lisp"
                     "script/restart-publisher.lisp"
+                    "script/source-provenance.lisp"
                     "autolith.asd"
                     "qlfile"
                     "qlfile.lock"

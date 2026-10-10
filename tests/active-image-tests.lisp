@@ -21,6 +21,30 @@
       (test-assert
        (not (active-image-build-record-compatible-p wrong-source source-root))
        "active-image compatibility rejects a changed source blob")))
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (let ((file (merge-pathnames "blob" root)))
+      (with-open-file (stream file :direction :output :if-exists :supersede)
+        (declare (ignore stream)))
+      (test-assert
+       (string= "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+                (cl-user::autolith-source-blob file))
+       "local provenance retains the empty Git blob identity")
+      (with-open-file (stream file :direction :output :if-exists :supersede)
+        (write-line "hello" stream))
+      (test-assert
+       (string= "ce013625030ba8dba906f756967f9e9ca394464a"
+                (cl-user::autolith-source-blob file))
+       "local provenance includes the Git blob header and file bytes")
+      (test-assert
+       (equal '("rev-parse" "HEAD")
+              (cl-user::autolith-source-command
+               root '("rev-parse" "HEAD")
+               (lambda (observed-root arguments)
+                 (test-assert (equal root observed-root)
+                              "non-jj source roots are passed through")
+                 arguments)))
+       "non-jj builds retain the original provenance implementation")))
   nil)
 
 (-> test-active-image-process-command () null)

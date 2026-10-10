@@ -36,6 +36,12 @@
                            user-setup)))
   (load (merge-pathnames "script/runtime-requirement.lisp" source-root))
   (autolith-require-minimum-runtime version-pathname)
+  (when (probe-file (merge-pathnames ".jj/" source-root))
+    (unless (probe-file quicklisp-setup)
+      (error "Recovery provenance needs Quicklisp at ~A." quicklisp-setup))
+    (load quicklisp-setup)
+    (uiop:symbol-call '#:ql '#:quickload :ironclad :silent t))
+  (load (merge-pathnames "script/source-provenance.lisp" source-root))
   (labels ((load-recovery-source ()
              "Load only the packages needed to compile the recovery runtime."
              (unless (probe-file quicklisp-setup)
@@ -50,17 +56,18 @@
                        package))
              (load (merge-pathnames "recovery/runtime.lisp" source-root)))
 
-             (git-output (arguments)
-               "Return trimmed output from one source-root Git command."
-               (string-trim
-                '(#\Space #\Tab #\Newline #\Return)
-                (uiop:run-program
-                 (append (list "git"
-                               "-c" "safe.directory=*"
-                               "-C" (namestring source-root))
-                         arguments)
-                 :output ':string
-                 :error-output ':output)))
+            (git-output (arguments)
+              "Return Git-compatible provenance for a Git or jj source tree."
+              (autolith-source-command
+               source-root arguments
+               (lambda (root arguments)
+                 (string-trim
+                  '(#\Space #\Tab #\Newline #\Return)
+                  (uiop:run-program
+                   (append (list "git" "-c" "safe.directory=*"
+                                 "-C" (namestring root))
+                           arguments)
+                   :output ':string :error-output ':output)))))
 
            (source-blob (relative-pathname)
              "Return the Git object identity of one current source file."
@@ -71,6 +78,7 @@
              (let* ((paths '("script/build-recovery"
                              "script/build-recovery.lisp"
                              "recovery/runtime.lisp"
+                             "script/source-provenance.lisp"
                              "recovery/launcher.lisp"
                              "bin/autolith"
                              "bin/autolith-active"
@@ -88,6 +96,8 @@
                      :builder-blob (source-blob "script/build-recovery")
                      :builder-source-blob
                      (source-blob "script/build-recovery.lisp")
+                     :provenance-source-blob
+                     (source-blob "script/source-provenance.lisp")
                      :source-launcher-blob
                      (source-blob "recovery/launcher.lisp")
                      :stable-launcher-blob (source-blob "bin/autolith")

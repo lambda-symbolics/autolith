@@ -15,7 +15,7 @@
     :initarg :source-root
     :reader recovery-context-source-root
     :type pathname
-    :documentation "The stable Autolith source checkout containing Git history.")
+    :documentation "The stable Autolith source checkout containing revision history.")
    (generation-root
     :initarg :generation-root
     :reader recovery-context-generation-root
@@ -1014,13 +1014,33 @@ generation. Its validator carries this image's own stricter checks."
     :output ':string
     :error-output ':output)))
 
+(serapeum:-> recovery-jj-p (pathname) boolean)
+(defun recovery-jj-p (repository)
+  "Return true when REPOSITORY is a jj workspace."
+  (not (null (probe-file (merge-pathnames ".jj/" repository)))))
+
+(serapeum:-> recovery-jj-output (pathname list) string)
+(defun recovery-jj-output (repository arguments)
+  "Return trimmed output from one jj command in REPOSITORY."
+  (string-trim
+   '(#\Space #\Tab #\Newline #\Return)
+   (uiop:run-program
+    (append (list "jj" "--no-pager" "--color" "never"
+                  "--repository" (namestring repository))
+            arguments)
+    :output ':string :error-output ':string)))
+
 (serapeum:-> recovery-source-commit (recovery-context) string)
 (defun recovery-source-commit (context)
-  "Return the validated commit currently checked out at CONTEXT's source root."
-  (let ((commit
-          (recovery-git-output
-           (recovery-context-source-root context)
-           '("rev-parse" "--verify" "HEAD^{commit}"))))
+  "Return the validated committed parent/HEAD at CONTEXT's source root."
+  (let* ((source-root (recovery-context-source-root context))
+         (commit
+           (if (recovery-jj-p source-root)
+               (recovery-jj-output
+                source-root '("--ignore-working-copy" "log" "--no-graph"
+                              "-r" "@-" "-T" "commit_id"))
+               (recovery-git-output
+                source-root '("rev-parse" "--verify" "HEAD^{commit}")))))
     (unless (recovery-git-commit-p commit)
       (error "The current source revision is not one full Git commit."))
     commit))
@@ -1038,16 +1058,53 @@ generation. Its validator carries this image's own stricter checks."
 
 (serapeum:-> recovery-source-checkout-valid-p (pathname string) boolean)
 (defun recovery-source-checkout-valid-p (checkout commit)
-  "Return true when CHECKOUT is a clean detached copy of COMMIT."
+  "Return true when CHECKOUT is a clean private copy of COMMIT."
   (handler-case
-      (and (string= (recovery-git-output checkout '("rev-parse" "HEAD"))
-                    commit)
-           (zerop
-            (length
-             (recovery-git-output checkout '("status" "--porcelain"))))
-           t)
+      (if (recovery-jj-p checkout)
+          (and (string= (recovery-jj-output
+                         checkout '("log" "--no-graph" "-r" "@-" "-T" "commit_id"))
+                        commit)
+               (zerop (length (recovery-jj-output
+                               checkout (list "diff" "--from" commit "--to" "@"
+                                              "--name-only"))))
+               t)
+          (and (string= (recovery-git-output checkout '("rev-parse" "HEAD"))
+                        commit)
+               (zerop (length (recovery-git-output
+                               checkout '("status" "--porcelain"))))
+               t))
     (error ()
       nil)))
+
+(serapeum:-> recovery-jj-source-checkout (pathname pathname string) null)
+(defun recovery-jj-source-checkout (source-root checkout commit)
+  "Create an isolated jj checkout of COMMIT without changing SOURCE-ROOT.
+
+Copy only Git objects, not source workspaces, configuration or indexes. A
+private ref makes even unexported jj commits available to the new repository.
+Colocation lets older committed source use its original Git provenance code."
+  (let* ((git-root
+           (uiop:ensure-directory-pathname
+            (recovery-jj-output source-root '("--ignore-working-copy" "git" "root"))))
+         (objects (merge-pathnames "objects/" git-root))
+         (private-objects (merge-pathnames ".git/objects/" checkout))
+         (reference (merge-pathnames ".git/refs/heads/recovery-source" checkout)))
+    (uiop:run-program
+     (list "jj" "--no-pager" "--color" "never" "git" "init" "--colocate"
+           (namestring checkout))
+     :output ':string :error-output ':string)
+    ;; Copy bytes, not hard links; retain any identical read-only objects from init.
+    (uiop:run-program
+     (list "cp" "-R" "-n" (concatenate 'string (namestring objects) ".")
+           (namestring private-objects))
+     :output ':string :error-output ':string)
+    (ensure-directories-exist reference)
+    (with-open-file (stream reference :direction ':output :if-exists ':supersede
+                                     :if-does-not-exist ':create)
+      (write-line commit stream))
+    (recovery-jj-output checkout '("git" "import"))
+    (recovery-jj-output checkout (list "new" commit)))
+  nil)
 
 (serapeum:-> recovery-source-checkout
     (recovery-context string string)
@@ -1076,16 +1133,18 @@ generation. Its validator carries this image's own stricter checks."
                                       :if-does-not-exist ':ignore))
         (unwind-protect
              (progn
-               (uiop:run-program
-                (list "git" "clone" "--quiet" "--no-checkout"
-                      "--no-hardlinks"
-                      (namestring (recovery-context-source-root context))
-                      (namestring temporary))
-                :output ':string
-                :error-output ':output)
-               (recovery-git-output temporary
-                                    (list "checkout" "--quiet" "--detach"
-                                          commit))
+               (let ((source-root (recovery-context-source-root context)))
+                 (if (recovery-jj-p source-root)
+                     (recovery-jj-source-checkout source-root temporary commit)
+                     (progn
+                       (uiop:run-program
+                        (list "git" "clone" "--quiet" "--no-checkout"
+                              "--no-hardlinks" (namestring source-root)
+                              (namestring temporary))
+                        :output ':string :error-output ':output)
+                       (recovery-git-output temporary
+                                            (list "checkout" "--quiet" "--detach"
+                                                  commit)))))
                (unless (recovery-source-checkout-valid-p temporary commit)
                  (error "The private recovery checkout failed validation."))
                (rename-file temporary checkout))

@@ -497,13 +497,14 @@ records resolves once."
 
 (-> self-git-command (configuration list &key (:ignore-error-status boolean)) string)
 (defun self-git-command (configuration arguments &key ignore-error-status)
-  "Run Git ARGUMENTS in CONFIGURATION's source root and return combined output."
-  (uiop:run-program
-   (append (list "git" "-C"
-                 (namestring (config :source-root configuration)))
-           arguments)
-   :output ':string
-   :error-output ':output
+  "Return source provenance, adapting read-only Git queries for jj workspaces."
+  (cl-user::autolith-source-command
+   (config :source-root configuration) arguments
+   (lambda (source-root arguments)
+     (uiop:run-program
+      (append (list "git" "-C" (namestring source-root)) arguments)
+      :output ':string :error-output ':output
+      :ignore-error-status ignore-error-status))
    :ignore-error-status ignore-error-status))
 
 (-> self-validate-commit-title (string) string)
