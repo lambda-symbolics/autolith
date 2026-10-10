@@ -108,7 +108,25 @@
               (conversation (agent-conversation child))
               (needle "ACP transcript fixture with real content")
               (full nil))
-         (conversation-append-user-message conversation needle)
+           (conversation-append-user-message conversation needle)
+          (dotimes (turn 2)
+            (when (plusp turn)
+              (conversation-append-user-message conversation "automatic continuation" :automatic-p t))
+            (conversation-append-record
+             conversation
+             (list :provider-item :wire-json
+                   (json-encode (agentcomms:json-object
+                                 "type" "function_call" "call_id" (format nil "call-~D" turn)
+                                 "name" "shell.run" "arguments" "{\"command\":\"pwd\"}"))))
+            (conversation-append-record
+             conversation (list :tool-result :call-id (format nil "call-~D" turn)
+                                :status ':ok :output "done")))
+           (conversation-append-user-message
+            conversation
+            (make-string 1000 :initial-element #\λ))
+           (dotimes (index 4)
+             (conversation-append-user-message conversation
+                                                (format nil "page update ~D" index)))
          (task-tests--publish-terminal
           job :completed
           (acp-extension-job-tests--result job (conversation-pathname conversation)))
@@ -122,6 +140,19 @@
            (test-assert (plusp total) "completed child transcript has content")
            (test-assert (search needle content) "transcript contains persisted child content")
            (test-assert (= total (length content)) "full transcript reports its length"))
+           (let* ((structured (acp-extension-job-transcript
+                                session
+                                (agentcomms:json-object
+                                 "jobId" (job-identifier job) "output" "structured"
+                                 "offset" 0 "limit" 20)))
+                  (updates (agentcomms:json-get structured "updates")))
+             (test-assert (vectorp updates)
+                          "structured transcript returns an update vector")
+             (test-assert (plusp (length updates))
+                          "structured transcript returns persisted updates")
+             (test-assert (string= "user_message_chunk"
+                                   (agentcomms:json-get (aref updates 0) "sessionUpdate"))
+                          "structured transcript uses the canonical ACP update kind"))
          (let* ((page-size 7)
                 (first-page
                   (acp-extension-job-transcript
@@ -141,8 +172,79 @@
            (test-assert (string= (agentcomms:json-get second-page "content")
                                  (subseq full page-size
                                          (min (length full) (* 2 page-size))))
-                        "transcript second page starts at nextOffset"))))))
-  nil)
+                        "transcript second page starts at nextOffset"))
+          (let* ((whole (acp-extension-job-transcript
+                         session (agentcomms:json-object "jobId" (job-identifier job)
+                                                         "output" "structured")))
+                 (updates (agentcomms:json-get whole "updates"))
+                 (collected nil)
+                 (offset 0))
+            (loop
+              (let* ((response (agentcomms:client-agent-request
+                                client "_autolith/job-transcript"
+                                (agentcomms:json-object "sessionId" session-id
+                                                       "jobId" (job-identifier job)
+                                                       "output" "structured" "offset" offset "limit" 3)))
+                     (page (agentcomms:json-get response "value"))
+                     (items (agentcomms:json-get page "updates")))
+                (test-assert (equal "ok" (agentcomms:json-get response "outcome"))
+                             "structured pages cross the wire as typed success")
+                (when (zerop offset)
+                  (test-assert (= 3 (length items)) "one page retains more than two updates"))
+                (setf collected (nconc collected (coerce items 'list)))
+                (when (eq t (agentcomms:json-get page "complete"))
+                  (test-assert (null (agentcomms:json-get page "nextOffset"))
+                               "snapshot exhaustion encodes a null cursor")
+                  (return))
+                (let ((next (agentcomms:json-get page "nextOffset")))
+                  (test-assert (= next (+ offset (length items))) "cursor advances by returned updates")
+                  (setf offset next))))
+            (test-assert (string= (json-encode updates) (json-encode (coerce collected 'vector)))
+                         "paged updates preserve all content in chronological order")
+            (let ((call (aref updates 1)) (result (aref updates 2))
+                  (next-call (aref updates 3)) (next-result (aref updates 4)))
+              (test-assert (equal (gethash "toolCallId" call) (gethash "toolCallId" result))
+                           "call and result share a qualified identity")
+              (test-assert (equal (gethash "toolCallId" next-call) (gethash "toolCallId" next-result))
+                           "automatic turns retain call and result pairing")
+              (test-assert (not (eql (parse-integer (gethash "toolCallId" call) :junk-allowed t)
+                                     (parse-integer (gethash "toolCallId" next-call) :junk-allowed t)))
+                           "automatic messages advance the durable tool identity prefix")
+              (test-assert (and (equal "done" (gethash "rawOutput" result))
+                                (plusp (length (gethash "content" result))))
+                           "structured tool results include their visible output"))
+            (let ((*acp-extension-job-structured-response-limit* 512))
+              (test-assert
+               (handler-case
+                   (progn (acp-extension-job-transcript
+                           session (agentcomms:json-object "jobId" (job-identifier job)
+                                                           "output" "structured" "offset" 5))
+                          nil)
+                 (agentcomms:acp-error () t))
+               "a giant multibyte update fails explicitly at its own offset")
+              (let ((page (acp-extension-job-transcript
+                           session (agentcomms:json-object "jobId" (job-identifier job)
+                                                           "output" "structured" "limit" 1))))
+                (test-assert (<= (length (utf8-string-to-octets
+                                         (json-encode (acp-extension-result ':ok :value page)))) 512)
+                             "the bound includes the encoded typed response envelope")))
+            (with-open-file (stream (conversation-log-pathname conversation)
+                                    :direction ':output :if-exists ':append)
+              (write-string "(" stream))
+            (let ((page (acp-extension-job-transcript
+                         session (agentcomms:json-object "jobId" (job-identifier job)
+                                                         "output" "structured"))))
+              (test-assert (string= (json-encode updates) (json-encode (gethash "updates" page)))
+                           "a torn tail preserves the last complete snapshot")))
+           (let ((invalid nil))
+             (handler-case
+                 (acp-extension-job-transcript
+                  session
+                  (agentcomms:json-object
+                   "jobId" (job-identifier job) "output" "structured" "offset" -1))
+               (agentcomms:acp-error () (setf invalid t)))
+             (test-assert invalid "negative structured offsets are rejected"))
+  nil)))))
 
 (-> test-acp-extension-job-steer-and-cancel-authority () null)
 (defun test-acp-extension-job-steer-and-cancel-authority ()

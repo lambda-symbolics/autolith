@@ -103,60 +103,69 @@
           (remhash (acp-session-identifier session) (acp-service-sessions service)))
         (error condition)))))
 
+(-> acp-replay--record-update (list integer) (option hash-table))
+(defun acp-replay--record-update (record turn-sequence)
+  "Project one durable record into the canonical ACP transcript update."
+  (let ((fields (rest record)))
+    (case (first record)
+      (:message
+       (unless (getf fields :automatic-p)
+         (funcall (if (eq (getf fields :role) ':user)
+                      #'agentcomms:acp-update-user-message
+                      #'agentcomms:acp-update-agent-message)
+                  (agentcomms:acp-text-content (getf fields :content)))))
+      (:provider-item
+       (let* ((item (json-decode (getf fields :wire-json)))
+              (type (json-get item "type")))
+         (cond
+           ((equal type "message")
+            (let ((text (response-item-assistant-text item)))
+              (when text
+                (agentcomms:acp-update-agent-message (agentcomms:acp-text-content text)))))
+           ((equal type "reasoning")
+            (let ((text (response-item-reasoning-summary item)))
+              (when text
+                (agentcomms:acp-update-agent-thought (agentcomms:acp-text-content text)))))
+           ((equal type "function_call")
+            (let ((name (function-call-canonical-name item))
+                  (arguments (json-decode (json-get item "arguments"))))
+              (agentcomms:acp-update-tool-call
+               (agentcomms:acp-tool-call
+                (acp-tool-identifier turn-sequence (json-get item "call_id"))
+                (acp-tool-title name arguments)
+                :name name :kind (acp-tool-kind name) :status ':pending
+                :raw-input arguments)))))))
+      (:tool-result
+       (let ((output (getf fields :output)))
+         (agentcomms:acp-update-tool-call-progress
+          (agentcomms:acp-tool-call-update
+           (acp-tool-identifier turn-sequence (getf fields :call-id))
+           :status (if (member (getf fields :status) '(:ok :success)) ':completed ':failed)
+           :raw-output output
+           :content (list (agentcomms:acp-tool-call-content
+                           (agentcomms:acp-text-content output))))))))))
+
+(-> acp-replay-map-updates (conversation function) null)
+(defun acp-replay-map-updates (conversation function)
+  "Call FUNCTION on chronological updates with durable turn-qualified tool identities."
+  (let ((turn-sequence 0))
+    (conversation-replay--map-records
+     conversation
+     (lambda (record)
+       (when (and (eq (first record) ':message)
+                  (eq (getf (rest record) :role) ':user))
+         (setf turn-sequence (getf (rest record) :seq)))
+       (let ((update (acp-replay--record-update record turn-sequence)))
+         (when update (funcall function update))))))
+  nil)
+
 (-> acp-session-replay (acp-session) null)
 (defun acp-session-replay (session)
   "Replay chronological durable messages, reasoning, calls, and results before load returns."
-  (let* ((application (acp-session-application session))
-         (observer (acp-observer-create session))
-         (turn-sequence 0))
-    (conversation-replay--map-records
-     (application-conversation application)
-     (lambda (record)
-       (let ((fields (rest record)))
-         (case (first record)
-           (:message
-            (when (eq (getf fields :role) ':user)
-              (setf turn-sequence (getf fields :seq)
-                    (acp-observer-turn-sequence observer) turn-sequence))
-            (unless (getf fields :automatic-p)
-              (acp-observer--send
-               observer
-               (funcall (if (eq (getf fields :role) ':user)
-                            #'agentcomms:acp-update-user-message #'agentcomms:acp-update-agent-message)
-                        (agentcomms:acp-text-content (getf fields :content))))))
-           (:provider-item
-            (let* ((item (json-decode (getf fields :wire-json)))
-                   (type (json-get item "type")))
-              (cond
-                ((equal type "message")
-                 (let ((text (response-item-assistant-text item)))
-                   (when text
-                     (acp-observer--send observer
-                                         (agentcomms:acp-update-agent-message
-                                          (agentcomms:acp-text-content text))))))
-                ((equal type "reasoning")
-                 (let ((text (response-item-reasoning-summary item)))
-                   (when text
-                     (acp-observer--send observer
-                                         (agentcomms:acp-update-agent-thought
-                                          (agentcomms:acp-text-content text))))))
-                ((equal type "function_call")
-                 (acp-observer--send
-                  observer (agentcomms:acp-update-tool-call
-                            (acp-observer--tool-report
-                             observer :identifier (json-get item "call_id")
-                             :title (function-call-canonical-name item) :status ':pending
-                             :arguments (json-decode (json-get item "arguments")))))))))
-           (:tool-result
-            (acp-observer--send
-             observer
-             (agentcomms:acp-update-tool-call-progress
-              (agentcomms:acp-tool-call-update
-               (acp-tool-identifier turn-sequence (getf fields :call-id))
-               :status (if (member (getf fields :status) '(:ok :success)) ':completed ':failed)
-               :raw-output (getf fields :output)
-               :content (list (agentcomms:acp-tool-call-content
-                               (agentcomms:acp-text-content (getf fields :output))))))))))))
+  (let ((observer (acp-observer-create session)))
+    (acp-replay-map-updates
+     (application-conversation (acp-session-application session))
+     (lambda (update) (acp-observer--send observer update)))
     (acp-observer--plan observer))
   nil)
 
