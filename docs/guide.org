@@ -276,6 +276,9 @@ connected to Autolith's own image, and an agent-shell conversation with the same
 Autolith. What you define in the REPL lives beside the agent, which can inspect
 it and advise.
 
+The conversation occupies the right third of the frame. The sly REPL occupies
+the bottom quarter of the left pane, with your code above it.
+
 Install sly and agent-shell, load the file, and run =M-x autolith-ide= from the
 buffer you are editing:
 

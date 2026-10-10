@@ -540,7 +540,8 @@
   test-emacs-server-fake-replies
   test-emacs-tools-registration
   test-emacs-tools-real-daemon
-  test-autolith-el-compiles)
+  test-autolith-el-compiles
+  test-autolith-el-layout)
 
 (define-test-suite active-image
   test-active-image-build-record

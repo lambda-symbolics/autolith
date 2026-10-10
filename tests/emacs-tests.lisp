@@ -392,3 +392,23 @@
                            (format nil "autolith.el compiles cleanly: ~A" error-output))
               (test-assert (probe-file (merge-pathnames "autolith.elc" root))
                            "Compilation writes autolith.elc.")))))))
+
+
+(-> test-autolith-el-layout () t)
+(defun test-autolith-el-layout ()
+  "Exercise IDE startup and pane geometry in a clean Emacs process."
+  (let ((emacs (emacs-test-executable)))
+    (if (null emacs)
+        (test-withheld ':emacs "autolith.el IDE layout")
+        (let ((source (asdf:system-source-directory :autolith)))
+          (multiple-value-bind (output error-output status)
+              (uiop:run-program
+               (list (uiop:native-namestring emacs) "-Q" "--batch"
+                     "--load" (uiop:native-namestring
+                               (merge-pathnames "emacs/autolith.el" source))
+                     "--load" (uiop:native-namestring
+                               (merge-pathnames "tests/autolith-emacs-tests.el" source))
+                     "-f" "ert-run-tests-batch-and-exit")
+               :output ':string :error-output ':string :ignore-error-status t)
+            (test-assert (zerop status)
+                         (format nil "IDE layout checks pass: ~A~A" output error-output)))))))

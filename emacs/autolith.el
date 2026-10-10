@@ -60,7 +60,7 @@ The first start compiles Slynk, which takes longer than later ones."
   :type 'integer)
 
 (defvar autolith--pending nil
-  "The pending IDE launch: a plist of :port-file, :code, :shell and :timer.")
+  "The pending IDE launch: :port-file, :code, :shell, :frame and :timer.")
 
 ;;;; Agent configuration
 
@@ -95,14 +95,16 @@ ENVIRONMENT is a list of \"NAME=VALUE\" strings added to
 ;;;###autoload
 (defun autolith-ide ()
   "Develop in Autolith's image: code, a sly REPL and an Autolith conversation.
-The current buffer stays as the code window.  Autolith starts under
-agent-shell, serves its image over Slynk, and sly connects to it once
-the port is known."
+The current buffer stays in the upper-left code window.  The conversation
+uses the right third of the frame; sly-mrepl uses the bottom quarter of
+the left pane.  Autolith starts under agent-shell and sly connects once
+Slynk reports its port."
   (interactive)
   (autolith--require 'sly)
   (autolith--require 'agent-shell)
   (autolith--cancel-pending)
   (let* ((code (current-buffer))
+         (frame (selected-frame))
          (port-file (make-temp-file "autolith-slynk-" nil ".port"))
          (shell (agent-shell-start
                  :config (autolith-agent-shell-config
@@ -110,7 +112,7 @@ the port is known."
                                         (expand-file-name (sly-slynk-path)))
                                 (concat "AUTOLITH_SLYNK_PORT_FILE=" port-file)
                                 (autolith--server-variable))))))
-    (setq autolith--pending (list :port-file port-file :code code :shell shell))
+    (setq autolith--pending (list :port-file port-file :code code :shell shell :frame frame))
     (autolith--await-port (float-time))
     (message "Autolith is starting; sly connects once Slynk is ready.")))
 
@@ -172,22 +174,32 @@ STARTED is when the launch began, for `autolith-slynk-timeout'."
   (let ((pending autolith--pending))
     (cl-labels ((arrange ()
                   (remove-hook 'sly-connected-hook #'arrange)
-                  (let ((repl (sly-mrepl--find-buffer (sly-current-connection))))
-                    (autolith--layout (plist-get pending :code)
-                                      repl
-                                      (plist-get pending :shell)))))
+                  (let ((repl (sly-mrepl--find-buffer (sly-current-connection)))
+                        (frame (plist-get pending :frame)))
+                    (when (frame-live-p frame)
+                      (with-selected-frame frame
+                        (autolith--layout (plist-get pending :code)
+                                          repl
+                                          (plist-get pending :shell)))))))
       (add-hook 'sly-connected-hook #'arrange 90)
       (sly-connect "127.0.0.1" port))))
 
 (defun autolith--layout (code repl shell)
-  "Show CODE on the left, REPL top right and SHELL bottom right."
-  (when (and (buffer-live-p code) (buffer-live-p shell))
-    (delete-other-windows)
-    (switch-to-buffer code)
-    (let* ((right (split-window-right))
-           (bottom (split-window right nil 'below)))
-      (set-window-buffer right (if (buffer-live-p repl) repl shell))
-      (set-window-buffer bottom shell))))
+  "Show CODE above REPL on the left, with SHELL in the right third.
+REPL occupies the bottom quarter of the left pane's height."
+  (when (and (buffer-live-p code) (buffer-live-p repl) (buffer-live-p shell))
+    (let* ((ignore-window-parameters t)
+           (left (cl-find-if (lambda (window)
+                               (not (window-parameter window 'window-side)))
+                             (window-list nil 'nomini))))
+      (delete-other-windows left)
+      (set-window-dedicated-p left nil)
+      (set-window-buffer left code)
+      (let* ((right (split-window left (- (/ (window-total-width left) 3)) 'right))
+             (bottom (split-window left (- (/ (window-total-height left) 4)) 'below)))
+        (set-window-buffer right shell)
+        (set-window-buffer bottom repl))
+      (select-window left))))
 
 (defun autolith--cancel-pending ()
   "Stop waiting for a previous launch's Slynk."
