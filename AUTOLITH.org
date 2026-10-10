@@ -18,6 +18,19 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Temporary shell capture quota
+
+- Problem: 424 closed shell captures could not be pruned, exceeding the
+  256-artifact limit and preventing new shell executions.
+- Behavior: Raise the active-image artifact count allowance to 1024 while
+  preserving protected captures and the 1 GiB total byte allowance.
+- Scope and location: exploratory =*shell-log-retention-count-limit*= setting,
+  mutation =dc5aa1b3-ab23-4e42-b147-fd5dba8136d6=. No private commit; papercut
+  =b2768af6-ee05-4b0c-8c2f-2b3821bdb984= tracks receipt-backed pruning.
+- Verification: inspection measured 4,253,525 bytes and zero active captures;
+  subsequent shell executions and the quota assertion passed.
+- Removal condition: discard the override after repairing capture pruning.
+
 ** Active-image internal symbol reader
 
 - Problem: Single-colon =autolith:= references failed for internal symbols during
