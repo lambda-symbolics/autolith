@@ -634,6 +634,10 @@ CONVERSATION is given, persisted as provider metadata under REQUEST-NUMBER so
 retries stay auditable next to the request they belong to."
   (lambda (event)
     (typecase event
+      (memory-context-event
+       (agent-observer-status
+        observer :related-memories
+        (list :count (memory-context-event-count event))))
       (provider-attempt-failed-event
        (let ((details
                (list :request-number request-number

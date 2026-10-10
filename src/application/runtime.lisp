@@ -3185,6 +3185,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
   "Return a terminal observer streaming one APPLICATION turn as stable lines."
   (let ((ui (application-ui application))
         (activity-label (application-thinking-label))
+        (related-memories-shown-p nil)
         (reasoning-text (text-buffer-create))
         (presented-reasoning-text nil)
         (stream-text (text-buffer-create))
@@ -3274,6 +3275,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
        (lambda (status details)
          (case status
            (:user-message-persisted
+            (setf related-memories-shown-p nil)
             (let ((pending-input-identifier
                     (getf details :pending-input-identifier)))
               (when (and pending-input-identifier
@@ -3314,6 +3316,16 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                      (user-message-input-text user-message-input)))))
                 (setf (application-rendered-sequence application) sequence)))
             (application-publish-recovery-session application))
+           (:related-memories
+            (unless related-memories-shown-p
+              (let ((count (getf details :count)))
+                (application-present
+                 application
+                 (list (terminal-span
+                        ':dim
+                        (format nil "~D relevant memor~:@P exist~:[~;s~]"
+                                count (= count 1)))))
+                (setf related-memories-shown-p t))))
            (:provider-progress
             (terminal-ui-note-status-progress ui))
            (:provider-request-started
@@ -3397,6 +3409,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                       application details)))))
             (application-set-activity application activity-label))
            (:steering-applied
+            (setf related-memories-shown-p nil)
             (application-render-records application)
             (application-set-activity application activity-label))
            (:compaction-started

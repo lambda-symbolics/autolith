@@ -162,3 +162,102 @@
                   "malformed memory data degrades to context diagnostics without reader evaluation")))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+
+(-> test-memory-context-notices () null)
+(defun test-memory-context-notices ()
+  "Exercise delivered memory counts and dim, per-input terminal notices."
+  (with-test-configuration (configuration)
+    (let* ((*context-contributors* nil)
+           (*context-resolver* (cl-llm-provider-api:make-context-resolver))
+           (*context-last-deliveries* (make-hash-table :test #'equal))
+           (*context-last-delivery-order* nil)
+           (*memory-context-result-limit* 2)
+           (conversation (conversation-create configuration))
+           (terminal (make-instance 'recording-terminal :columns 120))
+           (ui (terminal-ui-create :terminal terminal))
+           (application (make-instance 'application
+                                       :configuration configuration
+                                       :conversation conversation
+                                       :ui ui))
+           (observer (application-agent-observer application
+                                                 :user-message-input "granite"))
+           (callback (agent--provider-event-callback observer))
+           (present (symbol-function 'application-present))
+           (notices nil)
+           (counts nil))
+      (loop for index from 1 to 3
+            do (memory-remember configuration
+                                :title (format nil "Reference ~D" index)
+                                :content "Saved context."
+                                :tags '("granite")
+                                :scope (if (= index 1) ':global ':workspace)))
+      (register-context-contributor "related-memories" 'memory-related-context
+                                    :source ':built-in)
+      (labels ((notify (&key compaction-p)
+                 "Resolve a request and forward its selected presentation events."
+                 (let ((delivery (context-resolve-request
+                                  configuration conversation #()
+                                  :compaction-p compaction-p)))
+                   (context-delivery-notify
+                    delivery
+                    (lambda (event)
+                      (push (memory-context-event-count event) counts)
+                      (funcall callback event)))
+                   delivery)))
+        (test-call-with-function-replacements
+         (list (list 'application-present
+                     (lambda (application entry)
+                       (push entry notices)
+                       (funcall present application entry))))
+         (lambda ()
+           (unwind-protect
+                (progn
+                  (terminal-ui-start ui)
+                  (multiple-value-bind (item record)
+                      (conversation-append-user-message conversation "granite")
+                    (declare (ignore item))
+                    (agent-observer-status
+                     observer :user-message-persisted
+                     (list :sequence (getf (rest record) :seq)
+                           :time (getf (rest record) :time))))
+                  (agent-observer-status observer :provider-request-started nil)
+                  (notify)
+                  (let* ((entry (first notices))
+                         (output (recording-terminal-output terminal))
+                         (input-position (search "granite" output))
+                         (notice-position (search (terminal--spans-text entry) output)))
+                    (test-assert (and input-position notice-position
+                                      (< input-position notice-position))
+                                 "the memory notice is visible below the triggering input")
+                    (test-assert (eq (terminal-span-style (first entry)) ':dim)
+                                 "the memory notice uses dim presentation"))
+                  (agent-observer-status observer :provider-request-started nil)
+                  (notify)
+                  (funcall callback (make-instance 'provider-retry-event
+                                                   :attempt 1 :maximum-attempts 2
+                                                   :delay 0))
+                  (notify)
+                  (test-assert (and (= (length notices) 1)
+                                    (equal counts '(2 2 2)))
+                               "requests and retries expose the capped count without repeated notices")
+                  (let ((*context-advice-token-budget* 0))
+                    (notify))
+                  (notify :compaction-p t)
+                  (test-assert (equal counts '(2 2 2))
+                               "omitted advice and compaction do not announce memories")
+                  (conversation-append-user-message conversation "granite")
+                  (agent-observer-status observer :steering-applied nil)
+                  (let ((*memory-context-result-limit* 1))
+                    (notify))
+                  (test-assert (and (= (length notices) 2)
+                                    (= (first counts) 1))
+                               "a new input gets its own notice with the current offered count")
+                  (conversation-append-user-message conversation "basalt")
+                  (agent-observer-status observer :steering-applied nil)
+                  (notify)
+                  (test-assert (and (= (length notices) 2)
+                                    (= (length counts) 4))
+                               "input without matching memories produces no notice"))
+             (terminal-ui-stop ui)))))))
+  nil)

@@ -147,7 +147,8 @@
   test-version-comparison)
 
 (define-test-suite memory
-  test-memory-persistence)
+  test-memory-persistence
+  test-memory-context-notices)
 
 (define-test-suite papercut
   test-papercuts)

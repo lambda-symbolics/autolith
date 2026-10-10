@@ -835,6 +835,8 @@ are request-scoped and included in transport and result redaction."))
                    (provider-request-object adapter conversation tool-namespaces
                                             :goal-context goal-context
                                             :compaction-p compaction-p)
+                 (when event-callback
+                   (context-delivery-notify delivery event-callback))
                  (cl-llm-provider-api::provider-execute-request
                   adapter request :secrets *provider-active-credential-values*
                   :event-callback event-callback

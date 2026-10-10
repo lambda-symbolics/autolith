@@ -437,8 +437,15 @@ have the same evaluation behavior as DEFUN."
 (-> context--copy-contribution
     (context-contribution string keyword)
     context-contribution)
-(defun context--copy-contribution (contribution contributor source)
-  "Return CONTRIBUTION with immutable registration provenance attached."
+(defgeneric context--copy-contribution (contribution contributor source)
+  (:documentation "Copy CONTRIBUTION with immutable registration provenance attached."))
+
+(-> context-contribution-provider-event (context-contribution) (option provider-event))
+(defgeneric context-contribution-provider-event (contribution)
+  (:documentation "Return CONTRIBUTION's presentation event, or NIL for silent advice."))
+
+(defmethod context--copy-contribution
+    ((contribution context-contribution) contributor source)
   (make-instance
    'context-contribution
    :identifier (context-contribution-identifier contribution)
@@ -452,6 +459,18 @@ have the same evaluation behavior as DEFUN."
    :conflict-group (context-contribution-conflict-group contribution)
    :contributor contributor
    :source source))
+
+(defmethod context-contribution-provider-event ((contribution context-contribution))
+  nil)
+
+(-> context-delivery-notify (context-delivery function) null)
+(defun context-delivery-notify (delivery callback)
+  "Send CALLBACK presentation events for contributions actually selected in DELIVERY."
+  (dolist (contribution (context-delivery-contributions delivery))
+    (let ((event (context-contribution-provider-event contribution)))
+      (when event
+        (funcall callback event))))
+  nil)
 
 (-> context--normalize-result (t string keyword) list)
 (defun context--normalize-result (result contributor source)
