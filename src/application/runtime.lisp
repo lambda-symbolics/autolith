@@ -3664,7 +3664,10 @@ an automatic message shown by the request's notice instead of its text."
 (defun application--run-goal-continuations
     (application &key steering-function steering-persisted-function
                       pending-operations-function)
-  "Run bounded automatic continuation turns while the session goal is active."
+  "Run bounded automatic continuation turns while the session goal is active.
+
+The turns stop, leaving the goal active, while a job whose completion will
+wake the model is still queued, running or undelivered."
   (loop
     (let ((goal (application-goal application)))
       (unless (and goal (eq (getf goal :status) ':active))
@@ -3680,6 +3683,9 @@ an automatic message shown by the request's notice instead of its text."
                  "The goal paused after ~D automatic continuations. ~
                   Use /goal resume or send a message to keep going."
                  *application-goal-continuation-limit*))
+        (return))
+      ;; A running job's completion wakes the model and resumes the goal.
+      (when (application-job-completions-awaited-p application)
         (return))
       (incf (getf (application-goal application) :continuations))
        (application--record-goal application)

@@ -30,6 +30,27 @@
              (t
               t)))))))
 
+(-> application-job-completions-awaited-p (application) boolean)
+(defun application-job-completions-awaited-p (application)
+  "Return true while a pending result or unfinished job will wake APPLICATION.
+
+Goal continuations defer to that wakeup instead of urging the model on while
+its own jobs run; the completion turn resumes the goal afterwards. Without a
+connected wakeup nothing would resume it, so nothing is awaited."
+  (let ((agent (and (slot-boundp application 'agent) (application-agent application))))
+    (flet ((admissible-p (notice)
+             (application-job-completions--notice-admissible-p application notice)))
+      (and (typep agent 'agent)
+           (task-completion-wakeup-connected-p agent)
+           (or (some #'admissible-p (task-completion-pending agent :continuation-only-p t))
+               (some (lambda (job)
+                       (admissible-p
+                        (list :owner-conversation (session-job-completion-owner-conversation job)
+                              :completion-policy  (session-job-completion-policy job)
+                              :mission-id         (session-job-completion-mission-id job))))
+                     (task-completion-awaited-jobs agent)))
+           t))))
+
 (-> application-job-completions--controller-admissible-p
     (application-input-controller) boolean)
 (defun application-job-completions--controller-admissible-p (controller)
@@ -145,15 +166,20 @@
         (application-input-controller-call-with-primary-steering
          controller
          (lambda (take acknowledge)
-           (application--run-turn
-            application
-            *application-job-completion-continuation-prompt*
-            :continuation-p t
-            :steering-function take
-            :steering-persisted-function acknowledge
-            :pending-operations-function
-            (lambda (owner)
-              (application-input-controller--apply-pending-commands controller :agent owner))))))))
+           (flet ((pending-operations (owner)
+                    (application-input-controller--apply-pending-commands controller :agent owner)))
+             (application--run-turn
+              application
+              *application-job-completion-continuation-prompt*
+              :continuation-p t
+              :steering-function take
+              :steering-persisted-function acknowledge
+              :pending-operations-function #'pending-operations)
+             (application--run-goal-continuations
+              application
+              :steering-function take
+              :steering-persisted-function acknowledge
+              :pending-operations-function #'pending-operations)))))))
   nil)
 
 (-> application-job-completions-connect (application) null)

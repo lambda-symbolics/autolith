@@ -212,6 +212,57 @@
   nil)
 
 
+(-> test-job-completion-controller-goal-awaits-jobs () null)
+(defun test-job-completion-controller-goal-awaits-jobs ()
+  "Hold goal continuations while an owned job runs, then resume them after its wakeup."
+  (with-test-configuration (configuration root)
+    (setf configuration (configuration-copy configuration :working-directory root))
+    (let* ((*task-completion-coalescing-seconds* 0)
+           (application (mission-test--application
+                         configuration
+                         :results (list (mission-test--result "started")
+                                        (mission-test--result "integrated")
+                                        (mission-test--result "[GOAL-COMPLETE]"))))
+           (provider (application-provider application))
+           (parent (application-agent application))
+           (registry (task-augment-tool-registry (application-tool-registry application)))
+           (runtime (task-completion--runtime parent))
+           (release (sb-thread:make-semaphore))
+           (controller (application-input-controller-create application :start-reader-p nil :load-pending-p nil)))
+      (declare (ignore registry))
+      (unwind-protect
+           (let ((job (task-orchestrator-start-execution-job
+                       runtime parent :tool-name "completion.fixture" :summary "held job"
+                       :operation-function (lambda ()
+                                             (sb-thread:wait-on-semaphore release)
+                                             (tool-success "completed"))
+                       :detached-p t :completion-policy ':continue)))
+             (task-completion-watch job parent)
+             (setf (application-goal application)
+                   (list :objective "integrate the job" :status ':active
+                         :continuations 0 :created-at (get-universal-time)))
+             (application-run-message application "Start asynchronous work.")
+             (test-assert (and (= 1 (length (scripted-provider-input-snapshots provider)))
+                               (eq (getf (application-goal application) :status) ':active)
+                               (zerop (getf (application-goal application) :continuations)))
+                          "a running owned job holds goal continuations without spending them")
+             (sb-thread:signal-semaphore release)
+             (session-job-await job 5)
+             (cl-jobpond:completion-subscription-refresh
+              (task-completion-service-subscription (task-completion--service parent)))
+             (application-input-controller--run-work
+              controller (application-input-controller--next-work controller))
+             (test-assert (= 3 (length (scripted-provider-input-snapshots provider)))
+                          "the completion wakeup is followed by the goal's continuation")
+             (test-assert (eq (getf (application-goal application) :status) ':complete)
+                          "the resumed continuation completes the goal"))
+        (sb-thread:signal-semaphore release)
+        (application-input-controller-stop controller)
+        (setf (application-input-controller application) nil)
+        (task-orchestrator-close runtime)
+        (terminal-ui-stop (application-ui application)))))
+  nil)
+
 (-> test-job-completion-controller-mixed-overflow () null)
 (defun test-job-completion-controller-mixed-overflow ()
   "Publish an eligible continuation behind notify-only or stale-mission capacity without user input."

@@ -437,6 +437,19 @@ acknowledgment is reconciled without another model-visible message."
            (task-completion-service-wakeup service))
          t)))
 
+(-> task-completion-awaited-jobs (agent) list)
+(defun task-completion-awaited-jobs (agent)
+  "Return AGENT's queued or running detached jobs that report to its conversation."
+  (let ((runtime (task-completion--runtime agent))
+        (owner   (conversation-identifier (agent-conversation agent))))
+    (and runtime
+         (remove-if-not
+          (lambda (job)
+            (and (session-job-detached-p job)
+                 (equal owner (session-job-completion-owner-conversation job))
+                 (member (job-state job) '(:queued :running) :test #'eq)))
+          (task-orchestrator-list-jobs runtime)))))
+
 (-> task-completion-disconnect (agent) null)
 (defun task-completion-disconnect (agent)
   "Disconnect controller wakeups without losing durable pending notifications."
