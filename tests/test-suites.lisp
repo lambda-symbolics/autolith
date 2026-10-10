@@ -1018,6 +1018,11 @@
   test-acp-session-close-timeout-retains-ownership
   test-acp-session-delayed-cancel-during-finalization
   test-acp-session-flushes-thoughts-on-prompt-exit
+  test-acp-extension-portable-values
+  test-acp-extension-wire-state-and-authority
+  test-acp-extension-busy-and-notification-order
+  test-acp-extension-close-active-handler
+  test-acp-extension-shutdown-admission
   test-acp-mcp-overlay-configuration
   test-acp-mcp-overlay-discovery-call-and-cleanup
   test-acp-mcp-overlay-duplicate-validation)

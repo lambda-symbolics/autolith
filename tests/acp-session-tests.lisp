@@ -4,6 +4,8 @@
 
 (defclass acp-session-test-client (agentcomms:acp-client)
   ((updates :initform nil :accessor acp-session-test-updates)
+   (wire-events :initform nil :accessor acp-session-test-wire-events
+                :documentation "Chronological boundary, stream and permission evidence, newest first.")
    (permission-choice :initform "once" :accessor acp-session-test-permission-choice))
   (:documentation "A deterministic ACP client for session lifecycle tests."))
 
@@ -11,11 +13,55 @@
     ((client acp-session-test-client) session-id update params)
   (declare (ignore session-id params))
   (push update (acp-session-test-updates client))
+  (push (cons ':update update) (acp-session-test-wire-events client))
+  nil)
+
+(defmethod agentcomms:client-extension-notification
+    ((client acp-session-test-client) method params)
+  "Retain typed lifecycle notifications in their wire arrival order."
+  (when (equal method "_autolith/event")
+    (push (cons ':extension params) (acp-session-test-wire-events client)))
+  nil)
+
+(-> acp-session-test-turn-events (acp-session-test-client) list)
+(defun acp-session-test-turn-events (client)
+  "Return ordered turn boundary payloads received by CLIENT."
+  (loop for (kind . params) in (reverse (acp-session-test-wire-events client))
+        when (and (eq kind ':extension) (equal "turn" (agentcomms:json-get params "kind")))
+          collect (agentcomms:json-get params "data")))
+
+(-> acp-session-test-check-turns (acp-session-test-client list list) null)
+(defun acp-session-test-check-turns (client sources outcomes)
+  "Check ordered epoch ownership around streamed updates and permission callbacks."
+  (let ((active nil) (seen-sources nil) (seen-outcomes nil) (last-epoch -1))
+    (dolist (event (reverse (acp-session-test-wire-events client)))
+      (let ((kind (first event)) (params (rest event)))
+        (cond
+          ((and (eq kind ':extension) (equal "turn" (agentcomms:json-get params "kind")))
+           (let* ((data (agentcomms:json-get params "data"))
+                  (epoch (agentcomms:json-get data "epoch")))
+             (if (equal "running" (agentcomms:json-get data "state"))
+                 (progn
+                   (test-assert (and (null active) (> epoch last-epoch))
+                                "each running boundary owns a fresh nonoverlapping epoch")
+                   (setf active data last-epoch epoch))
+                 (progn
+                   (test-assert (and active (= epoch (agentcomms:json-get active "epoch")))
+                                "idle closes the exact active epoch")
+                   (push (agentcomms:json-get data "source") seen-sources)
+                   (push (agentcomms:json-get data "outcome") seen-outcomes)
+                   (setf active nil)))))
+          ((member kind '(:update :permission))
+           (test-assert active "stream and permission callbacks occur inside an owned turn")))))
+    (test-assert (null active) "all observed turns finish")
+    (test-assert (equal sources (nreverse seen-sources)) "turn sources retain their admission order")
+    (test-assert (equal outcomes (nreverse seen-outcomes)) "turn outcomes preserve cancellation and failure"))
   nil)
 
 (defmethod agentcomms:client-request-permission
     ((client acp-session-test-client) session-id tool-call options params)
-  (declare (ignore client session-id tool-call options params))
+  (declare (ignore session-id options params))
+  (push (cons ':permission tool-call) (acp-session-test-wire-events client))
   (values ':selected "once"))
 
 (defun acp-session-test-connect (service client)
@@ -444,8 +490,8 @@
             (append
              (list
               (list 'agent-run-user-turn
-                    (lambda (agent text &key observer)
-                      (declare (ignore agent text))
+                    (lambda (agent text &key observer automatic-p)
+                      (declare (ignore agent text automatic-p))
                       (agent-observer-reasoning observer "pending ")
                       (agent-observer-reasoning observer "thought")
                       (ecase outcome

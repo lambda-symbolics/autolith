@@ -52,6 +52,31 @@
    (cleanup-lock
     :initform (make-lock "Autolith ACP session cleanup") :reader acp-session-cleanup-lock
     :documentation "The lock serializing complete close attempts.")
+   (extension-lock
+    :initform (make-lock "Autolith ACP extension events") :reader acp-session-extension-lock
+    :documentation "Orders extension sequence allocation and wire notification writes.")
+   (extension-sequence
+    :initform 0 :accessor acp-session-extension-sequence :type integer
+    :documentation "The last non-durable extension notification sequence.")
+   (extension-usage
+    :initform nil :accessor acp-session-extension-usage
+    :documentation "The latest complete provider usage, copied at its observer boundary.")
+   (extension-verified-models
+    :initform (make-hash-table :test #'equal) :reader acp-session-extension-verified-models
+    :documentation "Successful model requests and their local verification times.")
+   (completion-thread
+    :initform nil :accessor acp-session-completion-thread
+    :documentation "The owned headless completion controller thread.")
+   (completion-condition
+    :initform (make-condition-variable :name "ACP completion wakeup")
+    :reader acp-session-completion-condition
+    :documentation "The wakeup condition protected by the session lock.")
+   (completion-wakeup-p
+    :initform nil :accessor acp-session-completion-wakeup-p :type boolean
+    :documentation "Whether the controller must inspect pending completions.")
+   (completion-report
+    :initform nil :accessor acp-session-completion-report
+    :documentation "A bounded failure report pausing automatic continuation.")
    (closing-p
     :initform nil :accessor acp-session-closing-p :type boolean
     :documentation "Whether session shutdown has stopped prompt admission.")
@@ -82,6 +107,10 @@
     (or (gethash identifier (acp-service-sessions service))
         (agentcomms:acp-invalid-params "Unknown session ~A." identifier))))
 
+(define-condition acp-operation-busy (agentcomms:acp-method-error)
+  ()
+  (:default-initargs :code -32603 :message "Another primary operation is active.")
+  (:documentation "Another session or setup owns the ACP process's primary operation."))
 (-> acp-service--call-with-operation (acp-service t function) t)
 (defun acp-service--call-with-operation (service owner function)
   "Run FUNCTION as the sole primary operation, rejecting overlapping work."
@@ -92,8 +121,7 @@
              (when (acp-service-closed-p service)
                (error 'agentcomms:acp-connection-closed))
              (when (acp-service-busy-owner service)
-               (error 'agentcomms:acp-method-error :code -32603
-                      :message "Another primary operation is active."))
+              (error 'acp-operation-busy))
              (setf (acp-service-busy-owner service) owner
                    claimed-p t))
            (funcall function))
@@ -101,14 +129,19 @@
         (with-lock-held ((acp-service-lock service))
           (setf (acp-service-busy-owner service) nil))))))
 
+(defvar *acp-extension-invocation-p* nil
+  "Whether an explicit extension invocation owns this thread's cancellation boundary.")
+
 (-> acp-session-check-cancelled (acp-session) null)
 (defun acp-session-check-cancelled (session)
   "Signal APPLICATION-TURN-CANCELLED at a provider or tool boundary."
   (when (or (acp-session-cancelled-p session)
             (acp-session-closed-p session)
             (acp-service-closed-p (acp-session-service session))
-            (agentcomms:agent-session-cancelled-p
-             (acp-session-service session) (acp-session-identifier session)))
+            (agentcomms:acp-request-cancelled-p)
+            (and (not *acp-extension-invocation-p*)
+                 (agentcomms:agent-session-cancelled-p
+                  (acp-session-service session) (acp-session-identifier session))))
     (error 'application-turn-cancelled))
   nil)
 
@@ -121,11 +154,12 @@
          thread
          (lambda ()
            (when (with-lock-held ((acp-session-lock session))
-                   (and (= epoch (acp-session-epoch session))
-                        (acp-session-cancelled-p session)
-                        (or (and (eq thread (acp-session-prompt-thread session))
+                   (and (acp-session-cancelled-p session)
+                        (or (and (= epoch (acp-session-epoch session))
+                                 (eq thread (acp-session-prompt-thread session))
                                  (acp-session-prompt-interruptible-p session))
-                            (eql epoch (gethash thread (acp-session-tool-threads session))))))
+                            (and (not (eq thread (acp-session-prompt-thread session)))
+                                 (eql epoch (gethash thread (acp-session-tool-threads session)))))))
              (error 'application-turn-cancelled))))
       (error ()
         nil)))
@@ -138,17 +172,20 @@
       (with-lock-held ((acp-session-lock session))
         (setf (acp-session-prompt-interruptible-p session) nil))
     (funcall function)))
-(-> acp-session-cancel (acp-session) null)
-(defun acp-session-cancel (session)
-  "Cancel the prompt, concurrent tool workers, and session-owned jobs."
+(-> acp-session-cancel (acp-session &key (:expected-epoch (option integer))) null)
+(defun acp-session-cancel (session &key expected-epoch)
+  "Cancel owned work, optionally only if EXPECTED-EPOCH is still current."
   (let ((threads nil) (epoch nil))
     (with-lock-held ((acp-session-lock session))
-      (unless (acp-session-cancelled-p session)
+      (when (and expected-epoch (/= expected-epoch (acp-session-epoch session)))
+        (return-from acp-session-cancel nil))
+      (when (or (acp-session-closing-p session) (not (acp-session-cancelled-p session)))
         (setf (acp-session-cancelled-p session) t
               epoch (acp-session-epoch session)
-              threads (cons (acp-session-prompt-thread session)
+              threads (cons (cons (acp-session-prompt-thread session) epoch)
                             (loop for thread being the hash-keys of (acp-session-tool-threads session)
-                                  collect thread)))))
+                                  using (hash-value generation)
+                                  collect (cons thread generation))))))
     (when epoch
       (let ((orchestrator (application--task-orchestrator (acp-session-application session))))
         (when orchestrator
@@ -158,8 +195,8 @@
               (unless (job-terminal-p job)
                 (job-cancel job))))))
       ;; Wake tool owners first so the prompt can join its tool wave while unwinding.
-      (dolist (thread (reverse threads))
-        (acp-session--interrupt session thread epoch))))
+      (dolist (owner (reverse threads))
+        (acp-session--interrupt session (first owner) (rest owner)))))
   nil)
 
 (-> acp-session--call-with-tool (acp-session function) t)
@@ -176,7 +213,8 @@
     (unwind-protect
          (progn
            (with-lock-held ((acp-session-lock session))
-             (unless (eq thread (acp-session-prompt-thread session))
+             (unless (or (eq thread (acp-session-prompt-thread session))
+                         (nth-value 1 (gethash thread (acp-session-tool-threads session))))
                (setf (gethash thread (acp-session-tool-threads session))
                      (acp-session-epoch session)
                      registered-p t)))
