@@ -1028,6 +1028,10 @@
   test-acp-extension-operations-and-invoke
   test-acp-extension-conversations-paging-and-fields
   test-acp-extension-conversations-invalid-bounds
+  test-acp-extension-job-foreign-rejection
+  test-acp-extension-job-transcript-window
+  test-acp-extension-job-steer-and-cancel-authority
+  test-acp-extension-job-durable-fallback
   test-acp-completion-continues-and-closes
   test-acp-completion-cancel-and-reuse
   test-acp-completion-start-failure-cleans-session
