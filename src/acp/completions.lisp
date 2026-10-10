@@ -52,6 +52,14 @@
          (agent (application-agent application))
          (notices (acp-completion--admitted-notices session)))
     (cond
+      ((acp-input--pending-commands-p session)
+       (acp-input--run-pending-commands session)
+       0)
+      ((acp-input--pending-p session)
+       (acp-session-run-turn
+        session "" :queued-p t
+        :prepare (lambda () (acp-input--prepare-queued-turn session)))
+       0)
       (notices
        (let ((delay (- (reduce #'min notices :key (lambda (notice) (getf notice :ready-at)))
                        (get-universal-time))))
@@ -129,6 +137,7 @@
             (progn
               (task-completion-connect agent (lambda () (acp-completion-wake session)))
               (with-lock-held ((acp-session-lock session))
+                (setf (acp-session-completion-wakeup-p session) t)
                 (setf (acp-session-completion-thread session)
                       (make-thread (lambda () (acp-completion--run session))
                                    :name "Autolith ACP completion controller"))))

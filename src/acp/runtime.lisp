@@ -72,6 +72,7 @@
                                                :identifier (conversation-identifier conversation)
                                                :application application
                                                :mode (acp-service-permission-mode service))))
+                  (acp-input-initialize session)
                   (with-lock-held ((acp-service-lock service))
                     (when (acp-service-closed-p service)
                       (error 'agentcomms:acp-connection-closed))
@@ -216,15 +217,18 @@
   nil)
 
 (-> acp-session-run-turn (acp-session string &key (:automatic-p boolean)
-                                                  (:prepare (option function))) keyword)
-(defun acp-session-run-turn (session text &key automatic-p prepare)
+                                                (:queued-p boolean)
+                                                (:prepare (option function))) keyword)
+(defun acp-session-run-turn (session text &key automatic-p queued-p prepare)
   "Run one admitted turn, preserving cancellation and durable repair for either input source."
   (let* ((service (acp-session-service session))
          (application (acp-session-application session))
          (conversation (application-conversation application))
+         (controller (acp-input-controller session))
+         (*acp-extension-invocation-p* (or automatic-p queued-p))
          (start-sequence nil)
          (observer nil)
-         (source (if automatic-p "completion" "prompt"))
+         (source (cond (queued-p "queue") (automatic-p "completion") (t "prompt")))
          (outcome ':condition)
          (claimed-p nil))
     (acp-service--call-with-operation
@@ -236,9 +240,9 @@
                   (with-lock-held ((acp-session-lock session))
                     (when (or (acp-session-closed-p session) (acp-session-closing-p session))
                       (agentcomms:acp-invalid-params "The session is closing or closed."))
-                    (when (and automatic-p (acp-session-cancelled-p session))
+                    (when (and (or automatic-p queued-p) (acp-session-cancelled-p session))
                       (error 'application-turn-cancelled))
-                    (unless automatic-p
+                    (unless (or automatic-p queued-p)
                       (setf (acp-session-cancelled-p session) nil
                             (acp-session-completion-report session) nil))
                     (incf (acp-session-epoch session))
@@ -251,21 +255,31 @@
                           (config :working-directory (application-configuration application))))
                     (acp-extension-turn-notify session "running" :source source)
                     (acp-session-check-cancelled session)
-                    (setf outcome
-                          (if (and prepare (not (funcall prepare)))
-                              ':end-turn
-                              (progn
-                                (setf start-sequence (conversation-next-sequence conversation)
-                                      observer (acp-observer-create session))
-                                (acp-extension-notify session "state")
-                                (agent-run-user-turn (application-agent application) text
-                                                     :observer observer :automatic-p automatic-p)
-                                (acp-session--call-with-finalization
-                                 session
-                                 (lambda ()
-                                   (acp-session-check-cancelled session)
-                                   (acp-observer-flush observer)
-                                   ':end-turn)))))))
+                    (let ((prepared (if prepare (funcall prepare) t)))
+                      (setf outcome
+                            (if (not prepared)
+                                ':end-turn
+                                (progn
+                                  (when controller
+                                    (application-input-controller-begin-external-work controller))
+                                  (when (and controller (not (or automatic-p queued-p)))
+                                    (with-lock-held ((application-input-controller-lock controller))
+                                      (setf (application-input-controller-queued-work-paused-p controller) nil)))
+                                  (setf start-sequence (conversation-next-sequence conversation)
+                                        observer (acp-observer-create session))
+                                  (acp-extension-notify session "state")
+                                  (agent-run-user-turn
+                                   (application-agent application) (if queued-p prepared text)
+                                   :observer observer :automatic-p automatic-p
+                                   :pending-input-identifier
+                                   (and queued-p controller
+                                        (application-input-controller-active-work-identifier controller)))
+                                  (acp-session--call-with-finalization
+                                   session
+                                   (lambda ()
+                                     (acp-session-check-cancelled session)
+                                     (acp-observer-flush observer)
+                                     ':end-turn))))))))
               (application-turn-cancelled (condition)
                 (setf outcome ':cancelled)
                 (acp-session--call-with-finalization
@@ -290,14 +304,23 @@
                    (when observer
                      (handler-case (acp-observer-flush observer)
                        (serious-condition () nil)))
+                    (with-lock-held ((acp-session-lock session))
+                      (let ((report (princ-to-string condition)))
+                        (setf (acp-session-completion-report session)
+                              (subseq report 0 (min 2000 (length report))))))
                    (error condition)))))
          (when claimed-p
-           (with-lock-held ((acp-session-lock session))
-             (setf (acp-session-prompt-interruptible-p session) nil
-                   (acp-session-prompt-thread session) nil))
-            (acp-extension-turn-notify session "idle" :source source :outcome outcome)
-           (acp-extension-notify session "state")
-           (acp-completion-wake session)))))))
+           (sb-sys:without-interrupts
+             (unwind-protect
+                  (when controller
+                    (application-input-controller-finish-external-work
+                     controller :pause-p (not (eq outcome ':end-turn))))
+               (with-lock-held ((acp-session-lock session))
+                 (setf (acp-session-prompt-interruptible-p session) nil
+                       (acp-session-prompt-thread session) nil))
+               (acp-extension-turn-notify session "idle" :source source :outcome outcome)
+               (acp-extension-notify session "state")
+               (acp-completion-wake session)))))))))
 
 (defmethod agentcomms:agent-prompt ((service acp-service) session-id prompt params)
   "Run one explicit user prompt through the shared primary turn boundary."

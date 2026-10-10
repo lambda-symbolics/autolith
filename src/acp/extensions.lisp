@@ -16,6 +16,8 @@
     ("_autolith/set-setting" acp-extension-set-setting :write)
     ("_autolith/operations" acp-extension-operations :read)
     ("_autolith/invoke" acp-extension-invoke :read)
+    ("_autolith/steer" acp-extension-steer :read)
+    ("_autolith/queue" acp-extension-queue :read)
     ("_autolith/conversations" acp-extension-conversations :read)
     ("_autolith/jobs" acp-extension-jobs :read)
     ("_autolith/job" acp-extension-job :read)
@@ -253,6 +255,8 @@
   "Publish measured usage and compaction notices after their ordinary ACP projection."
   (let ((session (acp-observer-session observer)))
     (case status
+      (:user-message-persisted
+       (acp-input--user-persisted observer details))
       (:provider-request-completed
        (with-lock-held ((acp-session-extension-lock session))
          (setf (acp-session-extension-usage session)

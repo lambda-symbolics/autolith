@@ -179,6 +179,10 @@
     (with-lock-held ((acp-session-lock session))
       (when (and expected-epoch (/= expected-epoch (acp-session-epoch session)))
         (return-from acp-session-cancel nil))
+      (let ((controller (acp-input-controller session)))
+        (when controller
+          (with-lock-held ((application-input-controller-lock controller))
+            (setf (application-input-controller-queued-work-paused-p controller) t))))
       (when (or (acp-session-closing-p session) (not (acp-session-cancelled-p session)))
         (setf (acp-session-cancelled-p session) t
               epoch (acp-session-epoch session)
@@ -242,6 +246,7 @@
                    (error 'agentcomms:acp-state-error
                           :message "The session has not finished cancelling."))
               (sleep 0.01)))
+      (acp-input-close session)
       (let* ((application (acp-session-application session))
              (failures (application--discard-connection-resources
                         application (application-tool-registry application)

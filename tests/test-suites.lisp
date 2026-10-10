@@ -1040,6 +1040,13 @@
   test-acp-completion-cancel-and-reuse
   test-acp-completion-start-failure-cleans-session
   test-acp-completion-failure-pauses
+  test-acp-input-extension-rejects-blank
+  test-acp-input-extension-queue-fifo
+  test-acp-input-extension-steers-active-turn
+  test-acp-input-extension-late-steer-promotes-before-fifo
+  test-acp-input-extension-length-and-shape-validation
+  test-acp-input-failure-and-cold-recovery
+  test-acp-input-wire-cancel-and-resume
   test-acp-mcp-overlay-configuration
   test-acp-mcp-overlay-discovery-call-and-cleanup
   test-acp-mcp-overlay-duplicate-validation)

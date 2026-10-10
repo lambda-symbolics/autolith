@@ -490,8 +490,8 @@
             (append
              (list
               (list 'agent-run-user-turn
-                    (lambda (agent text &key observer automatic-p)
-                      (declare (ignore agent text automatic-p))
+                    (lambda (agent text &key observer automatic-p pending-input-identifier)
+                      (declare (ignore agent text automatic-p pending-input-identifier))
                       (agent-observer-reasoning observer "pending ")
                       (agent-observer-reasoning observer "thought")
                       (ecase outcome
