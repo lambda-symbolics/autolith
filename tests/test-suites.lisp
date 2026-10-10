@@ -131,6 +131,7 @@
 
 (define-test-suite job-completion-controller
   test-job-completion-controller-coalescing
+  test-job-completion-controller-continuation-notice
   test-job-completion-controller-notify-and-busy
   test-job-completion-controller-pause-and-switch
   test-job-completion-controller-mission-admission

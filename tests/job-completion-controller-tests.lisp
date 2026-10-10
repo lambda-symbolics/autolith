@@ -73,6 +73,35 @@
        (test-assert (= 1 (length (scripted-provider-input-snapshots (application-provider application))))
                     "repeated consumed ticket cannot spawn another turn")))))
 
+(-> test-job-completion-controller-continuation-notice () null)
+(defun test-job-completion-controller-continuation-notice ()
+  "Name a completion wakeup as job results, live and replayed, without any goal."
+  (job-completion-controller-tests--fixture
+   (lambda (application controller notices)
+     (funcall notices (list (job-completion-controller-tests--notice application "only")))
+     (let ((terminal (terminal-ui-terminal (application-ui application))))
+       (recording-terminal-reset terminal)
+       (application-input-controller--run-work
+        controller (application-input-controller--next-work controller))
+       (let* ((output (recording-terminal-output terminal))
+              (record (find-if (lambda (record)
+                                 (equal (getf (rest record) :content)
+                                        *application-job-completion-continuation-prompt*))
+                               (conversation-records-newest
+                                (application-conversation application) 10)))
+              (replayed (and record
+                             (terminal--spans-text
+                              (conversation-record-entry application record)))))
+         (test-assert (null (application-goal application))
+                      "the wakeup runs without a session goal")
+         (test-assert (and (search "continuing with job results" output)
+                           (not (search "goal continues" output)))
+                      "a live completion wakeup is not announced as a goal continuation")
+         (test-assert (and replayed
+                           (search "continuing with job results" replayed)
+                           (not (search "Continue the current work" replayed)))
+                      "the replayed wakeup shows the same notice instead of its prompt"))))))
+
 (-> test-job-completion-controller-notify-and-busy () null)
 (defun test-job-completion-controller-notify-and-busy ()
   "Notify-only waits for a user turn; busy-boundary delivery suppresses a redundant idle turn."
