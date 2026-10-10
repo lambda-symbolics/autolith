@@ -92,7 +92,15 @@
   (when additional-directories
     (agentcomms:acp-invalid-params "Additional directories are not supported."))
   (let ((session (acp-service--open-session service :cwd cwd :mcp-servers mcp-servers)))
-    (values (acp-session-identifier session) (acp-service--modes session))))
+    (handler-case
+        (progn
+          (acp-completion-start session)
+          (values (acp-session-identifier session) (acp-service--modes session)))
+      (serious-condition (condition)
+        (acp-session-close session)
+        (with-lock-held ((acp-service-lock service))
+          (remhash (acp-session-identifier session) (acp-service-sessions service)))
+        (error condition)))))
 
 (-> acp-session-replay (acp-session) null)
 (defun acp-session-replay (session)
@@ -160,7 +168,10 @@
   (let ((session (acp-service--open-session service :cwd cwd :identifier session-id
                                             :mcp-servers mcp-servers)))
     (handler-case
-        (progn (acp-session-replay session) (acp-service--modes session))
+        (progn
+          (acp-session-replay session)
+          (acp-completion-start session)
+          (acp-service--modes session))
       (serious-condition (condition)
         (acp-session-close session)
         (with-lock-held ((acp-service-lock service))
@@ -189,15 +200,32 @@
             (otherwise
              (agentcomms:acp-invalid-params "Unsupported prompt content: ~A." type))))))
 
-(defmethod agentcomms:agent-prompt ((service acp-service) session-id prompt params)
-  "Run one primary turn, streaming progress and repairing durable interrupted outcomes."
-  (declare (ignore params))
-  (let* ((session (acp-service--session service session-id))
+(defmethod agentcomms:peer-handle-notification :before
+    ((service acp-service) connection method params)
+  "Apply cancellation to headless continuations and explicit tool invocations too."
+  (declare (ignore connection))
+  (when (and (string= method "session/cancel") (hash-table-p params))
+    (let* ((identifier (agentcomms:json-get params "sessionId"))
+           (session (with-lock-held ((acp-service-lock service))
+                      (gethash identifier (acp-service-sessions service))))
+           (epoch (and session
+                       (with-lock-held ((acp-session-lock session))
+                         (when (acp-session-prompt-thread session)
+                           (acp-session-epoch session))))))
+      (when epoch (acp-session-cancel session :expected-epoch epoch))))
+  nil)
+
+(-> acp-session-run-turn (acp-session string &key (:automatic-p boolean)
+                                                  (:prepare (option function))) keyword)
+(defun acp-session-run-turn (session text &key automatic-p prepare)
+  "Run one admitted turn, preserving cancellation and durable repair for either input source."
+  (let* ((service (acp-session-service session))
          (application (acp-session-application session))
          (conversation (application-conversation application))
-         (text (acp-prompt->text prompt))
-         (start-sequence (conversation-next-sequence conversation))
+         (start-sequence nil)
          (observer nil)
+         (source (if automatic-p "completion" "prompt"))
+         (outcome ':condition)
          (claimed-p nil))
     (acp-service--call-with-operation
      service session
@@ -208,29 +236,42 @@
                   (with-lock-held ((acp-session-lock session))
                     (when (or (acp-session-closed-p session) (acp-session-closing-p session))
                       (agentcomms:acp-invalid-params "The session is closing or closed."))
+                    (when (and automatic-p (acp-session-cancelled-p session))
+                      (error 'application-turn-cancelled))
+                    (unless automatic-p
+                      (setf (acp-session-cancelled-p session) nil
+                            (acp-session-completion-report session) nil))
                     (incf (acp-session-epoch session))
                     (setf (acp-session-prompt-thread session) (current-thread)
                           (acp-session-prompt-interruptible-p session) t
-                          (acp-session-cancelled-p session) nil
                           claimed-p t))
                   (let ((*active-application* application)
                         (*configuration* (application-configuration application))
                         (*default-pathname-defaults*
-                         (config :working-directory (application-configuration application))))
+                          (config :working-directory (application-configuration application))))
+                    (acp-extension-turn-notify session "running" :source source)
                     (acp-session-check-cancelled session)
-                    (setf observer (acp-observer-create session))
-                    (agent-run-user-turn (application-agent application) text :observer observer)
-                    (acp-session--call-with-finalization
-                     session
-                     (lambda ()
-                       (acp-session-check-cancelled session)
-                       (acp-observer-flush observer)
-                       ':end-turn))))
+                    (setf outcome
+                          (if (and prepare (not (funcall prepare)))
+                              ':end-turn
+                              (progn
+                                (setf start-sequence (conversation-next-sequence conversation)
+                                      observer (acp-observer-create session))
+                                (acp-extension-notify session "state")
+                                (agent-run-user-turn (application-agent application) text
+                                                     :observer observer :automatic-p automatic-p)
+                                (acp-session--call-with-finalization
+                                 session
+                                 (lambda ()
+                                   (acp-session-check-cancelled session)
+                                   (acp-observer-flush observer)
+                                   ':end-turn)))))))
               (application-turn-cancelled (condition)
+                (setf outcome ':cancelled)
                 (acp-session--call-with-finalization
                  session
                  (lambda ()
-                   (when claimed-p
+                   (when start-sequence
                      (application--record-turn-aborted application condition
                                                        :turn-start-sequence start-sequence
                                                        :reason ':cancelled))
@@ -242,7 +283,7 @@
                 (acp-session--call-with-finalization
                  session
                  (lambda ()
-                   (when claimed-p
+                   (when start-sequence
                      (application--record-turn-aborted application condition
                                                        :turn-start-sequence start-sequence
                                                        :reason ':application-error))
@@ -253,7 +294,15 @@
          (when claimed-p
            (with-lock-held ((acp-session-lock session))
              (setf (acp-session-prompt-interruptible-p session) nil
-                   (acp-session-prompt-thread session) nil))))))))
+                   (acp-session-prompt-thread session) nil))
+            (acp-extension-turn-notify session "idle" :source source :outcome outcome)
+           (acp-extension-notify session "state")
+           (acp-completion-wake session)))))))
+
+(defmethod agentcomms:agent-prompt ((service acp-service) session-id prompt params)
+  "Run one explicit user prompt through the shared primary turn boundary."
+  (declare (ignore params))
+  (acp-session-run-turn (acp-service--session service session-id) (acp-prompt->text prompt)))
 
 (defmethod agentcomms:agent-cancel ((service acp-service) session-id)
   "Interrupt the prompt and its concurrent tools without waiting on the reader."

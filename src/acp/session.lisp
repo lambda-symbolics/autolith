@@ -232,6 +232,7 @@
       (with-lock-held ((acp-session-lock session))
         (setf (acp-session-closing-p session) t))
       (acp-session-cancel session)
+      (acp-completion-stop session)
       (let ((deadline (+ (get-internal-real-time)
                          (* *acp-session-close-seconds* internal-time-units-per-second))))
         (loop while (with-lock-held ((acp-session-lock session))

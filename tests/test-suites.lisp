@@ -1023,6 +1023,10 @@
   test-acp-extension-busy-and-notification-order
   test-acp-extension-close-active-handler
   test-acp-extension-shutdown-admission
+  test-acp-completion-continues-and-closes
+  test-acp-completion-cancel-and-reuse
+  test-acp-completion-start-failure-cleans-session
+  test-acp-completion-failure-pauses
   test-acp-mcp-overlay-configuration
   test-acp-mcp-overlay-discovery-call-and-cleanup
   test-acp-mcp-overlay-duplicate-validation)
