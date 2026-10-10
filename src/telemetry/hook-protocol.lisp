@@ -40,6 +40,8 @@
          (when outcome
            (telemetry-note-repair
             :run *telemetry-run*
+            :report-id (telemetry-mutation-report-id (or (getf properties :mutation)
+                                                        (getf properties :id)))
             :target *telemetry-tool-name*
             :repair-kind (case kind
                            (:definition "redefine_function")

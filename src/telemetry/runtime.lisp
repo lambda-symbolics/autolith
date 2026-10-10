@@ -10,7 +10,8 @@
 
 (defstruct (telemetry-run (:constructor telemetry--make-run))
   "Fresh run identity and counters; never holds prompts, arguments or native handles."
-  controller epoch trace-id span-id report-id start (tools 0) (models 0) previous-digest active)
+  controller epoch trace-id span-id start (tools 0) (models 0) previous-digest active
+  (repair-ids (make-hash-table :test #'equal)))
 
 (defvar *telemetry-controller* nil
   "The current process owner's controller; detached before saving a checkpoint.")
@@ -29,6 +30,29 @@
   "Return decimal Unix nanoseconds with wall-clock microsecond precision."
   (multiple-value-bind (seconds microseconds) (sb-ext:get-time-of-day)
     (+ (* seconds 1000000000) (* microseconds 1000))))
+
+(-> telemetry--report-id-p (t) boolean)
+(defun telemetry--report-id-p (value)
+  "Accept only a nonzero 128-bit hexadecimal correlation identifier."
+  (and (stringp value) (= (length value) 32)
+       (every (lambda (char) (digit-char-p char 16)) value)
+       (not (every (lambda (char) (char= char #\0)) value)) t))
+
+(-> telemetry-new-report-id () (option string))
+(defun telemetry-new-report-id ()
+  "Allocate an issue identity only inside a live consented run."
+  (when *telemetry-run*
+    (bt:with-lock-held ((telemetry-controller-lock (telemetry-run-controller *telemetry-run*)))
+      (when (telemetry--live-p *telemetry-run*) (telemetry--id 16)))))
+
+(-> telemetry-mutation-report-id (t) (option string))
+(defun telemetry-mutation-report-id (identifier)
+  "Correlate one mutation's transitions within a run, without exporting its local ID."
+  (when (and *telemetry-run* (stringp identifier))
+    (bt:with-lock-held ((telemetry-controller-lock (telemetry-run-controller *telemetry-run*)))
+      (when (telemetry--live-p *telemetry-run*)
+        (or (gethash identifier (telemetry-run-repair-ids *telemetry-run*))
+            (setf (gethash identifier (telemetry-run-repair-ids *telemetry-run*)) (telemetry--id 16)))))))
 
 (defun telemetry--live-p (run)
   "Check RUN's generation while holding its controller lock."
@@ -49,6 +73,7 @@
   "Revoke every run and child synchronously, under the controller lock."
   (incf (telemetry-controller-epoch controller))
   (dolist (run (telemetry-controller-runs controller))
+    (clrhash (telemetry-run-repair-ids run))
     (setf (telemetry-run-active run) nil
           (telemetry-run-previous-digest run) nil))
   (setf (telemetry-controller-queue controller) nil
@@ -170,7 +195,6 @@ Pending runs and spans are discarded; the parent accepts fresh runs afterwards."
           (let ((run (telemetry--make-run :controller controller
                                         :epoch (telemetry-controller-epoch controller)
                                         :trace-id (telemetry--id 16) :span-id (telemetry--id 8)
-                                        :report-id (telemetry--id 16)
                                         :start (telemetry--now) :active t)))
             (push run (telemetry-controller-runs controller))
             run))))))
@@ -335,7 +359,7 @@ Run-end upload is bounded and failure-isolated. Nonlocal exits count as cancelle
                     (telemetry--pre-redact safe)))))
           (error () nil))))))
 
-(defun telemetry-note-report (&key (run *telemetry-run*) tool issue-kind summary-function (language "en"))
+(defun telemetry-note-report (&key (run *telemetry-run*) report-id tool issue-kind summary-function (language "en"))
   "Record structured report metadata and, with separate consent, a redacted summary."
   (when run
     (let ((safe (telemetry--diagnostic run summary-function language))
@@ -344,7 +368,7 @@ Run-end upload is bounded and failure-isolated. Nonlocal exits count as cancelle
         (when (telemetry--live-p run)
           (telemetry--enqueue
            run "report"
-           (append (list (cons "autolith.report.id" (telemetry-run-report-id run))
+           (append (list (cons "autolith.report.id" (if (telemetry--report-id-p report-id) report-id (telemetry--id 16)))
                          (cons "gen_ai.tool.name" (telemetry--tool tool))
                          (cons "autolith.issue.kind"
                                (telemetry--enum issue-kind
@@ -353,7 +377,7 @@ Run-end upload is bounded and failure-isolated. Nonlocal exits count as cancelle
                    (telemetry--diagnostic-attributes safe)) 0)))))
   nil)
 
-(defun telemetry-note-repair (&key (run *telemetry-run*) target repair-kind outcome verified summary-function
+(defun telemetry-note-repair (&key (run *telemetry-run*) report-id target repair-kind outcome verified summary-function
                                   (language "en"))
   "Record a repair transition without source, replacement values or raw verification output."
   (when run
@@ -363,7 +387,7 @@ Run-end upload is bounded and failure-isolated. Nonlocal exits count as cancelle
         (when (telemetry--live-p run)
           (telemetry--enqueue
            run "repair"
-           (append (list (cons "autolith.report.id" (telemetry-run-report-id run))
+           (append (list (cons "autolith.report.id" (if (telemetry--report-id-p report-id) report-id (telemetry--id 16)))
                          (cons "autolith.repair.target" (telemetry--tool target))
                          (cons "autolith.repair.kind"
                                (telemetry--enum repair-kind
@@ -389,6 +413,7 @@ Run-end upload is bounded and failure-isolated. Nonlocal exits count as cancelle
         (setf (telemetry-run-previous-digest run) nil)))
     (unwind-protect (telemetry-flush run)
       (bt:with-lock-held ((telemetry-controller-lock controller))
+        (clrhash (telemetry-run-repair-ids run))
         (setf (telemetry-run-active run) nil
               (telemetry-controller-runs controller)
               (remove run (telemetry-controller-runs controller))))))

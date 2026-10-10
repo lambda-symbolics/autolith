@@ -70,7 +70,7 @@
      (setf (config :telemetry-enabled-p configuration) t
            (config :telemetry-model-aliases configuration) '(("private-local-model" . "model-a")))
      (telemetry-attach configuration)
-     (let ((bodies nil) (reads 0) (first-run nil))
+     (let ((bodies nil) (reads 0) (first-run nil) (report-id nil))
        (let ((*telemetry-process-function*
                (lambda (run request)
                  (declare (ignore run))
@@ -80,6 +80,7 @@
           configuration
           (lambda ()
             (setf first-run *telemetry-run*)
+            (setf report-id (telemetry-new-report-id))
             (telemetry-call-with-run configuration
                                      (lambda () (test-assert (eq first-run *telemetry-run*)
                                                             "Nested provider calls reuse the ambient root.")))
@@ -92,9 +93,9 @@
               (declare (ignore i))
               (telemetry-note-tool :tool "external.private-tool" :outcome "success" :duration-ms 2
                                    :arguments (json-object "secret" "private-argument")))
-            (telemetry-note-report :tool "shell.run" :issue-kind "broken_tool"
+            (telemetry-note-report :report-id report-id :tool "shell.run" :issue-kind "broken_tool"
                                  :summary-function (lambda () (incf reads) "raw-summary-fixture"))
-            (telemetry-note-repair :target "self.redefine" :repair-kind "redefine_function" :outcome "applied")))
+            (telemetry-note-repair :report-id report-id :target "self.redefine" :repair-kind "redefine_function" :outcome "applied")))
          (telemetry-call-with-run configuration
                                   (lambda () (telemetry-note-repair :target "self.set" :outcome "proposed"))))
        (test-assert (zerop reads) "Metadata-only consent never reads a summary.")
@@ -107,7 +108,7 @@
                       "A repair without a preceding report has a fresh report correlation ID.")
          (test-assert (equal (test-telemetry--attribute (aref spans 4) "autolith.report.id")
                              (test-telemetry--attribute (aref spans 5) "autolith.report.id"))
-                      "Reports and repairs share their run's report ID.")
+                      "An explicit report identity links its repair.")
          (test-assert (string= (test-telemetry--attribute model "gen_ai.request.model") "model-a")
                       "Only trusted aliases expose model identifiers.")
          (test-assert (string= (test-telemetry--attribute model "gen_ai.response.model") "custom")

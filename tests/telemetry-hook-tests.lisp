@@ -122,6 +122,65 @@
                         (write-to-string count))
                  "The root counts real attempts, without an outer fallback duplicate.")))
 
+(defun test-telemetry-issue-correlation ()
+  "Separate issues in one run and preserve their own IDs across runs and controller restarts."
+  (test-telemetry--call
+   (lambda (configuration)
+     (let ((first-id nil) (second-id nil) (first-body nil))
+       (setf first-body
+             (first
+              (test-telemetry-hooks--capture
+               configuration
+               (lambda ()
+                 (telemetry-call-with-run
+                  configuration
+                  (lambda ()
+                    (setf first-id (papercut-identifier
+                                    (papercut-report configuration :title "Shell output missing"
+                                                     :content "Fixture command stdout disappears."
+                                                     :tool "shell.run" :issue-kind "broken_tool"))
+                          second-id (papercut-identifier
+                                     (papercut-report configuration :title "Image decoder fails"
+                                                      :content "Fixture picture pixels are corrupted."
+                                                      :tool "fs.view-image" :issue-kind "performance")))))))))
+       (telemetry-shutdown)
+       (let* ((later-bodies
+                (test-telemetry-hooks--capture
+                 configuration
+                 (lambda ()
+                   (telemetry-call-with-run
+                    configuration
+                    (lambda () (papercut-assess configuration first-id :verdict ':improved :note "Fixture improved.")))
+                   (telemetry-call-with-run
+                    configuration
+                    (lambda () (papercut-mark-closed configuration first-id :resolution "Fixture resolved."))))))
+              (reports (test-telemetry-hooks--kind first-body "report"))
+              (report-id (test-telemetry--attribute (first reports) "autolith.report.id")))
+         (test-assert (not (equal report-id (test-telemetry--attribute (second reports) "autolith.report.id")))
+                      "Two issues in a single run have independent telemetry identities.")
+         (test-assert (not (equal report-id (remove #\- first-id))) "Local papercut IDs are not reused on the wire.")
+         (dolist (body later-bodies)
+           (test-assert (equal report-id
+                               (test-telemetry--attribute (first (test-telemetry-hooks--kind body "repair"))
+                                                         "autolith.report.id"))
+                        "Later assessments and closure retain the issue identity across fresh runs.")
+           (test-assert (not (search first-id body)) "Local issue identifiers stay private."))
+         (test-assert (papercut-find configuration second-id) "The unrelated issue remains open."))
+       (setf (config :telemetry-enabled-p configuration) nil)
+       (let* ((off (papercut-report configuration :title "Offline fixture issue" :content "Offline fixture details."))
+              (id (papercut-identifier off)))
+         (test-assert (null (papercut-telemetry-id off)) "Default-off reporting allocates no export identity.")
+         (test-telemetry-hooks--capture
+          configuration
+          (lambda ()
+            (telemetry-call-with-run configuration
+                                     (lambda () (papercut-assess configuration id :verdict ':improved :note "Improved.")))))
+         (let ((identity (papercut-telemetry-id (papercut-find configuration id))))
+           (test-assert (telemetry--report-id-p identity) "First consented assessment persists an independent identity.")
+           (test-assert (equal identity (papercut-telemetry-id (papercut-find configuration id)))
+                        "The identity annotation replays without regeneration."))))))
+  nil)
+
 (defun test-telemetry-provider-retry-hooks ()
   "Exercise inherited subscription streaming, authentication refresh and transport retry."
   (test-telemetry--call
@@ -398,7 +457,7 @@
                    (let ((*telemetry-tool-name* "self.redefine"))
                      (dolist (result '(:pending :installed :passed :failed :discarded :committed))
                        (telemetry-note-mutation-journal
-                        (list :mutation :kind :definition :result result
+                        (list :mutation :kind :definition :id "private-mutation-id" :result result
                               :source "private-source-fixture" :output "private-output-fixture"))))
                    (multiple-value-bind (report duplicate-p)
                        (papercut-report configuration :title "Fixture event dispatch fault"
@@ -425,10 +484,16 @@
                       "Only passed journal verification is asserted as tested.")
          (test-assert (not (json-true-p (test-telemetry--attribute (car (last repairs)) "autolith.repair.verified")))
                       "Manual closure does not imply successful testing.")
-         (dolist (span repairs)
+         (test-assert (equal (test-telemetry--attribute (car (last repairs)) "autolith.report.id")
+                             (test-telemetry--attribute (first reports) "autolith.report.id"))
+                      "Closure references its own report.")
+         (dolist (span (butlast repairs))
            (test-assert (equal (test-telemetry--attribute span "autolith.report.id")
-                               (test-telemetry--attribute (first reports) "autolith.report.id"))
-                        "Repairs, including those preceding the report, share run correlation."))
+                               (test-telemetry--attribute (first repairs) "autolith.report.id"))
+                        "Transitions of the same mutation retain their own correlation.")
+           (test-assert (not (equal (test-telemetry--attribute span "autolith.report.id")
+                                    (test-telemetry--attribute (first reports) "autolith.report.id")))
+                        "An unrelated mutation must not claim to repair a reported issue."))
          (dolist (private '("private-source-fixture" "private-output-fixture" "Fixture manually closed."))
            (test-assert (not (search private body)) "Metadata hooks omit private journal and summary text."))))))
   nil)

@@ -7,6 +7,7 @@
 (define-test-suite telemetry-hooks
   test-telemetry-returned-model-hook
   test-telemetry-papercut-metadata-hooks
+  test-telemetry-issue-correlation
   test-telemetry-provider-retry-hooks
   test-telemetry-provider-failure-hooks
   test-telemetry-provider-fallback-hooks
