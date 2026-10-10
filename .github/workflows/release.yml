@@ -299,44 +299,10 @@ jobs:
             --clobber
 
   package-netbsd-x86_64:
-    name: Package NetBSD x86-64
     needs: publish-metadata
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Package NetBSD release
-        uses: vmactions/netbsd-vm@v1
-        with:
-          release: "10"
-          mem: 8192
-          # Do not restore a prepared VM across runs. NetBSD package mirrors can advance
-          # independently of the cached package database, causing pkg_add conflicts.
-          cache-after-prepare: false
-          prepare: |
-            set -eu
-            if command -v pkgin >/dev/null 2>&1; then
-              pkgin -y install bash curl git gmake rust cmake zstd sbcl pkgconf coreutils gtar icu mozilla-rootcerts
-            else
-              pkg_add bash curl git gmake rust cmake zstd sbcl pkgconf coreutils gtar icu mozilla-rootcerts
-            fi
-            if [ ! -d /etc/openssl/certs ] || [ -z "$(ls -A /etc/openssl/certs 2>/dev/null)" ]; then
-              mozilla-rootcerts install
-            fi
-          run: |
-            set -eu
-            export PATH="$HOME/bin:/usr/pkg/bin:/usr/local/bin:$PATH"
-            ./script/ci-package-release dist/
-
-      - name: Upload NetBSD release artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload "$GITHUB_REF_NAME" \
-            dist/autolith-"$GITHUB_REF_NAME"-x86_64-netbsd.tar.gz \
-            dist/autolith-"$GITHUB_REF_NAME"-x86_64-netbsd.tar.gz.sha256 \
-            --clobber
+    uses: ./.github/workflows/package-netbsd.yml
+    with:
+      tag: ${{ github.ref_name }}
 
   package-openbsd-x86_64:
     name: Package OpenBSD x86-64

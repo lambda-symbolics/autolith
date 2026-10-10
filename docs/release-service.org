@@ -46,6 +46,11 @@ validation or the full test suite. Tagged releases can reuse the default-branch
 caches. For a manual package-only verification, dispatch =Windows package= with
 =run-tests=false=; package validation and launcher/sandbox probes still run.
 
+For a NetBSD rebuild, dispatch =Package NetBSD= with =tag= set to an existing
+release tag. The workflow checks out that tag, upgrades preinstalled package
+dependencies, validates the archive checksum and packaged launcher, then uploads
+the archive and checksum to the existing GitHub release.
+
 The installer, service entrypoints, and initial bootstrap remain shell because
 they must run before a Lisp image is available or replace the current Unix
 process.

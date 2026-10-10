@@ -1,0 +1,82 @@
+name: Package NetBSD
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package NetBSD x86-64
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Validate release tag
+        run: '[[ $RELEASE_TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
+
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Validate release source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^  :version "\([0-9][0-9.]*\)"$/\1/p' autolith.asd)
+          test "v$version" = "$RELEASE_TAG"
+          gh release view "$RELEASE_TAG" >/dev/null
+
+      - name: Package and validate NetBSD release
+        uses: vmactions/netbsd-vm@v1
+        with:
+          release: "10"
+          mem: 8192
+          envs: RELEASE_TAG
+          cache-after-prepare: false
+          prepare: |
+            set -eu
+            export PATH="/usr/pkg/bin:/usr/pkg/sbin:$PATH"
+            # Upgrade dependencies already installed in the base VM from the live mirror.
+            pkg_add -u bash curl git gmake rust cmake zstd sbcl pkgconf coreutils gtar icu mozilla-rootcerts
+            pkg_info -e 'pcre2-[0-9]*'
+            if [ ! -d /etc/openssl/certs ] || [ -z "$(ls -A /etc/openssl/certs 2>/dev/null)" ]; then
+              mozilla-rootcerts install
+            fi
+          run: |
+            set -eu
+            export PATH="$HOME/bin:/usr/pkg/bin:/usr/local/bin:$PATH"
+            ./script/ci-package-release dist/
+            release_name=autolith-"$RELEASE_TAG"-x86_64-netbsd
+            (cd dist && sha256sum -c "$release_name.tar.gz.sha256")
+            smoke_root=$(mktemp -d)
+            trap 'rm -rf "$smoke_root"' EXIT HUP INT TERM
+            tar -xzf "dist/$release_name.tar.gz" -C "$smoke_root"
+            XDG_DATA_HOME="$smoke_root/data" \
+            XDG_STATE_HOME="$smoke_root/state" \
+            XDG_CONFIG_HOME="$smoke_root/config" \
+            XDG_CACHE_HOME="$smoke_root/cache" \
+              "$smoke_root/$release_name/bin/autolith" --version > "$smoke_root/version"
+            cat "$smoke_root/version"
+            grep -F "${RELEASE_TAG#v}" "$smoke_root/version"
+
+      - name: Upload NetBSD release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            dist/autolith-"$RELEASE_TAG"-x86_64-netbsd.tar.gz \
+            dist/autolith-"$RELEASE_TAG"-x86_64-netbsd.tar.gz.sha256 \
+            --clobber
