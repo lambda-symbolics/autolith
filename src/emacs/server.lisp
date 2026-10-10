@@ -15,8 +15,11 @@
 (defparameter *emacs-server-timeout* 10
   "Seconds one Emacs server request may wait for its reply.")
 
-(defparameter *emacs-server-maximum-reply* (* 4 1024 1024)
-  "The largest reply, in characters, accepted from the Emacs server.")
+(defparameter *emacs-server-maximum-reply* (* 8 1024 1024)
+  "The largest reply, in characters, accepted from the Emacs server.
+
+It holds a whole emacs: buffer of *EMACS-BUFFER-MAXIMUM-CHARACTERS* as base64
+UTF-8 JSON.")
 
 
 ;;;; -- Availability --

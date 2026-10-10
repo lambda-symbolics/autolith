@@ -892,7 +892,8 @@
   "Create Autolith's tool registry, omitting mutable self tools when requested.
 
 LSP tools register only when CONFIGURATION enables a language server, and the
-emacs.* tools only when it names a reachable Emacs server socket."
+emacs.* tools and emacs: resources only when it names a reachable Emacs server
+socket."
   (let ((registry (make-instance 'tool-registry))
         (search-worker (search-worker-create :configuration configuration)))
     (default-tools--register-workspace registry)

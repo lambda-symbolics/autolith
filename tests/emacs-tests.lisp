@@ -12,8 +12,10 @@
 
 (-> emacs-test-context (configuration &key (:authorization keyword)) tool-context)
 (defun emacs-test-context (configuration &key (authorization ':full-access))
-  "Return a tool context with the emacs.* tools whose command authorization answers AUTHORIZATION."
-  (let ((registry (emacs-register-tools (make-instance 'tool-registry))))
+  "Return a tool context with the resource and emacs.* tools whose command authorization answers AUTHORIZATION."
+  (let ((registry (make-instance 'tool-registry)))
+    (default-tools--register-workspace registry)
+    (emacs-register-tools registry)
     (make-instance 'tool-context
                    :configuration configuration
                    :registry registry
@@ -24,21 +26,47 @@
                      (declare (ignore command directory))
                      authorization))))
 
-(-> emacs-test-invoke (tool-context string hash-table) tool-result)
-(defun emacs-test-invoke (context name arguments)
-  "Invoke emacs.NAME through ordinary lookup, validation and error projection."
+(-> emacs-test-invoke (tool-context string string hash-table) tool-result)
+(defun emacs-test-invoke (context namespace name arguments)
+  "Invoke NAMESPACE.NAME through ordinary lookup, validation and error projection."
   (tool-registry-execute-call (tool-context-registry context)
-                              (json-object "namespace" "emacs" "name" name
+                              (json-object "namespace" namespace "name" name
                                            "arguments" (json-encode arguments))
                               context))
 
 (-> emacs-test-call (tool-context string hash-table) json-object)
 (defun emacs-test-call (context name arguments)
   "Invoke emacs.NAME, assert success and decode its JSON result."
-  (let ((result (emacs-test-invoke context name arguments)))
+  (let ((result (emacs-test-invoke context "emacs" name arguments)))
     (test-assert (tool-result-success-p result)
                  (format nil "emacs.~A succeeds: ~A" name (tool-result-content result)))
     (json-decode (tool-result-content result))))
+
+(-> emacs-test-read (tool-context string) string)
+(defun emacs-test-read (context uri)
+  "Read URI with resource.read, assert success and return the result text."
+  (let ((result (emacs-test-invoke context "resource" "read" (json-object "uri" uri))))
+    (test-assert (tool-result-success-p result)
+                 (format nil "resource.read ~A succeeds: ~A" uri (tool-result-content result)))
+    (tool-result-content result)))
+
+(-> emacs-test-revision (string) string)
+(defun emacs-test-revision (text)
+  "Return the Revision: line's value in resource result TEXT."
+  (let* ((start (+ (search "Revision: " text) (length "Revision: ")))
+         (end   (position #\Newline text :start start)))
+    (subseq text start end)))
+
+(-> emacs-test-replace-line (tool-context string string (integer 1) string) tool-result)
+(defun emacs-test-replace-line (context uri revision line content)
+  "Replace LINE of URI observed at REVISION with CONTENT through resource.edit."
+  (emacs-test-invoke context "resource" "edit"
+                     (json-object "uri" uri
+                                  "base-revision" revision
+                                  "operations" (vector (json-object "op" "replace-lines"
+                                                                    "start-line" line
+                                                                    "end-line" line
+                                                                    "content" content)))))
 
 (-> emacs-test-serve-once (pathname function) t)
 (defun emacs-test-serve-once (socket function)
@@ -153,16 +181,23 @@
 ;;;; -- Registration --
 
 (defun test-emacs-tools-registration ()
-  "The emacs.* tools exist only while a configured Emacs server socket exists."
+  "The emacs.* tools and emacs: scheme exist only while a configured Emacs server socket exists."
   (with-test-configuration (base root)
     (declare (ignore base))
     (flet ((registered-p (configuration)
              (let ((registry (make-default-tool-registry :configuration configuration)))
                (unwind-protect
-                    (and (tool-registry-find registry "emacs" "context") t)
+                    (let ((tool-p   (and (tool-registry-find registry "emacs" "visit") t))
+                          (scheme-p (and (search "emacs:current"
+                                                 (tool-description
+                                                  (tool-registry-find registry "resource" "read")))
+                                         t)))
+                      (test-assert (eq tool-p scheme-p)
+                                   "The emacs.* tools and the emacs: scheme appear together.")
+                      tool-p)
                  (tool-registry-close-runtime-state registry)))))
       (test-assert (not (registered-p (emacs-test-configuration root nil)))
-                   "Without a socket setting no emacs.* tool is registered.")
+                   "Without a socket setting nothing Emacs is registered.")
       (test-assert (not (registered-p (emacs-test-configuration
                                        root (merge-pathnames "missing/server" root))))
                    "A named socket that does not exist registers nothing.")
@@ -172,7 +207,7 @@
                (listener (platform-local-listener *platform* socket)))
           (unwind-protect
                (test-assert (registered-p (emacs-test-configuration root socket))
-                            "An existing Emacs server socket registers the emacs.* tools.")
+                            "An existing Emacs server socket registers the tools and scheme.")
             (sb-bsd-sockets:socket-close listener)
             (platform-delete-directory-tree *platform* directory :validate t :if-does-not-exist ':ignore)))))))
 
@@ -180,7 +215,7 @@
 ;;;; -- Real Emacs --
 
 (defun test-emacs-tools-real-daemon ()
-  "Every emacs.* tool works against a real Emacs daemon, and eval needs full access."
+  "emacs: resources and emacs.* tools work against a real Emacs daemon."
   (let ((emacs (emacs-test-executable)))
     (if (or (null emacs) (not (platform-supports-p *platform* ':local-sockets)))
         (test-withheld ':emacs "real Emacs server tools")
@@ -190,8 +225,10 @@
                  (name "autolith-test")
                  (socket (merge-pathnames (format nil "emacs/~A" name) runtime))
                  (file (merge-pathnames "notes.lisp" root))
+                 (outside (merge-pathnames "outside.txt" runtime))
                  (configuration (emacs-test-configuration root socket)))
             (publish-file file (format nil "(defun greet ()~%  \"hello\")~%"))
+            (publish-file outside (format nil "outside~%"))
             (unwind-protect
                  (progn
                    (uiop:run-program (list "env" (format nil "XDG_RUNTIME_DIR=~A"
@@ -202,20 +239,51 @@
                    (test-assert (probe-file socket) "The Emacs daemon listens on its socket.")
                    (emacs-server-evaluate
                     socket
-                    (format nil "(with-current-buffer (find-file-noselect ~S) (goto-char (point-max)) (insert \"; λ unsaved\\n\"))"
-                            (uiop:native-namestring file)))
-                   (let ((context (emacs-test-context configuration)))
-                     (test-assert (vectorp (json-get (emacs-test-call context "context" (json-object))
-                                                     "windows"))
-                                  "emacs.context lists windows.")
-                     (let ((buffer (emacs-test-call context "read-buffer"
-                                                    (json-object "path" "notes.lisp"))))
-                       (test-assert (search "λ unsaved" (json-get buffer "text"))
-                                    "emacs.read-buffer sees unsaved unicode edits.")
-                       (test-assert (eq (json-get buffer "modified") t)
-                                    "emacs.read-buffer reports the unsaved state.")
-                       (test-assert (eql (json-get buffer "total-lines") 3)
-                                    "emacs.read-buffer counts the live lines."))
+                    (format nil "(progn (with-current-buffer (find-file-noselect ~S) (goto-char (point-max)) (insert \"; λ unsaved\\n\")) (find-file-noselect ~S) (with-current-buffer (get-buffer-create \"*autolith notes*\") (insert \"scratch\")))"
+                            (uiop:native-namestring file) (uiop:native-namestring outside)))
+                   (let ((context (emacs-test-context configuration))
+                         (uri "emacs:buffer/notes.lisp"))
+                     (test-assert (search "- emacs:buffer/notes.lisp, visiting"
+                                          (emacs-test-read context "emacs:current"))
+                                  "emacs:current lists file buffers by their URI.")
+                     (let ((text (emacs-test-read context uri)))
+                       (test-assert (search "λ unsaved" text)
+                                    "A buffer read sees unsaved unicode edits.")
+                       (test-assert (search "Unsaved changes: yes" text)
+                                    "A buffer read reports the unsaved state.")
+                       (test-assert (search "Visible lines: 1-3 of 3" text)
+                                    "A buffer read counts the live lines.")
+                       (let* ((edited (emacs-test-replace-line context uri (emacs-test-revision text)
+                                                               1 "(defun greet (name)"))
+                              (buffer (emacs-server-evaluate
+                                       socket "(with-current-buffer \"notes.lisp\" (buffer-string))")))
+                         (test-assert (tool-result-success-p edited)
+                                      (format nil "A buffer edit applies: ~A" (tool-result-content edited)))
+                         (test-assert (search "(defun greet (name)" buffer)
+                                      "The edit lands in the live buffer.")
+                         (test-assert (search "λ unsaved" buffer)
+                                      "The edit keeps the person's unsaved text.")
+                         (test-assert (not (search "(name)" (uiop:read-file-string file)))
+                                      "The edit leaves the file on disk unsaved.")
+                         (emacs-server-evaluate
+                          socket "(with-current-buffer \"notes.lisp\" (goto-char (point-max)) (insert \";; typed\\n\"))")
+                         (let ((stale (emacs-test-replace-line
+                                       context uri (emacs-test-revision (tool-result-content edited))
+                                       1 "(defun greet ()")))
+                           (test-assert (and (not (tool-result-success-p stale))
+                                             (search "stale" (tool-result-content stale)))
+                                        "An edit after the person typed is stale.")
+                           (test-assert (search "(defun greet (name)"
+                                                (emacs-server-evaluate
+                                                 socket "(with-current-buffer \"notes.lisp\" (buffer-string))"))
+                                        "A stale edit leaves the buffer alone."))))
+                     (test-assert (search "scratch" (emacs-test-read
+                                                     context (emacs-buffer-uri "*autolith notes*")))
+                                  "Buffers without files resolve by their encoded name.")
+                     (test-assert (not (tool-result-success-p
+                                        (emacs-test-invoke context "resource" "read"
+                                                           (json-object "uri" "emacs:buffer/absent"))))
+                                  "A missing buffer fails to read.")
                      (test-assert (equal (json-get (emacs-test-call context "visit"
                                                                     (json-object "path" "notes.lisp"
                                                                                  "line" 2))
@@ -227,10 +295,14 @@
                                                    "value")
                                          "3")
                                   "emacs.eval returns the printed value."))
-                   (let* ((denied (emacs-test-context configuration :authorization ':sandboxed))
-                          (result (emacs-test-invoke denied "eval"
-                                                     (json-object "form" "(setq autolith-test-ran t)"))))
-                     (test-assert (not (tool-result-success-p result))
+                   (let ((denied (emacs-test-context configuration :authorization ':sandboxed)))
+                     (test-assert (not (tool-result-success-p
+                                        (emacs-test-invoke denied "resource" "read"
+                                                           (json-object "uri" "emacs:buffer/outside.txt"))))
+                                  "A buffer visiting a file outside the roots needs full access.")
+                     (test-assert (not (tool-result-success-p
+                                        (emacs-test-invoke denied "emacs" "eval"
+                                                           (json-object "form" "(setq autolith-test-ran t)"))))
                                   "emacs.eval without full access fails.")
                      (let ((ran (emacs-server-evaluate socket "(boundp 'autolith-test-ran)")))
                        (test-assert (equal ran "nil")

@@ -2,24 +2,17 @@
 
 ;;;; -- Emacs Tools --
 
-;;; Four tools reach the person's Emacs through its server: what they are
-;;; looking at, a buffer's live text including unsaved edits, showing them a
-;;; place in a file, and evaluating elisp for them. They are registered only
-;;; while EMACS-SERVER-AVAILABLE-P holds, so a session without Emacs never
-;;; sees them. Evaluation is as powerful as a shell command and asks the same
-;;; command authorization.
+;;; Two tools act in the person's Emacs through its server: showing them a
+;;; place in a file and evaluating elisp for them. What they see and their
+;;; buffers' live text are emacs: resources, read and edited through
+;;; resource.read and resource.edit. Tools and scheme are registered only while
+;;; EMACS-SERVER-AVAILABLE-P holds, so a session without Emacs never sees them.
+;;; Evaluation is as powerful as a shell command and asks the same command
+;;; authorization.
 
 (defclass emacs-tool (tool)
   ()
   (:documentation "A tool answered by the configured Emacs server."))
-
-(defclass emacs-context-tool (emacs-tool)
-  ()
-  (:documentation "Report the visible windows, their buffers and the active region."))
-
-(defclass emacs-read-buffer-tool (emacs-tool)
-  ()
-  (:documentation "Read a range of lines from a live buffer, unsaved edits included."))
 
 (defclass emacs-visit-tool (emacs-tool)
   ()
@@ -29,69 +22,11 @@
   ()
   (:documentation "Evaluate authorized Emacs Lisp in the person's Emacs."))
 
-(defparameter *emacs-read-buffer-maximum-lines* 2000
-  "The most lines emacs.read-buffer returns at once.")
-
-(defparameter *emacs-text-limit* 65536
-  "The most characters of buffer text one Emacs tool result carries.")
-
 (defparameter *emacs-eval-value-limit* 16384
   "The most characters of a printed emacs.eval value returned.")
 
 
 ;;;; -- Elisp --
-
-(defparameter *emacs-context-elisp*
-  "(let ((selected (selected-window)) (windows nil))
-  (dolist (frame (frame-list))
-    (when (frame-visible-p frame)
-      (dolist (window (window-list frame 'no-minibuf))
-        (with-current-buffer (window-buffer window)
-          (push (list :buffer (buffer-name)
-                      :file (or buffer-file-name :null)
-                      :mode (symbol-name major-mode)
-                      :line (line-number-at-pos (window-point window))
-                      :column (save-excursion (goto-char (window-point window)) (current-column))
-                      :modified (if (and buffer-file-name (buffer-modified-p)) t :false)
-                      :selected (if (eq window selected) t :false))
-                windows)))))
-  (list :windows (vconcat (nreverse windows))
-        :region (with-current-buffer (window-buffer selected)
-                  (if (use-region-p)
-                      (let ((start (region-beginning)) (end (region-end)))
-                        (list :buffer (buffer-name)
-                              :start-line (line-number-at-pos start)
-                              :end-line (line-number-at-pos end)
-                              :text (buffer-substring-no-properties start (min end (+ start 8000)))))
-                    :null))))"
-  "Elisp describing the visible windows and the selected window's region.")
-
-(defparameter *emacs-read-buffer-elisp*
-  "(let ((buffer (cond ((> (length a0) 0) (get-buffer a0))
-                     ((> (length a1) 0) (find-buffer-visiting a1)))))
-  (if (null buffer)
-      (list :found :false)
-    (with-current-buffer buffer
-      (save-restriction
-        (widen)
-        (let* ((start (string-to-number a2))
-               (count (string-to-number a3))
-               (limit (string-to-number a4))
-               (text (save-excursion
-                       (goto-char (point-min))
-                       (forward-line (1- start))
-                       (let ((from (point)))
-                         (forward-line count)
-                         (buffer-substring-no-properties from (point))))))
-          (list :found t
-                :buffer (buffer-name)
-                :file (or buffer-file-name :null)
-                :modified (if (buffer-modified-p) t :false)
-                :total-lines (count-lines (point-min) (point-max))
-                :start-line start
-                :truncated (if (> (length text) limit) t :false)
-                :text (if (> (length text) limit) (substring text 0 limit) text)))))))"
-  "Elisp reading lines A2 to A2+A3 of buffer A0 or of the buffer visiting file A1.")
 
 (defparameter *emacs-visit-elisp*
   "(let* ((buffer (find-file-noselect a0))
@@ -135,35 +70,6 @@
 (defgeneric emacs-tool--execute (tool context arguments)
   (:documentation "Return TOOL's JSON object result for ARGUMENTS."))
 
-(defmethod emacs-tool--execute ((tool emacs-context-tool) context arguments)
-  "Describe every window in the visible frames."
-  (declare (ignore tool arguments))
-  (emacs-server-call (tool-context-configuration context) *emacs-context-elisp*))
-
-(defmethod emacs-tool--execute ((tool emacs-read-buffer-tool) context arguments)
-  "Read lines from the named buffer or the buffer visiting the named file."
-  (declare (ignore tool))
-  (let ((buffer (tool-argument arguments "buffer"))
-        (path (tool-argument arguments "path"))
-        (start (or (tool-argument arguments "start-line") 1))
-        (count (min (or (tool-argument arguments "line-count") 200)
-                    *emacs-read-buffer-maximum-lines*)))
-    (unless (or (non-empty-string-p buffer) (non-empty-string-p path))
-      (error 'tool-error :message "emacs.read-buffer needs a buffer name or a path."
-                         :tool-name "emacs.read-buffer"))
-    (unless (and (integerp start) (plusp start) (integerp count) (plusp count))
-      (error 'tool-error :message "start-line and line-count must be positive integers."
-                         :tool-name "emacs.read-buffer"))
-    (emacs-server-call (tool-context-configuration context) *emacs-read-buffer-elisp*
-                       (or buffer "")
-                       (if (non-empty-string-p path)
-                           (uiop:native-namestring
-                            (workspace-tool-path context path :tool-name "emacs.read-buffer"))
-                           "")
-                       (princ-to-string start)
-                       (princ-to-string count)
-                       (princ-to-string *emacs-text-limit*))))
-
 (defmethod emacs-tool--execute ((tool emacs-visit-tool) context arguments)
   "Show PATH at LINE and COLUMN in a file window of the selected frame."
   (declare (ignore tool))
@@ -195,24 +101,14 @@
 
 (-> emacs-register-tools (tool-registry) tool-registry)
 (defun emacs-register-tools (registry)
-  "Register the emacs.* tools in REGISTRY."
+  "Register the emacs.* tools and the emacs: resource scheme in REGISTRY."
   (tool-registry-describe-namespace
    registry "emacs"
-   "The person's running Emacs: what they see, live buffers, and actions in their editor.")
+   "Actions in the person's running Emacs. Read and edit what they see and their live buffers through resource.read and resource.edit with emacs: URIs.")
+  (resource-registry-register (tool-registry-resource-registry registry)
+                              (make-instance 'emacs-resolver :scheme "emacs"))
   (dolist (specification
            (list
-            (list 'emacs-context-tool "emacs" "context"
-                  "Report what the person is looking at in Emacs: each visible window's buffer, file, major mode, point line and column, unsaved state, which window is selected, and the active region's text. Use it before advising about \"this code\"."
-                  (tool-object-schema (json-object) '()))
-            (list 'emacs-read-buffer-tool "emacs" "read-buffer"
-                  "Read lines from a live Emacs buffer, including unsaved edits, by buffer name or by the path of the file it visits. Files not open in Emacs are read with resource.read instead."
-                  (tool-object-schema
-                   (json-object
-                    "buffer" (tool-string-property "A buffer name, as emacs.context reports it.")
-                    "path" (tool-string-property "The file a buffer visits, when no buffer name is given.")
-                    "start-line" (tool-integer-property "The first line, from 1; defaults to 1.")
-                    "line-count" (tool-integer-property "How many lines; defaults to 200, at most 2000."))
-                   '()))
             (list 'emacs-visit-tool "emacs" "visit"
                   "Show the person a place: open PATH in a file window of their selected frame and move to LINE and COLUMN. It changes what they see, nothing else."
                   (tool-object-schema
@@ -222,7 +118,7 @@
                     "column" (tool-integer-property "The column, from 0; defaults to 0."))
                    '("path")))
             (list 'emacs-eval-tool "emacs" "eval"
-                  "Evaluate one Emacs Lisp form in the person's Emacs and return its printed value or error. As powerful as a shell command, it asks the same command authorization. Prefer emacs.context, emacs.read-buffer and emacs.visit when they suffice."
+                  "Evaluate one Emacs Lisp form in the person's Emacs and return its printed value or error. As powerful as a shell command, it asks the same command authorization. Prefer emacs: resources and emacs.visit when they suffice."
                   (tool-object-schema
                    (json-object "form" (tool-string-property "One Emacs Lisp form, as text."))
                    '("form")))))

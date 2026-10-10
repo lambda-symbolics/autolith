@@ -162,6 +162,7 @@
                              (:file "lsp/semantic-proposals")
                              (:file "lsp/semantic-tools")
                              (:file "emacs/server")
+                             (:file "emacs/resource")
                              (:file "emacs/tools")
                              (:file "resource/agenda")
                              (:file "resource/memory")
