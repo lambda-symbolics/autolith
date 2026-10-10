@@ -237,3 +237,30 @@
                                     (format nil "A denied form never reaches Emacs: ~S" ran)))))
               (ignore-errors (emacs-server-evaluate socket "(kill-emacs)" :timeout 2))
               (platform-delete-directory-tree *platform* runtime :validate t :if-does-not-exist ':ignore)))))))
+
+
+;;;; -- autolith.el --
+
+(defun test-autolith-el-compiles ()
+  "emacs/autolith.el byte-compiles warning-free without sly or agent-shell installed."
+  (let ((emacs (emacs-test-executable)))
+    (if (null emacs)
+        (test-withheld ':emacs "autolith.el byte compilation")
+        (with-test-configuration (base root)
+          (declare (ignore base))
+          (let ((copy (merge-pathnames "autolith.el" root)))
+            (publish-file copy (uiop:read-file-string
+                                (merge-pathnames "emacs/autolith.el"
+                                                 (asdf:system-source-directory :autolith))))
+            (multiple-value-bind (output error-output status)
+                (uiop:run-program (list (uiop:native-namestring emacs) "-Q" "--batch"
+                                        "--eval" "(setq byte-compile-error-on-warn t)"
+                                        "-f" "batch-byte-compile"
+                                        (uiop:native-namestring copy))
+                                  :output ':string :error-output ':string
+                                  :ignore-error-status t)
+              (declare (ignore output))
+              (test-assert (zerop status)
+                           (format nil "autolith.el compiles cleanly: ~A" error-output))
+              (test-assert (probe-file (merge-pathnames "autolith.elc" root))
+                           "Compilation writes autolith.elc.")))))))
