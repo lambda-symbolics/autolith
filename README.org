@@ -5,6 +5,11 @@
 #+ATTR_HTML: :alt Autolith terminal interface
 [[file:docs/autolith-banner.png]]
 
+[[file:LICENSE][https://img.shields.io/badge/license-ISC-42b28a.svg]]
+[[https://autolith.rocks][https://img.shields.io/badge/web-autolith.rocks-42b28a.svg]]
+[[https://lambda-symbolics.com/autolith/docs][https://img.shields.io/badge/docs-guide-42b28a.svg]]
+[[https://zulip.lambda-symbolics.com][https://img.shields.io/badge/chat-Zulip-42b28a.svg]]
+
 Autolith, or AL, is a terminal agent inside a live Common Lisp image. It can
 observe, self-modify, discover, introspect its own code, its live state and what
 it's doing. This lets Autolith adapt to the user's preferences or to what is needed
@@ -85,122 +90,6 @@ Then start Autolith:
 autolith
 #+END_SRC
 
-* Some features
-
-** Optional fullscreen terminal
-
-Autolith is inline by default. Start one session in the application-owned
-fullscreen viewport with =autolith --fullscreen=, or save the preference at the
-Autolith prompt for future launches:
-
-#+BEGIN_SRC lisp
-(preferences-set-fullscreen (application-configuration *active-application*) t)
-#+END_SRC
-
-Fullscreen keeps the transcript scrollable and pins the composer at the bottom.
-Use =PageUp=, =PageDown=, =Ctrl-Home=, =Ctrl-End=, or the mouse wheel to move
-through the transcript. An empty session displays a centered Lisp-machine startup
-panel above the composer.
-
-** The prompt input is the REPL
-
-In Autolith, the message window is just a LISP repl with familiar interactivity,
-you can make prompts in regular prose, or you can enter a form when you need an exact
-local action or a computed prompt.
-
-#+BEGIN_SRC lisp
-(describe 'application)
-(resource.read :uri "workspace:.")
-(prompt (read-file "review-notes.org"))
-#+END_SRC
-
-The form runs in the active image.
-
-** Tools for self modification and ephemeral Lisp REPLs
-Autolith has a well organized suite of *self* tools for inspecting and modifying itself live.
-You would think that doing live brain surgery on yourself would be catastrophic, but
-Autolith can triage and revert changes.
-
-Similar set of *lisp* tools let Autolith avoid littering temporary Python3 scripts, instead
-doing these things in its bundled Common Lisp runtime, but in REPLs that are pristine and
-separate from the agent's image. That's one less system dependency, and it also lets Autolith
-observe its scripts better.
-
-Autolith can decide if it wants to keep the same Lisp REPL alive or to create a pristine one,
-and can maintain multiple.
-
-#+BEGIN_SRC lisp
-(lisp.eval :forms '("(+ 20 22)") :repl "scratch")
-(lisp.describe :designator "APPLICATION" :target "self")
-(self.status)
-#+END_SRC
-
-=lisp.*= uses named, heap-isolated SBCL workers and can target read-only active
-inspection explicitly. =self.*= changes or reports the active Autolith image.
-
-** Recursive inference
-
-Autolith can treat a large input as an environment instead of a prompt. =infer= runs one
-bounded inference over context you pass explicitly, returns a Lisp value, and never touches
-your conversation:
-
-#+BEGIN_SRC lisp
-(infer "List the invariants this file maintains."
-       :context (list #p"src/conversation/store.lisp"))
-#+END_SRC
-
-Frames recurse, fan out through =rlm-map=, and return validated data instead of prose when you
-give them a JSON Schema contract. Calls, tokens, and recursion depth come out of one shared
-budget, so a fan-out cannot outspend its allocation, and the private frame conversations cannot
-pollute yours or your prompt cache.
-
-=rlm-complete= is the full form: the input is interned as a content-addressed object, the root
-model sees only its label, size, and digest, and it writes Lisp in an isolated environment to
-slice, search and sub-infer over it. Inputs larger than the provider context window are processed
-this way.
-
-#+BEGIN_SRC lisp
-(rlm-complete "Summarize every incident in this log."
-              :context #p"/var/log/huge.log")
-#+END_SRC
-
-The model reaches the same operations through the =rlm.infer=, =rlm.map= and =rlm.complete= tools.
-Every frame persists its own trace under =data/inferences/=, readable afterwards through
-=inference:<trace-id>= URIs, so you can still ask why an inference concluded what it did.
-
-See [[file:docs/rlm.org][RLM]] for contracts, budgets, policies and the design decisions.
-
-** Messages are just syntax sugar
-When you type a message like:
-#+BEGIN_SRC lisp
-Hello Autolith! How do you do?
-#+END_SRC
-
-It is just syntactic sugar for:
-
-#+BEGIN_SRC lisp
-(prompt "Hello Autolith! how do you do?")
-#+END_SRC
-
-This omits the default value for the *:to* parameter:
-
-#+BEGIN_SRC lisp
-(prompt :to 'autolith "Hello Autolith! how do you do?")
-#+END_SRC
-
-
-So if you ask Autolith to delegate work (it is likely to do it on its own with mostmodels), so it can keep working
-while the children run, you can talk to them as well.
-If one visible child is named =test-review=, you steer the sub-agent by prompting it:
-
-#+BEGIN_SRC lisp
-(prompt :to 'test-review
-        "Run the focused tests and report only failures.")
-#+END_SRC
-
-As a convenience, its next useful verbal response returns to
-the primary terminal.
-
 * Update
 If you want to pull an update, you can do so easily:
 
@@ -209,53 +98,6 @@ If you want to pull an update, you can do so easily:
 #+END_SRC
 
 Or do *autolith update* in your shell.
-
-* Autolith differences from other agents
-
-** Lisp-first control
-Plain text, callable commands, tools, and explicit Common Lisp share
-Autolith's REPL (or prompt window/input, as you may know it from other agents).
-This means that you can construct scripts easily, and you can call tools just
-like the clanker does it.
-
-Exact forms can compute prompts or return results, and the model will see them.
-
-For example, if you put your prompt to a file, you can just do:
-
-#+BEGIN_SRC lisp
-(prompt (read-file "path"))
-#+END_SRC
-
-You could do templating, too, if you like.
-
-** Responsive and inobtrusive terminal work
-Autolith defaults to inline presentation and generally uses your terminal's base
-16 colors. Use =--fullscreen= for an application-owned transcript viewport.
-
-Inline mode emits prompt markers, so terminals with shell-prompt navigation can
-also jump between messages to Autolith.
-
-The line editor is the fairly powerful [[https://github.com/luciusmagn/clinedi][clinedi]], it should support all the editing niceties
-and shortcuts you are used to.
-
-** State and recovery
-Conversations use append-only readable files.
-
-Steering messages and follow-ups survive active-image crashes and abrupt shutdowns in a conversation-scoped vault. The vault is (intentionally) not resubmitted automatically,
-since you may want to diagnose a crash before you resume your previous work.
-
-You can use the following commands to interact with the vault:
-#+BEGIN_SRC lisp
-(vault)         ; see what's in da vault
-(vault-restore) ; re-submit follow-ups and steering messages in the vault
-(vault-discard) ; delete vault contents
-#+END_SRC
-
-Finally, checkpoints, private mutation commits, generations, and a pristine recovery image keep
-live work reconstructible, so it's hard to terminally lobotomize AL.
-
-* License
-Autolith is ISC licensed. See [[file:LICENSE][LICENSE]].
 
 * Friends of Autolith
 
