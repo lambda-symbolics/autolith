@@ -1032,6 +1032,8 @@
   test-acp-extension-job-transcript-window
   test-acp-extension-job-steer-and-cancel-authority
   test-acp-extension-job-durable-fallback
+  test-acp-extension-resource-windows
+  test-acp-extension-resource-authorization
   test-acp-completion-continues-and-closes
   test-acp-completion-cancel-and-reuse
   test-acp-completion-start-failure-cleans-session
