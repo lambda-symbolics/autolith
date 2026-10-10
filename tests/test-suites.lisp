@@ -5,6 +5,7 @@
 (setf *test-suites* nil)
 
 (define-test-suite telemetry-hooks
+  test-telemetry-returned-model-hook
   test-telemetry-provider-retry-hooks
   test-telemetry-provider-failure-hooks
   test-telemetry-provider-fallback-hooks

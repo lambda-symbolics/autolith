@@ -2,6 +2,44 @@
 
 ;;;; -- Real Lifecycle Boundaries --
 
+(defclass telemetry-test-stream-provider (responses-api-provider)
+  ((data :initarg :data :accessor telemetry-test-stream-data
+         :documentation "The synthetic SSE body consumed by this fixture."))
+  (:documentation "Read real Responses SSE through the native telemetry boundary."))
+
+(defmethod provider-stream-turn ((provider telemetry-test-stream-provider) conversation
+                                &key tool-namespaces event-callback goal-context compaction-p)
+  (declare (ignore conversation tool-namespaces goal-context compaction-p))
+  (with-input-from-string (stream (telemetry-test-stream-data provider))
+    (provider-consume-stream provider stream nil event-callback)))
+
+(defun test-telemetry-returned-model-hook ()
+  "Read multiline wire metadata, map aliases, and never reuse a prior attempt's model."
+  (test-telemetry--call
+   (lambda (configuration)
+     (setf (config :telemetry-model-aliases configuration)
+           '(("private-response-model" . "model-b")))
+     (let ((provider (make-instance 'telemetry-test-stream-provider
+                                    :configuration configuration
+                                    :data (format nil "data: {\"type\":\"response.completed\",~%data: \"response\":{\"id\":\"private-response-id\",\"model\":\"private-response-model\",\"usage\":{}}}~%~%"))))
+       (let* ((bodies (test-telemetry-hooks--capture
+                       configuration
+                       (lambda ()
+                         (provider-stream-turn provider nil :event-callback #'identity)
+                         (setf (telemetry-test-stream-data provider)
+                               (format nil "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"second\",\"usage\":{}}}~%~%"))
+                         (provider-stream-turn provider nil :event-callback #'identity))))
+              (first (first (test-telemetry-hooks--kind (first bodies) "model")))
+              (second (first (test-telemetry-hooks--kind (second bodies) "model"))))
+         (test-assert (equal (test-telemetry--attribute first "gen_ai.response.model") "model-b")
+                      "Returned model metadata passes through the configured public alias map.")
+         (test-assert (equal (test-telemetry--attribute second "gen_ai.response.model") "unknown")
+                      "An absent model stays unknown instead of inheriting a previous request.")
+         (dolist (body bodies)
+           (test-assert (not (search "private-response" body))
+                        "Neither raw response model nor response identity is exported."))))))
+  nil)
+
 (defun test-telemetry-hooks--capture (configuration function)
   "Capture offline uploads while exercising the actual lifecycle wrappers."
   (setf (config :telemetry-enabled-p configuration) t)
