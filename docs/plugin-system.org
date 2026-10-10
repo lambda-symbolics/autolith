@@ -1,0 +1,327 @@
+#+TITLE: Autolith Plugin System
+#+STARTUP: content
+
+*Status*: intended design. Nothing in this document is implemented yet.
+
+* Overview
+
+Autolith plugins let users share code, tools, skills, providers, commands, and
+MCP servers as ordinary git repositories, outside the Autolith source tree and
+without shipping them in the core.
+
+A plugin is a git repository whose root holds one required file,
+=manifest.sexp=. The manifest names the plugin and its entry point and declares
+its dependencies. Everything else the plugin does, it does from code: skills,
+tool registrations, MCP servers, providers, commands, and context contributors
+are registered at load time through the same calls built-ins use.
+
+Users choose what is installed. Declarations live in Lisp initialization files
+and are gated by an explicit permission. The agent can operate the whole
+plugin system through the same gate.
+
+* Decisions
+
+- Installation is user-gated. One permission record per plugin identity plus
+  resolved commit covers install, load, disable, update, and remove.
+- Plugins are declared from Lisp; users build the dependency tree with function
+  calls.
+- Declarations are accepted from global, site, and project scopes.
+- Third-party plugin code lives in its own package and reaches Autolith only
+  through the exported extension surface.
+- Plugins register tools, MCP servers, providers, commands, and context
+  contributors directly, under their own registration source.
+- Plugins may ship their own ASDF systems and dependencies.
+- A dependency conflict fails the load. The locked dependency environment is
+  never overridden.
+- Loading and redefinition are hot. Removing a plugin or changing its code
+  means restarting into an image that never loaded it.
+- The tool schema stays vanilla: a tool carries the existing single
+  =:description=.
+
+* Terms
+
+- *Plugin identity* :: the pair of a plugin's git source and a resolved commit.
+- *Resolved commit* :: the exact git object a requested ref points at.
+- *Plugin store* :: the per-user checkout directory holding fetched plugins.
+- *Plugin lock* :: the record of resolved refs, the transitive plugin graph,
+  and checkout paths.
+- *Permission record* :: the user's consent to load one plugin identity.
+- *Registration source* :: the layer tag every contribution carries, used to
+  remove a plugin's contributions as a group.
+
+* Plugin repository and manifest
+
+The only required file is =manifest.sexp= at the repository root. No directory
+layout is prescribed beyond that; the manifest names an entry point, and the
+plugin organizes everything else as it sees fit.
+
+#+BEGIN_SRC lisp
+(:manifest-version 1
+ :name "my-cool-autolith-plugin"
+ :version "0.3.0"
+ :entry "src/init.lisp"          ; or :system "my-cool-autolith-plugin"
+ :deps ((:plugin "autolith-plugin-utils"
+          :git "github.com/example/autolith-plugin-utils"
+          :ref (:tag "v1.1.0"))
+         (:system "dexador"))
+ :on-undefined :abort)
+#+END_SRC
+
+** Manifest reference
+
+| Key                 | Required | Meaning                                             |
+|---------------------+----------+-----------------------------------------------------|
+| =:manifest-version= | yes      | schema version, checked before anything loads       |
+| =:name=             | yes      | plugin name, the default identifier                 |
+| =:version=          | no       | human-readable plugin version                       |
+| =:entry=            | one of   | path, relative to the root, of a Lisp file to load  |
+| =:system=           | one of   | ASDF system name inside the checkout                |
+| =:deps=             | no       | plugin and ASDF dependencies                        |
+| =:on-undefined=     | no       | =:abort= (default) or =:warn=                       |
+
+=:entry= and =:system= are alternatives. A plugin that ships an ASD names the
+system and brings its own build; a plugin without one names a file. There is no
+API-version key: no versioned extension API exists yet, and one is added when
+the exported surface is actually versioned.
+
+=:deps= entries are either plugin source specs or ASDF system names:
+
+#+BEGIN_SRC lisp
+(:deps ((:plugin "autolith-plugin-utils"
+          :git "github.com/example/autolith-plugin-utils"
+          :ref (:tag "v1.1.0")
+          :hash "a91c04f0")            ; optional exact pin
+         (:system "dexador")))
+#+END_SRC
+
+Skills, MCP servers, providers, commands, and tools are not declared in the
+manifest. They are things a plugin does at load time, so they are registered
+from code and carry the plugin's registration source.
+
+* Declaring plugins
+
+=plugin-get= declares intent. It performs no network access and returns a
+plugin record in the =declared= state.
+
+#+BEGIN_SRC lisp
+;; user init.lisp
+(plugin-get :git "github.com/example/my-cool-autolith-plugin"
+            :hash "efffff"
+            :deps '((:plugin "autolith-plugin-utils"
+                      :git "github.com/me/autolith-plugin-utils-fork"
+                      :hash "0badc0de"))
+            :enabled t
+            :on-failure :disable
+            :config (lambda (plugin) ...))
+#+END_SRC
+
+| Key           | Meaning                                            |
+|---------------+----------------------------------------------------|
+| =:git=        | repository URL or shorthand                        |
+| =:ref=        | =:tag=, =:branch=, =:commit=, or =:version=         |
+| =:hash=       | exact commit; equivalent to =:ref (:commit ...)=   |
+| =:local=      | path to a development checkout instead of a fetch  |
+| =:deps=       | user-level dependency selection, overrides pins    |
+| =:enabled=    | start disabled when false                          |
+| =:on-failure= | =:disable=, =:abort=, or =:prompt=                 |
+| =:config=     | Lisp run after the plugin loads                    |
+
+Declarations are accepted from global and site =init.lisp= and from a project's
+=.autolith/= configuration. A project-scoped plugin set applies only inside
+trusted directories, matching the existing directory-scope trust model.
+
+* Resolution and the plugin lock
+
+A requested ref resolves once at install and pins. =:hash= and
+=:ref (:commit ...)= are exact and never re-resolve. =:tag=, =:branch=, and
+=:version= resolve to a commit that is then recorded, so startup is
+reproducible offline without contacting the remote again. Re-resolution happens
+only on an explicit update.
+
+=plugins.lock= under the state root records, for each declared plugin:
+
+- the requested git source and ref,
+- the resolved commit,
+- the checkout path in the plugin store,
+- the transitive plugin dependency graph,
+- the winner wherever the user or Autolith overrode a plugin's own pin.
+
+The lock is machine-managed and regenerated on resolve or update. It is
+separate from permissions: the permission store records user consent and
+persists until changed, while the lock records resolution state and is rebuilt
+whenever a ref is re-resolved. The permission store answers "may this run"; the
+lock answers "what did this ref mean last time".
+
+* Permissions
+
+One permission record per plugin identity: the plugin's git source plus its
+resolved commit. It covers install, load, disable, update, and remove, and it is
+required of the agent and the user alike. The record is stored the way command
+permissions already are, as a validated transactional sexp file under the state
+root with a lock file.
+
+- A new resolved commit is a new identity and re-prompts.
+- Installing a plugin presents its transitive dependencies in the same approval
+  view.
+- The plugin system is a decision boundary, not a container. Code loaded into
+  the active image is exactly as privileged as the image, consistent with the
+  existing stance that process separation is not a security claim.
+
+* Loading
+
+1. =init.lisp= evaluates =plugin-get= forms. Plugins enter =declared=.
+2. A background job resolves and fetches each approved plugin into the plugin
+   store, writing =plugins.lock=. Missing consent prompts and never blocks
+   startup.
+3. The manager checks =:manifest-version=.
+4. It compiles the plugin's whole file set, collecting undefined-reference
+   warnings, and applies the undefined-reference gate.
+5. It binds the registration source to the plugin identity and loads =:system=
+   then =:entry=, or =:entry= alone.
+6. =:config= runs after the plugin is loaded, as ordinary user code.
+
+A failure at any step marks the plugin =failed= with its reason and leaves
+startup intact. Registry changes roll back through the existing extension
+registry transaction; arbitrary Lisp side effects are not reversible, the same
+caveat executable filesystem configuration already carries.
+
+** States
+
+=declared= -> =approved= -> =fetching= -> =resolved= -> =loading= ->
+=enabled= / =failed= / =disabled=.
+
+** Undefined references
+
+SBCL's compiler reports unresolved references during compilation.
+=compile-file= signals a muffleable =SB-INT:SIMPLE-STYLE-WARNING= whose format
+control begins =undefined ~(~A~):=, where the kind is =function=, =variable=,
+=type=, or =class=. The manager filters on that prefix during the compile pass.
+
+Detection is two-stage:
+
+- *Pre-scan.* Walk each source for defining heads (=defun=, =defmacro=,
+  =defgeneric=, =defmethod=, =defclass=, and defining macros) to build the
+  plugin's own name set. A reference is an error only when the name is not
+  =fbound=, matches no recognized defining head anywhere in the plugin, and is
+  not supplied by a declared dependency.
+- *Post-load check.* After the whole plugin is loaded, every recorded name is
+  re-checked with =fboundp=.
+
+The post-load =fboundp= check is authoritative. The pre-scan exists to abort
+before side effects in the unambiguous case; when the two disagree, post-load
+wins and the disagreement is recorded. Pre-scan false positives come from
+macro-generated definitions, =eval-when=, =defclass=-implicit accessors, and
+dependency systems. Pre-scan false negatives, where a matched defining head did
+not actually define the name, are real failures.
+
+Calls through =funcall= and computed symbols are not statically visible and are
+out of scope. =:on-undefined :abort= fails the plugin; =:warn= loads it and
+records the unresolved names in =plugin.status=.
+
+* Registration and removal
+
+A plugin registers through the same calls built-ins use, and the manager tags
+every contribution with the plugin's registration source.
+
+#+BEGIN_SRC lisp
+(in-package #:my-cool-autolith-plugin)
+
+(register-plugin-tool
+ :namespace "deploy" :name "start"
+ :description "Start a deployment for one target and stream its status."
+ :parameters (json-object "target" (tool-string-property "Deployment target."))
+ :function #'start-deployment)
+
+(register-plugin-skill-root (merge-pathnames "docs/skills/" *plugin-root*))
+
+(register-mcp-server
+ '(:name "deploy-registry" :transport (:type :stdio :command "deploy-mcp")))
+
+(define-application-command /deploy
+  (:name "/deploy" :description "deploy the current workspace"))
+
+(register-plugin-lifecycle :deactivate #'stop-deployment)
+#+END_SRC
+
+Disable removes every registration by source and runs =:deactivate= so the
+plugin stops its threads, sockets, and workers. It does not remove definitions;
+Lisp code is not unloadable.
+
+** Tools
+
+Plugin tools use the existing tool schema: a namespace, a name, one
+=:description=, and a JSON Schema. There is no separate short and long
+description, and no skill-linked tool documentation.
+
+** Skill roots
+
+Plugin skill roots are registered from code, tagged by plugin source, and
+ordered below every declarative scope. Highest to lowest precedence:
+
+| Rank | Root                                                  |
+|------+-------------------------------------------------------|
+| 1    | project =.autolith/skills/=                           |
+| 2    | Autolith user =skills/=                               |
+| 3    | shared user =~/.agents/skills/=                       |
+| 4    | site =skills/=                                        |
+| 5    | plugin-contributed roots, in declaration order        |
+| 6    | bundled =skills/=                                     |
+
+Project, user, shared, and site skills therefore win over plugin skills, and
+plugin skills win over bundled first-party skills. A plugin skill that shadows
+a bundled skill name is reported at load.
+
+* Lifecycle and restart
+
+=plugin.enable= and =plugin.disable= add and remove registrations in place.
+=plugin.update= fetches a new commit. Because loaded code cannot be removed,
+changing a plugin's code or removing a plugin is completed by a restart.
+
+=plugin.restart= selects a retained generation that does not contain the plugin
+and rolls back to it through =generation-request-rollback=. The base image is
+always plugin-free, because plugins load in-process after boot; any generation
+saved before a plugin loaded works the same way.
+
+- The loader is idempotent and records, in the live image, which plugins and
+  resolved commits are present, so a restored generation reconciles declared
+  against present instead of double-loading.
+- Plugin-owned runtimes join the checkpoint quiesce path and the runtime-close
+  ordering, so a checkpoint taken with plugins loaded is clean.
+- Windows cannot fork and withholds rollback; =plugin.restart= there is a
+  process re-exec into the base core.
+
+* Observability
+
+#+BEGIN_SRC lisp
+> (plugins)
+  my-cool-autolith-plugin  0.3.0  efffff  enabled   2 tools, 1 mcp, 1 provider
+  autolith-plugin-utils    1.1.0  a91c04  enabled   (dependency)
+  vault                    main   3f21bd  failed: could not load entry file
+#+END_SRC
+
+=plugins= lists each plugin with its version, resolved commit, state, and
+contributed counts. Mutating operations are tools and commands behind the
+plugin permission: =plugin.install=, =plugin.enable=, =plugin.disable=,
+=plugin.update=, =plugin.remove=, =plugin.restart=. =plugin.list= and
+=plugin.status= are unrestricted.
+
+* Implementation gaps
+
+- Registration sources are bare keywords with removal by keyword. Either the
+  source carries plugin identity, or every contributed identifier is namespaced
+  by plugin name. Both are small changes across the four registries and the
+  layered registry.
+- Tools have no source layer and no per-source removal. This generalizes the
+  dynamic add and remove MCP already performs.
+- =skill-roots= computes a fixed list; it needs plugin-contributed roots, tagged
+  by source and ordered as above.
+- Generations need to record which plugins were loaded into them.
+- Plugin-owned runtimes must participate in checkpoint quiescence and runtime
+  close ordering.
+
+* Deferred
+
+- A versioned extension API with a compatibility key in the manifest.
+- Two-tier tool metadata (short summary plus detailed description) and
+  skill-linked tool documentation.
+- Static detection of dynamic calls through =funcall= and computed symbols.
