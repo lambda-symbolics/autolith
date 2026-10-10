@@ -29,9 +29,10 @@ the clanker can, and the same machinery is exposed to you.
 
 * Goals and verified missions
 
-Use =/goal OBJECTIVE= for lightweight autonomous work. Use =/goal pause=,
-=/goal resume= or =/goal clear= to control it. For externally verifiable work,
-install explicit acceptance policy with =/mission start PLIST=, or evaluate:
+Use =(goal "OBJECTIVE")= for lightweight autonomous work. Use =(goal "pause")=,
+=(goal "resume")= or =(goal "clear")= to control it. For externally verifiable
+work, install explicit acceptance policy with =(mission "start PLIST")=, or
+evaluate:
 
 #+BEGIN_SRC lisp
 (application-mission-start
@@ -45,8 +46,8 @@ install explicit acceptance policy with =/mission start PLIST=, or evaluate:
             :attempt-limit 3 :timeout-seconds 300))))
 #+END_SRC
 
-Use =/mission run= to begin, =/mission status= to inspect the complete durable
-state, and =/mission verify= to request harness verification. The model can
+Use =(mission "run")= to begin, =(mission "status")= to inspect the complete
+durable state, and =(mission "verify")= to request harness verification. The model can
 also call =mission.status=, =mission.verify=, =mission.stop= and
 =mission.invalidate=. Only the primary agent may mutate mission policy through
 these model operations. Configure acceptance criteria yourself; the model
@@ -55,10 +56,10 @@ cannot weaken them or supply user acceptance.
 Each criterion has a unique =:id=, a =:description= and optional ordered gate
 IDs in =:gates=. Criteria without gates require your explicit evidence:
 
-#+BEGIN_SRC text
-/mission accept ("review" "I inspected the artifact and accept the result")
-/mission resume
-/mission verify
+#+BEGIN_SRC lisp
+(mission "accept (\"review\" \"I inspected the artifact and accept the result\")")
+(mission "resume")
+(mission "verify")
 #+END_SRC
 
 The model's completion marker requests verification. Passing a gate proves
@@ -78,9 +79,9 @@ can exhaust the token allowance. Missing usage is recorded as unknown and blocks
 further inference. Install a new explicit budget to proceed after unknown usage.
 
 The wall-clock deadline includes gate execution, delegated tools, pauses and
-time away. Work runs under cl-jobpond supervision. Use =/goal pause= and
-=/mission resume= without resetting any mission budget; use =/mission cancel
-REASON= to terminate it. Terminal states are =verified=, =exhausted=, =cancelled=
+time away. Work runs under cl-jobpond supervision. Use =(goal "pause")= and
+=(mission "resume")= without resetting any mission budget; use
+=(mission "cancel REASON")= to terminate it. Terminal states are =verified=, =exhausted=, =cancelled=
 and =failed=. A =blocked= mission retains the evidence needed to resolve its
 blocker and resume. Interrupted inference restores as blocked when its usage
 cannot be recovered. Gate attempts, fingerprints and evidence restore with the
@@ -100,8 +101,8 @@ unchanged failed gates are withheld while the model works on their relevant
 inputs. For remote state, omit deterministic policy or invalidate a particular
 gate explicitly:
 
-#+BEGIN_SRC text
-/mission invalidate ("build" "The remote build configuration changed")
+#+BEGIN_SRC lisp
+(mission "invalidate (\"build\" \"The remote build configuration changed\")")
 #+END_SRC
 
 Invalidation permits another execution without replenishing its attempt budget.
@@ -160,7 +161,7 @@ For recurring wakeups, choose =missed-policy= =latest= (the default), =all= or
 Use =mission-schedule.event= with an event name and stable external event =id=;
 repeated delivery of that ID is deduplicated. The local daemon listener hosts time
 wakeups. Due work enters the ordinary primary command queue as a persisted
-=/mission-wakeup= ticket and executes as a mission continuation under the existing
+=(mission-wakeup "TICKET")= command and executes as a mission continuation under the existing
 turn, token and wall-clock budgets.
 
 Only the primary agent may use the =mission-schedule= tools. Each wakeup retains
@@ -668,8 +669,8 @@ Papercuts use current-workspace resource URIs:
 - =papercut:id/<percent-encoded-stable-id>= reads one active report and accepts
   =papercut-close= with a complete resolution.
 
-The existing =papercut.report= tool and =/papercuts=, =/papercut=, and
-=/papercut-close= commands remain convenient direct interfaces.
+The existing =papercut.report= tool and =(papercuts)=, =(papercut "ID")=, and
+=(papercut-close "ID")= commands remain convenient direct interfaces.
 
 Conversation history uses read-only resource URIs:
 
@@ -734,12 +735,12 @@ third actual user turn, Autolith may ask the active model for one concise
 replacement and persist it with the conversation. The local title does not depend
 on provider generation.
 
-Provider-generated refreshes are enabled by default. Use =/titles on|off= or
-=(titles "on")= / =(titles "off")= to inspect or change the durable global
+Provider-generated refreshes are enabled by default. Use =(titles)=,
+=(titles "on")= or =(titles "off")= to inspect or change the durable global
 preference.
 
-=/resume= displays titles in its picker while explicit =/resume ID= and
-=(resume "ID")= continue to address the stable conversation identifier. The
+=(resume)= displays titles in its picker while an explicit =(resume "ID")=
+continues to address the stable conversation identifier. The
 terminal status bar and local session status display the title when one is
 available and otherwise show the conversation ID.
 
@@ -804,7 +805,7 @@ Current IDs are case-sensitive. Legacy hexadecimal IDs accept either case.
 
 Detaching hands a session to a supervised process group that outlives the
 terminal. Windows has no process groups or detached sessions, so sessions
-there always run directly in the terminal that started them: =/detach= and
+there always run directly in the terminal that started them: =(detach)= and
 client-first starts report that the handoff is withheld, while the loopback
 endpoint and the =localgroup= commands work as elsewhere.
 
@@ -863,15 +864,15 @@ is user-owned.
 ** Settings
 
 Every knob Autolith exposes is a named setting with a type, a description, a
-default, and, where the choices are finite, its options. =/settings= opens the
+default, and, where the choices are finite, its options. =(settings)= opens the
 settings page: a picker listing each setting with its current value and where
 that value came from. Choosing an adjustable setting opens its options;
 choosing a read-only one explains why it cannot change in a running session.
 The page returns to the list after every change until you cancel.
 
-The same operations work without the page. =/settings NAME= describes one
-setting, =/settings NAME VALUE= changes it, and =(settings)= called from Lisp
-or a script, where no picker can open, prints every setting grouped by area. Values are written as they appear on the page: =on=
+The same operations work without the page. =(settings "NAME")= describes one
+setting, =(settings "NAME" "VALUE")= changes it, and =(settings)= called from
+a script, where no picker can open, prints every setting grouped by area. Values are written as they appear on the page: =on=
 and =off= for switches, option names for choices, and integers or paths as
 text. A change to a durable setting is saved at once for future sessions.
 
@@ -1163,7 +1164,7 @@ ctx [==========|..] 218K / 272K used
 
 At narrow widths, the meter keeps the used and window counts and drops the bar.
 
-Use =(compact)= or =/compact= to compact the current conversation immediately,
+Use =(compact)= to compact the current conversation immediately,
 regardless of the meter. It uses the same provider-native checkpoint and portable
 summary path as automatic compaction. During an active turn, the command waits
 in the idle queue. An empty conversation needs no provider request. Compaction
@@ -1183,7 +1184,7 @@ context.
 
 Providers bill context served from their prompt cache at a fraction of the
 uncached input price, so a request that re-reads context the previous request
-had cached costs noticeably more. =/cache-misses on= or =(cache-misses "on")=
+had cached costs noticeably more. =(cache-misses "on")=
 enables a dim notice after any request whose cache reads fell below half of the
 previous prompt, and after any request whose cache reads stopped growing while
 the prompt grew and at least a sixteenth of the previous prompt, never less
@@ -1220,9 +1221,9 @@ autolith models | grep gpt
 The command prints one sorted, deduplicated model ID per line from built-in and
 locally configured catalogs.
 
-Inside a session, =/auth= and =(auth)= are the same operation. Omit the
-provider to pick one interactively, or use =/auth my-provider= and
-=(auth "my-provider")= for an explicit selection. Use
+Inside a session, =(auth)= without a
+provider picks one interactively, and =(auth "my-provider")= selects one
+explicitly. Use
 =autolith auth my-provider= to authenticate during startup.
 
 After a key is saved, static metadata or the last good cache keeps models
@@ -1232,7 +1233,7 @@ providers that have no model-list endpoint.
 
 Built-in ChatGPT subscriptions use browser OAuth with PKCE and a local callback
 on =localhost:1455= or =localhost:1457= by default. Use
-=/auth chatgpt device=, =(auth "chatgpt" "device")=, or
+=(auth "chatgpt" "device")= or
 =autolith auth chatgpt device= to select the device-code flow instead. The
 browser authorization URL is always printed for manual use. Grok and Nous
 Research use browser device flows. Gemini uses Google installed-application
@@ -1240,8 +1241,8 @@ OAuth with a local loopback callback.
 Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, and user-registered
 OpenAI-compatible providers use API keys.
 
-Authenticate a GitHub Copilot subscription with =autolith auth copilot=,
-=/auth copilot=, or =(auth "copilot")=. Approve the displayed device code at
+Authenticate a GitHub Copilot subscription with =autolith auth copilot=
+or =(auth "copilot")=. Approve the displayed device code at
 GitHub. Credentials are stored in the private =copilot-auth.sexp= under the
 state root. Tokens renew automatically before expiry.
 
@@ -1272,12 +1273,12 @@ so it may require updates when GitHub changes that service.
 ChatGPT Codex Fast mode sends =service_tier=priority= when the active Codex model
 advertises Fast support. Fast responses count more heavily against plan usage;
 the exact rate is set by OpenAI per model and is not tracked here. The built-in
-GPT-6.1, GPT-6, and GPT-5.6 models support it. Use =/fast= or =/fast status= to inspect it, and =/fast on= or
-=/fast off= to change the saved preference. The activity status line displays
+GPT-6.1, GPT-6, and GPT-5.6 models support it. Use =(fast)= or =(fast "status")= to inspect it, and =(fast "on")= or
+=(fast "off")= to change the saved preference. The activity status line displays
 =FAST= while the active model uses Fast mode. Other providers and unknown Codex
 models keep the preference but use the standard path. Set
 =AUTOLITH_CODEX_FAST_MODE=on= or =off= to override the saved choice for one
-process; while it is set, =/fast on= and =/fast off= are unavailable.
+process; while it is set, =(fast "on")= and =(fast "off")= are unavailable.
 
 A request that fails before the model has produced anything is retried up to
 six times with jittered delays, since the failed attempt cost only the wait.
@@ -1304,7 +1305,7 @@ expansion replays intact in every later request, which keeps those tools
 loaded and the prompt prefix cacheable; only native compaction requests replay
 it empty. Other models and providers receive the complete eager tool array.
 
-Authenticate Gemini with =autolith auth gemini=, =/auth gemini=, or
+Authenticate Gemini with =autolith auth gemini= or
 =(auth "gemini")=. Autolith stores its Google OAuth credentials separately at
 =gemini-auth.sexp= under the state root. The provider uses the Gemini CLI Code
 Assist subscription service directly, including streaming text and thinking,
@@ -1345,7 +1346,7 @@ OpenRouter models are discovered from the authenticated catalog and use
 that emit text and advertise function tools, tool choice, and normalized
 reasoning, matching the request shape Autolith sends. =OPENROUTER_API_KEY= takes
 precedence over Autolith's private OpenRouter key. Authenticate with
-=autolith auth openrouter=, =/auth openrouter=, or =(auth "openrouter")=.
+=autolith auth openrouter= or =(auth "openrouter")=.
 =AUTOLITH_OPENROUTER_PROVIDER_ENDPOINT= and
 =AUTOLITH_OPENROUTER_MODELS_ENDPOINT= override the chat and discovery endpoints
 independently.
@@ -1420,7 +1421,7 @@ grouped by reason, and leaves it out of the next =self.commit=. Commits publishe
 this record replay their tracked overrides only while the image runs the source
 revision the lineage was published against. Reapply a skipped definition
 against the current source to restore it, or use =(fix-skipped-definitions)=
-or =/fix-skipped-definitions= to hand every skipped definition to the model
+to hand every skipped definition to the model
 with its persisted source, the tracked source it was written against, and the
 current tracked source. The model rebuilds each override on the current source
 with =self.redefine=, drops any the tracked source already covers, and
@@ -1433,11 +1434,11 @@ Use =self.refine= to record trajectory evidence, choose the smallest useful targ
 or =none=, and exercise existing memory, context, skill, role, RLM or mutation
 operations. Every transition names the proposal ID and its observed revision.
 Evaluation records actual task observations separately from owner compile/replay
-checks. Inspect proposals with =/refine= and supply a local assessment before
+checks. Inspect proposals with =(refine)= and supply a local assessment before
 promotion:
 
 #+BEGIN_SRC lisp
-/refine (:assess "PROPOSAL-ID" 3 :passed "Evidence from a separate task")
+(refine "(:assess \"PROPOSAL-ID\" 3 :passed \"Evidence from a separate task\")")
 #+END_SRC
 
 Promotion proceeds from session to project to global scope, with renewed evaluation
@@ -1633,7 +1634,7 @@ boundary. With =notify=, receive results on the next ordinary turn instead.
 Delivery receipts survive restart and conversation compaction. Notification
 reconstruction reads terminal artifacts without repeating job effects. Cancellation,
 paused or terminal missions, spent budgets, and conversation ownership constrain
-automatic turns. Inspect retained results with =job.get=, =job.continuity= or =/tasks=.
+automatic turns. Inspect retained results with =job.get=, =job.continuity= or =(tasks)=.
 Child-owned outcomes are inspection-only outside their exact conversation; completing
 a child does not reopen it or redirect descendant results into the primary context.
 ACP sessions also own a completion controller and stream automatic turns to the
@@ -1642,14 +1643,14 @@ subsequent ordinary turns. Use =job.wait= when deliberate waiting is appropriate
 
 ** Task inspection and continuity
 
-Use =/tasks= for a compact nonmodal inventory of owned live and durable work,
+Use =(tasks)= for a compact nonmodal inventory of owned live and durable work,
 including lineage, timing, reported usage, recent activity and artifact paths:
 
-#+BEGIN_SRC text
-/tasks get JOB-ID
-/tasks transcript JOB-ID 0 4000
-/tasks send JOB-ID Inspect the failing check before continuing.
-/tasks cancel JOB-ID
+#+BEGIN_SRC lisp
+(tasks "get JOB-ID")
+(tasks "transcript JOB-ID 0 4000")
+(tasks "send JOB-ID Inspect the failing check before continuing.")
+(tasks "cancel JOB-ID")
 #+END_SRC
 
 Transcript arguments are a character offset and window limit, defaulting to
@@ -1669,9 +1670,9 @@ an assertion about repeating external effects. Revival reattaches live work,
 starts the named REPL from its saved image, or dispatches a new child from a safe
 retained shared-workspace task specification:
 
-#+BEGIN_SRC text
-/tasks revive JOB-ID authorize
-/tasks abandon EXECUTION-ID authorize
+#+BEGIN_SRC lisp
+(tasks "revive JOB-ID authorize")
+(tasks "abandon EXECUTION-ID authorize")
 #+END_SRC
 
 Equivalent =job.continuity= actions are =revive= and =abandon= with =id= and
