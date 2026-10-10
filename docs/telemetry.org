@@ -40,17 +40,39 @@ configurations cannot override the process owner's consent or destination.
 
 * Exported metadata
 
-The exporter sends OTLP/HTTP JSON schema 1 with fresh random trace, span and
-report IDs. Each logical root carries its outcome and actual model/tool attempt
+The exporter sends OTLP/HTTP JSON schema 1, instrumentation revision 2, with
+fresh random trace and span IDs. Exact event timestamps are retained. Each
+logical root carries its outcome and actual model/tool attempt
 counts. Model spans contain a fixed provider category, trusted configured public
 model aliases, duration and bounded normalized input/output/cache token counts.
-Unmapped models become =custom=; missing models become =unknown=. Tool spans
+The returned model comes from the provider's actual streaming response envelope
+for Responses, Chat Completions, Anthropic and Gemini protocols. It is never
+filled from the requested model. Unmapped models become =custom=; missing models
+become =unknown=. Tool spans
 contain the exact Seismograph catalog name or =unknown= for external names,
 completion sequence, outcome, duration, correction flag and a consecutive
 argument-equality boolean. The local argument digest is discarded at run end
-and during checkpoint quiescence.
+and during checkpoint quiescence. Builtin tool schemas accept an optional
+=corrects_previous= boolean: true explicitly marks a correction of the immediately
+preceding tool call. The registry consumes this control field before executing
+the tool and excludes it from argument equality. No correction is inferred from
+private text. External tool arguments are not changed by this convention.
 
 Reports and repairs carry fixed issue/repair enums and public tool categories.
+=papercut.report= and the =papercut-report= operation of =resource.edit= accept
+optional =issue-kind= and =tool= fields. Categories are =broken_tool=,
+=misleading_success=, =authorization=, =performance= and =other=. Missing categories
+default to =other=; missing or external tool names become =unknown=.
+
+Each papercut receives an independent random telemetry ID during a consented
+run. It is stored alongside the local report and reused by assessments and
+closures across later runs and process restarts. It is distinct from the local
+papercut ID and is not a user or installation ID. Issues created without consent
+receive no telemetry ID until their first consented assessment or closure.
+Standalone self-modification transitions use separate run-scoped mutation
+correlation IDs, without claiming a link to a papercut. Per-issue IDs permit
+cross-run correlation for that issue, so this metadata is not fully unlinkable.
+
 Diagnostic consent gates the summary thunk before reading it. Deterministic
 credential/path/host masking surrounds Defingerprinter's full pinned Rampart
 model. Only successful native output of at most 1024 characters enters the
@@ -94,6 +116,10 @@ authentication recovery and retries, with normalized provider usage. Emit
 =telemetry-note-tool= once per completed attempt with the typed outcome and
 monotonic duration. =telemetry-note-report= and =telemetry-note-repair= accept a
 =summary-function= thunk; acquire raw text only inside that thunk.
+Supply the same explicit =:report-id= on related report/repair events; without
+one each emission receives a fresh ID. Papercut hooks supply their persisted
+telemetry ID automatically. Revision 2 separates the corrected model, issue
+and correction instrumentation from revision 1 in collector comparisons.
 
 Before a checkpoint fork, enclose the entire fork admission interval in
 =telemetry-call-with-quiescence=. It excludes diagnostic acquisition, discards
@@ -108,7 +134,7 @@ One-shot =telemetry-quiesce= is also available for shutdown-style callers.
 Run the registered suite with:
 
 #+begin_src sh
-./script/check --suite telemetry --jobs 1
+./script/check --suite telemetry --suite telemetry-hooks --jobs 1
 #+end_src
 
 All ordinary tests mock uploads or supervised worker launches. The actual-model
