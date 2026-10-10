@@ -225,6 +225,10 @@
       (operation-schema
        "papercut-report"
        (json-object
+        "issue-kind" (cl-llm-provider-api:provider-enum-schema
+                      '("broken_tool" "misleading_success" "authorization" "performance" "other")
+                      "Explicit issue category; omit when unknown.")
+        "tool" (tool-string-property "Affected builtin tool name; omit when unknown.")
         "title" (tool-string-property "Complete bounded papercut title.")
         "content" (tool-string-property "Complete bounded papercut report."))
        '("title" "content"))
@@ -483,7 +487,11 @@
       "title" (tool-string-property
                 "A concise description of the problem, at most 200 characters.")
       "content" (tool-string-property
-                  "The complete concrete report for the user, at most 8000 characters."))
+                  "The complete concrete report for the user, at most 8000 characters.")
+      "issue-kind" (cl-llm-provider-api:provider-enum-schema
+                    '("broken_tool" "misleading_success" "authorization" "performance" "other")
+                    "Explicit issue category; omit when unknown.")
+      "tool" (tool-string-property "Affected builtin tool name; omit when unknown."))
      '("title" "content"))))
   registry)
 

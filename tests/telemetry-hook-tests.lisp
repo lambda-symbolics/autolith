@@ -61,6 +61,58 @@
      (equal (test-telemetry--attribute span "autolith.event.kind") kind))
    (coerce (test-telemetry--spans body) 'list)))
 
+(defun test-telemetry-papercut-metadata-hooks ()
+  "Classified reports and resource edits retain metadata through durable replay."
+  (test-telemetry--call
+   (lambda (configuration)
+     (let* ((registry (make-default-tool-registry))
+            (context (make-instance 'tool-context :configuration configuration :worker nil
+                                    :conversation (conversation-create configuration)))
+            (bodies
+              (test-telemetry-hooks--capture
+               configuration
+               (lambda ()
+                 (telemetry-call-with-run
+                  configuration
+                  (lambda ()
+                    (test-assert
+                     (tool-result-success-p
+                      (papercut-resource-tests--call
+                       registry context "papercut" "report"
+                       "title" "Shell permission denial" "content" "Fixture command authorization fails."
+                       "issue-kind" "authorization" "tool" "shell.run"))
+                     "The direct report tool accepts explicit metadata.")
+                    (let* ((read (papercut-resource-tests--call registry context "resource" "read"
+                                                              "uri" "papercut:current"))
+                           (revision (papercut-resource-tests--field (tool-result-content read) "Revision: "))
+                           (report (papercut-resource-tests--call
+                                    registry context "resource" "edit" "uri" "papercut:current"
+                                    "base-revision" revision "operations"
+                                    (vector (json-object "op" "papercut-report"
+                                                         "title" "Image renderer returns blank pixels"
+                                                         "content" "Fixture raster decoding loses every pixel."
+                                                         "issue-kind" "broken_tool" "tool" "fs.view-image")))))
+                      (test-assert (tool-result-success-p report) "Resource reporting accepts metadata.")
+                      (let ((papercut (find "fs.view-image" (papercut-list configuration)
+                                            :key #'papercut-tool :test #'equal)))
+                        (test-assert (equal (papercut-issue-kind papercut) "broken_tool")
+                                     "The structured category survives reading the durable store.")
+                        (papercut-assess configuration (papercut-identifier papercut)
+                                         :verdict ':improved :note "Private fixture assessment.")
+                        (papercut-mark-closed configuration (papercut-identifier papercut)
+                                              :resolution "Private fixture closure."))))))))
+            (reports (test-telemetry-hooks--kind (first bodies) "report"))
+            (repairs (test-telemetry-hooks--kind (first bodies) "repair")))
+       (test-assert (equal (mapcar (lambda (span) (test-telemetry--attribute span "autolith.issue.kind")) reports)
+                           '("authorization" "broken_tool")) "Both real entry points emit classified reports.")
+       (test-assert (equal (mapcar (lambda (span) (test-telemetry--attribute span "gen_ai.tool.name")) reports)
+                           '("shell.run" "fs.view-image")) "Affected tools reach the wire.")
+       (test-assert (and (= (length repairs) 2)
+                         (every (lambda (span) (equal (test-telemetry--attribute span "autolith.repair.target")
+                                                       "fs.view-image")) repairs))
+                    "Assessments and closure retain the original affected tool."))))
+  nil)
+
 (defun test-telemetry-hooks--assert-attempts (body count)
   "Require one span per actual attempt and an exact root counter."
   (let ((models (test-telemetry-hooks--kind body "model"))

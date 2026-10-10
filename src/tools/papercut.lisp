@@ -60,6 +60,8 @@ existing report instead of recording another."
          (tool-context-configuration context)
          :title title
          :content content
+         :issue-kind (or (tool-argument arguments "issue-kind") "other")
+         :tool (tool-argument arguments "tool")
          :source-conversation
          (conversation-identifier (tool-context-conversation context)))
       (tool-success (papercut-tool--result papercut duplicate-p)))))
