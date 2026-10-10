@@ -1112,6 +1112,48 @@
    :session-id (make-identifier)
    :outcomes outcomes))
 
+(-> test-provider-context-presentation () null)
+(defun test-provider-context-presentation ()
+  "Exercise presentation events through authenticated ordinary and compaction requests."
+  (with-test-configuration (configuration)
+    (let* ((*context-contributors* nil)
+           (*context-resolver* (cl-llm-provider-api:make-context-resolver))
+           (*context-last-deliveries* (make-hash-table :test #'equal))
+           (*context-last-delivery-order* nil)
+           (conversation (conversation-create configuration))
+           (credentials (provider-tests--credentials configuration)))
+      (memory-remember configuration
+                       :title "Granite reference"
+                       :content "Inspect this reference before use."
+                       :scope ':workspace
+                       :tags '("granite"))
+      (register-context-contributor "related-memories" 'memory-related-context
+                                    :source ':built-in)
+      (conversation-append-user-message conversation "granite")
+      (dolist (compaction-p '(nil t))
+        (let* ((response-id (if compaction-p "compaction-presentation" "ordinary-presentation"))
+               (stream (make-instance 'test-character-input-stream
+                                      :source (provider-tests--completed-sse-source response-id)))
+               (provider (provider-tests--transport-provider configuration (list stream)))
+               (memory-notices 0))
+          (credential-source-save
+           (credential-manager-primary-source (provider-credential-manager provider))
+           credentials)
+          (let ((result (provider-attempt-turn
+                         provider conversation
+                         :tool-namespaces #()
+                         :event-callback (lambda (event)
+                                           (when (typep event 'memory-context-event)
+                                             (incf memory-notices)))
+                         :force-refresh nil
+                         :compaction-p compaction-p)))
+            (test-assert (and (string= (provider-result-response-id result) response-id)
+                              (= (test-transport-provider-attempt-count provider) 1))
+                         "both request modes reach transport and complete with a callback")
+            (test-assert (= memory-notices (if compaction-p 0 1))
+                         "only ordinary requests announce their selected memories"))))))
+  nil)
+
 (-> test-provider-transport-boundary () null)
 (defun test-provider-transport-boundary ()
   "Test connection normalization and failure-proof provider stream cleanup."

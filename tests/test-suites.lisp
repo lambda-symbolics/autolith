@@ -343,6 +343,7 @@
   test-provider-request-tool-filtering
   test-provider-native-compaction
   test-provider-rate-limits
+  test-provider-context-presentation
   test-provider-transport-boundary
   test-provider-codex-request-headers
   test-provider-usage-limit-terminal
