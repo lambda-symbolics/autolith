@@ -50,7 +50,7 @@ let
     "agentcomms" "argo" "cl-colorist" "cl-exec-sandbox" "cl-hashline" "cl-jobpond"
     "cl-llm-provider-api" "cl-lsp" "cl-resources" "cl-rfc8252" "cl-rfc8628"
     "cl-skills" "cl-termdown" "cl-worktree" "clasted" "clifff" "clinedi"
-    "clinker-transcript" "colordiff" "colorlisp" "daphne" "fetch-gist"
+    "clinker-transcript" "colordiff" "colorlisp" "daphne" "defingerprinter" "fetch-gist"
     "idsmall" "image-daemon" "lambda-debugger" "ls-compat" "ls-flock" "mcparen" "org-templater"
     "parenchek" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config" "sexp-store"
     "sophisticated-clipboard" "structlisp" "surgeon" "yolokuva"
@@ -64,6 +64,44 @@ let
       rm -rf "$out/test/yaml-test-suite-data"
     '';
   });
+
+  defingerprinterSource = qlotSource "defingerprinter";
+  defingerprinter = pkgs.sbcl.buildASDFSystem {
+    pname = "defingerprinter";
+    version = qlotVersion "defingerprinter";
+    src = defingerprinterSource;
+    lispLibs = with pkgs.sbclPackages; [ cffi babel bordeaux-threads ];
+  };
+
+  # Import upstream packaging from the same locked checkout as the Lisp binding.
+  # Loading the ASDF system does not load this library or initialize its model.
+  defingerprinterSupported = builtins.elem pkgs.stdenv.hostPlatform.system
+    [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ];
+  defingerprinterModel = pkgs.callPackage "${defingerprinterSource}/nix/model.nix" {};
+  defingerprinterRuntime = pkgs.callPackage "${defingerprinterSource}/nix/runtime.nix" {};
+  defingerprinterNative = if defingerprinterSupported then
+    pkgs.callPackage "${defingerprinterSource}/nix/package.nix" {
+      model = defingerprinterModel;
+      runtime = defingerprinterRuntime;
+    }
+    else null;
+
+  defingerprinterChecks = pkgs.runCommand "autolith-defingerprinter-checks" {
+    nativeBuildInputs = [ (pkgs.sbcl.withPackages (_: [ defingerprinter ])) ];
+  } ''
+    export HOME="$TMPDIR/home"
+    mkdir -p "$HOME"
+    export DEFINGERPRINTER_LIBRARY="${defingerprinterNative}/lib/libdefingerprinter${sharedLibrary}"
+    # ASDF loading must not open the native library before explicit consent.
+    sbcl --noinform --no-sysinit --no-userinit --non-interactive \
+      --eval '(require :asdf)' \
+      --eval '(asdf:load-system :defingerprinter)' \
+      --eval '(assert (null defingerprinter::*library*))' \
+      --eval '(assert (null defingerprinter::*library-path*))' \
+      --load "${defingerprinterSource}/tests/cffi.lisp" \
+      --eval '(defingerprinter-tests:run-tests)'
+    touch "$out"
+  '';
 
   agentcomms = pkgs.sbcl.buildASDFSystem {
     pname = "agentcomms";
@@ -546,6 +584,7 @@ let
       colordiff
       clTermdown
       dexador
+      defingerprinter
       fiveam
       fetchGist
       ironclad
@@ -657,7 +696,16 @@ let
     ${autolithSystem}
   '';
 
-  runtime = pkgs.sbcl.withPackages (_: [ autolithSystem ]);
+  # Include the trusted native path in SBCL launches as well as the CLI, so
+  # workers and checks inherit it without enabling diagnostics consent.
+  runtime = (pkgs.sbcl.withPackages (_: [ autolithSystem ])).overrideAttrs (old: {
+    # Preserve empty ASDF output-mapping fields in the existing binary wrapper.
+    nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.makeBinaryWrapper ];
+    postFixup = (old.postFixup or "") + lib.optionalString defingerprinterSupported ''
+      wrapProgram "$out/bin/sbcl" \
+        --set AUTOLITH_DEFINGERPRINTER_LIBRARY "${defingerprinterNative}/lib/libdefingerprinter${sharedLibrary}"
+    '';
+  });
 
   sbclSource = pkgs.runCommand "autolith-sbcl-${expectedSbclVersion}-source" {
     nativeBuildInputs = [ pkgs.bzip2 pkgs.coreutils pkgs.gnutar ];
@@ -935,6 +983,8 @@ pkgs.writeShellApplication {
 
   passthru = {
     inherit qlotGitSources;
+    inherit defingerprinter defingerprinterNative defingerprinterSupported defingerprinterChecks;
+    tests.defingerprinter = defingerprinterChecks;
     inherit autolithSystem clColorist clExecSandbox clifff clinedi clJobpond
       colorlisp colorlispNativeLibrary fffLibrary idsmall imageIdentity
       imageValidation runtime sandboxHelper sbclGenerations sbclSource mcparen
