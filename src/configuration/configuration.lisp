@@ -36,6 +36,16 @@
   (:default-initargs :type '(option pathname))
   (:documentation "An optional existing canonical site configuration directory."))
 
+(defclass optional-directory-setting (directory-setting)
+  ()
+  (:default-initargs :type '(option pathname))
+  (:documentation "An optional directory pathname; empty text means none."))
+
+(defclass optional-absolute-file-setting (absolute-file-setting)
+  ()
+  (:default-initargs :type '(option pathname))
+  (:documentation "An optional absolute file pathname; empty text means none."))
+
 (defmethod setting-coerce ((setting web-search-mode-setting) (value string) configuration)
   "Read the mode name in lower case."
   (declare (ignore setting configuration))
@@ -72,6 +82,20 @@ exist yet, and is only put in directory form."
   (declare (ignore setting configuration))
   (configuration--absolute-file-pathname
    (if (stringp value) (parse-namestring value) value)))
+
+(defmethod setting-coerce ((setting optional-directory-setting) value configuration)
+  "Store a directory designator in directory form, reading empty text as none."
+  (declare (ignore setting configuration))
+  (unless (or (null value) (equal value ""))
+    (uiop:ensure-directory-pathname
+     (if (stringp value) (parse-namestring value) value))))
+
+(defmethod setting-coerce ((setting optional-absolute-file-setting) value configuration)
+  "Anchor a relative file pathname to the process directory, reading empty text as none."
+  (declare (ignore setting configuration))
+  (unless (or (null value) (equal value ""))
+    (configuration--absolute-file-pathname
+     (if (stringp value) (parse-namestring value) value))))
 
 (defmethod setting-coerce ((setting management-transport-setting) (value string) configuration)
   "Read the transport name case-insensitively."
@@ -482,6 +506,30 @@ exist yet, and is only put in directory form."
   :minimum 1
   :environment "AUTOLITH_MANAGEMENT_REPL_AUTH_TIMEOUT"
   :default 10)
+
+(define-setting :slynk-directory (optional-directory-setting)
+  :label "Slynk directory"
+  :group :editor
+  :documentation "The slynk/ directory of the sly installation whose Slynk serves this image."
+  :scope :process
+  :environment "AUTOLITH_SLYNK_DIRECTORY"
+  :default nil)
+
+(define-setting :slynk-port-file (optional-absolute-file-setting)
+  :label "Slynk port file"
+  :group :editor
+  :documentation "The file that receives the Slynk port, or the start failure, for an editor."
+  :scope :process
+  :environment "AUTOLITH_SLYNK_PORT_FILE"
+  :default nil)
+
+(define-setting :emacs-server-socket (optional-absolute-file-setting)
+  :label "Emacs server socket"
+  :group :editor
+  :documentation "The Emacs server socket the emacs.* tools talk to; without it they are absent."
+  :scope :process
+  :environment "AUTOLITH_EMACS_SERVER"
+  :default nil)
 
 
 ;;;; -- Construction --
