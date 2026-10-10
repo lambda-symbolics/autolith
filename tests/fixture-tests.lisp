@@ -289,7 +289,9 @@
           (destructuring-bind (source target modes) case
             (dolist (mode modes)
               (test-fixture-set-file-mode *platform* source mode)
-              (platform-copy-file-permissions *platform* source target)
-              (test-assert (= mode (test-fixture-file-mode *platform* target))
-                           "copy every captured POSIX permission bit")))))))
+              ;; A host may clear setgid when the inherited group is not ours.
+              (let ((captured (test-fixture-file-mode *platform* source)))
+                (platform-copy-file-permissions *platform* source target)
+                (test-assert (= captured (test-fixture-file-mode *platform* target))
+                             "copy every captured POSIX permission bit"))))))))
   nil)
