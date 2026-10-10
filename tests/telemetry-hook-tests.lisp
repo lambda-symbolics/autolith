@@ -352,6 +352,47 @@
 (defclass telemetry-test-authorized-tool (agent-test-echo-tool) ()
   (:documentation "Exercise explicit authorization through the real registry helper."))
 
+(defclass telemetry-test-correction-tool (agent-test-echo-tool) ()
+  (:documentation "Check that correction metadata does not reach the underlying tool."))
+
+(defmethod tool-execute :before ((tool telemetry-test-correction-tool)
+                                (context tool-context) (arguments hash-table))
+  (declare (ignore tool context))
+  (test-assert (not (nth-value 1 (gethash "corrects_previous" arguments)))
+               "The registry consumes correction metadata before invoking the tool."))
+
+(defun test-telemetry-explicit-correction-hook ()
+  "An explicit correction reaches telemetry without changing arguments or leaking between calls."
+  (test-telemetry--call
+   (lambda (configuration)
+     (let* ((registry (make-instance 'tool-registry))
+            (tool (default-tools--register
+                   registry (list 'telemetry-test-correction-tool "test" "echo" "Fixture echo."
+                                  (tool-object-schema (json-object "value" (tool-string-property "Value.")) '("value")))))
+            (conversation (conversation-create configuration :identifier "telemetry-correction"))
+            (provider (make-instance 'scripted-provider
+                                     :results
+                                     (list (agent-test-result
+                                            "correction-calls"
+                                            (list (agent-test-call :call-id "first" :arguments "{\"value\":\"same\"}")
+                                                  (agent-test-call :call-id "second" :arguments "{\"value\":\"same\",\"corrects_previous\":true}")
+                                                  (agent-test-call :call-id "third" :arguments "{\"value\":\"different\"}")))
+                                           (agent-test-result "done" (list (agent-test-message "done"))))))
+            (agent (agent-create :configuration configuration :conversation conversation
+                                 :provider provider :tool-registry registry :worker :unused))
+            (bodies (test-telemetry-hooks--capture configuration
+                                                   (lambda () (agent-run-user-turn agent "Fixture correction."))))
+            (spans (test-telemetry-hooks--kind (first bodies) "tool")))
+       (test-assert (equal (json-get (json-get (json-get (tool-parameters tool) "properties") "corrects_previous") "type") "boolean")
+                    "Builtin registration advertises the annotation as a boolean.")
+       (test-assert (equal (mapcar (lambda (span) (json-true-p (test-telemetry--attribute span "autolith.tool.corrects_previous"))) spans)
+                           '(nil t nil)) "The explicit correction is recorded on exactly its own call.")
+       (test-assert (json-true-p (test-telemetry--attribute (second spans) "autolith.tool.same_as_previous"))
+                    "Control metadata does not change local argument equality.")
+       (test-assert (= (length (agent-test-tool-outputs conversation)) 3) "All calls preserve their normal results.")
+       (test-assert (null *telemetry-tool-arguments*) "Decoded arguments do not escape their execution binding."))))
+  nil)
+
 (defmethod tool-execute ((tool telemetry-test-authorized-tool)
                          (context tool-context) (arguments hash-table))
   (if (eq (tool-context-authorize-tool context tool arguments) :deny)

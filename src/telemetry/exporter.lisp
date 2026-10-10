@@ -76,7 +76,7 @@
                                         (cons "autolith.consent.diagnostics"
                                               (json-boolean (telemetry-controller-diagnostics controller)))
                                         (cons "autolith.schema.version" 1)
-                                        (cons "autolith.instrumentation.version" 1))) 'vector))
+                                        (cons "autolith.instrumentation.version" 2))) 'vector))
      "scopeSpans"
      (json-array (json-object "scope" (json-object "name" "seismograph.autolith" "version" "0.1.0")
                               "spans" (coerce spans 'vector)))))))

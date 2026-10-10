@@ -12,6 +12,7 @@
   test-telemetry-provider-failure-hooks
   test-telemetry-provider-fallback-hooks
   test-telemetry-tool-denial-hooks
+  test-telemetry-explicit-correction-hook
   test-telemetry-parallel-tool-hooks
   test-telemetry-repair-hook-projections
   test-telemetry-configuration-owner-hook

@@ -1056,6 +1056,9 @@ restricted turn cannot discover tools outside its allowlist."
          (*resource-readable-schemes*
            (and tool-restriction-p '("workspace")))
          (*telemetry-tool-denied-p* nil)
+         (*telemetry-tool-corrects-previous-p* nil)
+         (*telemetry-tool-arguments* nil)
+         (*telemetry-tool-capture-p* (not (null *telemetry-run*)))
          (*telemetry-tool-name* (function-call-canonical-name call))
          (real-start (get-internal-real-time))
          (cpu-start  (get-internal-run-time))
@@ -1086,6 +1089,8 @@ restricted turn cannot discover tools outside its allowlist."
      :result result
      :condition condition
      :telemetry-denied-p *telemetry-tool-denied-p*
+     :telemetry-corrects-previous-p *telemetry-tool-corrects-previous-p*
+     :telemetry-arguments *telemetry-tool-arguments*
      :telemetry-duration-ms (telemetry--elapsed-milliseconds real-start)
      :cpu-microseconds
      (and record-timings-p
@@ -1161,7 +1166,8 @@ worker results become explicit unknown outcomes so provider history stays valid.
              (telemetry-note-tool
               :run *telemetry-run*
               :tool tool-name
-              :arguments (json-get call "arguments")
+              :arguments (or (getf execution :telemetry-arguments) (json-get call "arguments"))
+              :corrects-previous (getf execution :telemetry-corrects-previous-p)
               :outcome (cond
                          ((getf execution :telemetry-denied-p) "permission_denied")
                          ((typep condition 'application-turn-cancelled) "cancelled")

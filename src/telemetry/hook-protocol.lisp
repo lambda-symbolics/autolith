@@ -5,6 +5,15 @@
 (defvar *telemetry-tool-denied-p* nil
   "Whether this tool attempt received an explicit authorization denial.")
 
+(defvar *telemetry-tool-corrects-previous-p* nil
+  "Whether this tool call explicitly declares a correction of the preceding call.")
+
+(defvar *telemetry-tool-arguments* nil
+  "The current call's decoded arguments after removing control metadata; never queued.")
+
+(defvar *telemetry-tool-capture-p* nil
+  "True only inside the agent's dynamically scoped capture of one consented tool execution.")
+
 (defvar *telemetry-tool-name* nil
   "The current tool's local name, used only for structured repair metadata.")
 

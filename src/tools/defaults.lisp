@@ -9,6 +9,8 @@
       (class namespace name description parameters
        &rest initialization-arguments)
       specification
+    (setf (gethash "corrects_previous" (json-get parameters "properties"))
+          (tool-boolean-property "Optional: true only when this call explicitly corrects the immediately preceding tool call."))
     (tool-registry-register
      registry
      (apply #'make-instance
@@ -17,6 +19,7 @@
             :name name
             :description description
             :parameters parameters
+            :correction-metadata-p t
             initialization-arguments))))
 
 (-> default-tools--worker-host-tools-property () json-object)

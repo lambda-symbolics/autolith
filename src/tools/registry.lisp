@@ -22,7 +22,10 @@
     :initarg :parameters
     :reader tool-parameters
     :type json-object
-    :documentation "The JSON Schema accepted by this tool."))
+    :documentation "The JSON Schema accepted by this tool.")
+   (correction-metadata-p
+    :initarg :correction-metadata-p :initform nil :reader tool-correction-metadata-p
+    :type boolean :documentation "Whether the registry consumes the reserved correction annotation."))
   (:documentation "A documented, model-visible operation."))
 
 (defclass resource-tool (tool)
@@ -1216,7 +1219,17 @@ signals with the candidate canonical names."
                  (if missing-names
                      (tool--missing-arguments-result
                       tool arguments missing-names)
-                     (tool-execute tool context arguments))))))
+                     (progn
+                       (when (tool-correction-metadata-p tool)
+                         (multiple-value-bind (value present-p) (gethash "corrects_previous" arguments)
+                           (when (and present-p (not (or (json-true-p value) (json-false-p value))))
+                             (error 'tool-error :tool-name canonical-name
+                                               :message "corrects_previous must be a boolean."))
+                           (when *telemetry-tool-capture-p*
+                             (setf *telemetry-tool-corrects-previous-p* (and present-p (json-true-p value))))
+                           (remhash "corrects_previous" arguments)))
+                       (when *telemetry-tool-capture-p* (setf *telemetry-tool-arguments* arguments))
+                       (tool-execute tool context arguments)))))))
       (active-image-corruption (condition)
         (error condition))
       (error (condition)
