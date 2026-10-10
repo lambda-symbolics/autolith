@@ -1240,12 +1240,13 @@ The caller must hold CONTROLLER's publication lock."
             (unless (application-input-controller-stopping-p controller)
               (application-input-controller--capture-pending-publication-locked
                controller generation t))))
-    (with-lock-held ((application-input-controller-publication-lock controller))
-      (when (> generation
-               (application-input-controller-published-ui-generation controller))
-        (setf (application-input-controller-published-ui-generation controller)
-              generation)
-        (terminal-ui-set-pending-inputs ui steering-inputs queued-inputs))
+      (with-lock-held ((application-input-controller-publication-lock controller))
+        (when (> generation
+                 (application-input-controller-published-ui-generation controller))
+          (setf (application-input-controller-published-ui-generation controller)
+                generation)
+          (when ui
+            (terminal-ui-set-pending-inputs ui steering-inputs queued-inputs)))
       (when pending-publication
         (application-input-controller--publish-pending-publication-locked
          controller pending-publication nil))))
@@ -1589,10 +1590,11 @@ the ordinary FIFO queue."
                 (application-input-controller-live-vault-sync-p controller) t)
         (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller))))
-    (when resumed-p
-      (terminal-ui-set-notice
-       (application-ui (application-input-controller-application controller))
-       nil))
+      (when resumed-p
+        (let ((ui (application-ui
+                   (application-input-controller-application controller))))
+          (when ui
+            (terminal-ui-set-notice ui nil))))
     (application-input-controller--publish-counts controller)
     (values (not (null delivery)) (or delivery ':rejected))))
 
@@ -3247,6 +3249,135 @@ sandbox grant is revalidated at this final authorization boundary."
       (application-input-controller--start-reader controller))
     controller))
 
+(-> application-input-controller--take-queued-work-locked
+    (application-input-controller)
+    (option list))
+(defun application-input-controller--take-queued-work-locked (controller)
+  "Take the next ordinary FIFO work item while CONTROLLER's lock is held."
+  (let ((application (application-input-controller-application controller)))
+    (when (and (not (application-input-controller-active-p controller))
+               (not (application-input-controller-stopping-p controller))
+               (not (application-input-controller-queued-work-paused-p controller))
+               (not (application-localgroup-paused-p application))
+               (not (eql (application-input-controller-follow-up-edit-index controller)
+                         0))
+               (not (deque-empty-p
+                     (application-input-controller-work-items controller))))
+      (let ((work (deque-pop-front
+                   (application-input-controller-work-items controller))))
+        (setf (application-input-controller-active-p controller) t
+              (application-input-controller-active-work-kind controller)
+              (first work)
+              (application-input-controller-active-work-interactive-p controller)
+              t)
+        (if (eq (first work) ':message)
+            (setf (application-input-controller-active-work controller) work
+                  (application-input-controller-active-work-identifier controller)
+                  (make-identifier))
+            (setf (application-input-controller-active-work controller) nil
+                  (application-input-controller-active-work-identifier controller)
+                  nil))
+        (when (application-input-controller-follow-up-edit-index controller)
+          (decf (application-input-controller-follow-up-edit-index controller)))
+        (when (plusp
+               (application-input-controller-steering-promotion-prefix-count
+                controller))
+          (decf
+           (application-input-controller-steering-promotion-prefix-count
+            controller)))
+        work))))
+
+(-> application-input-controller-pending-work-p
+    (application-input-controller)
+    boolean)
+(defun application-input-controller-pending-work-p (controller)
+  "Return whether ordinary FIFO work is ready for nonblocking dispatch."
+  (with-lock-held ((application-input-controller-lock controller))
+    (and (not (application-input-controller-active-p controller))
+         (not (application-input-controller-stopping-p controller))
+         (not (application-input-controller-queued-work-paused-p controller))
+         (not (application-localgroup-paused-p
+               (application-input-controller-application controller)))
+         (not (eql (application-input-controller-follow-up-edit-index controller)
+                   0))
+         (not (deque-empty-p
+               (application-input-controller-work-items controller))))))
+
+(-> application-input-controller-take-queued-work
+    (application-input-controller)
+    (option list))
+(defun application-input-controller-take-queued-work (controller)
+  "Nonblockingly take ordinary FIFO work and publish durable state first."
+  (let ((work nil)
+        (promoted-p nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (setf promoted-p
+            (plusp (application-input-controller-steering-promotion-prefix-count controller))
+            work (application-input-controller--take-queued-work-locked controller)))
+    (when work
+      (handler-case
+          (progn
+            (application-input-controller--persist-pending controller :error-p t)
+            (application-input-controller--publish-counts controller))
+        (error (condition)
+          (with-lock-held ((application-input-controller-lock controller))
+            (when (application-input-controller-active-p controller)
+              (deque-push-front
+               (application-input-controller-work-items controller) work)
+              (when promoted-p
+                (incf (application-input-controller-steering-promotion-prefix-count controller)))
+              (when (application-input-controller-follow-up-edit-index controller)
+                (incf (application-input-controller-follow-up-edit-index controller)))
+              (setf (application-input-controller-active-p controller) nil
+                    (application-input-controller-active-work-kind controller) nil
+                    (application-input-controller-active-work controller) nil
+                    (application-input-controller-active-work-identifier controller) nil
+                    (application-input-controller-active-work-interactive-p controller) nil)))
+          (error condition))))
+    work))
+
+(-> application-input-controller-begin-external-work
+    (application-input-controller &key (:kind keyword))
+    boolean)
+(defun application-input-controller-begin-external-work
+    (controller &key (kind ':message))
+  "Mark one runner-free external turn active without consuming FIFO work."
+  (with-lock-held ((application-input-controller-lock controller))
+    (unless (application-input-controller-stopping-p controller)
+      (setf (slot-value controller 'main-thread) (current-thread)
+            (application-input-controller-active-p controller) t
+            (application-input-controller-active-work-kind controller) kind
+            (application-input-controller-primary-steering-p controller)
+            (eq kind ':message))
+      (sb-thread:condition-broadcast
+       (application-input-controller-condition-variable controller))
+      t)))
+
+(-> application-input-controller-finish-external-work
+    (application-input-controller &key (:pause-p boolean))
+    null)
+(defun application-input-controller-finish-external-work
+    (controller &key (pause-p nil))
+  "Finish a runner-free external turn using native promotion and cleanup."
+  (unwind-protect
+       (progn
+         (with-lock-held ((application-input-controller-lock controller))
+           (setf (application-input-controller-primary-steering-p controller) nil)
+           (when pause-p
+             (setf (application-input-controller-queued-work-paused-p controller) t))
+           (when (application-input-controller-active-work controller)
+             (deque-push-front
+              (application-input-controller-work-items controller)
+              (application-input-controller-active-work controller))
+             (incf (application-input-controller-steering-promotion-prefix-count controller))
+             (when (application-input-controller-follow-up-edit-index controller)
+               (incf (application-input-controller-follow-up-edit-index controller)))))
+         (application-input-controller--finish-work controller)
+         (application-input-controller--persist-pending controller :error-p t))
+    (with-lock-held ((application-input-controller-lock controller))
+      (setf (slot-value controller 'main-thread) nil)))
+  nil)
+
 (-> application-input-controller--next-work
     (application-input-controller)
     (option list))
@@ -3310,41 +3441,10 @@ sandbox grant is revalidated at this final authorization boundary."
            (setf work (list ':apply-pending)
                  (application-input-controller-active-p controller) t)
            (return))
-          ((and (not (application-localgroup-paused-p application))
-                (not
-                 (application-input-controller-queued-work-paused-p controller))
-                (not
-                 (deque-empty-p
-                  (application-input-controller-work-items controller)))
-                (not
-                 (eql
-                  (application-input-controller-follow-up-edit-index controller)
-                  0)))
-           (setf work
-                 (deque-pop-front
-                  (application-input-controller-work-items controller))
-                 (application-input-controller-active-p controller) t
-                 (application-input-controller-active-work-interactive-p
-                  controller)
-                 t)
-           (if (eq (first work) ':message)
-               (setf (application-input-controller-active-work controller) work
-                     (application-input-controller-active-work-identifier controller)
-                     (make-identifier))
-               (setf (application-input-controller-active-work controller) nil
-                     (application-input-controller-active-work-identifier controller)
-                     nil))
-           (when (application-input-controller-follow-up-edit-index controller)
-             (decf
-              (application-input-controller-follow-up-edit-index controller)))
-           (when (plusp
-                  (application-input-controller-steering-promotion-prefix-count
-                   controller))
-             (decf
-              (application-input-controller-steering-promotion-prefix-count
-               controller)))
-            ;; Publish active WORK after releasing the controller lock.
-            (setf persist-p t)
+          ((setf work
+                  (application-input-controller--take-queued-work-locked controller))
+           ;; Publish active WORK after releasing the controller lock.
+           (setf persist-p t)
            (return)))
         (when (and (null (application-input-controller-follow-up-edit-index controller))
                    (setf work (or (application-job-completions--take-work controller)
@@ -3464,21 +3564,24 @@ sandbox grant is revalidated at this final authorization boundary."
       (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller)))
     (cond (pause-notice
-           (terminal-ui-set-notice
-            (application-ui (application-input-controller-application controller))
-            pause-notice
-            :duration-seconds *application-interrupted-queue-notice-seconds*))
+           (let ((ui (application-ui
+                      (application-input-controller-application controller))))
+             (when ui
+               (terminal-ui-set-notice
+                ui pause-notice
+                :duration-seconds *application-interrupted-queue-notice-seconds*))))
           (clear-notice-p
-           (terminal-ui-set-notice
-            (application-ui (application-input-controller-application controller))
-            nil)))
+           (let ((ui (application-ui
+                      (application-input-controller-application controller))))
+             (when ui
+               (terminal-ui-set-notice ui nil)))))
     (application-input-controller--publish-counts controller)
     (let ((ui
             (application-ui
              (application-input-controller-application controller))))
-      (when marker-work-p
+      (when (and ui marker-work-p)
         (terminal-ui-finish-prompt-block ui marker-status))
-      (when reopen-p
+      (when (and ui reopen-p)
         (application-input-controller--open-prompt-if-ready controller))))
   nil)
 
