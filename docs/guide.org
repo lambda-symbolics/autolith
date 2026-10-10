@@ -326,7 +326,8 @@ error or =(sb-ext:exit)= ends the session, which recovers like any crash.
 Slynk's debugger and output hooks stay off for Autolith's own threads, so your
 REPL sees only your evaluations. A checkpoint stops Slynk, closing sly
 connections, and serves the same port again; reconnect with
-=M-x autolith-ide-reconnect=.
+=M-x autolith-ide-reconnect=. A checkpoint waits for in-flight sly evaluations
+and fails if they exceed the shutdown timeout.
 
 * Fullscreen terminal
 

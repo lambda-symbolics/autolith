@@ -522,6 +522,16 @@
   test-slynk-start-failure-reports-port-file
   test-slynk-missing-system-fails
   test-slynk-quiesce-restarts-same-port
+  test-slynk-load-reentrant-cancellation
+  test-slynk-independent-listener-stop
+  test-slynk-partial-load-does-not-block-checkpoints
+  test-slynk-startup-races
+  test-slynk-scope-cancels-queued-start
+  test-slynk-checkpoint-defers-start-and-restarts-after-unwind
+  test-slynk-publication-failure-drains-listener
+  test-slynk-quiescence-timeout-and-closed-channel
+  test-slynk-unsupported-shutdown-protocol
+  test-slynk-real-evaluation-quiescence
   test-slynk-real-server
   test-slynk-context-note)
 
