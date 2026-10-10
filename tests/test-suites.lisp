@@ -1023,6 +1023,8 @@
   test-acp-extension-busy-and-notification-order
   test-acp-extension-close-active-handler
   test-acp-extension-shutdown-admission
+  test-acp-extension-settings-types-and-mutation
+  test-acp-extension-model-verification
   test-acp-completion-continues-and-closes
   test-acp-completion-cancel-and-reuse
   test-acp-completion-start-failure-cleans-session
