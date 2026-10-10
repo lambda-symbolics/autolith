@@ -268,6 +268,60 @@ epoch when handling approvals, cancellation and transcript boundaries.
 Automatic job continuations stream through ordinary ACP updates. Cancellation or
 an inference failure pauses continuation; submit an explicit prompt to resume.
 
+* Emacs and sly
+
+Autolith's image can be your Common Lisp development image. =emacs/autolith.el=
+in the source tree sets up one frame with three windows: your code, a sly REPL
+connected to Autolith's own image, and an agent-shell conversation with the same
+Autolith. What you define in the REPL lives beside the agent, which can inspect
+it and advise.
+
+Install sly and agent-shell, load the file, and run =M-x autolith-ide= from the
+buffer you are editing:
+
+#+BEGIN_SRC emacs-lisp
+(load "/path/to/autolith/emacs/autolith.el")
+#+END_SRC
+
+=autolith-ide= starts the Emacs server if needed and launches =autolith acp=
+through agent-shell with three environment variables:
+
+- =AUTOLITH_SLYNK_DIRECTORY= is your sly's own =slynk/= directory, so the server
+  speaks exactly your client's protocol. Autolith loads that =slynk.asd= by path
+  and compiles it into the ASDF cache on first use.
+- =AUTOLITH_SLYNK_PORT_FILE= receives the loopback port once Slynk listens, or
+  =error: REASON= when it cannot start. =autolith-ide= waits for it, up to
+  =autolith-slynk-timeout= seconds, and connects sly.
+- =AUTOLITH_EMACS_SERVER= is this Emacs's server socket and enables the
+  =emacs.*= tools.
+
+=M-x autolith-agent-shell= starts only the conversation, with the Emacs tools
+and without Slynk. The same variables, or the =:slynk-directory=,
+=:slynk-port-file= and =:emacs-server-socket= settings, work outside Emacs. In
+the terminal, =(slynk)= starts Slynk and shows the port for =M-x sly-connect=,
+and =(slynk "stop")= closes it.
+
+The agent reaches your definitions with =lisp.describe=, =lisp.source= and
+=lisp.apropos= using target =self=, or with =self.eval=. While Slynk serves, a
+context note tells it so. The Emacs tools appear only while the configured
+server socket exists:
+
+- =emacs.context= lists the visible windows, their buffers, files, point and
+  unsaved state, and the active region.
+- =emacs.read-buffer= reads lines of a live buffer, unsaved edits included.
+- =emacs.visit= shows a file position in a file window of the selected frame.
+- =emacs.eval= evaluates Emacs Lisp. It asks command authorization for
+  =emacs.eval -- FORM= and runs only with full access.
+
+Slynk listens on =127.0.0.1= only. Like ordinary sly it has no authentication
+beyond the optional =~/.sly-secret=, so anyone who can reach loopback on this
+machine can evaluate in the image. Your code shares the agent's heap: a fatal
+error or =(sb-ext:exit)= ends the session, which recovers like any crash.
+Slynk's debugger and output hooks stay off for Autolith's own threads, so your
+REPL sees only your evaluations. A checkpoint stops Slynk, closing sly
+connections, and serves the same port again; reconnect with
+=M-x autolith-ide-reconnect=.
+
 * Fullscreen terminal
 
 Autolith uses the ordinary inline terminal presentation by default. Opt into the

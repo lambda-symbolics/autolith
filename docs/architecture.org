@@ -324,6 +324,18 @@ application; annotated confirmations use the command-authorization boundary.
   shell sandbox. Server-driven workspace edits are declined; file changes use
   revision-gated resources. =cl-lsp= encodes language-server file URIs.
 
+** Emacs and Slynk
+
+=src/slynk/endpoint.lisp= owns one process-wide Slynk server serving the active
+image on loopback, loaded by exact path from the person's own sly installation.
+ACP serving and the terminal session own its lifetime; checkpoints quiesce it
+and serve the same port again. Slynk's global debugger, stream redirection and
+log output stay off, so Autolith's threads never report into a sly connection.
+=src/emacs/server.lisp= speaks the Emacs server line protocol over the
+configured Unix socket, with base64 arguments and JSON results.
+=src/emacs/tools.lisp= registers the =emacs.*= tools only while that socket
+exists. =emacs/autolith.el= wires both from Emacs.
+
 * Terminal
 
 Autolith uses the primary screen and leaves finalized output in normal
