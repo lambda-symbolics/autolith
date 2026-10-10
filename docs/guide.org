@@ -185,7 +185,9 @@ autolith acp
 
 Authenticate the selected provider with =autolith auth= before starting the
 editor session. ACP uses UTF-8 JSON-RPC on stdin/stdout; diagnostics go to stderr.
-Use =autolith --pristine acp= to start from tracked definitions.
+The normal launch loads durable mutations and user initialization. For AUI, use
+=autolith --permissions auto acp=. Use =--pristine= when recovering from a damaged
+mutable image.
 
 New sessions use the editor's absolute working directory and a durable Autolith
 conversation ID. Load that ID to replay messages, visible reasoning, tool calls,
@@ -218,9 +220,10 @@ and a bounded =report= on failure. Unknown measurements are JSON null.
 | =settings=, =models=, =operations= | Typed catalog =items= |
 | =set-setting= | Set =name= to =value=; return the updated setting row |
 | =invoke= | Invoke =operation= with JSON =arguments=; return presented =text= |
+| =steer=, =queue= | Durably admit primary =text=; return =accepted= and =delivery= |
 | =conversations= | Page durable conversations using =limit= and =cursor=; optionally filter =cwd= |
 | =jobs=, =job= | Page owned jobs or inspect one =jobId= |
-| =job-transcript= | Read =jobId= with character =offset= and =limit= |
+| =job-transcript= | Read =jobId= with =offset=, =limit= and =output= (=text= or =structured=) |
 | =job-send=, =job-cancel= | Send =text= to or cancel an owned =jobId= |
 | =resource= | Read bounded =workspace:= lines or =shell-log:= bytes from =uri= |
 
@@ -230,10 +233,34 @@ Terminal-only operations return an explicit unsupported outcome. Workspace resou
 windows use =startLine= and =lineCount= and include the observed revision. Shell-log
 windows use =byteOffset= and =byteCount= and require session ownership.
 
+Invoke ordinary commands with =arguments: {"input": "..."}=, using native command
+arguments without the command name. =text= is an alias for =input=. Commands such
+as =skills=, =hurry-up= and =papercuts= return their presented text. Operations with
+=terminalWithoutArguments= require an argument to avoid a terminal picker. During
+an active turn, native inspection and execution policies apply; boundary-applied
+commands return =delivery: "scheduled"= and present their results as ACP updates.
+
+=steer= delivers text at the next safe boundary, including submissions made while
+an approval is pending. Late steering is promoted ahead of ordinary queued
+follow-ups. =queue= appends a follow-up for the next available primary turn.
+Both accept up to 262144 characters and return =delivery: "steering"= or ="queued"=.
+Display accepted input separately until its durable =user_message_chunk= arrives.
+Cancellation pauses pending input; a new submission resumes it. Accepted input
+survives session close and reload. ACP has no per-item withdrawal operation.
+
+For structured child transcripts, =value.updates= contains ordinary ACP
+SessionUpdate bodies, with messages, reasoning, tool calls and result content.
+Offsets count updates from zero; the default limit is 100 and the maximum is 200.
+The typed response envelope is bounded to 262144 UTF-8 bytes. A single update over
+that bound returns a condition instead of advancing the cursor. =nextOffset= is
+JSON null when =complete= is true, meaning the current snapshot is exhausted.
+For a running child, poll again from =total= to read later updates. Text output
+uses character offsets and retains its existing numeric end cursor.
+
 Treat =_autolith/event= state and catalog notifications as invalidation hints.
 Refetch the affected snapshot after a sequence gap. Events with kind =turn= are
 ordered lifecycle boundaries: =data= contains =state= (=running= or =idle=), an
-integer =epoch=, =source= (=prompt=, =completion=, or =invoke=), and a terminal
+integer =epoch=, =source= (=prompt=, =queue=, =completion=, or =invoke=), and a terminal
 =outcome= (=end-turn=, =cancelled=, or =condition=; null while running). Match the
 epoch when handling approvals, cancellation and transcript boundaries.
 
