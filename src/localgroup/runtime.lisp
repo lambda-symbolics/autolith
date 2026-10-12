@@ -560,12 +560,8 @@ already disconnected costs nothing."
                  "The localgroup session cannot pause while detaching.")))
       (:detach (localgroup--detach-terminal session))
       (:kill
-       (let ((controller
-              (application-input-controller (localgroup-session-application session))))
-         (when controller
-           (application-input-controller--request-exit controller ':localgroup-kill))
-         (list :ok :operation :kill :session-id
-               (image-daemon:daemon-runtime-identifier session))))
+       (list :ok :operation :kill :session-id
+             (image-daemon:daemon-runtime-identifier session)))
       (otherwise
        (list :error :message
              (format nil "Unknown localgroup operation ~S." operation))))))
@@ -636,7 +632,18 @@ already disconnected costs nothing."
          envelope :cancelled-p cancelled-p))
       :character-limit 32768 :request-timeout 2))
     (otherwise
-     (daemon-write-packet stream (localgroup--dispatch-request session request)))))
+     (let* ((response (localgroup--dispatch-request session request))
+            (kill-request-p
+              (and (eq (localgroup--request-field request :operation) ':kill)
+                   (eq (first response) ':ok))))
+       (daemon-write-packet stream response)
+       (when kill-request-p
+         (let ((controller
+                 (application-input-controller
+                  (localgroup-session-application session))))
+           (when controller
+             (application-input-controller--request-exit
+              controller ':localgroup-kill))))))))
 
 (defun localgroup-stop (application)
   "Stop APPLICATION's watchdog and its owned image-daemon endpoint."

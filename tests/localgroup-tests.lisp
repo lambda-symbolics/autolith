@@ -515,10 +515,36 @@
                       (list :message "resume input"))
          (test-assert (not (application-localgroup-paused-p application))
           "new localgroup input resumes a paused session")
-         (daemon-call (image-daemon:daemon-runtime-port session)
-                      (image-daemon:daemon-runtime-token session) ':kill)
-         (test-assert (application-input-controller-stopping-p controller)
-          "localgroup kill requests ordinary graceful shutdown"))
+         (let ((kill-response-state nil)
+               (write-packet (symbol-function 'daemon-write-packet)))
+           (test-call-with-function-replacements
+            (list
+             (list 'daemon-write-packet
+                   (lambda (stream packet)
+                     (let ((result (funcall write-packet stream packet)))
+                       (when (and (eq (first packet) ':ok)
+                                  (eq (getf (rest packet) :operation) ':kill))
+                         (setf kill-response-state
+                               (cons :written
+                                     (not
+                                      (application-input-controller-stopping-p
+                                       controller)))))
+                       result))))
+            (lambda ()
+              (let ((response
+                      (daemon-call (image-daemon:daemon-runtime-port session)
+                                   (image-daemon:daemon-runtime-token session) ':kill)))
+                (test-assert (eq (first response) ':ok)
+                             "localgroup kill returns its acknowledgement")
+                (test-assert
+                 (task-tests--wait-until (lambda () kill-response-state) 10)
+                 "localgroup kill writes its acknowledgement")
+                (test-assert (rest kill-response-state)
+                             "localgroup kill writes its acknowledgement before shutdown")
+                (test-assert
+                 (task-tests--wait-until
+                  (lambda () (application-input-controller-stopping-p controller)) 10)
+                 "localgroup kill requests ordinary graceful shutdown after acknowledgement"))))))
       (when application (localgroup-stop application))
       (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
                                              ':ignore)))
