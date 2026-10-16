@@ -1157,3 +1157,9 @@
   test-acp-launcher-source-stdio-roundtrip
   test-acp-launcher-failure-keeps-stdout-clean
   test-acp-launcher-failure-diagnostics)
+
+(define-test-suite pp-tool
+  test-pp-endpoint-and-timeout
+  test-pp-env-file-parsing
+  test-pp-interpret-response
+  test-pp-config-fallback)

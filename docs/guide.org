@@ -824,6 +824,15 @@ a report from the last day, answers with that existing report instead. A
 conversation re-filing within an hour of its own report is matched more
 loosely, since rewritten repeats share fewer words.
 
+** Pricklypear habitat eval
+
+=pp.eval= evaluates one Nopales expression on a Pricklypear habitat through its
+=/api/eval= endpoint and returns the printed value, so parens work reaches the
+habitat without leaving Autolith. Credentials come from =PP_URL=, =PP_USER=, and
+=PP_PASS= in the environment, falling back to the local
+=~/.config/pricklypear/env= file. =PP_EVAL_TIMEOUT= overrides the read timeout
+(default 120 seconds), since large habitat evals can take 35 to 45 seconds.
+
 ** Exporting and importing data
 
 Use the same portable archive from the command line or an active session:

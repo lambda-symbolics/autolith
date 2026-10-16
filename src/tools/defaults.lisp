@@ -720,6 +720,25 @@
       (default-tools--register registry specification)))
   registry)
 
+(-> default-tools--register-pp (tool-registry) tool-registry)
+(defun default-tools--register-pp (registry)
+  "Register Pricklypear habitat tools in REGISTRY."
+  (tool-registry-describe-namespace
+   registry "pp"
+   "Pricklypear habitat Nopales evaluation over the eval API.")
+  (default-tools--register
+   registry
+   (list
+    'pp-eval-tool
+    "pp" "eval"
+    "Evaluate one Nopales expression on the Pricklypear habitat and return its printed value. Credentials come from PP_URL, PP_USER, and PP_PASS in the environment or ~/.config/pricklypear/env."
+    (tool-object-schema
+     (json-object
+      "expr" (tool-string-property
+              "The complete Nopales expression to evaluate, for example \"(whoami)\"."))
+     '("expr"))))
+  registry)
+
 (-> default-tools--register-self (tool-registry) tool-registry)
 (defun default-tools--register-self (registry)
   "Register active-image inspection and mutation tools in REGISTRY."
@@ -904,6 +923,7 @@ socket."
     (default-tools--register-agenda registry)
     (default-tools--register-plan registry)
     (default-tools--register-lisp registry)
+    (default-tools--register-pp registry)
     (when (and configuration (lsp-configuration-enabled-p configuration))
       (lsp-register-tools registry))
     (when (emacs-server-available-p configuration)
