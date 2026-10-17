@@ -395,6 +395,11 @@
   test-bounded-string-limit
   test-configuration-source-platform-reading)
 
+(define-test-suite registration-source
+  test-registration-source-identity
+  test-registration-source-tool-registry
+  test-registration-source-scoped-removal)
+
 (define-test-suite fullscreen
   test-fullscreen-transcript-residency
   test-fullscreen-outcome-batch
@@ -1284,11 +1289,11 @@
 
 (define-test-suite tool
   test-tool-registry
-
   test-tool-native-dispatch
   test-tool-native-result-boundaries
-  test-tool-argument-name-correction
+  test-tool-argument-transport-names
   test-tool-registry-restrict
+  test-tool-argument-name-correction
   test-tool-result-overflow
   test-workspace-tools
   test-workspace-tool-outside-paths)

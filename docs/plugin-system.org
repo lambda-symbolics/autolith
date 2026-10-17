@@ -1,7 +1,7 @@
 #+TITLE: Autolith Plugin System
 #+STARTUP: content
 
-*Status*: intended design. Nothing in this document is implemented yet.
+*Status*: intended design. The plugin manager is not implemented. Registration sources carry plugin identity, and the tool registry records a source layer with per-source removal.
 
 * Overview
 
@@ -415,12 +415,6 @@ plugin permission: =plugin.install=, =plugin.enable=, =plugin.disable=,
 
 * Implementation gaps
 
-- Registration sources are bare keywords with removal by keyword. Either the
-  source carries plugin identity, or every contributed identifier is namespaced
-  by plugin name. Both are small changes across the four registries and the
-  layered registry.
-- Tools have no source layer and no per-source removal. This generalizes the
-  dynamic add and remove MCP already performs.
 - =skill-roots= computes a fixed list; it needs plugin-contributed roots, tagged
   by source and ordered as above.
 - Plugin images need a cache key covering the plugin set, the parent image, and

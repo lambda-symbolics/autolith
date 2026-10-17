@@ -263,8 +263,8 @@ ignored. Metadata never grants tool authority."
                           values))))
        t))
 
-(-> register-context-rule (list &key (:source keyword)) string)
-(defun register-context-rule (rule &key (source *extension-registration-source*))
+(-> register-context-rule (list &key (:source registration-source-designator)) string)
+(defun register-context-rule (rule &key (source (current-registration-source)))
   "Register one validated project/user RULE as an ordinary bounded contributor.
 
 Fields within :when are conjunctive; values within a field are alternatives.

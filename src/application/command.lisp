@@ -465,10 +465,10 @@ The maximum is NIL for &REST or &KEY."
     :type          application-command
     :documentation "The immutable command contributed by this registry layer.")
    (source
-    :initarg       :source
+    :documentation "The layer and optional plugin that contributed the command."))
+    :type          registration-source-designator
     :reader        application-command-registration-source
-    :type          keyword
-    :documentation "The site, user, or runtime layer that contributed the command."))
+    :initarg       :source
   (:documentation "One ordered, possibly shadowed command registration layer."))
 
 (defvar *application-command-registrations* nil
@@ -618,10 +618,10 @@ The maximum is NIL for &REST or &KEY."
 
 ;;;; -- Layered Registry --
 
-(-> application-command--current-registration-source () keyword)
+(-> application-command--current-registration-source () registration-source-designator)
 (defun application-command--current-registration-source ()
   "Return the registration source appropriate to the current load context."
-  *extension-registration-source*)
+  (current-registration-source))
 
 (-> application-command--effective-projections
     (list)
@@ -672,7 +672,7 @@ The maximum is NIL for &REST or &KEY."
   nil)
 
 (-> register-application-command
-    (application-command &key (:source keyword))
+    (application-command &key (:source registration-source-designator))
     application-command)
 (defun register-application-command
     (command &key (source (application-command--current-registration-source)))
@@ -684,9 +684,7 @@ the earlier layer. Identifier collisions among effective commands are rejected
 without changing the registry."
   (application-command--validate command)
   (application-command-validate-registration command)
-  (unless (keywordp source)
-    (error 'configuration-error
-           :message "An application command registration source must be a keyword."))
+  (setf source (registration-source-coerce source))
   (with-extension-registry-transaction
     (with-lock-held (*application-command-lock*)
       (let* ((replacement
@@ -707,7 +705,7 @@ without changing the registry."
   command)
 
 (-> unregister-application-command
-    (symbol &key (:source keyword))
+    (symbol &key (:source registration-source-designator))
     boolean)
 (defun unregister-application-command
     (definition-name
@@ -720,9 +718,7 @@ without changing the registry."
     (error 'configuration-error
            :message
            "An application command definition name must be an interned non-keyword symbol."))
-  (unless (keywordp source)
-    (error 'configuration-error
-           :message "An application command registration source must be a keyword."))
+  (setf source (registration-source-coerce source))
   (with-extension-registry-transaction
     (with-lock-held (*application-command-lock*)
       (let ((candidate
@@ -790,20 +786,21 @@ without changing the registry."
       (application-command--publish-registrations (copy-list snapshot))))
   nil)
 
-(-> application-command--remove-registration-source (keyword) null)
+(-> application-command--remove-registration-source (registration-source-designator) null)
 (defun application-command--remove-registration-source (source)
   "Remove every command registration contributed by SOURCE."
-  (with-extension-registry-transaction
-    (with-lock-held (*application-command-lock*)
-      (application-command--publish-registrations
-       (remove source
-               *application-command-registrations*
-               :test #'eq
-               :key  #'application-command-registration-source))))
+                 :key #'application-command-registration-source)))))
+                 :test #'eq
+                 *application-command-registrations*
+         (remove source
+        (application-command--publish-registrations
+      (with-lock-held (*application-command-lock*)
+    (with-extension-registry-transaction
+  (let ((source (registration-source-coerce source)))
   nil)
 
 (-> application-command--registration-snapshot
-    (symbol keyword)
+    (symbol registration-source-designator)
     (option list))
 (defun application-command--registration-snapshot (definition-name source)
   "Return DEFINITION-NAME's SOURCE registration and exact position."
@@ -821,7 +818,7 @@ without changing the registry."
               return (list :position position :registration registration)))))
 
 (-> application-command--registration-restore
-    (symbol keyword (option list))
+    (symbol registration-source-designator (option list))
     null)
 (defun application-command--registration-restore
     (definition-name source snapshot)

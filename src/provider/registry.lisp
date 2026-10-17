@@ -3,7 +3,7 @@
 ;;;; -- Provider Registry --
 
 (defparameter *provider-registration-sources*
-  '(:builtin :site :user :runtime)
+  '(:builtin :plugin :site :user :runtime)
   "The provider registration sources ordered from lowest to highest precedence.")
 
 (defparameter *provider-cache-selection-hint-p* nil
@@ -29,6 +29,13 @@
 
 (setf *provider-registry-error-class* 'provider-registry-configuration-error)
 
+(defvar *provider-registration-provenance* (make-hash-table :test #'equal)
+  "Provider registration layers mapped to the source that supplied them.
+
+Each key is a provider name paired with a layer keyword. The provider registry
+records keyword layers only, so this table keeps each layer's registration
+source for source-scoped removal and rollback.")
+
 (defparameter *provider-name-aliases*
   '(("codex" . "chatgpt")
     ("openai" . "chatgpt")
@@ -50,13 +57,13 @@
             (:model-discovery (option function))
             (:model-discovery-endpoint (option string))
             (:model-discovery-endpoint-resolver (option function))
-            (:source keyword))
+            (:source registration-source-designator))
     string)
 (defun register-provider
     (name &key description family models factory authenticator
       (protocol ':custom) endpoint model-discovery model-discovery-endpoint
       model-discovery-endpoint-resolver
-      (source (provider--current-registration-source)))
+      (source (current-registration-source)))
   "Register a provider and its model metadata.
 
 FACTORY receives CONFIGURATION and the keyword REASONING-SUMMARIES-P and must
@@ -64,34 +71,39 @@ return a MODEL-PROVIDER. MODEL-DISCOVERY, when supplied, receives CONFIGURATION
 and returns model strings or metadata property lists. The optional endpoint
 resolver returns the current model-discovery cache identity. AUTHENTICATOR, when
 supplied, receives the provider and the keyword arguments STREAM and
-OPEN-BROWSER-P. Site, user, and runtime registrations replace only registrations
-with the same name and source. Registrations with that name from lower-precedence
+    name))
+    (provider--record-registration name source)
+     :source                            (registration-source-layer source))
+     :model-discovery-endpoint-resolver model-discovery-endpoint-resolver
+     :model-discovery-endpoint          model-discovery-endpoint
+     :model-discovery                   model-discovery
+     :endpoint                          endpoint
+     :protocol                          protocol
+     :authenticator                     authenticator
+     :factory                           factory
+     :models                            models
+     :family                            family
+     :description                       description
+     *provider-registry* (provider--canonical-name name)
+    (provider-registry-register
+  (let ((source (registration-source-coerce source)))
 sources are shadowed."
-  (provider-registry-register
-   *provider-registry* (provider--canonical-name name)
-   :description                       description
-   :family                            family
-   :models                            models
-   :factory                           factory
-   :authenticator                     authenticator
-   :protocol                          protocol
-   :endpoint                          endpoint
-   :model-discovery                   model-discovery
-   :model-discovery-endpoint          model-discovery-endpoint
-   :model-discovery-endpoint-resolver model-discovery-endpoint-resolver
-   :source                            source))
+with the same name and source. Registrations with that name from lower-precedence
+OPEN-BROWSER-P. Site, user, and runtime registrations replace only registrations
 
-(-> unregister-provider (string &key (:source (option keyword))) boolean)
-(defun unregister-provider (name &key (source (provider--current-registration-source)))
+(-> unregister-provider (string &key (:source registration-source-designator)) boolean)
+(defun unregister-provider (name &key (source (current-registration-source)))
   "Remove NAME from one provider registration SOURCE layer."
-  (provider-registry-unregister *provider-registry* (provider--canonical-name name) :source source))
+      (provider--forget-registration name source))))
+                                      :source (registration-source-layer source))
+        (provider-registry-unregister *provider-registry* (provider--canonical-name name)
+    (prog1
+  (let ((source (registration-source-coerce source)))
 
-(-> provider--current-registration-source () keyword)
+(-> provider--current-registration-source () registration-source-designator)
 (defun provider--current-registration-source ()
   "Return the registration source appropriate to the current load context."
-  (if (boundp '*extension-registration-source*)
-      (symbol-value '*extension-registration-source*)
-      ':runtime))
+  (current-registration-source))
 
 (-> provider--canonical-name (string) string)
 (defun provider--canonical-name (name)
@@ -517,17 +529,85 @@ contradictory provider prefixes still signal their selection errors."
                 when window collect (cons model window))))
   nil)
 
-(-> provider--remove-registration-source (keyword) null)
+(-> provider--record-registration (string registration-source-designator) null)
+(defun provider--record-registration (name source)
+  "Record SOURCE as the supplier of NAME's provider registry layer."
+  (setf (gethash (cons (provider--canonical-name name)
+                       (registration-source-layer source))
+                 *provider-registration-provenance*)
+        source)
+  nil)
+
+(-> provider--forget-registration (string registration-source-designator) null)
+(defun provider--forget-registration (name source)
+  "Forget NAME's provider registry layer when SOURCE supplied it."
+  (let* ((source (registration-source-coerce source))
+         (key (cons (provider--canonical-name name)
+                    (registration-source-layer source))))
+    (when (eq (gethash key *provider-registration-provenance*) source)
+      (remhash key *provider-registration-provenance*)))
+  nil)
+
+(-> provider--forget-registration-layer (keyword) null)
+(defun provider--forget-registration-layer (layer)
+  "Forget every provider registry layer attributed to LAYER."
+  (let ((keys nil))
+    (maphash (lambda (key source)
+               (declare (ignore source))
+               (when (eq (rest key) layer)
+                 (push key keys)))
+             *provider-registration-provenance*)
+    (dolist (key keys)
+      (remhash key *provider-registration-provenance*)))
+  nil)
+
+(-> provider--remove-registration-source (registration-source-designator) null)
 (defun provider--remove-registration-source (source)
   "Remove all provider registrations supplied by SOURCE."
-  (provider-registry-remove-source *provider-registry* source))
+  (let* ((source (registration-source-coerce source))
+         (layer (registration-source-layer source)))
+    (if (registration-source-plugin-p source)
+        (let ((names nil))
+          (maphash (lambda (key recorded)
+                     (when (and (eq layer (rest key)) (eq source recorded))
+                       (push (first key) names)))
+                   *provider-registration-provenance*)
+          (dolist (name names)
+            (provider-registry-unregister *provider-registry* name :source layer)
+            (remhash (cons name layer) *provider-registration-provenance*)))
+        (progn
+          (provider-registry-remove-source *provider-registry* layer)
+          (provider--forget-registration-layer layer))))
+  nil)
+
+(-> provider--copy-provenance (hash-table) hash-table)
+(defun provider--copy-provenance (provenance)
+  "Return a detached copy of the provider registration provenance table."
+  (let ((copy (make-hash-table :test (hash-table-test provenance)
+                               :size (hash-table-size provenance))))
+    (maphash (lambda (key source)
+               (setf (gethash key copy) source))
+             provenance)
+    copy))
 
 (-> provider--registry-snapshot () list)
 (defun provider--registry-snapshot ()
   "Return an exact snapshot of provider registration layers and model state."
-  (provider-registry-snapshot *provider-registry*))
+  (list :registry   (provider-registry-snapshot *provider-registry*)
+        :provenance (provider--copy-provenance *provider-registration-provenance*)))
 
 (-> provider--registry-restore (list) null)
 (defun provider--registry-restore (snapshot)
   "Restore provider registration layers and model state from SNAPSHOT."
-  (provider-registry-restore *provider-registry* snapshot))
+  (unless (and (proper-list-p snapshot)
+               (getf snapshot :registry)
+               (hash-table-p (getf snapshot :provenance)))
+    (error 'configuration-error
+           :message "A provider registry snapshot is invalid."))
+  (provider-registry-restore *provider-registry* (getf snapshot :registry))
+  (let ((provenance (getf snapshot :provenance)))
+    (clrhash *provider-registration-provenance*)
+    (maphash (lambda (key source)
+               (setf (gethash key *provider-registration-provenance*) source))
+             provenance))
+  nil)

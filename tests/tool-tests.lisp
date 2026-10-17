@@ -1188,3 +1188,38 @@
                   "the sandbox's confined path stays inside the roots even with full access")))
           (tool-registry-close-runtime-state registry)))))
   nil)
+
+(defun test-tool-argument-transport-names ()
+  "A transport-renamed argument name still satisfies the declared required name."
+  (let ((tool
+          (make-instance
+           'tool
+           :namespace "test"
+           :name "renamed"
+           :description "Accept one declared argument."
+           :parameters
+           (tool-object-schema
+            (json-object "base-revision" (tool-string-property "Revision."))
+            '("base-revision")))))
+    (let ((arguments
+            (tool--declared-argument-object tool (json-object "base_revision" "R1"))))
+      (test-assert (equal (tool-argument arguments "base-revision") "R1")
+                   "an underscore spelling binds the declared argument name")
+      (test-assert (null (tool--missing-required-names tool arguments))
+                   "an underscore spelling satisfies the declared required name"))
+    (test-assert
+     (null (tool--missing-required-names
+            tool
+            (tool--declared-argument-object tool (json-object "baseRevision" "R1"))))
+     "a camel-case spelling satisfies the declared required name")
+    (test-assert
+     (tool--missing-required-names
+      tool
+      (tool--declared-argument-object
+       tool
+       (json-object "base_revision" "R1" "baseRevision" "R2")))
+     "an ambiguous rename stays unbound")
+    (let ((value (json-array)))
+      (test-assert (eq (tool--declared-argument-object tool value) value)
+                   "a non-object argument value stays unchanged")))
+  nil)

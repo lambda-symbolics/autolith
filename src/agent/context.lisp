@@ -10,9 +10,6 @@
 (defvar *user-init-loading-p* nil
   "True only while Autolith loads executable filesystem configuration.")
 
-(defvar *extension-registration-source* ':runtime
-  "The source attributed to extension registrations in the current load context.")
-
 (defvar *context-contributors* nil
   "Portable contributor registrations in deterministic registration order.")
 
@@ -152,9 +149,9 @@ activation, contents, and lifetime are checked on every request."))
     :type          non-empty-string
     :documentation "The registration that produced the contribution.")
    (source
-    :initarg       :source
+    :type          registration-source-designator
     :reader        context-contribution-diagnostic-source
-    :type          keyword
+    :initarg       :source
     :documentation "The built-in, user, or runtime origin of the contributor.")
    (priority
     :initarg       :priority
@@ -259,11 +256,11 @@ activation, contents, and lifetime are checked on every request."))
        t))
 
 (-> register-context-contributor
-    (string t &key (:source keyword))
+    (string t &key (:source registration-source-designator))
     string)
 (defun register-context-contributor
     (identifier function-designator
-     &key (source *extension-registration-source*))
+     &key (source (current-registration-source)))
   "Register FUNCTION-DESIGNATOR under stable IDENTIFIER and return IDENTIFIER.
 
 The function receives one REQUEST-CONTEXT and returns NIL, one contribution,
@@ -275,9 +272,7 @@ identifier can only reload its existing named definition."
     (error 'configuration-error
            :message (format nil "Context contributor ~A is not callable."
                             identifier)))
-  (unless (keywordp source)
-    (error 'configuration-error
-           :message "A context contributor source must be a keyword."))
+  (setf source (registration-source-coerce source))
   (with-extension-registry-transaction
     (with-lock-held (*context-lock*)
       (let* ((definition-name
@@ -437,15 +432,16 @@ stays cached across midnight; this separate block carries the change instead."
              :copy-function #'copy-tree))))
   nil)
 
-(-> context--remove-registration-source (keyword) null)
+(-> context--remove-registration-source (registration-source-designator) null)
 (defun context--remove-registration-source (source)
   "Remove every context contributor registered from SOURCE."
-  (with-extension-registry-transaction
-    (with-lock-held (*context-lock*)
-      (setf *context-contributors*
-            (layered-registry-remove-source
-             *context-contributors* source
-             (lambda (registration) (getf registration :source))))))
+  (let ((source (registration-source-coerce source)))
+    (with-extension-registry-transaction
+      (with-lock-held (*context-lock*)
+        (setf *context-contributors*
+              (layered-registry-remove-source
+               *context-contributors* source
+               (lambda (registration) (getf registration :source)))))))
   nil)
 
 

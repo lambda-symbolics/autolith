@@ -53,12 +53,13 @@
 
 (defparameter *mcp-registration-source-precedence*
   '((:tracked . 0)
-    (:site-config . 1)
-    (:site . 2)
-    (:config . 3)
-    (:directory . 4)
-    (:user . 5)
-    (:runtime . 6))
+    (:plugin . 1)
+    (:site-config . 2)
+    (:site . 3)
+    (:config . 4)
+    (:directory . 5)
+    (:user . 6)
+    (:runtime . 7))
   "The explicit low-to-high precedence of MCP registration sources.")
 
 (define-condition mcp-configuration-error (configuration-error)
@@ -146,10 +147,10 @@
     :documentation "The immutable registered server configuration.")
    (source
     :initarg :source
+    :type    registration-source-designator
     :reader  mcp-server-registration-source
-    :type    keyword
     :documentation
-    "The tracked, site-config, site, config, directory, user, or runtime registration layer."))
+    "The layer and optional plugin that supplied this registration layer."))
   (:documentation "One source-attributed layer in the MCP server registry."))
 
 
@@ -571,17 +572,18 @@ bound policy takes effect without reloading this file."
 (defvar *mcp-server-registrations* nil
   "Ordered source-attributed MCP server registration layers.")
 
-(-> mcp--current-registration-source () keyword)
+(-> mcp--current-registration-source () registration-source-designator)
 (defun mcp--current-registration-source ()
   "Return the registration source appropriate to the current load context."
-  *extension-registration-source*)
+  (current-registration-source))
 
-(-> mcp--registration-source-rank (keyword) integer)
+(-> mcp--registration-source-rank (registration-source-designator) integer)
 (defun mcp--registration-source-rank (source)
   "Return SOURCE's explicit MCP precedence rank or reject SOURCE."
-  (or (rest (assoc source *mcp-registration-source-precedence*))
-      (mcp-configuration--error
-       (format nil "Unsupported MCP registration source ~S." source))))
+  (let ((layer (registration-source-layer (registration-source-coerce source))))
+    (or (rest (assoc layer *mcp-registration-source-precedence*))
+        (mcp-configuration--error
+         (format nil "Unsupported MCP registration source ~S." source)))))
 
 (-> mcp--validate-registration-list (list) list)
 (defun mcp--validate-registration-list (registrations)
@@ -598,7 +600,7 @@ bound policy takes effect without reloading this file."
       (let* ((source (mcp-server-registration-source registration))
              (configuration
                (mcp-server-registration-configuration registration)))
-        (unless (and (keywordp source)
+        (unless (and (registration-source-designator-p source)
                      (typep configuration 'mcp-server-configuration))
           (mcp-configuration--error
            "The MCP server registry contains an invalid registration layer."))
@@ -644,7 +646,7 @@ bound policy takes effect without reloading this file."
        (mcp--effective-registrations *mcp-server-registrations*)))))
 
 (-> register-mcp-server
-    ((or list mcp-server-configuration) &key (:source keyword))
+    ((or list mcp-server-configuration) &key (:source registration-source-designator))
     mcp-server-configuration)
 (defun register-mcp-server
     (definition &key (source (mcp--current-registration-source)))
@@ -653,9 +655,7 @@ bound policy takes effect without reloading this file."
 DEFINITION may be an MCP-SERVER-CONFIGURATION or the same strict property list
 accepted in mcp.sexp. The same source and case-sensitive server name replace
 their prior layer without destroying shadowed lower layers."
-  (unless (keywordp source)
-    (mcp-configuration--error
-     "An MCP registration source must be a keyword."))
+  (setf source (registration-source-coerce source))
   (mcp--registration-source-rank source)
   (let* ((configuration
            (etypecase definition
@@ -699,12 +699,10 @@ their prior layer without destroying shadowed lower layers."
       (setf *mcp-server-registrations* (copy-list snapshot))))
   nil)
 
-(-> mcp--remove-registration-source (keyword) null)
+(-> mcp--remove-registration-source (registration-source-designator) null)
 (defun mcp--remove-registration-source (source)
   "Remove every MCP registration layer attributed to SOURCE."
-  (unless (keywordp source)
-    (mcp-configuration--error
-     "An MCP registration source must be a keyword."))
+  (setf source (registration-source-coerce source))
   (mcp--registration-source-rank source)
   (with-extension-registry-transaction
     (with-lock-held (*mcp-server-registry-lock*)

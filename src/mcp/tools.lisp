@@ -634,8 +634,9 @@ McParen may already hold its lifecycle lock or be joining the listener."
             mcp-server-runtime-configuration :type mcp-server-configuration
             :documentation "The native immutable server configuration.")
            (registration-source :initarg :registration-source :reader
-            mcp-server-runtime-registration-source :type keyword :documentation
-            "The source layer providing this effective server.")
+            mcp-server-runtime-registration-source :type
+            registration-source-designator :documentation
+            "The layer and optional plugin providing this effective server.")
            (provider-namespace :initarg :provider-namespace :reader
             mcp-server-runtime-provider-namespace :type non-empty-string
             :documentation "The deterministic provider namespace for this server."))
@@ -1860,7 +1861,9 @@ retained value is credential-redacted or projected."
             (tools               (mcparen:mcp-discovery-snapshot-tools snapshot))
             (task-required-count (mcp-tools--task-required-tool-count tools)))
        (list :name (mcparen:mcp-discovery-snapshot-name snapshot) :source
-             (mcp-server-runtime-registration-source runtime) :transport
+             (registration-source-layer
+              (mcp-server-runtime-registration-source runtime))
+             :transport
              (mcp-tools--transport-kind configuration) :required-p
              (mcp-server-configuration-required-p configuration) :state
              (mcparen:mcp-discovery-snapshot-state snapshot) :tool-count
@@ -2355,7 +2358,7 @@ Evict the oldest activation first when either activation bound is exceeded."
     ;; refresh with the same capabilities in any order leaves the active tool
     ;; declarations, and with them a provider's cached prefix, unchanged.
     (setf (mcp-registry-binding-discovered-tools binding) effective-replacements)
-    (mcp-tool-registry--reconcile-active-tools registry))
+>>>>>>> 0917ed2a (Carry registration sources through the tool and extension registries)
   registry)
 
 (-> mcp-tool-registry--current-p
@@ -2532,7 +2535,14 @@ Evict the oldest activation first when either activation bound is exceeded."
        '("query"))
       :manager manager))
     (mcp-tool-registry--replace-dynamic-tools
-     registry manager (mcp-tools--manager-tool-objects manager))
+=======
+    (dolist (tool (mcp-tools--manager-tool-objects manager))
+      (tool-registry-register
+       registry tool
+       :source
+       (mcp-server-runtime-registration-source
+        (mcp-provider-tool-runtime tool))))
+>>>>>>> 0917ed2a (Carry registration sources through the tool and extension registries)
     (setf (mcp-registry-binding-reconciled-revisions binding)
           (mcp-manager-tool-revisions manager)))
   registry)
