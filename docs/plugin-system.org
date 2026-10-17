@@ -31,12 +31,20 @@ plugin system through the same gate.
 - Plugins register tools, MCP servers, providers, commands, and context
   contributors directly, under their own registration source.
 - Plugins may ship their own ASDF systems and dependencies.
-- A dependency conflict fails the load. The locked dependency environment is
-  never overridden.
-- Loading and redefinition are hot. Removing a plugin or changing its code
-  means restarting into an image that never loaded it.
+  - A dependency conflict has a deterministic contract, not a solver. A plugin
+    and its commit resolve once; where two plugins require different commits of
+    the same plugin, scope order decides the winner, the losing requirement is
+    recorded in the lock, and the load reports it. A manifest may declare
+    =:on-conflict :abort= to fail its own plugin instead.
+  - Loading is hot; changing what is loaded is not. Removing a plugin or
+    changing its code rebuilds the image: a clean base boots, durable state and
+    committed mutations are restored, and the new plugin set loads. That is not
+    a rollback, and it discards no self-modification.
 - The tool schema stays vanilla: a tool carries the existing single
   =:description=.
+  - Plugin residency is layered. The global image carries core plus global
+    plugins, and a project image is derived from it to add that project's local
+    plugins.
 
 * Terms
 
@@ -48,6 +56,9 @@ plugin system through the same gate.
 - *Permission record* :: the user's consent to load one plugin identity.
 - *Registration source* :: the layer tag every contribution carries, used to
   remove a plugin's contributions as a group.
+  - *Plugin image* :: a saved core that already contains a resolved plugin set.
+  - *Image layer* :: one rung of the plugin image ladder, from the global image
+    down to a project image.
 
 * Plugin repository and manifest
 
@@ -64,7 +75,8 @@ plugin organizes everything else as it sees fit.
           :git "github.com/example/autolith-plugin-utils"
           :ref (:tag "v1.1.0"))
          (:system "dexador"))
- :on-undefined :abort)
+  :on-undefined :abort
+  :on-conflict :record)
 #+END_SRC
 
 ** Manifest reference
@@ -78,6 +90,7 @@ plugin organizes everything else as it sees fit.
 | =:system=           | one of   | ASDF system name inside the checkout                |
 | =:deps=             | no       | plugin and ASDF dependencies                        |
 | =:on-undefined=     | no       | =:abort= (default) or =:warn=                       |
+| =:on-conflict=      | no       | =:record= (default) or =:abort=                     |
 
 =:entry= and =:system= are alternatives. A plugin that ships an ASD names the
 system and brings its own build; a plugin without one names a file. There is no
@@ -151,6 +164,31 @@ separate from permissions: the permission store records user consent and
 persists until changed, while the lock records resolution state and is rebuilt
 whenever a ref is re-resolved. The permission store answers "may this run"; the
 lock answers "what did this ref mean last time".
+** Dependency conflicts
+
+Two plugins requiring different commits of the same plugin is the only conflict
+the lock has to settle. ASDF system dependencies are not versioned, so ASDF
+resolves them by finding the first system with that name and there is no
+selection to make. Plugin identities, being a git source plus a commit, are the
+only things that can genuinely disagree.
+
+There is no solver. Resolving version ranges would mean inventing compatibility
+semantics for plugins that declare none, so the contract is deterministic
+precedence plus an honest record instead:
+
+1. Requirements are ordered by scope: a user-level =:deps= selection, then
+   global, then site, then project, then the declaring plugin's own pin.
+2. The first requirement in that order wins and is the resolved commit.
+3. Every losing requirement is recorded in the lock beside the winner, with the
+   plugin that made it, so the outcome stays inspectable after the fact.
+4. The load reports the conflict, naming both requirements and the winner.
+5. A manifest that declares =:on-conflict :abort= fails its own plugin rather
+   than loading against a dependency it did not pin.
+
+=:on-conflict= defaults to =:record=, so a plugin that merely uses its
+dependency tolerates a different commit, and a plugin that needs its pin gets
+to insist on one. Either way nothing is chosen silently, and no plugin is
+dropped because another plugin wanted something else.
 
 * Permissions
 
@@ -174,8 +212,11 @@ root with a lock file.
    store, writing =plugins.lock=. Missing consent prompts and never blocks
    startup.
 3. The manager checks =:manifest-version=.
-4. It compiles the plugin's whole file set, collecting undefined-reference
-   warnings, and applies the undefined-reference gate.
+  4. ASDF compiles the plugin. A compile failure, which by ASDF's definition
+     includes any non-style warning, raises
+     =asdf/lisp-build:compile-file-error= and fails the plugin with its
+     description. Undefined-reference diagnostics are collected during this pass
+     and judged after the load.
 5. It binds the registration source to the plugin identity and loads =:system=
    then =:entry=, or =:entry= alone.
 6. =:config= runs after the plugin is loaded, as ordinary user code.
@@ -192,31 +233,50 @@ caveat executable filesystem configuration already carries.
 
 ** Undefined references
 
-SBCL's compiler reports unresolved references during compilation.
-=compile-file= signals a muffleable =SB-INT:SIMPLE-STYLE-WARNING= whose format
-control begins =undefined ~(~A~):=, where the kind is =function=, =variable=,
-=type=, or =class=. The manager filters on that prefix during the compile pass.
+ASDF performs the compile, and its diagnostics are the primary source. There is
+no source pre-scan: the manager does not walk defining heads, because the
+compiler already knows which references are unresolved, and a hand-written walk
+over =defun=, =defgeneric=, and =defclass= heads reproduces the compiler's job
+worse than the compiler does.
 
-Detection is two-stage:
+Two ASDF knobs cover the compile pass:
 
-- *Pre-scan.* Walk each source for defining heads (=defun=, =defmacro=,
-  =defgeneric=, =defmethod=, =defclass=, and defining macros) to build the
-  plugin's own name set. A reference is an error only when the name is not
-  =fbound=, matches no recognized defining head anywhere in the plugin, and is
-  not supplied by a declared dependency.
-- *Post-load check.* After the whole plugin is loaded, every recorded name is
-  re-checked with =fboundp=.
+- =asdf/lisp-build:*compile-file-failure-behaviour*= is bound to =:error=, so a
+  compile failure raises =asdf/lisp-build:compile-file-error= and fails the
+  plugin. ASDF defines a failure as including any non-style warning, so an
+  undefined *variable*, which SBCL signals as a plain =SIMPLE-WARNING=, is
+  already a load failure through this path alone.
+- A =handler-bind= on =warning= around the compile operation collects the
+  remaining style warnings, which ASDF would otherwise only print.
 
-The post-load =fboundp= check is authoritative. The pre-scan exists to abort
-before side effects in the unambiguous case; when the two disagree, post-load
-wins and the disagreement is recorded. Pre-scan false positives come from
-macro-generated definitions, =eval-when=, =defclass=-implicit accessors, and
-dependency systems. Pre-scan false negatives, where a matched defining head did
-not actually define the name, are real failures.
+Undefined *functions* and *types* are style warnings, so they reach the handler
+rather than the failure path. The manager keeps the reports that are undefined
+references and discards the rest. The discriminator is the condition's format
+arguments, not its format control: SBCL passes =(kind symbol)=, where =kind= is
+=:function=, =:variable=, or =:type=. The format control is a compiled
+=SB-FORMAT::FMT-CONTROL= structure rather than a string, so it cannot be
+prefix-matched. SBCL also aggregates repeats past
+=sb-c::*undefined-warning-limit*=, which is 3, so the first argument is
+sometimes a count: both =(count kind symbol)= and =(kind symbol)= occur. No SBCL
+predicate helps here, since =sb-c:undefined-warning-p= names an internal
+accumulator structure that is not the condition SBCL signals.
 
-Calls through =funcall= and computed symbols are not statically visible and are
-out of scope. =:on-undefined :abort= fails the plugin; =:warn= loads it and
-records the unresolved names in =plugin.status=.
+Collected names are judged after the load rather than during the compile pass,
+because per-file compilation cannot see the plugin as a whole: a file that calls
+a function another file defines warns during its own compile. Once the whole
+plugin is loaded, each recorded name is re-checked with =fboundp=, =boundp=, or
+=find-class= as its kind requires, and only a name still unresolved then is a
+failure. =:on-undefined :abort= fails the plugin; =:warn= loads it and records
+the unresolved names in =plugin.status=.
+
+Three cases stay outside this and are accepted rather than worked around:
+
+- Undefined *classes*. =defclass= with an unknown superclass compiles with no
+  diagnostic at all, so no name is ever recorded and none is checked. Class
+  references are invisible to this gate.
+- Calls through =funcall= and computed symbols are not statically visible.
+- A macro that expands to a reference the compiler never sees, because the macro
+  itself is not loaded yet at compile time.
 
 * Registration and removal
 
@@ -274,21 +334,69 @@ a bundled skill name is reported at load.
 * Lifecycle and restart
 
 =plugin.enable= and =plugin.disable= add and remove registrations in place.
-=plugin.update= fetches a new commit. Because loaded code cannot be removed,
-changing a plugin's code or removing a plugin is completed by a restart.
+=plugin.update= fetches a new commit. Loaded code cannot be removed from a
+running image, so removing a plugin, or changing which plugin supplies a name,
+is completed by starting a new image rather than by mutating this one.
 
-=plugin.restart= selects a retained generation that does not contain the plugin
-and rolls back to it through =generation-request-rollback=. The base image is
-always plugin-free, because plugins load in-process after boot; any generation
-saved before a plugin loaded works the same way.
+Two operations look similar and mean different things.
+
+*Rebuild.* =plugin.restart= boots a clean base image, restores durable state,
+replays the committed mutation lineage, and loads the declared plugin set as it
+now stands. Nothing is reverted: mutations, conversation, memory, and agenda
+all survive, and the only thing that changes is which plugins are loaded. Every
+removal, update, and conflict resolution completes through this.
+
+*Rollback.* Selecting a retained generation boots that generation's saved image
+directly, which is what it means, so self-modifications made after it are gone.
+That is correct for a generation rollback and is not a plugin operation.
+=plugin.restart= never selects a generation, and the plugin system never
+reaches for one.
+
+The distinction matters because the two have different blast radii. A rebuild
+costs a boot and keeps the user's work; a rollback costs the self-modifications
+made since that generation. Conflating them would let removing a plugin
+silently discard live agent changes.
 
 - The loader is idempotent and records, in the live image, which plugins and
-  resolved commits are present, so a restored generation reconciles declared
-  against present instead of double-loading.
+  resolved commits are present, so a rebuilt image reconciles declared against
+  present instead of double-loading.
 - Plugin-owned runtimes join the checkpoint quiesce path and the runtime-close
   ordering, so a checkpoint taken with plugins loaded is clean.
-- Windows cannot fork and withholds rollback; =plugin.restart= there is a
-  process re-exec into the base core.
+- Windows withholds rollback rather than rebuild; a rebuild there re-executes
+  into the base core and replays as above.
+
+* Image layers and project switching
+
+A plugin set is part of what an image is, so a workspace carrying
+project-local plugins needs its own image. Images form a ladder, and every rung
+is derived from the rung above it rather than rebuilt from source:
+
+| Layer | Contents                                          |
+|-------+---------------------------------------------------|
+| 1     | tracked source plus the selected mutation commit  |
+| 2     | layer 1 plus global and site plugins              |
+| 3     | layer 2 plus one project's local plugins          |
+
+Layer 2 is the image a global install builds, and it is what boots wherever a
+directory declares no local plugins. Layer 3 is produced by loading layer 2 and
+saving, which is why the ladder only descends: a project image is always a child
+of the image its parent produced, never a sibling of it.
+
+Consequences worth naming:
+
+- Switching project boots a different image, because the plugin set differs.
+  Durable state follows the user rather than the image, so the switch costs a
+  boot and nothing else.
+- A project image is invalidated when its own plugin set changes, when the
+  global image beneath it changes, or when the mutation commit changes. It is a
+  cache keyed on all three, not a durable artifact, and it is rebuilt on demand
+  when stale.
+- Layer 3 is per workspace, so a machine with many plugin-bearing projects
+  accumulates one image each. Only layers 1 and 2 are retained deliberately;
+  layer 3 is disposable.
+- Windows cannot fork and saves an image by exiting through
+  =save-lisp-and-die=, so descending a rung there costs a process rather than a
+  fork.
 
 * Observability
 
@@ -315,9 +423,10 @@ plugin permission: =plugin.install=, =plugin.enable=, =plugin.disable=,
   dynamic add and remove MCP already performs.
 - =skill-roots= computes a fixed list; it needs plugin-contributed roots, tagged
   by source and ordered as above.
-- Generations need to record which plugins were loaded into them.
+- Plugin images need a cache key covering the plugin set, the parent image, and
+  the mutation commit, plus invalidation when any of the three moves.
 - Plugin-owned runtimes must participate in checkpoint quiescence and runtime
-  close ordering.
+  close ordering
 
 * Deferred
 
