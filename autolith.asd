@@ -183,6 +183,13 @@
                                           (:file "skills/runtime")
                                           (:file "application/command")
                                           (:file "configuration/project-adaptations")
+                                          (:module     "plugins"
+                                           :serial     t
+                                           :components ((:file "identity")
+                                                        (:file "record")
+                                                        (:file "store")
+                                                        (:file "lock")
+                                                        (:file "layers")))
                                           (:file "agent/memory-context")
                                           (:file "agent/knowledge-usage")
                                           (:file "agent/plan-context")
@@ -497,6 +504,7 @@
                                           (:file "context-tests")
                                           (:file "context-rule-tests")
                                           (:file "registration-source-tests")
+                                          (:file "plugin-tests")
                                           (:file "saved-context-rule-tests")
                                           (:file "complaint-tests")
                                           (:file "interpreter-discipline-tests")
