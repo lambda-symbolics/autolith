@@ -98,7 +98,14 @@
 (define-test-suite registration-source
   test-registration-source-identity
   test-registration-source-tool-registry
-  test-registration-source-scoped-removal)
+    test-registration-source-scoped-removal)
+(define-test-suite plugin
+  test-plugin-identity
+  test-plugin-record
+  test-plugin-store-paths
+  test-plugin-lock-format
+  test-plugin-lock-file
+  test-plugin-image-layers)
 
 (define-test-suite fullscreen
   test-terminal-fullscreen-viewport
