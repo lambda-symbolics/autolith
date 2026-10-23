@@ -1,0 +1,240 @@
+#+TITLE: Structured knowledge, procedures, and diagnosis
+#+STARTUP: overview
+
+This records the symbolic capabilities built on the =lho/symbolic-autolith=
+branch: what they are, what changed for users, and what is still open. Its
+first use is the release notes. Every item under [[*Release notes][Release
+notes]] is a user-visible change and belongs in the notes of the release that
+ships it, not a passing mention. When this work ships, copy that section into
+=docs/releases/vX.Y.Z.md=, then mark it shipped here with the version.
+
+* Release notes
+
+Not shipped yet.
+
+** Memories with sources
+- Memories record what they were written from: quoted file text, web pages,
+  your own words, or other memories they follow from. A memory whose quoted
+  file text or premise changed is shown as stale, and one whose evidence
+  cannot be checked as unverified, in recall and in its notice:
+  =@ 2 relevant memories exist · 1 stale=.
+- =(memories)= lists memories with their status, =(memory "ID")= explains one
+  with its sources, and =(forget "ID")= removes one.
+- Replacing a memory without sources keeps the recorded ones, so a stale
+  memory stays stale until it is checked against current sources.
+- A workspace export includes the global memories its memories rely on.
+
+** Facts and rules
+- Besides prose memories, Autolith keeps structured facts: typed values with
+  units, dates, instants, and durations, each citing its evidence and why it
+  is believed (an observation, your statement, an assumption, or the model's
+  own proposal). The basis comes from where the evidence was checked, never
+  from the model's label: retrieve a web source with =web_extra.gist= to
+  record its URL, result identity, and observation time. Web pages expire a
+  week after retrieval and tool output after a day; retrieve them again to
+  renew their evidence.
+- Rules derive facts from facts, locally and without a model request: move a
+  meeting and the departure time moves with it. Conflicting facts are kept and
+  shown, never silently resolved. A rule the model proposes derives nothing
+  until it is admitted through the usual approval or =(admit-rule)=.
+- Recall offers current facts complete, and =@ 1 fact given earlier changed=
+  explains a change to the model once.
+- New commands: =(why "ID")=, =(what-changed)=, =(rules)=, =(admit-rule)=,
+  =(retire-rule)=; =(memories)= lists facts too, conflicted and no-longer
+  holding ones first, and =(forget)= retracts a fact.
+- New =memory:= resources for the model: =memory:facts=, =memory:claim/ID=,
+  =memory:predicates=, =memory:rules=, =memory:methods=, =memory:contracts=,
+  =memory:procedures=, =memory:changes=.
+- New setting =Structured knowledge= (=knowledge-mode=: =active=, =passive=,
+  =off=; =AUTOLITH_KNOWLEDGE=). =passive= and =off= leave model requests
+  exactly as without it.
+- Mission status and gate results are recorded as facts.
+- Facts, rules, and procedures travel in data exports; a relocated workspace
+  keeps them.
+
+** Plans, methods, gates, and contracts
+- Plan steps can require facts and read their values (=Leave at {?leave}=);
+  a step is shown blocked when nothing satisfies it, and a done step whose
+  facts stop holding is flagged. =@ 1 plan step changed with its facts=.
+- =plan.expand= turns a task into a checked plan with task methods, locally.
+- Mission gates of kind =:fact= pass only on undisputed observed facts or
+  your statements, never on the model's predictions; a derived fact counts
+  only if all it rests on, negated premises included, is accepted.
+- Action contracts: admit the exact observation mapping and acceptance policy
+  through the usual approval. Requirements use accepted, undisputed facts;
+  successful results supply the admitted observations. A replacement needs
+  fresh admission; the previous admitted policy applies until then.
+
+** Learned procedures
+- When three turns make the same tool calls, Autolith learns a procedure from
+  them, locally: =@ learned procedure make-sales-report from 3 turns=.
+- A request that fits is offered the one =procedure.run= call that does the
+  work; the first run asks to admit it. Completed, successful model turns of
+  that exact version must demonstrate both request and token savings before
+  a matching request runs it before the model's first request. Procedures
+  are learned only from turns the model finished.
+- Every call keeps its own approval and contracts; a failed call hands the
+  work back to the model, and two failed runs in a row suspend it.
+- New commands: =(procedures)= with each procedure's measured savings,
+  =(run-procedure)=, =(admit-procedure)=, =(retire-procedure)=.
+
+** Diagnosis
+- New setting =Diagnostic probes= (=diagnosis-p=, =AUTOLITH_DIAGNOSIS=), off by
+  default. With it, =diagnosis.run= finds which of up to four hypotheses
+  explains a failure by running the probes that tell them apart, at most
+  three, before any repair. A case no probe settles is reported as open.
+- =(diagnoses)= lists saved diagnoses and recent cases with the facts that
+  decided them.
+
+** Storage and compatibility
+- Structured knowledge lives in a new append-only log, =knowledge.sexp=, next
+  to =memories.sexp=. Older generations never read it, so rolling back keeps
+  every memory readable.
+
+* Status
+
+| Stage | Capability                                      | State    |
+|-------+-------------------------------------------------+----------|
+| S0    | Sourced memories and staleness                  | done     |
+| S1    | Facts, evidence, supports, applicability        | done     |
+| S2    | Rules, recall, explanations, usage attribution  | done     |
+| S3    | Fact-dependent plans, methods, gates, contracts | done     |
+| S4    | Learned procedures with measured payback        | done     |
+| S5    | Hypothesis-driven diagnosis                     | done     |
+| S6    | Counterfactual assumption contexts              | deferred |
+
+Open items:
+- The live paired evaluation (12 tasks, three per domain, identical models,
+  cold and warm cache reported separately). It spends provider budget and
+  needs explicit approval before it runs.
+- Results of executable Skills cannot feed facts yet: cl-skills manifests
+  reject unknown keys, so a Skill cannot declare observations.
+- The optional Lisp condition and restart adapter for diagnosis.
+- Leave-one-out validation checks that a procedure reproduces each source
+  turn's calls, not that the task succeeded; outcome checks need replaying
+  effectful tools against fixtures.
+- Learned parameter names come from argument keys, so "Summarize the sales of
+  q1" learns ={uri}=. Better names would need a model.
+
+* Review fixes (2026-10-21)
+
+Astra reviewed =5fe95cd= and found boundary defects; each fix has a
+regression test.
+
+| Finding                                                  | Fix                                                           | Commit   |
+|----------------------------------------------------------+---------------------------------------------------------------+----------|
+| Negated premises missing from provenance and gates       | negations join justifications, bases, and query solutions     | 4046624b |
+| Gates accepted disputed facts                            | one admissibility rule: supported, undisputed, accepted base  | 4046624b |
+| Contract requirements accepted predictions               | same rule, widened only by a contract's =accepts=             | ad08345b |
+| Diagnosis decided on predictions                         | same rule for confirming and contradicting predictions        | 69413c95 |
+| Unretrieved URLs and model-chosen labels as observations | basis from the checked source; the model may only lower it    | bceb8c4c |
+| Expiry at the boundary second cached as current          | boundaries are valid-from and the second after valid-until    | e4acada2 |
+| Reobserving expired evidence did not renew it            | =:evidence-renewed= records the new observation and expiry    | 7aae30ec |
+| Wildcard wording ran procedures before the model         | unread runs need exact wording, admission, and proven savings | 9bc7c7cf |
+| Preflight refused build-then-use procedures              | requirements an earlier call can produce are checked later    | 33c2ff08 |
+| Unfinished turns counted as accepted traces              | accepted turns are answered after the last call, not aborted  | 983a0a5c |
+
+* Daily-drive review (2026-10-21)
+
+Rebased =819ace4= onto =41fd881e= before reviewing. These checks use scripted
+fixtures and disposable Lisp workers, without live provider requests.
+
+| Finding                                      | Correction                                                        | Commits           |
+|----------------------------------------------+-------------------------------------------------------------------+-------------------|
+| An unrelated write could certify a URL       | retrieval receipt binds URL, result digest, and original time      | 49446374          |
+| Disputed premises could justify decisions    | validate complete support paths, including every explicit negation | d4e0e6da fcdb2b2f |
+| Alternative support depended on ordering     | preserve basis sets and all matching negative premises            | d4e0e6da fcdb2b2f |
+| Inference errors could leave decisions open  | refuse fact-based decisions on erroneous or incomplete views       | fcdb2b2f          |
+| Contracts could create evidence unadmitted   | exact mapping and policy admission; imported receipts convey no authority | 152ed722    |
+| Duplicate archive properties exposed receipts | reject ambiguous record, receipt, contract and observation properties | 9923878c       |
+| Import could disable admitted requirements   | preserve local admission while importing inactive proposals         | 9923878c          |
+| Superseded mappings could publish observations | revalidate admission inside each assertion's locked transaction   | 9923878c          |
+| Repeated contract variables could disagree   | structural JSON unification before matching                        | bcfd2145          |
+| Learned decimal and boolean inputs failed    | typed JSON request bindings, preserving numeric signs              | d672564b          |
+| Old or unfinished runs qualified new versions | completed same-definition runs with measured request and token savings | 79a7bf4d      |
+| Numeric probe literals failed while planning | distinguish literals from string references                        | a4b2eff5          |
+| Refused probes consumed the execution budget | select only probes whose current requirements permit a call        | c046da62          |
+| Cold highlighting setup masked cancellation  | prepare tool presentation before timing the cancellable call       | a2ce2c57          |
+
+Procedure preflight now checks grounded requirements jointly, including
+applicable earlier calls, argument bindings, accepted bases, explicit negation,
+and admitted derivations. Future observations stay symbolic until each call's
+ordinary contract check. Quoted file evidence requires the observed content
+digest; a surviving quotation in an edited document preserves provenance but
+not current support.
+
+* Design
+
+** Storage
+The knowledge log is append-only: a batch of records is one =:transaction=
+form, so an interrupted write leaves none of it, and a reader folds only what
+was appended since its cached read. Unknown record kinds are skipped, so a
+log written by a newer generation stays readable. Record kinds: schemas,
+evidence, claim supports, retractions, rules and their admission, methods,
+contracts, procedures with admission, retirement and runs, diagnoses and
+diagnosis cases.
+
+Derivations, statuses, and conflicts are evaluated from the log, the cited
+files, and the time, and never stored. Evaluated views are reused until the
+log, a cited file, or a validity boundary changes.
+
+** Model
+- Terms: strings, rationals, =:true= / =:false=, =(:instant)=, =(:date)=,
+  =(:duration SECONDS)=, =(:quantity MAGNITUDE "unit")= with unit dimensions.
+- Predicate schemas name typed arguments and the key positions; supported
+  claims that agree on the key and differ elsewhere conflict.
+- A claim's identity is the digest of scope, workspace, and proposition, so
+  equal propositions share one claim with several supports.
+- Supports carry a basis: =:observation=, =:user-assertion=, =:assumption=,
+  =:model-proposal=. Derivation never upgrades a basis.
+- Rules are typed, range-restricted, and acyclic; negated premises match only
+  explicit negations, never missing facts. Evaluation is capped and reports
+  what it could not decide as unknown, never false.
+
+** Procedures
+Procedures are data: a sequence of tool calls whose arguments are constants,
+parameters, text around a parameter, or values taken from an earlier call's
+JSON result. They are learned by anti-unification of at least three accepted
+traces with the same tool sequence, kept only when leave-one-out reproduces
+every source turn, and run through the ordinary tool registry. Traces are
+read from conversation logs and cached in memory, never written elsewhere.
+
+** Diagnosis
+Hypotheses predict facts; probes are tool calls whose contracts observe facts.
+Probes are ranked by the pairs of remaining hypotheses they tell apart per
+cost. A hypothesis is eliminated only by a fact contradicting a prediction.
+
+* Deviations from the original plan
+
+- Procedures are replayed through the tool registry instead of being compiled
+  into executable Skills: each step keeps its normal approval and contracts,
+  instead of a Skill needing full access on every run.
+- Procedures are admitted through the usual approval or =(admit-procedure)=,
+  not =refinement-assess=.
+- Neural generalization keeps the plan's default allowance of zero; nothing
+  in this work calls a model to learn.
+
+* Measurements
+
+Fixture and benchmark results, not live results:
+- 10,002 claims and 50,010 supports (29 MB log): cold read 0.7 s, evaluation
+  about 0.2 s, view reuse free, an assertion about 8 ms, heap about 145 MB.
+- Ten recurring reports with a scripted model, learning included: 40 model
+  requests down to 20, and tokens 562,000 down to 173,600 under the fixture's
+  token model.
+- Learning over 43 MB of conversations: 0.24 s cold, 2 ms after a new turn.
+- Remote-service diagnosis: each of three causes found with one or two probes
+  and fixed with one repair, against six repairs tried in turn.
+
+* Commits
+
+Commits on =lho/symbolic-autolith=, from =368f278f= (Let memories record
+their sources and premises); the review fixes are listed above:
+
+| Stage | Commits                 |
+|-------+-------------------------|
+| S0    | 368f278f to 60070bda    |
+| S1-S2 | 3a1a1d5c to b4e822d1    |
+| S3    | 070b5b8a to 48f3c370    |
+| S4    | 33eba02b to 84c76f76    |
+| S5    | 4f29d255 to 592a3906    |

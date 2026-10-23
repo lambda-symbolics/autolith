@@ -125,7 +125,7 @@ server, raw tool name, and complete arguments as aligned fields.
 
 =always= records the exact server, raw tool, arguments, and workspace in the
 standard permission store. The argument payload is hashed rather than saved.
-=/permissions clear= removes these grants along with shell-command grants.
+=(permissions :clear)= removes these grants along with shell-command grants.
 
 Local command sandboxing cannot confine an external server. In =sandbox= mode,
 a server call needs an exact remembered grant or separate approval. Automatic
@@ -144,7 +144,7 @@ its tool registry.
   initialization or discovery fails
 - An optional server stays visible as failed, so unrelated work can
   continue
-- Retry it with =mcp.refresh= or =/mcp refresh=
+- Retry it with =mcp.refresh= or =(mcp :refresh)=
 
 Servers without tools may still provide resources or prompts. Autolith
 validates advertised tool names and schemas before showing them to the

@@ -191,6 +191,7 @@ leaves a machine-readable invocation tree instead of orphaned frames."
                            :budget run-budget
                            :provider provider
                            :configuration configuration
+                           :activity-callback activity-callback
                            :concurrency
                            (let ((requested (getf arguments ':concurrency)))
                              (if (and (integerp requested) (plusp requested))

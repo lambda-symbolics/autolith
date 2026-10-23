@@ -1870,6 +1870,10 @@
                 (next-turn-finished-observed-p nil)
                 (producer-condition nil)
                 (producer nil))
+           ;; A fresh test-worker cache may need to compile the native syntax
+           ;; highlighter. Finish presentation setup before the bounded gate wait.
+           (application-tool-call-entry tool application
+                                        (agent-test-call :name "gate"))
            (tool-registry-register registry tool)
            (queued-recording-terminal-enqueue
             terminal '(:insert "run the gated tool"))
@@ -2327,12 +2331,9 @@
 (defun test-tool-code-output-highlighting ()
   "Format explicit code payloads through generic and shell result boundaries."
   (let* ((application (application-tests--ui-application :columns 100 :compact-view-p nil))
-         (json "{\"answer\":42,\"message\":\"hello\"}")
-         (diff (format nil "diff --git a/demo.lisp b/demo.lisp~%--- a/demo.lisp~%+++ b/demo.lisp~%@@ -1 +1 @@~%-(defun greet () ~S)~%+(defun greet () ~S)"
-                       "before" "after")))
+         (json "{\"answer\":42,\"message\":\"hello\"}"))
     (dolist (output (list (format nil "```json~%~A~%```" json)
-                          "(:state :ready :message \"hello\")"
-                          diff))
+                          "(:state :ready :message \"hello\")"))
       (let ((entry (conversation-record-entry
                     application (list :tool-result :tool "unknown.run" :status ':ok :output output))))
         (test-assert (find ':syntax-string entry :key #'terminal-span-style)
@@ -2362,6 +2363,49 @@
                    application (list :tool-result :tool "unknown.run" :status ':ok :output output))))
       (test-assert (<= (count #\Newline (test-terminal-row-text entry)) 6)
                    "Fenced output obeys the tool row budget."))))
+
+(-> test-raw-diff-output-presentation () null)
+(defun test-raw-diff-output-presentation ()
+  "Preserve captured diff prefixes and indentation beneath one output rail."
+  (let* ((application (application-tests--ui-application :columns 100 :compact-view-p nil))
+         (lines '("diff --git a/demo.lisp b/demo.lisp"
+                  "index abcdef0..1234567 100644"
+                  "--- a/demo.lisp"
+                  "+++ b/demo.lisp"
+                  "@@ -1,2 +1,2 @@"
+                  " (in-package #:demo)"
+                  "-(defun greet () \"before\")"
+                  "+(defun greet () \"after\")"
+                  "\\ No newline at end of file"
+                  "diff --git a/notes.txt b/notes.txt"
+                  "--- a/notes.txt"
+                  "+++ b/notes.txt"
+                  "@@ -1,2 +1,2 @@"
+                  " "
+                  "-  old text"
+                  "+  new text"))
+         (diff (format nil "~{~A~^~%~}" lines)))
+    (dolist (case '(("unknown.run" nil 24)
+                    ("shell.run" "combined output" 24)
+                    ("shell.run" "stderr" 24)
+                    ("shell.run" "stdout" 6)))
+      (destructuring-bind (tool stream limit) case
+        (let* ((*application-tool-output-lines* limit)
+               (output (if stream
+                           (format nil "exit 0~%Execution: exited; timeout no; cancelled no~%~A: ~D bytes retained, ~D bytes observed; capture-complete yes; status complete~%Log: shell-log:fixture~%~A"
+                                   stream (length diff) (length diff) diff)
+                           diff))
+               (entry (conversation-record-entry
+                       application (list :tool-result :tool tool :status ':ok :output output)))
+               (rendered (application--display-lines (test-terminal-row-text entry)))
+               (railed (remove-if-not (lambda (line) (position #\│ line)) rendered))
+               (columns (mapcar (lambda (line) (position #\│ line)) railed))
+               (payload (mapcar (lambda (line) (subseq line (+ 2 (position #\│ line))))
+                                railed)))
+          (test-assert (and columns (apply #'= columns))
+                       "metadata, context and change lines share one output rail")
+          (test-assert (equal payload (subseq lines 0 (min limit (length lines))))
+                       "bounded output preserves each diff line including its original prefix"))))))
 
 (-> test-resource-source-highlighting () null)
 (defun test-resource-source-highlighting ()
@@ -2660,28 +2704,6 @@
                 (<= (terminal--spans-width row) 29))
               rows)
        "tool detail columns stay inside their transcript cell budget"))
-    (let ((form
-            (application--provider-call-equivalent-form
-             (json-object
-              "type" "function_call"
-              "namespace" "odd"
-              "name" "tool"
-              "arguments"
-              "{\"z\":[true,false,null],\"a key)\":{\"b\":true,\"a\":\"x\"}}"))))
-      (test-assert
-       (string=
-        form
-        "(odd.tool :|a key)| (json-object \"a\" \"x\" \"b\" t) :z (vector t nil :null))")
-       "provider calls render deterministic readable Lisp with distinct JSON values"))
-    (let ((form
-            (application--provider-call-equivalent-form
-             (json-object
-              "type" "function_call"
-              "namespace" "1"
-              "name" "2"
-              "arguments" "{\"path\":\"x\"}"))))
-      (test-assert (string= form "(|1.2| :path \"x\")")
-                   "numeric provider names are escaped into a Lisp symbol token"))
     (let* ((call
              (json-object
               "type" "function_call"
@@ -2694,13 +2716,10 @@
               :compact-view-p nil))
            (entry (response-item-entry wide-application call))
            (text (test-terminal-row-text entry)))
-      (test-assert (null (application--provider-call-equivalent-form call))
-                   "trailing JSON data cannot be presented as a Lisp form")
       (test-assert
-       (and (equal (first entry) (terminal-span :tool "▸ resource.read"))
-            (not (search "equivalent Lisp" text))
-            (not (search "(resource.read" text)))
-       "malformed provider calls keep their tool name without fabricated Lisp"))
+       (and (equal (first entry) (terminal-span :tool "▸ (resource.read)"))
+            (not (find #\Newline text)))
+       "malformed provider arguments retain the tool header without fabricated fields"))
     (let* ((narrow-application
              (application-tests--ui-application
               :columns 20
@@ -2725,70 +2744,57 @@
             (<= (text-cell-width header) 19)
             (char= (char header (1- (length header))) #\…))
        "provider-controlled tool names are sanitized and width-bounded"))
-    (let* ((*application-provider-form-characters* 10)
-           (uri "workspace:provider-form-fallback")
-           (entry
+    (let* ((entry
              (response-item-entry
-              application
+              (application-tests--ui-application :columns 100 :compact-view-p nil)
               (json-object
-               "type" "function_call"
-               "namespace" "resource"
-               "name" "read"
-               "arguments" (json-encode (json-object "uri" uri)))))
-           (text (test-terminal-row-text entry)))
+               "type" "function_call" "namespace" "odd" "name" "tool"
+               "arguments" "{\"z\":false,\"a key)\":true,\"nested\":{\"value\":null}}")))
+           (lines (rest (uiop:split-string (test-terminal-row-text entry)
+                                           :separator '(#\Newline))))
+           (value-columns (mapcar #'search '("true" "null" "false") lines)))
       (test-assert
-       (and (equal (first entry) (terminal-span :tool "▸ resource.read"))
-            (not (search "(resource.read" text))
-            (search uri text))
-       "simple tool calls retain their detail when Lisp rendering is bounded out"))
-    (let ((*application-provider-form-characters* 10))
-      (test-assert
-       (null
-        (application--provider-call-equivalent-form
-         (json-object
-          "type" "function_call"
-          "namespace" "resource"
-          "name" "read"
-          "arguments" "{\"uri\":\"workspace:a path beyond the bound\"}")))
-       "equivalent provider forms stop before exceeding their output bound"))
-    (let* ((form
-             (application--provider-call-equivalent-form
-              (json-object
-               "type" "function_call"
-               "namespace" "x|y"
-               "name" "z\\q"
-               "arguments" "{}"))))
-      (multiple-value-bind (expression end)
-          (read-from-string form)
-        (test-assert
-         (and (= end (length form))
-              (consp expression)
-              (symbolp (first expression))
-              (string= (symbol-name (first expression)) "x|y.z\\q"))
-         "hostile provider names remain one escaped readable function symbol")))
-    (labels ((render (source)
-               "Render SOURCE as one ordinary resource.read provider call."
-               (application--provider-call-equivalent-form
-                (json-object
-                 "type" "function_call"
-                 "namespace" "resource"
-                 "name" "read"
-                 "arguments" source)))
-
-             (bounded (source &rest limits)
-               "Render SOURCE with provider form decoding bounded by LIMITS."
-               (let ((*application-provider-form-limits*
-                       (apply #'make-json-limits limits)))
-                 (render source))))
-      (test-assert
-       (and (render "{\"value\":{\"a\":{\"b\":1}}}")
-            (null (bounded "{}" :maximum-characters 1))
-            (null (bounded "{\"a\":1,\"b\":2}" :maximum-object-members 1))
-            (null (bounded "{\"value\":{\"a\":{\"b\":1}}}" :maximum-depth 2))
-            (null (bounded "{\"uri\":\"four\"}" :maximum-string-characters 3))
-            (null (bounded "{\"uri\":\"x\"}" :maximum-object-key-characters 2))
-            (null (render "{\"x\\ny\":1}")))
-       "provider forms enforce their decoding limits and key characters"))
+       (and (search ":|a key)|" (first lines))
+            (search ":nested.value" (second lines))
+            (search ":z" (third lines))
+            (search "true" (first lines))
+            (search "null" (second lines))
+            (search "false" (third lines)))
+       "generic argument tables escape keyword labels and preserve nested JSON values")
+      (test-assert (apply #'= value-columns)
+                   "generic argument values share one column across nested fields"))
+    (dolist (columns '(24 40 100))
+      (dolist (uri '("memory:workspace" "workspace:example" "extension:example"))
+        (let* ((entry
+                 (response-item-entry
+                  (application-tests--ui-application :columns columns :compact-view-p nil)
+                  (json-object
+                   "type" "function_call" "namespace" "resource" "name" "edit"
+                   "arguments"
+                   (json-encode
+                    (json-object
+                     "uri" uri "base-revision" "Rfixture"
+                     "operations"
+                     (vector (json-object "op" "memory-remember"
+                                          "title" "TITLE" "scope" "global"
+                                          "tags" (vector "TAG")
+                                          "content" (format nil "first content~%second content"))))))))
+               (lines (uiop:split-string (test-terminal-row-text entry)
+                                         :separator '(#\Newline)))
+               (value-columns
+                 (loop for value in '("global" "TAG" "TITLE")
+                       for row = (find-if (lambda (line) (search value line)) lines)
+                       collect (and row (search value row)))))
+          (test-assert
+           (and (every #'integerp value-columns) (apply #'= value-columns))
+           (format nil "~A operation fields share a value column at ~D columns"
+                   uri columns))
+          (test-assert
+           (and (or (< columns 40)
+                    (search ":base-revision" (test-terminal-row-text entry)))
+                (position-if (lambda (line) (search "first content" line)) lines)
+                (every (lambda (line) (< (text-cell-width line) columns)) lines))
+           "resource operations retain argument names, multiline previews and cell bounds"))))
     (let* ((source (format nil "~{form-line-~D~^~%~}"
                            (loop for index from 1 to 10 collect index)))
            (entry (response-item-entry
@@ -2803,13 +2809,9 @@
                                   "restart" "CONTINUE")))))
            (text (test-terminal-row-text entry)))
       (test-assert
-       (and (equal (first entry) (terminal-span :tool "▸ self.eval"))
-            (find (terminal-span :syntax-function "self.eval")
-                  entry
-                  :test #'equal)
-            (search "(self.eval :forms (vector" text)
-            (not (search "equivalent Lisp" text)))
-       "provider tool requests keep their names and syntax-highlighted Lisp forms")
+       (and (equal (first entry) (terminal-span :tool "▸ (self.eval)"))
+            (search ":restart" text))
+       "provider calls show a parenthesized name above their argument table")
       (test-assert (and (search "form-line-1" text)
                         (search "… +2 more lines" text))
                    "self.eval previews only the first configured source lines")
@@ -2819,7 +2821,7 @@
                                         (search "CONTINUE"
                                                 (terminal-span-text span))))
                                  entry))
-                   "self.eval presents restart selection in a separate area")
+                   "self.eval presents the selected restart in its argument table")
       (test-assert (not (search "{\"forms\"" text))
                    "tool requests never expose raw argument JSON"))
     (let* ((entry (response-item-entry
@@ -2832,14 +2834,10 @@
                                  (json-object "forms" (vector "(+ 1 2)"))))))
            (text (test-terminal-row-text entry)))
       (test-assert
-       (and (equal (first entry) (terminal-span :tool "▸ lisp.eval"))
-            (find (terminal-span :syntax-function "lisp.eval")
-                  entry
-                  :test #'equal)
-            (search "(lisp.eval :forms (vector \"(+ 1 2)\"))" text)
-            (not (search "equivalent Lisp" text))
+       (and (equal (first entry) (terminal-span :tool "▸ (lisp.eval)"))
+            (search "(+ 1 2)" text)
             (not (search "{\"forms\"" text)))
-       "lisp.eval calls show syntax-highlighted Lisp instead of JSON"))
+       "lisp.eval calls show a parenthesized name above their source rail"))
     (let* ((entry (response-item-entry
                    application
                    (json-object
@@ -2852,20 +2850,44 @@
                                   "directory" "/tmp/work"
                                   "timeout-seconds" 30)))))
            (text (test-terminal-row-text entry)))
-      (test-assert (and (search "$ printf" text)
-                        (search "directory" text)
-                        (search "/tmp/work" text)
-                        (search "30 seconds" text))
-                   "shell.run calls show command text and execution metadata")
-      (test-assert (not (search "{\"command\"" text))
-                   "shell.run calls omit raw argument JSON"))
+      (let* ((lines (rest (uiop:split-string text :separator '(#\Newline))))
+             (rail (position-if (lambda (line) (search "$ printf" line)) lines)))
+        (test-assert
+         (and rail (= rail 2)
+              (search ":directory" (first lines))
+              (search "/tmp/work" (first lines))
+              (search ":timeout-seconds" (second lines))
+              (search "30" (second lines)))
+         "shell source begins immediately after the last keyword argument row")))
+    (dolist (columns '(24 40 100))
+      (dolist (case (list (list "shell" "run"
+                               (json-object "command" "printf hello" "directory" "work"))
+                         (list "lisp" "eval"
+                               (json-object "forms" (vector "(+ 1 2)") "repl" "sample"))
+                         (list "self" "set"
+                               (json-object "symbol" "*sample*" "value" "(list :x 1)"))))
+        (destructuring-bind (namespace name arguments) case
+          (let* ((entry
+                   (response-item-entry
+                    (application-tests--ui-application :columns columns :compact-view-p nil)
+                    (json-object "type" "function_call" "namespace" namespace "name" name
+                                 "arguments" (json-encode arguments))))
+                 (lines (uiop:split-string (test-terminal-row-text entry)
+                                           :separator '(#\Newline))))
+            (test-assert
+             (and (search "  :" (second lines))
+                  (search "│ " (third lines))
+                  (find ':syntax-keyword entry :key #'terminal-span-style)
+                  (every (lambda (line) (< (text-cell-width line) columns)) lines))
+             (format nil "~A.~A arguments touch the source rail at ~D columns"
+                     namespace name columns))))))
     (let ((entry (response-item-entry
                   application
                   (json-decode
                    "{\"type\":\"web_search_call\",
                      \"action\":{\"type\":\"search\",
                                  \"query\":\"live lisp images\"}}"))))
-      (test-assert (equal (first entry) (terminal-span :tool "▸ web search"))
+      (test-assert (equal (first entry) (terminal-span :tool "▸ (web search)"))
                    "web search calls present a styled search header")
       (test-assert (search "live lisp images"
                            (test-terminal-row-text entry))
@@ -3001,12 +3023,29 @@
                         (search "CAR" text)
                         (search "values" text))
                    "lisp.describe results separate structured description and values"))
+    (dolist (case '(("resource.read"
+                    "resource.read failed: byte-count is out of range."
+                    "byte-count is out of range.")
+                   ("resource.read" "File not found." "File not found.")
+                   ("resource.read" "backend.run failed: unavailable"
+                    "backend.run failed: unavailable")
+                   ("unknown.run" "unknown.run failed: resource.read failed: denied"
+                    "resource.read failed: denied")))
+      (destructuring-bind (tool output reason) case
+        (let ((entry (conversation-record-entry
+                      application
+                      (list :tool-result :tool tool :status ':error :output output))))
+          (test-assert
+           (and (equal (first entry)
+                       (terminal-span ':failure (format nil "✗ ~A failed" tool)))
+                (find (terminal-span ':plain reason) entry :test #'equal))
+           "the failure header identifies the tool and its body shows only the reason"))))
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 6 :time 0 :call-id 5
                          :tool "self.eval" :status ':error
                          :output (format nil
-                                         "Needs a value.~2%Available restarts:~%~
+                                         "self.eval failed: Needs a value.~2%Available restarts:~%~
                                             CONTINUE  Try again.~%~
                                             USE-VALUE  Supply a value.~%~
                                           Retry the identical call with a restart."))))
@@ -3014,7 +3053,8 @@
       (test-assert (equal (first entry)
                           (terminal-span :failure "✗ self.eval failed"))
                    "failed tool results present a failure header")
-      (test-assert (and (search "condition" text)
+      (test-assert (and (find (terminal-span ':plain "Needs a value.") entry :test #'equal)
+                        (search "condition" text)
                         (search "available restarts" text)
                         (search "retry" text)
                         (find-if (lambda (span)
@@ -3272,7 +3312,8 @@
                  "clean-source recovery restores its conversation and cursors")
                 (let ((ui (application-ui application)))
                   (test-assert
-                    (and (zerop (terminal-ui-context-used ui))
+                    (and (plusp (terminal-ui-context-used ui))
+                         (terminal-ui-context-estimated-p ui)
                          (= (terminal-ui-context-window ui) 272000)
                          (= (terminal-ui-context-compaction-limit ui) 217600))
                    "application creation seeds its idle context meter")
@@ -3317,7 +3358,8 @@
                  "retained-generation reconnect restores recovery state")
                 (let ((ui (application-ui application)))
                   (test-assert
-                    (and (zerop (terminal-ui-context-used ui))
+                    (and (plusp (terminal-ui-context-used ui))
+                         (terminal-ui-context-estimated-p ui)
                          (= (terminal-ui-context-window ui) 272000)
                          (= (terminal-ui-context-compaction-limit ui) 217600))
                    "application reconnect seeds its idle context meter")
@@ -3375,7 +3417,7 @@
               "startup retains exactly the newest two hundred fifty visible entries")
              (test-assert
               (search
-               "showing 250 newest transcript entries; /history loads an earlier page"
+               "showing 250 newest transcript entries; use (history) to load an earlier page"
                output)
               "bounded startup replay explains how to load omitted history"))
            (test-assert
@@ -3564,7 +3606,7 @@
                          (= (terminal-tests--substring-count
                              "CONTEXT COMPACTED" output)
                             2)
-                         (not (search "/history loads an earlier page" output)))
+                         (not (search "use (history) to load an earlier page" output)))
                     "a short active chunk scans exactly one preceding segment"))
                  (let* ((recovery-terminal
                           (make-instance 'recording-terminal :columns 80))
@@ -3820,6 +3862,7 @@
            (application-refresh-context-meter application)
            (test-assert
              (and (= (terminal-ui-context-used ui) 262500)
+                  (not (terminal-ui-context-estimated-p ui))
                   (= (terminal-ui-context-window ui) 272000)
                   (= (terminal-ui-context-compaction-limit ui) 217600))
             "application refresh projects current provider usage into the idle meter")
@@ -3847,12 +3890,23 @@
                (declare (ignore display cursor))
                (test-assert (search "COMPACTING  [====>" text)
                             "the application observer projects compaction live"))
-             (setf (conversation-last-total-tokens conversation) 0)
+             (conversation-append-provider-metadata
+              conversation
+              (list :compaction ':summary :usage '(("total_tokens" 270000))))
+             (conversation-append-summary conversation "retained handoff")
              (funcall send-status :compaction-completed nil)
              (test-assert (not (terminal-ui-compacting-p ui))
                           "completion removes the compaction indicator")
-             (test-assert (zerop (terminal-ui-context-used ui))
-                          "compaction completion refreshes the context meter")
+             (test-assert (and (plusp (terminal-ui-context-used ui))
+                               (< (terminal-ui-context-used ui) 262500)
+                               (terminal-ui-context-estimated-p ui))
+                          "compaction completion estimates retained context, not compaction spend")
+             (conversation-append-provider-metadata
+              conversation (list :usage '(("total_tokens" 24000))))
+             (funcall send-status :provider-request-completed nil)
+             (test-assert (and (= (terminal-ui-context-used ui) 24000)
+                               (not (terminal-ui-context-estimated-p ui)))
+                          "the next provider report replaces the compacted prompt estimate")
              (funcall send-status :compaction-started nil)
              (funcall send-status :turn-completed nil)
              (test-assert (and (not (terminal-ui-compacting-p ui))
@@ -4182,8 +4236,8 @@
                          output)
                         1)
                        (search "<thought>" output)
-                       (search "▸ self.eval" output)
-                       (search "(self.eval :forms (vector" output)
+                       (search "▸ (self.eval)" output)
+                       (search "(+ 1 2)" output)
                        (null (terminal-ui-preview-rows
                               (application-ui application))))
                 "tool-only provider steps finalize one trace before the tool call")))
@@ -6113,8 +6167,8 @@
                    (active-configuration
                      (application-configuration application)))
               (test-assert
-               (and (= (terminal-ui-context-used ui)
-                       (conversation-last-total-tokens conversation))
+               (and (plusp (terminal-ui-context-used ui))
+                    (terminal-ui-context-estimated-p ui)
                     (= (terminal-ui-context-window ui)
                        (config :context-window active-configuration))
                     (= (terminal-ui-context-compaction-limit ui)

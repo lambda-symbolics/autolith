@@ -281,7 +281,7 @@ the terminal wraps the semantic spans for both inline and fullscreen tips."
    :style ':failure
    :header "✗ error"
    :body (if (typep condition 'credentials-unavailable)
-             (format nil "~A~%Use /auth to authenticate Autolith directly."
+             (format nil "~A~%Use (auth) to authenticate Autolith directly."
                      condition)
              (format nil "~A" condition))))
 
@@ -738,12 +738,17 @@ dependencies."
           (:immutable-p boolean)
           (:pristine-p boolean)
           (:permission-mode (member :ask :auto :sandboxed :full-access))
-          (:fresh-conversation-p boolean))
+          (:fresh-conversation-p boolean)
+          (:image-replay-failures list))
     application)
 (defun main--connect-application
     (&key configuration conversation-id immutable-p pristine-p permission-mode
-          fresh-conversation-p)
-  "Create or reconnect the active application for one normal or handoff startup."
+          fresh-conversation-p
+          (image-replay-failures nil image-state-loaded-p))
+  "Create or reconnect the active application for one normal or handoff startup.
+
+Forward supplied IMAGE-REPLAY-FAILURES when authentication already loaded private
+state, including an empty list after successful or pristine startup."
   (if (and (not pristine-p)
            (not fresh-conversation-p)
            (typep *active-application* 'application))
@@ -751,14 +756,12 @@ dependencies."
                              :conversation-id conversation-id
                              :immutable-p immutable-p
                              :permission-mode permission-mode)
-      (if pristine-p
-          (application-create configuration
-                              :conversation-id conversation-id
-                              :permission-mode permission-mode
-                              :pristine-p t)
-          (application-create configuration
-                              :conversation-id conversation-id
-                              :permission-mode permission-mode))))
+      (apply #'application-create configuration
+             :conversation-id conversation-id
+             :permission-mode permission-mode
+             (append (when pristine-p (list :pristine-p t))
+                     (when image-state-loaded-p
+                       (list :image-replay-failures image-replay-failures))))))
 
 (-> main--site-root-arguments (clingon:command) list)
 (defun main--site-root-arguments (command)
@@ -836,7 +839,14 @@ dependencies."
                (and effective-resume-requested-p
                     (or (not (null effective-resume-id))
                         (and (null recovery-conversation-id)
-                             (null recovery-diagnosis)))))))
+                             (null recovery-diagnosis))))))
+         (image-state-loaded-p
+           (and authenticate-p
+                (or pristine-p fresh-handoff-p
+                    (not (typep *active-application* 'application)))))
+         (image-replay-failures
+           (when image-state-loaded-p
+             (image-state-load configuration :pristine-p pristine-p))))
     (when authenticate-p
       (unless pristine-p
         (user-init-load configuration))
@@ -886,13 +896,15 @@ dependencies."
           (return-from main--start-session nil))))
     (let ((*localgroup-startup-record* handoff-record))
       (setf *active-application*
-            (main--connect-application
-             :configuration configuration
-             :conversation-id effective-resume-id
-             :immutable-p immutable-p
-             :pristine-p pristine-p
-             :permission-mode permission-mode
-             :fresh-conversation-p (not (null fresh-handoff-p))))
+            (apply #'main--connect-application
+                   :configuration configuration
+                   :conversation-id effective-resume-id
+                   :immutable-p immutable-p
+                   :pristine-p pristine-p
+                   :permission-mode permission-mode
+                   :fresh-conversation-p (not (null fresh-handoff-p))
+                   (when image-state-loaded-p
+                     (list :image-replay-failures image-replay-failures))))
       (application--clear-recovery-environment)
       (when (and (getopt* command ':simulate-crash)
                  (not (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED"))))
@@ -1218,16 +1230,23 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
    :description "list known model identifiers and exit"
    :handler
    (lambda (command)
-      (let ((configuration
+     (let* ((pristine-p (not (null (getopt* command ':pristine))))
+            (configuration
               (apply #'configuration-create
                      :immutable-p t
                      :defer-provider-validation-p t
-                     (main--site-root-arguments command))))
-       (user-init-load configuration)
+                     (main--site-root-arguments command)))
+            (replay-failures
+              (image-state-load configuration :pristine-p pristine-p)))
+       (dolist (failure replay-failures)
+         (format *error-output* "Autolith: private image replay failed: ~A: ~A~%"
+                 (first failure) (rest failure)))
+       (unless pristine-p
+         (user-init-load configuration))
        (provider-bootstrap-configuration configuration)
        (dolist (model (main--known-model-identifiers))
          (format t "~A~%" model))
-         (force-output)))))
+       (force-output)))))
 
 (-> main--update-command () clingon:command)
 (defun main--update-command ()

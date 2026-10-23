@@ -252,11 +252,13 @@
                       archive :properties-p t :versions (list *data-transfer-version*)
                       :allow-other-keys nil
                       :fields
-                      (cons (list :indicator ':format :required t
-                                  :validate (lambda (value) (eq value ':autolith-data)))
-                            (mapcar (lambda (key) (list :indicator key :required t))
-                                    '(:workspace :workspaces :sessions :children :memories
-                                      :papercuts :agendas :plans :files :states))))
+                      (append
+                       (list (list :indicator ':format :required t
+                                   :validate (lambda (value) (eq value ':autolith-data)))
+                             (list :indicator ':knowledge :validate #'listp))
+                       (mapcar (lambda (key) (list :indicator key :required t))
+                               '(:workspace :workspaces :sessions :children :memories
+                                 :papercuts :agendas :plans :files :states))))
                      (or (null (getf archive :workspace))
                          (data-transfer--directory-p (getf archive :workspace)))
                      (every (lambda (key) (listp (getf archive key)))
@@ -270,6 +272,7 @@
         (data-transfer--validate-children archive pathname)
         (data-transfer--validate-history (getf archive :memories) ':memory pathname)
         (data-transfer--validate-history (getf archive :papercuts) ':papercut pathname)
+        (data-transfer--validate-knowledge archive pathname)
         (dolist (record (getf archive :agendas))
           (unless (and (agenda--record-form-p record *agenda-version*)
                        (data-transfer--directory-p (getf (rest record) :directory)))
@@ -336,15 +339,20 @@
                             (loop for key in '(:memories :papercuts) append
                               (mapcar (lambda (record) (getf (rest record) :workspace)) (getf archive key)))
                             (loop for key in '(:agendas :plans) append
-                              (mapcar (lambda (record) (getf (rest record) :directory)) (getf archive key)))))
+                              (mapcar (lambda (record) (getf (rest record) :directory)) (getf archive key)))
+                            (data-transfer--knowledge-workspaces archive)))
             :test #'equal)))
     (unless (and (every #'data-transfer--directory-p actual)
                  (null (set-exclusive-or actual (getf archive :workspaces) :test #'equal))
                  (or (null workspace) (every (lambda (key) (equal key workspace)) actual)))
       (data-transfer--fail pathname ':invalid "Declared archive scope disagrees with entity ownership."))
     (when workspace
-      (let ((linked (loop for agenda in (getf archive :agendas) append
-                      (loop for item in (getf (rest agenda) :items) append (getf (rest item) :memory-ids)))))
+      (let ((linked (data-transfer--memory-links
+                     (getf archive :memories)
+                     :workspace workspace
+                     :linked (loop for agenda in (getf archive :agendas) append
+                               (loop for item in (getf (rest agenda) :items)
+                                     append (getf (rest item) :memory-ids))))))
         (dolist (record (getf archive :memories))
           (when (and (eq (first record) ':memory) (eq (getf (rest record) :scope) ':global)
                      (not (member (getf (rest record) :id) linked :test #'equal)))
@@ -370,6 +378,7 @@
       (dolist (record (getf copy key))
         (when (equal (getf (rest record) :workspace) old)
           (setf (getf (rest record) :workspace) directory))))
+    (setf copy (data-transfer--remap-knowledge copy old directory))
     (dolist (key '(:agendas :plans))
       (dolist (record (getf copy key))
         (when (equal (getf (rest record) :directory) old)

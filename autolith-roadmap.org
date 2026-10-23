@@ -432,7 +432,7 @@ Autolith owns the inspector because its grouping and actions are agent semantics
 own any newly reusable picker/layout primitives extracted while implementing it.
 
 *** Verified implementation
-=/tasks= projects owned live and durable rows through the ordinary job registry.
+=(tasks)= projects owned live and durable rows through the ordinary job registry.
 Checks cover lineage, timing/usage, bounded recent output, artifact paths,
 transcript windows across compacted chunks, missing/foreign transcript refusal,
 ordinary cancellation and revive, authorization forwarding and a real multiword

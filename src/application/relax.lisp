@@ -24,7 +24,7 @@
        (application-set-relax application nil))
       (t
        (error 'configuration-error
-              :message "Usage: /relax on or /relax off."))))
+              :message "Usage: (relax t) or (relax nil)."))))
   nil)
 
 (define-application-command application--builtin-relax-command

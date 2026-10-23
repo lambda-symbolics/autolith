@@ -42,6 +42,7 @@
           (terminal-ui-deferred-live-appended-display ui) ""
           (terminal-ui-deferred-live-appended-regions ui) nil
           (terminal-ui-stream-tail ui) nil
+          (terminal-ui-compact-success-tail-p ui) nil
           (terminal-ui-pending-action ui) nil
           (terminal-ui-notice ui) nil
           (terminal-ui-notice-deadline ui) nil
@@ -373,8 +374,10 @@ lock, because copying and browser launches present notices of their own."
                                       entry))))
   nil)
 
-(defmethod terminal-ui--append-output ((ui fullscreen-terminal-ui) text display &key regions)
+(defmethod terminal-ui--append-output
+    ((ui fullscreen-terminal-ui) text display &key regions compact-first-p compact-last-p)
   "Commit output through the same transaction as streamed live presentation."
+  (declare (ignore compact-first-p compact-last-p))
   (terminal-ui--present-live ui :appended-text text :appended-display display
                                 :appended-regions regions))
 

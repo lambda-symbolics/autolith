@@ -64,6 +64,11 @@
                      (list (memory-identifier workspace-memory)))
               "memory search matches all terms across content and tags")
              (test-assert
+              (equal (mapcar #'memory-identifier
+                             (memory-search configuration "which (script) workflow?"))
+                     (list (memory-identifier workspace-memory)))
+              "memory search ignores punctuation around question words")
+             (test-assert
               (handler-case
                   (progn
                     (memory-remember
@@ -130,7 +135,9 @@
                                        :configuration configuration
                                        :conversation conversation
                                        :tool-namespaces #()))
-                      (contribution (memory-related-context request))
+                      (contribution (find "related-memories" (memory-related-context request)
+                                          :key #'context-contribution-identifier
+                                          :test #'string=))
                       (evidence
                         (and contribution
                              (context-contribution-evidence contribution))))

@@ -20,6 +20,124 @@
   "Return the plain text of UI's committed transcript row INDEX."
   (clinedi:transcript-viewport-row-text (fullscreen-terminal-ui-viewport ui) index))
 
+(-> test-terminal-compact-success-groups () null)
+(defun test-terminal-compact-success-groups ()
+  "Group mixed single-line tool results across append and batch boundaries."
+  (let* ((edit (list (terminal-span ':success "✓ resource.edit")
+                     (terminal-span ':dim "  applied")))
+         (check (list (terminal-span ':success "✓ lisp.paren-check")))
+         (custom (list (terminal-span ':success "✓ extension.probe")))
+         (body (list (terminal-span ':success "✓ resource.read")
+                     (terminal-span ':plain (format nil "~%  │ body"))))
+         (failure (list (terminal-span ':failure "✗ resource.read failed")))
+         (call (list (terminal-span ':plain "▸ (shell.run)")))
+         (message (list (terminal-span ':success "✓ goal complete")))
+         (entries (list (list 0 edit) (list 0 "duplicate") (list 1 edit)
+                        (list 2 check) (list 3 custom) (list 4 body)
+                        (list 5 edit) (list 6 failure) (list 7 edit)
+                        (list 8 call) (list 9 edit) (list 10 message)))
+         (expected (format nil "✓ resource.edit  applied~%✓ resource.edit  applied~%✓ lisp.paren-check~%✓ extension.probe~%~%✓ resource.read~%  │ body~%~%✓ resource.edit  applied~%~%✗ resource.read failed~%~%✓ resource.edit  applied~%~%▸ (shell.run)~%~%✓ resource.edit  applied~%~%✓ goal complete~%~%")))
+    (dolist (fullscreen-p '(nil t))
+      (dolist (batch-p '(nil t))
+        (let* ((terminal (make-instance 'recording-terminal :columns 100 :rows 24))
+               (ui (terminal-ui-create :terminal terminal :fullscreen-p fullscreen-p)))
+          ;; Exercise durable noninteractive output and interactive deferred output.
+          (dolist (deferred-p '(nil t))
+            (setf (terminal-ui-live-output-suspended-p ui) deferred-p
+                  (terminal-interactive-p terminal) deferred-p)
+            (if batch-p
+                (progn
+                  (test-assert (= 4 (terminal-ui-append-finalized-batch ui (subseq entries 0 5)))
+                               "batch counts only unique entries")
+                  (terminal-ui-append-finalized-batch ui (subseq entries 5)))
+                (dolist (pair entries)
+                  (terminal-ui-append-finalized ui (first pair) (second pair))))
+            (let ((actual
+                    (if deferred-p
+                        (terminal-ui-deferred-live-appended-text ui)
+                        (if fullscreen-p
+                            (format nil "~{~A~%~}"
+                                    (loop for row below (clinedi:transcript-viewport-row-count
+                                                         (fullscreen-terminal-ui-viewport ui))
+                                          collect (fullscreen-test--row-text ui row)))
+                            (clinedi:ansi-strip (recording-terminal-output terminal))))))
+              (test-assert (string= (string-right-trim '(#\Newline) expected)
+                                    (string-right-trim '(#\Newline) actual))
+                           "only adjacent one-line tool successes share a block"))
+            ;; A second run uses fresh identifiers and output, but the same UI.
+            (clrhash (terminal-ui-finalized-identifiers ui))
+            (setf (terminal-ui-deferred-live-appended-text ui) ""
+                  (terminal-ui-deferred-live-appended-display ui) ""
+                  (terminal-ui-deferred-live-appended-regions ui) nil))))))
+  nil)
+
+(-> test-terminal-compact-success-stream-and-retry () null)
+(defun test-terminal-compact-success-stream-and-retry ()
+  "Separate live/streamed output and restore compact grouping after failed appends."
+  (let ((entry (list (terminal-span ':success "✓ extension.probe"))))
+    (dolist (fullscreen-p '(nil t))
+      (let* ((terminal (make-instance 'failing-recording-terminal :columns 100 :rows 24))
+             (ui (terminal-ui-create :terminal terminal :fullscreen-p fullscreen-p)))
+        (with-terminal-ui (ui ui)
+          (terminal-ui-append-finalized ui 0 entry)
+          (let ((count (hash-table-count (terminal-ui-finalized-identifiers ui)))
+                (before (terminal-ui-compact-success-tail-p ui)))
+            (terminal-ui--finalized-content ui "capture only")
+            (test-assert (and (eql before (terminal-ui-compact-success-tail-p ui))
+                              (= count (hash-table-count (terminal-ui-finalized-identifiers ui))))
+                         "capture formatting has no transcript side effects"))
+          (test-assert (not (terminal-ui-append-finalized ui 0 "ignored"))
+                       "duplicate result does not break a group")
+          (terminal-ui-stream-update ui :tail "unfinished")
+          (test-assert (null (first (terminal-ui--live-prefix-rows ui)))
+                       "live output has a gap after compact results")
+          (setf (failing-recording-terminal-fail-next-write-p terminal) t)
+          (test-assert
+           (handler-case (progn (terminal-ui-append-finalized-batch
+                                ui (list (list 1 entry) (list 2 "boundary"))) nil)
+             (terminal-error () t))
+           "append error is propagated")
+          (test-assert (and (terminal-ui-compact-success-tail-p ui)
+                            (not (gethash 1 (terminal-ui-finalized-identifiers ui)))
+                            (not (gethash 2 (terminal-ui-finalized-identifiers ui))))
+                       "failed batch restores grouping state and identifiers")
+          (setf (terminal-ui-live-output-suspended-p ui) t)
+          (terminal-ui-append-finalized ui 1 entry)
+          (terminal-ui-stream-update ui :rows (list (list (terminal-span ':plain "stream")))
+                                     :tail "tail")
+          (terminal-ui-stream-update ui :rows (list (list (terminal-span ':plain "next"))))
+          (test-assert (string= (terminal-ui-deferred-live-appended-text ui)
+                                (format nil "✓ extension.probe~%~%stream~%next~%"))
+                       "stream starts after a gap and subsequent chunks are contiguous")
+          (setf (terminal-ui-live-output-suspended-p ui) nil)
+          (when fullscreen-p
+            (terminal-ui-append-finalized ui 3 entry)
+            (terminal-ui-reset-transcript ui)
+            (terminal-ui-append-finalized ui 3 "fresh")
+            (test-assert (string= "fresh" (fullscreen-test--row-text ui 0))
+                         "clear resets compact separation and result identities")
+            (terminal-ui-reset-transcript ui)
+            (terminal-ui-append-finalized ui 0 entry)
+            (let ((actions nil))
+              (setf (terminal-ui-action-function ui)
+                    (lambda (action) (push action actions)))
+              (terminal-ui-append-finalized-batch
+               ui (list (list 1 entry)
+                        (list 2 (list (termdown:make-widget
+                                      ':code-copy "copy" '(:copy "boundary"))))))
+              (terminal-ui-process-event ui '(:click 1 4))
+              (test-assert (equal '(:copy "boundary") (first actions))
+                           "batch widgets retain their regions across the inserted gap")
+              (terminal-ui-reset-transcript ui)
+              (terminal-ui-append-finalized ui 0 entry)
+              (terminal-ui-append-finalized-batch
+               ui (list (list 2 (list (termdown:make-widget
+                                      ':code-copy "copy" '(:copy "external"))))))
+              (terminal-ui-process-event ui '(:click 1 3))
+              (test-assert (equal '(:copy "external") (first actions))
+                           "leading batch gap shifts widget regions with the text")))))))
+  nil)
+
 ;;;; -- Fullscreen Behavior --
 
 (-> fullscreen-test--ui (terminal) terminal-ui)

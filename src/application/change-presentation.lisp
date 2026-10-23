@@ -285,10 +285,8 @@
      :header "▸ resource.edit"
      :rows
      (append
-      (application--tool-field-rows
-       application
-       (list (list :label "uri" :value uri :style ':code)
-             (list :label "revision" :value revision :style ':code)))
+      (application--generic-argument-rows
+       application arguments :excluded-keys '("operations"))
       (list nil)
       (cond
         (path

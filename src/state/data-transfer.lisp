@@ -267,6 +267,7 @@ Conflicts and incomplete rollbacks become typed transfer failures."
         :papercuts (length (data-transfer--histories (getf archive :papercuts)))
         :agendas (length (getf archive :agendas))
         :plans (length (getf archive :plans))
+        :facts (count :claim-asserted (getf archive :knowledge) :key #'first)
         :files (length (getf archive :files))))
 
 (-> data-transfer--native-pathname ((or pathname string)) pathname)

@@ -642,8 +642,8 @@
                     (member "/ste off" entry-names :test #'string=))
                "slash completion offers every finite command option")
               (test-assert
-                (and (member "(ste :on)" entry-names :test #'string=)
-                    (member "(ste :off)" entry-names :test #'string=))
+               (and (member "(ste t)" entry-names :test #'string=)
+                    (member "(ste nil)" entry-names :test #'string=))
                "Lisp completion offers every finite command option")
               (flet ((primary-of (name)
                        "Return the :PRIMARY of the completion entry named NAME."
@@ -653,7 +653,7 @@
                              :primary)))
                 (test-assert
                  (and (equal (primary-of "/ste on") "/ste")
-                      (equal (primary-of "(ste :off)") "(ste")
+                      (equal (primary-of "(ste nil)") "(ste")
                       (null (primary-of "/ste"))
                       (null (primary-of "(conversations)")))
                  "finite option entries stay behind their canonical command rows")

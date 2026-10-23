@@ -83,30 +83,27 @@
     (integer integer &key (:width integer) (:input-p boolean) (:scrollable-p boolean))
     list)
 (defun terminal-ui-onboarding--footer (index count &key (width 76) input-p scrollable-p)
-  "Fit essential navigation into WIDTH, keeping Escape visible on narrow screens."
-  (let ((variables (make-hash-table :test #'eq)))
+  "Choose a fitting legend, prioritizing scrolling help when space is limited."
+  (let ((variables (make-hash-table :test #'eq))
+        (names (if scrollable-p
+                   '("footer-wide" "footer-scroll-compact" "footer-scroll-small"
+                     "footer-small" "footer-minimal")
+                   '("footer-wide" "footer-medium" "footer-compact"
+                     "footer-small" "footer-minimal"))))
     (setf (gethash ':current variables) (1+ index)
           (gethash ':count variables) count
           (gethash ':action variables) (onboarding-source-text (if input-p "action-check" "action-next"))
           (gethash ':scroll variables) (if scrollable-p (onboarding-source-text "footer-scroll") ""))
-    (mapcar (lambda (fragment)
-              (if (stringp fragment)
-                  (terminal-span ':dim fragment)
-                  (terminal-span (first fragment) (second fragment))))
-            (onboarding-source--inline
-             (onboarding-source-text
-              (cond
-                ((>= width 70)
-                 "footer-wide")
-                ((>= width 44)
-                 "footer-medium")
-                ((>= width 28)
-                 "footer-compact")
-                ((>= width 16)
-                 "footer-small")
-                (t
-                 "footer-minimal"))
-              variables)))))
+    (loop for name in names
+          for spans = (mapcar (lambda (fragment)
+                                (if (stringp fragment)
+                                    (terminal-span ':dim fragment)
+                                    (terminal-span (first fragment) (second fragment))))
+                              (onboarding-source--inline
+                               (onboarding-source-text name variables)))
+          when (or (<= (text-cell-width (terminal--spans-text spans)) width)
+                   (string= name "footer-minimal"))
+            return spans)))
 
 (-> terminal-ui-onboarding--exercise-hint ((option keyword) keyword) string)
 (defun terminal-ui-onboarding--exercise-hint (exercise stage)

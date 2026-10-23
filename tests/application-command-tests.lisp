@@ -132,6 +132,18 @@
       (test-assert
        (application-command-tests--macroexpand-error-p form)
        "invalid command metadata fails during macro expansion"))
+    (dolist (options '((t t) (nil nil) (t :on) (nil "off") (ordinary-symbol)))
+      (test-assert
+       (application-command-tests--macroexpand-error-p
+        `(define-application-command application-command-tests--invalid-options
+             (:name "/invalid-options"
+              :description "invalid finite choices" :tip "tests finite option validation."
+              :busy-behavior :inspect :terminal-behavior :shared
+              :callable t :static-options ,options)
+             (application value)
+           (declare (ignore application value))
+           :continue))
+       "finite choices reject ambiguous spellings and non-literal symbols"))
     (test-assert
      (equal snapshot (application-command--registry-snapshot))
      "macro expansion never mutates the live command registry"))
@@ -529,9 +541,9 @@
                  name)))))
   (let ((command (application-command-find "/ste")))
     (test-assert
-     (and (equal (application-command-static-options command) '(:on :off))
+     (and (equal (application-command-static-options command) '(t nil))
           (string= (application-command-argument command) "[on|off]"))
-     "finite options derive the optional argument hint from one metadata list"))
+     "native finite options derive their slash spelling from one metadata list"))
   (let* ((objective "fix argument mismatches without crashing the application")
          (invocation
            (application-command-invocation-parse
@@ -687,20 +699,52 @@
 
 (-> test-application-typed-boolean-controls () null)
 (defun test-application-typed-boolean-controls ()
-  "Test native booleans, query defaults, slash parsing, and invalid controls."
+  "Test completed boolean calls, query defaults, slash parsing, and invalid controls."
   (test-call-with-typed-control-application
    (lambda (application root observations)
      (declare (ignore root observations))
-     (let ((configuration (application-configuration application)))
+     (let ((configuration (application-configuration application))
+           (entries (application-operation-completion-entries application))
+           (*read-eval* nil))
        (dolist
            (case
             '(("fast" :codex-fast-mode-p) ("trace" :reasoning-traces-p)
               ("timestamps" :turn-timestamps-p) ("cache-misses" :cache-miss-notices-p)
               ("ste" :simple-technical-english-p) ("titles" :session-title-generation-p)
               ("hurry-up" :hurry-up-p) ("compact-tool" :compact-view-p)))
-         (destructuring-bind
-             (name setting)
-             case
+         (destructuring-bind (name setting) case
+           (let* ((completions
+                    (remove-if-not
+                     (lambda (entry) (equal (getf entry :primary) (format nil "(~A" name)))
+                     entries))
+                  (forms (mapcar (lambda (entry) (read-from-string (getf entry :name)))
+                                 completions))
+                  (boolean-completions
+                    (remove-if-not
+                     (lambda (entry)
+                       (typep (second (read-from-string (getf entry :name))) 'boolean))
+                     completions))
+                  (hint (application-operation-completion-argument
+                         (application-operation-find application name)))
+                  (hint-values
+                    (mapcar #'read-from-string
+                            (uiop:split-string (string-trim '(#\[ #\] #\)) hint)
+                                               :separator "|"))))
+             (test-assert
+              (equal (mapcar (lambda (entry) (second (read-from-string (getf entry :name))))
+                             boolean-completions)
+                     '(t nil))
+              (format nil "~A completes both native boolean values" name))
+             (test-assert (equal hint-values (mapcar #'second forms))
+                          "native argument hints advertise the completed native values")
+             (dolist (entry boolean-completions)
+               (let* ((source (getf entry :name))
+                      (value (second (read-from-string source)))
+                      (evaluation (application-lisp-evaluate source :application application)))
+                 (test-assert
+                  (and (eq (application-lisp-evaluation-status evaluation) ':ok)
+                       (eq (config setting configuration) value))
+                  (format nil "completed ~A evaluates and applies its boolean value" source)))))
            (dolist (value '(t nil :on :off))
              (application-operation-call application name value)
              (test-assert
@@ -708,15 +752,15 @@
               (format nil "~A applies the native boolean ~S" name value)))
            (application-operation-call application name t)
            (let ((saved
-                  (uiop/stream:read-file-string
-                   (configuration-preferences-path configuration))))
+                   (uiop/stream:read-file-string
+                    (configuration-preferences-path configuration))))
              (application-operation-call application name)
              (application-operation-call application name ':status)
              (dolist (invalid '("on" 42 :unknown))
                (test-assert
                 (handler-case
-                 (progn (application-operation-call application name invalid) nil)
-                 (configuration-error nil t))
+                    (progn (application-operation-call application name invalid) nil)
+                  (configuration-error () t))
                 (format nil "~A rejects non-native control ~S" name invalid)))
              (test-assert
               (and (eq (config setting configuration) t)

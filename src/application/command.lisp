@@ -38,17 +38,20 @@
           count (eq (first tail) key)))
 
   (defun application-command--option-text (option)
-    "Return the slash spelling of a native string or keyword OPTION."
+    "Return the slash spelling of a native string, keyword, or boolean OPTION."
     (etypecase option
+      (boolean (if option "on" "off"))
       (string option)
       (keyword (string-downcase (symbol-name option)))))
 
   (defun application-command--static-options-p (value)
-    "Return true for unique printable string or keyword choices."
+    "Return true for unique printable string, keyword, or boolean choices."
     (and (proper-list-p value)
          (not (null value))
          (every (lambda (option)
-                  (and (or (non-empty-string-p option) (keywordp option))
+                  (and (or (non-empty-string-p option)
+                           (keywordp option)
+                           (typep option 'boolean))
                        (non-empty-string-p (application-command--option-text option))
                        (every #'graphic-char-p (application-command--option-text option))))
                 value)
@@ -118,10 +121,15 @@
         (error "An application command rest marker requires a parameter."))
       (values minimum (and (not rest-p) maximum))))
 
-  (defun application-command--static-option-hint (options optional-p)
-    "Return the argument hint derived from finite native OPTIONS."
-    (let ((choices (format nil "~{~A~^|~}"
-                           (mapcar #'application-command--option-text options))))
+  (defun application-command--static-option-hint (options optional-p &key native-p)
+    "Return the finite OPTIONS hint in native Lisp or slash syntax."
+    (let* ((*print-case* ':downcase)
+           (choices (format nil "~{~A~^|~}"
+                            (mapcar (lambda (option)
+                                      (if native-p
+                                          (format nil "~S" option)
+                                          (application-command--option-text option)))
+                                    options))))
       (if optional-p (format nil "[~A]" choices) choices)))
 
   (defun application-command--validate-metadata
@@ -322,7 +330,7 @@
     :initform nil
     :reader application-command-static-options
     :type list
-    :documentation "Finite native string or keyword values offered for the command's sole argument.")
+    :documentation "Finite native string, keyword, or boolean values offered for the command's sole argument.")
    (handler
     :initarg :handler
     :reader application-command-handler
@@ -863,6 +871,11 @@ without changing the registry."
     (t
      parsed-arguments)))
 
+(-> application-command--display-name (application-command) string)
+(defun application-command--display-name (command)
+  "Return COMMAND's canonical callable spelling for human-facing diagnostics."
+  (format nil "(~A)" (subseq (application-command-name command) 1)))
+
 (-> application-command--validate-invocation-arity
     (application-command list)
     list)
@@ -877,7 +890,7 @@ without changing the registry."
              :message
              (format nil
                      "Command ~A accepts at most ~D argument~:P; received ~D."
-                     (application-command-name command)
+                     (application-command--display-name command)
                      maximum
                      (length arguments)))))
   arguments)
@@ -953,7 +966,7 @@ without changing the registry."
                      :report
                      (lambda (stream)
                        (format stream "Supply replacement arguments for ~A."
-                               (application-command-name command)))
+                               (application-command--display-name command)))
                      (invoke-callable-handler replacement-arguments)))
                  (apply (application-command-handler command)
                         application arguments)))
@@ -975,7 +988,7 @@ without changing the registry."
                         :message
                         (format nil
                                 "Application command ~A returned invalid action ~S."
-                                (application-command-name command)
+                                (application-command--display-name command)
                                 result)))
                result)))
     (if (eq *application-command-presentation-invocation* invocation)
@@ -1086,14 +1099,14 @@ the typed text stops matching the canonical name."
                             name)
                     :primary (copy-seq name)))))
 
-(-> application-command--slash-option-token ((or string keyword)) string)
+(-> application-command--slash-option-token ((or string keyword boolean)) string)
 (defun application-command--slash-option-token (option)
   "Return a native OPTION's text spelling, quoted when slash syntax requires it."
   (let ((text (application-command--option-text option)))
     (if (find-if (lambda (character)
-                   (or (char= character #\")
-                       (find character *application-command-whitespace*)))
-                 text)
+                    (or (char= character #\")
+                        (find character *application-command-whitespace*)))
+                text)
         (format nil "~S" text)
         (copy-seq text))))
 

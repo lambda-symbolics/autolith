@@ -462,6 +462,20 @@
     :documentation "The memory identifier involved in the failure, when known."))
   (:documentation "Persistent memory data is invalid or cannot be updated."))
 
+(define-condition knowledge-error (autolith-error)
+  ((code
+    :initarg :code
+    :initform ':invalid
+    :reader knowledge-error-code
+    :type keyword
+    :documentation "A stable reason callers and tools can distinguish.")
+   (subject
+    :initarg :subject
+    :initform nil
+    :reader knowledge-error-subject
+    :documentation "The identifier, predicate, or value involved, when known."))
+  (:documentation "Structured knowledge, or an operation on it, is invalid."))
+
 (define-condition papercut-error (autolith-error)
   ((pathname
     :initarg :pathname

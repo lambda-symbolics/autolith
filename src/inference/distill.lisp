@@ -292,8 +292,7 @@ pipeline; nothing is evaluated or installed here."
             (routing (multiple-value-list
                       (rlm--tool-routing tool context arguments)))
             (provider (first routing))
-            (configuration (second routing))
-            (activity-callback (rlm--tool-activity-callback tool context)))
+            (configuration (second routing)))
        (rlm--tool-invoke
         context arguments
         :tool-name "rlm.distill"
@@ -308,7 +307,8 @@ pipeline; nothing is evaluated or installed here."
                                   :budget budget
                                   :provider provider
                                   :configuration configuration
-                                  :activity-callback activity-callback)))
+                                  :activity-callback
+                                  (rlm--tool-activity-callback tool context))))
                (tool-success
                 (rlm--result-sexp
                  (append proposal

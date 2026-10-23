@@ -977,26 +977,55 @@ values from either side of a terminal transition."
                    :limit *task-retained-assignment-limit*)
                   :detached (task-job-detached-p job))))))))
 
+(defmethod tool-execution-activity-callback ((runtime task-orchestrator))
+  "Capture the executing job so nested workers report to the same owner."
+  (let ((job *tool-execution-current-job*))
+    (when (and job (eq runtime (session-job-orchestrator job)))
+      (lambda (activity)
+        (check-type activity string)
+        (let ((changed-p nil))
+          (with-lock-held ((cl-jobpond::job--lock job))
+            (when (member (job-state job) '(:queued :running) :test #'eq)
+              (setf (tool-execution-job-activity job)
+                    (bounded-string (sanitize-text activity :single-line-p t)
+                                    :limit 160)
+                    (tool-execution-job-activity-at job) (get-internal-real-time)
+                    changed-p t)))
+          (when changed-p
+            (task-orchestrator-emit
+             runtime ':tool-execution-progress
+             (list :id (session-job-identifier job)))))))))
+
 (defmethod session-job-live-activity ((job tool-execution-job))
-  "Return a primary-owned tool JOB's queued or running command presentation."
+  "Return a primary-owned tool JOB's bounded live command or inference phase."
   (let ((state (job-state job)))
     (when (and (null (job-owner-identifiers job))
                (member state '(:queued :running) :test #'eq))
       (let ((now (get-internal-real-time)))
-        (list :id (session-job-identifier job)
-              :type ':tool
-              :index (session-job-order job)
-              :tool (tool-execution-job-tool-name job)
-              :description
-              (let ((description (tool-execution-job-description job)))
-                (if (non-empty-string-p description)
-                    description
-                    (tool-execution-job-summary job)))
-              :state state
-              :duration-ms
-              (and (job-started-at job)
-                   (task--milliseconds-between (job-started-at job) now))
-              :detached (session-job-detached-p job))))))
+        (multiple-value-bind (activity activity-at)
+            (with-lock-held ((cl-jobpond::job--lock job))
+              (values (tool-execution-job-activity job)
+                      (tool-execution-job-activity-at job)))
+          (list :id (session-job-identifier job)
+                :type ':tool
+                :index (session-job-order job)
+                :tool (tool-execution-job-tool-name job)
+                :description
+                (if (tool-recursive-inference-p (tool-execution-job-tool-name job))
+                    (or activity "starting")
+                    (let ((description (tool-execution-job-description job)))
+                      (if (non-empty-string-p description)
+                          description
+                          (tool-execution-job-summary job))))
+                :activity-age-ms
+                (and (or activity-at (job-started-at job))
+                     (task--milliseconds-between
+                      (or activity-at (job-started-at job)) now))
+                :state state
+                :duration-ms
+                (and (job-started-at job)
+                     (task--milliseconds-between (job-started-at job) now))
+                :detached (session-job-detached-p job)))))))
 
 (-> task-job-live-activity (task-job) (option list))
 (defun task-job-live-activity (job)

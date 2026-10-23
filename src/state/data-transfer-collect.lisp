@@ -8,21 +8,24 @@
   (with-recursive-lock-held (*data-transfer-lock*)
     (with-recursive-lock-held (*agenda-lock*)
       (with-recursive-lock-held (*memory-lock*)
-        (with-lock-held (*papercut-lock*)
-          (labels ((acquire (paths)
-                     (if paths
-                         (call-with-file-lock (first paths)
-                                              (lambda () (acquire (rest paths))))
-                         (plan--call-with-lock configuration function))))
-            (acquire
-             (list (merge-pathnames "data-transfer.lock"
-                                    (config :state-root configuration))
-                   (readable-state-lock-pathname (configuration-agenda-path configuration)
-                                                 "agendas.lock")
-                   (readable-state-lock-pathname (configuration-memory-path configuration)
-                                                 "memories.lock")
-                   (readable-state-lock-pathname (configuration-papercut-path configuration)
-                                                 "papercuts.lock")))))))))
+        (with-recursive-lock-held (*knowledge-lock*)
+          (with-lock-held (*papercut-lock*)
+            (labels ((acquire (paths)
+                       (if paths
+                           (call-with-file-lock (first paths)
+                                                (lambda () (acquire (rest paths))))
+                           (plan--call-with-lock configuration function))))
+              (acquire
+               (list (merge-pathnames "data-transfer.lock"
+                                      (config :state-root configuration))
+                     (readable-state-lock-pathname (configuration-agenda-path configuration)
+                                                   "agendas.lock")
+                     (readable-state-lock-pathname (configuration-memory-path configuration)
+                                                   "memories.lock")
+                     (readable-state-lock-pathname (configuration-papercut-path configuration)
+                                                   "papercuts.lock")
+                     (readable-state-lock-pathname (configuration-knowledge-path configuration)
+                                                   "knowledge.lock"))))))))))
 
 (-> data-transfer--histories (list) list)
 (defun data-transfer--histories (records)
@@ -63,6 +66,30 @@
                                        (not (equal owner (getf (rest record) :workspace)))))
                                 (rest history))
                      (rest history))))
+
+(-> data-transfer--memory-links (list &key (:workspace t) (:linked list)) list)
+(defun data-transfer--memory-links (records &key workspace linked)
+  "Return LINKED with every memory that WORKSPACE's memories rely on.
+
+A workspace memory may be derived from global memories, which may in turn rely
+on other global memories, so premises are followed until none are new."
+  (let ((histories (data-transfer--histories records))
+        (links (copy-list linked))
+        (changed t))
+    (loop while changed
+          do (setf changed nil)
+             (dolist (history histories)
+               (let ((owner (data-transfer--history-workspace history ':memory)))
+                 (when (if owner
+                           (equal owner workspace)
+                           (member (first history) links :test #'equal))
+                   (dolist (record (rest history))
+                     (dolist (premise (and (eq (first record) :memory)
+                                           (getf (rest record) :premises)))
+                       (unless (member (getf premise :id) links :test #'equal)
+                         (push (getf premise :id) links)
+                         (setf changed t))))))))
+    links))
 
 (-> data-transfer--session-root (configuration keyword) pathname)
 (defun data-transfer--session-root (configuration kind)
@@ -286,10 +313,14 @@
          (linked (loop for agenda in agendas append
                    (loop for item in (workspace-agenda-items agenda)
                          append (agenda-item-memory-identifiers item))))
+         (memory-records (data-transfer--log-records
+                          (configuration-memory-path configuration) ':memories))
          (memories (data-transfer--filter-histories
-                    (data-transfer--log-records (configuration-memory-path configuration)
-                                                ':memories)
-                    ':memory :workspace workspace :linked linked))
+                    memory-records ':memory
+                    :workspace workspace
+                    :linked (data-transfer--memory-links memory-records
+                                                         :workspace workspace
+                                                         :linked linked)))
          (papercuts (data-transfer--filter-histories
                      (data-transfer--log-records (configuration-papercut-path configuration)
                                                  ':papercuts)
@@ -351,8 +382,15 @@
                                       (append plans agenda-forms)))) :test #'equal)))
       (multiple-value-bind (states input-files)
           (data-transfer--collect-inputs states)
-        (list :format ':autolith-data :version *data-transfer-version*
-              :workspace workspace :workspaces (sort workspaces #'string<)
-              :sessions sessions :children children :memories memories :papercuts papercuts
-              :agendas agenda-forms :plans plans :files (append files input-files)
-              :states states)))))
+        (let ((knowledge (data-transfer--collect-knowledge configuration workspace)))
+          (list :format ':autolith-data :version *data-transfer-version*
+                :workspace workspace
+                :workspaces (sort (remove-duplicates
+                                   (append workspaces
+                                           (data-transfer--knowledge-workspaces
+                                            (list :knowledge knowledge)))
+                                   :test #'equal)
+                                  #'string<)
+                :sessions sessions :children children :memories memories :papercuts papercuts
+                :agendas agenda-forms :plans plans :files (append files input-files)
+                :states states :knowledge knowledge))))))

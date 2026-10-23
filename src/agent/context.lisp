@@ -78,6 +78,13 @@
     :documentation "Whether the request is a side-channel compaction."))
   (:documentation "A read-only snapshot supplied to context contributors."))
 
+(defclass anchored-context-contribution (context-contribution)
+  ()
+  (:documentation
+   "Current request context projected at its first surviving history boundary.
+Use for large stable blocks whose position can be reused while their current
+activation, contents, and lifetime are checked on every request."))
+
 (defclass context-delivery ()
   ((conversation-identifier
     :initarg :conversation-identifier
@@ -460,6 +467,11 @@ have the same evaluation behavior as DEFUN."
    :contributor contributor
    :source source))
 
+(defmethod context--copy-contribution
+    ((contribution anchored-context-contribution) contributor source)
+  "Preserve anchored placement while attaching registration provenance."
+  (change-class (call-next-method) 'anchored-context-contribution))
+
 (defmethod context-contribution-provider-event ((contribution context-contribution))
   nil)
 
@@ -499,6 +511,56 @@ have the same evaluation behavior as DEFUN."
   "Return the library's default request-context cost for product diagnostics."
   (cl-llm-provider-api:context-contribution-token-estimate contribution))
 
+(-> context--known-value-character-count (t) (integer 0))
+(defun context--known-value-character-count (value)
+  "Count portable JSON-like VALUE characters without serializing its whole tree."
+  (typecase value
+    (string
+     (length value))
+    (number
+     (length (princ-to-string value)))
+    (hash-table
+     (loop for key being the hash-keys of value using (hash-value item)
+           sum (+ (context--known-value-character-count key)
+                  (context--known-value-character-count item))))
+    (vector
+     (loop for item across value
+           sum (context--known-value-character-count item)))
+    (cons
+     (loop for item in value
+           sum (context--known-value-character-count item)))
+    (null
+     0)
+    (t
+     (length (princ-to-string value)))))
+
+(-> context-estimate-known-tokens
+    (configuration conversation
+     &key (:tool-registry (option tool-registry)) (:hurry-up-p boolean)
+          (:family (option keyword)))
+    (integer 0))
+(defun context-estimate-known-tokens
+    (configuration conversation &key tool-registry hurry-up-p family)
+  "Estimate known request context before provider usage is available.
+
+The portable fallback uses four characters per token for the system prompt,
+mutable session state, compatible retained input, and known tool schemas. Do not
+invoke request-local contributors merely to display idle context usage."
+  (let ((characters
+          (+ (length (system-prompt configuration))
+             (length (request-context-session-state
+                      configuration :hurry-up-p hurry-up-p))
+             (context--known-value-character-count
+              (conversation-input-items-for-family
+               conversation
+               (or family (model-family (config :model configuration)
+                                        (config :model-provider configuration)))))
+             (if tool-registry
+                 (context--known-value-character-count
+                  (tool-registry-provider-schemas tool-registry))
+                 0))))
+    (ceiling characters 4)))
+
 (-> context--render (list) (option string))
 (defun context--render (contributions)
   "Render CONTRIBUTIONS as one request-local developer instruction block."
@@ -516,6 +578,64 @@ have the same evaluation behavior as DEFUN."
                               (json-encode
                                (context-contribution-evidence contribution)))))
                ordered)))))
+
+(-> context-delivery-project-items
+    ((option context-delivery) conversation list)
+    (values list (option string)))
+(defun context-delivery-project-items (delivery conversation items)
+  "Return ITEMS with active anchored context and the remaining context tail.
+
+Only identities and history boundaries survive assembly. Render current selected
+contributions afresh, dropping inactive blocks and relocating anchors whose
+history was removed or compacted. Never append context to durable history."
+  (unless delivery
+    (return-from context-delivery-project-items (values items nil)))
+  (let* ((contributions (context-delivery-contributions delivery))
+         (anchored (stable-sort
+                    (remove-if-not
+                     (lambda (contribution)
+                       (typep contribution 'anchored-context-contribution))
+                     contributions)
+                    #'< :key #'context-contribution-priority))
+         (trailing (remove-if
+                    (lambda (contribution)
+                      (typep contribution 'anchored-context-contribution))
+                    contributions)))
+    (with-recursive-lock-held ((conversation-append-lock conversation))
+      (let ((previous (conversation-context-anchors conversation))
+            (generation (conversation-log-generation conversation))
+            (groups (make-hash-table :test #'eq))
+            (anchors nil)
+            (projected nil))
+        (dolist (contribution anchored)
+          (let* ((key (list (context-contribution-contributor contribution)
+                            (context-contribution-source contribution)
+                            (context-contribution-identifier contribution)))
+                 (old (assoc key previous :test #'equal))
+                 (after (if (and old
+                                (= (getf (rest old) :generation) generation)
+                                (or (null (getf (rest old) :after))
+                                    (member (getf (rest old) :after) items
+                                            :test #'eq)))
+                            (getf (rest old) :after)
+                            (first (last items))))
+                 (message
+                   (json-object
+                    "role" "developer"
+                    "content" (json-array
+                               (json-object
+                                "type" "input_text"
+                                "text" (context--render (list contribution)))))))
+            (push (list key :generation generation :after after) anchors)
+            (push message (gethash after groups))))
+        (dolist (message (reverse (gethash nil groups)))
+          (push message projected))
+        (dolist (item items)
+          (push item projected)
+          (dolist (message (reverse (gethash item groups)))
+            (push message projected)))
+        (setf (conversation-context-anchors conversation) (nreverse anchors))
+        (values (nreverse projected) (context--render trailing))))))
 
 (-> context--invoke-contributors
     (request-context list)

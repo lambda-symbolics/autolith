@@ -1109,6 +1109,24 @@ continue also requests an automatic continuation after a detached job completes.
    "description"
    "Detached completion policy: notify delivers a completion notice and retains the result; continue also requests an automatic continuation. Defaults to continue, including grace-expired handoffs."))
 
+(-> tool-recursive-inference-p (string) boolean)
+(defun tool-recursive-inference-p (name)
+  "Return true when canonical tool NAME denotes recursive inference work."
+  (not (null (member name '("rlm.infer" "rlm.map" "rlm.complete" "rlm.distill")
+                     :test #'string=))))
+
+(-> tool-execution-activity-callback (t) (option function))
+(defgeneric tool-execution-activity-callback (runtime)
+  (:documentation
+   "Capture the current execution's bounded activity reporter, if available.
+
+Call from inside the operation. The returned callback may be shared with
+nested workers and accepts only compact, content-free phase descriptions."))
+
+(defmethod tool-execution-activity-callback ((runtime null))
+  "Return no reporter when executing without a session job runtime."
+  nil)
+
 (-> tool-execution-invoke
     (t t
      &key (:tool-name non-empty-string)
@@ -1268,7 +1286,7 @@ signals with the candidate canonical names."
                              (setf *telemetry-tool-corrects-previous-p* (and present-p (json-true-p value))))
                            (remhash "corrects_previous" arguments)))
                        (when *telemetry-tool-capture-p* (setf *telemetry-tool-arguments* arguments))
-                       (tool-execute tool context arguments)))))))
+                       (tool-execute-with-contracts tool context arguments)))))))
       (active-image-corruption (condition)
         (error condition))
       (error (condition)

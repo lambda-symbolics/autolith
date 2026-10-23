@@ -225,9 +225,9 @@
            (test-assert (tool-child-safe-p tool)
                         "skill.load is available across the child-agent boundary")
            (test-assert
-            (and (eq (tool-conversation-persistence tool) ':next-response)
-                 (tool-provider-round-trip-barrier-p tool))
-            "skill.load declares request-local persistence and a provider barrier")
+             (and (eq (tool-conversation-persistence tool) ':durable)
+                  (tool-provider-round-trip-barrier-p tool))
+             "skill.load retains selection metadata and requires a provider barrier")
            (let ((schema (tool-provider-schema tool)))
              (test-assert
               (and (string= (json-get schema "name") "load")
@@ -462,4 +462,118 @@
       (platform-delete-directory-tree *platform* root
                                       :validate t
                                       :if-does-not-exist ':ignore)))
+  nil)
+
+
+;;;; -- Cache-Prefix Projection --
+
+(-> test-skill-cache-prefix () null)
+(defun test-skill-cache-prefix ()
+  "Exercise stable skill placement, live edits, expiry, and metadata replay."
+  (with-test-configuration (configuration)
+    (let* ((*context-contributors* nil)
+           (*context-resolver* (cl-llm-provider-api:make-context-resolver))
+           (conversation (conversation-create configuration :identifier "skill-cache"))
+           (registry (skill-augment-tool-registry (make-instance 'tool-registry)))
+           (schemas (tool-registry-provider-schemas registry))
+           (context (make-instance 'tool-context :configuration configuration
+                                               :worker nil :conversation conversation
+                                               :registry registry))
+           (provider (provider-create configuration))
+           (body (concatenate 'string "ALPHA-CACHE-BODY-" (make-string 16000 :initial-element #\a)))
+           (state "Mutable state one."))
+      (register-context-contributor "skills" 'skill-context-contributor :source ':built-in)
+      (dolist (name '("alpha" "beta"))
+        (skill-tool-tests--write
+         (skill-global-root configuration) (format nil "~A/SKILL.sexp" name)
+         (skill-tests--definition name "Cache projection fixture."
+                                  (if (string= name "alpha") body "BETA-CACHE-BODY"))))
+      (labels ((request (&optional (namespaces schemas))
+                 (let ((*context-request-contributions*
+                         (list (make-context-contribution
+                                :identifier "mutable" :instruction state :class ':mandatory))))
+                   (provider-request-object provider conversation namespaces)))
+
+               (select (name)
+                 (let* ((tool (tool-registry-find registry "skill" "load"))
+                        (persistence (tool-conversation-persistence tool))
+                        (call-id (format nil "select-~A" name)))
+                   (conversation-append-provider-item
+                    conversation
+                    (json-object "type" "function_call" "namespace" "skill" "name" "load"
+                                 "call_id" call-id
+                                 "arguments" (json-encode (json-object "name" name)))
+                    :persistence persistence)
+                   (let ((result (skill-tool-tests--call registry context name)))
+                     (test-assert (tool-result-success-p result) "skill selection succeeds")
+                     (conversation-append-tool-result
+                      conversation call-id :tool-name "skill.load"
+                      :output (tool-result-content result) :success-p t :persistence persistence))))
+
+               (stable-input (request)
+                 (let ((input (json-get request "input")))
+                   (subseq input 0 (1- (length input)))))
+
+               (prefix-p (earlier later)
+                 (let ((prefix (stable-input earlier))
+                       (input (json-get later "input")))
+                   (and (<= (length prefix) (length input))
+                        (string= (json-encode prefix)
+                                 (json-encode (subseq input 0 (length prefix))))))))
+        (conversation-append-user-message conversation "Initial work.")
+        (let ((initial (request)))
+          (call-with-skill-logical-turn
+           (user-message-input-create :text "Load skills.")
+           (lambda ()
+             (select "alpha")
+             (let ((first (request)))
+               (test-assert (prefix-p initial first)
+                            "loading a skill preserves the earlier catalog prefix")
+               (test-assert (search body (json-encode (stable-input first)))
+                            "the reusable input includes the complete large skill body")
+               (conversation-clear-ephemeral-input-items conversation)
+               (conversation-append-user-message conversation "Continue work.")
+               (setf state "Mutable state two.")
+               (let ((second (request)))
+                 (test-assert (prefix-p first second)
+                              "growing history and mutable context do not move selected skills")
+                 (test-assert
+                  (and (string= (json-get first "instructions") (json-get second "instructions"))
+                       (string= (json-encode (json-get first "tools"))
+                                (json-encode (json-get second "tools"))))
+                  "equivalent requests retain stable instruction and tool definitions")
+                 (select "beta")
+                 (test-assert (prefix-p second (request))
+                              "adding a second skill preserves previously projected blocks"))
+               (skill-tool-tests--write
+                (skill-global-root configuration) "alpha/SKILL.sexp"
+                (skill-tests--definition "alpha" "Cache projection fixture." "UPDATED-ALPHA-BODY"))
+               (let ((edited (json-encode (request))))
+                 (test-assert (and (search "UPDATED-ALPHA-BODY" edited) (not (search body edited)))
+                              "anchored skill contents are reread after edits"))
+               (test-assert (not (search "UPDATED-ALPHA-BODY" (json-encode (request #()))))
+                            "tool restrictions remove skill instructions")
+               (request)
+               (let ((compaction (provider-request-object provider conversation schemas :compaction-p t)))
+                 (test-assert (not (search "UPDATED-ALPHA-BODY" (json-encode compaction)))
+                              "compaction side requests omit skill context"))
+               (let ((summary (json-object "role" "user" "content" "Compacted work.")))
+                 (setf (conversation-input-items conversation) (list summary))
+                 (incf (conversation-log-generation conversation))
+                 (let ((input (json-get (request) "input")))
+                   (test-assert
+                    (and (search "Compacted work." (json-encode (aref input 0)))
+                         (search "UPDATED-ALPHA-BODY" (json-encode input)))
+                    "removed history boundaries relocate active context after compaction")))))))
+        (let* ((next (json-encode (request)))
+               (loaded (conversation-load (conversation-pathname conversation)))
+               (replayed (json-encode (coerce (conversation-input-items loaded) 'vector))))
+          (test-assert (and (not (search "UPDATED-ALPHA-BODY" next))
+                            (not (search "BETA-CACHE-BODY" next)))
+                       "selection expires at the logical-turn boundary")
+          (test-assert (and (search "select-alpha" replayed) (search "select-beta" replayed)
+                            (not (search body replayed))
+                            (not (search "UPDATED-ALPHA-BODY" replayed))
+                            (null (conversation-context-anchors loaded)))
+                       "selection metadata replays without skill bodies or process-local anchors")))))
   nil)

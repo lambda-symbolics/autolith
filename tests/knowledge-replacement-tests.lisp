@@ -1,0 +1,125 @@
+(in-package #:autolith)
+
+;;;; -- Replacement Observations --
+
+(-> test-knowledge-replacement-renewal () null)
+(defun test-knowledge-replacement-renewal ()
+  "Test identical expired observations renew durably without duplicating supports."
+  (with-test-configuration (base root)
+    (let* ((configuration (configuration-copy base :working-directory root))
+           (now 100000)
+           (*knowledge-clock* (lambda () now))
+           (proposition '("price.listed" "lamp" 40)))
+      (knowledge-define-schema
+       configuration
+       (knowledge-make-schema :predicate "price.listed"
+                              :arguments '((:name "item" :type :entity)
+                                           (:name "price" :type :number))
+                              :key '("item")))
+      (labels ((observe ()
+                 (knowledge-replace-observation
+                  configuration proposition
+                  (knowledge-observe :source '(:url :url "https://example.com/lamp")
+                                     :digest (memory-source-text-digest "Lamp: 40")
+                                     :adapter "test/1")))
+
+               (node (claim)
+                 (knowledge-view-node (knowledge-view-current configuration) claim)))
+        (let* ((claim (observe))
+               (before (knowledge-base-read configuration))
+               (supports (copy-list (getf (knowledge-base-claim before claim) :supports)))
+               (evidence-id (getf (knowledge-base-support before (first supports)) :evidence)))
+          (incf now (1+ *knowledge-url-lifetime*))
+          (test-assert (eq (knowledge-node-applicability (node claim)) ':expired)
+                       "the original observation expires")
+          (test-assert (equal claim (observe)) "renewal preserves the claim identity")
+          (test-assert (eq (knowledge-node-applicability (node claim)) ':current)
+                       "fresh identical content becomes current")
+          (let* ((replayed (knowledge-tests--reread configuration))
+                 (evidence (knowledge-base-evidence-record replayed evidence-id)))
+            (test-assert (= now (getf evidence :observed-at))
+                         "replay retains the new observation time")
+            (test-assert (= (+ now *knowledge-url-lifetime*) (getf evidence :valid-until))
+                         "replay retains the renewed expiry")
+            (test-assert (equal supports (getf (knowledge-base-claim replayed claim) :supports))
+                         "renewal reuses the existing support")
+            (test-assert (eq (knowledge-node-applicability (node claim)) ':current)
+                         "the replayed observation is current"))
+          (let ((revision (knowledge-base-revision (knowledge-base-read configuration))))
+            (observe)
+            (test-assert (= revision (knowledge-base-revision (knowledge-base-read configuration)))
+                         "an identical observation at the same time is idempotent"))
+          (incf now (1+ *knowledge-url-lifetime*))
+          (test-assert (eq (knowledge-node-applicability (node claim)) ':expired)
+                       "renewed evidence expires at its new deadline")))))
+  nil)
+
+
+(-> test-knowledge-replacement-source-identity () null)
+(defun test-knowledge-replacement-source-identity ()
+  "Test replacement isolates source identities and supersedes their own revisions."
+  (dolist (sources
+           '(((:url :url "https://example.com/a" :quote "old")
+              (:url :url "https://example.com/b")
+              (:url :quote "new" :url "https://example.com/a"))
+             ((:tool :name "probe.a" :conversation "one" :call "old")
+              (:tool :name "probe.b" :conversation "one")
+              (:tool :call "new" :conversation "two" :name "probe.a"))
+             ((:tool :name "probe.a" :call "old")
+              (:tool :name "probe.b")
+              (:tool :name "probe.a" :call "new"))
+             ((:file :path "a.txt" :relative t :quote "old")
+              (:file :path "b.txt" :relative t)
+              (:file :quote "new" :relative t :path "a.txt"))
+             ((:mission :id "a" :detail "old")
+              (:mission :id "b")
+              (:mission :detail "new" :id "a"))
+             ((:skill :id "a" :detail "old")
+              (:skill :id "b")
+              (:skill :detail "new" :id "a"))
+             ((:memory :id "a" :digest "0000000000000000000000000000000000000000000000000000000000000000")
+              (:memory :id "b" :digest "0000000000000000000000000000000000000000000000000000000000000000")
+              (:memory :id "a" :digest "1111111111111111111111111111111111111111111111111111111111111111"))
+             ((:user :conversation "one" :quote "The lamp was listed for ten yesterday.")
+              (:user :conversation "two" :quote "The lamp is listed elsewhere for twenty.")
+              (:user :quote "The lamp is now listed for thirty today." :conversation "one"))
+             ((:user :quote "The lamp was listed for ten yesterday.")
+              (:user :quote "The lamp is listed elsewhere for twenty.")
+              (:user :quote "The lamp was listed for ten yesterday."))))
+    (with-test-configuration (base root)
+      (let ((configuration (configuration-copy base :working-directory root)))
+        (knowledge-define-schema
+         configuration
+         (knowledge-make-schema :predicate "price.listed"
+                                :arguments '((:name "item" :type :entity)
+                                             (:name "price" :type :number))
+                                :key '("item")))
+        (labels ((observe (source value)
+                   (knowledge-replace-observation
+                    configuration (list "price.listed" "lamp" value)
+                    (knowledge-make-evidence :source source
+                                             :observed-at 100000
+                                             :digest (memory-source-text-digest
+                                                      (format nil "Lamp: ~D" value))
+                                             :adapter "test/1")))
+
+                 (support (claim)
+                   (let ((base (knowledge-base-read configuration)))
+                     (knowledge-base-support
+                      base (first (getf (knowledge-base-claim base claim) :supports))))))
+          (let ((original (observe (first sources) 10))
+                (independent (observe (second sources) 20)))
+            (test-assert (null (getf (support original) :retracted-at))
+                         (format nil "a distinct ~S source does not supersede the original"
+                                 (first (first sources))))
+            (let ((replacement (observe (third sources) 30)))
+              (test-assert (getf (support original) :retracted-at)
+                           "a changed report supersedes its own source's previous value")
+              (test-assert (null (getf (support independent) :retracted-at))
+                           "same-source replacement preserves the independent report")
+              (knowledge-tests--reread configuration)
+              (test-assert (and (getf (support original) :retracted-at)
+                                (null (getf (support independent) :retracted-at))
+                                (null (getf (support replacement) :retracted-at)))
+                           "replay preserves the per-source replacement decision")))))))
+  nil)

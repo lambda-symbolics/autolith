@@ -2238,14 +2238,14 @@
                                  (json-get (third outputs) "output"))))
               "calls after skill.load are explicitly deferred instead of executed")
              (test-assert
-              (and (null (search "skill-call" record-source))
+              (and (search "skill-call" record-source)
                    (null (search "after-call" record-source))
                    (null (search "BARRIER-SKILL-INSTRUCTIONS" record-source)))
-              "Skill selection correlation and instruction text never enter durable history")
+              "selection metadata persists without instruction bodies or deferred calls")
              (test-assert
-              (and (= (length (conversation-input-items conversation)) 4)
+              (and (= (length (conversation-input-items conversation)) 6)
                    (null (conversation-ephemeral-input-entries conversation)))
-              "the next successful provider response consumes ephemeral correlation")
+              "a successful response consumes deferred correlation and retains selection metadata")
              (let* ((reloaded
                       (conversation-load-by-id
                        configuration
@@ -2261,19 +2261,16 @@
                                      :tool-registry registry
                                      :ui replay-ui)))
                (test-assert
-                (and (= (length (conversation-input-items reloaded)) 4)
-                     (find "before-call"
-                           (conversation-input-items reloaded)
-                           :key (lambda (item)
-                                  (json-get item "call_id"))
-                           :test #'string=)
-                     (null
-                      (find "skill-call"
-                            (conversation-input-items reloaded)
-                            :key (lambda (item)
-                                   (json-get item "call_id"))
-                            :test #'string=)))
-                "crash replay retains only the complete durable call pair")
+                (and (= (length (conversation-input-items reloaded)) 6)
+                     (equal
+                      (loop for item in (conversation-input-items reloaded)
+                            for call-id = (json-get item "call_id")
+                            when call-id collect call-id)
+                      '("before-call" "skill-call" "before-call" "skill-call"))
+                     (string=
+                      (json-encode (coerce (conversation-input-items reloaded) 'vector))
+                      (json-encode (coerce (conversation-input-items conversation) 'vector))))
+                "replay restores complete durable call pairs in their original order")
                (unwind-protect
                     (progn
                       (terminal-ui-start replay-ui)

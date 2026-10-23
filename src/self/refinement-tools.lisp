@@ -24,7 +24,7 @@
    (make-instance
     'refinement-tool :namespace "self" :name "refine"
     :description
-    "Unify trajectory lessons, memories, context guidance, skills, roles, RLM policies and exploratory mutations. Propose the smallest useful target or none. Execute existing owner tools with explicit authority; evaluate records actual task observations. A trusted local reviewer or /refine command must accept efficacy before promotion session -> project -> global. Owner mechanical replay checks remain separate."
+    "Unify trajectory lessons, memories, context guidance, skills, roles, RLM policies and exploratory mutations. Propose the smallest useful target or none. Execute existing owner tools with explicit authority; evaluate records actual task observations. A trusted local reviewer or the (refine) command must accept efficacy before promotion session -> project -> global. Owner mechanical replay checks remain separate."
     :parameters
     (tool-object-schema
      (json-object

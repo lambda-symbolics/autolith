@@ -544,7 +544,10 @@
                  "memory collection max-results bounds returned entries")
                 (test-assert
                  (and (tool-result-success-p exact-read)
-                      (search (memory-resource--render-item global-memory)
+                      (search (memory-resource--render-item
+                               (memory-assess (memory-assessor-create configuration)
+                                              global-memory)
+                               nil)
                               (tool-result-content exact-read)))
                  "canonical memory item resources return complete content"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)
@@ -1054,4 +1057,550 @@
       (platform-delete-directory-tree *platform* root
                                       :validate t
                                       :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-memory-resource-sources () null)
+(defun test-memory-resource-sources ()
+  "Test cited evidence and premises through memory: resource edits and reads."
+  (with-test-configuration (base root)
+    (let* ((workspace (merge-pathnames "sourced/" root))
+           (configuration (progn
+                            (ensure-directories-exist workspace)
+                            (configuration-copy base :working-directory workspace)))
+           (registry (make-default-tool-registry))
+           (conversation (conversation-create configuration
+                                              :identifier "memory-sources"))
+           (context (make-instance 'tool-context
+                                   :configuration configuration
+                                   :worker nil
+                                   :conversation conversation))
+           (notes (memory-source-tests--write
+                   (merge-pathnames "NOTES.md" workspace)
+                   (format nil "Deploy with make release-prod after tagging.~%"))))
+      (conversation-append-user-message
+       conversation "Please always use tabs for indentation here.")
+      (labels ((read-resource (uri)
+                 "Read one complete memory resource."
+                 (memory-resource-tests--call
+                  registry context "resource" "read" "uri" uri))
+
+               (revision (result)
+                 "Return RESULT's transient revision alias."
+                 (memory-resource-tests--field
+                  (tool-result-content result) "Revision: "))
+
+               (edit (uri operation)
+                 "Apply OPERATION to a fresh observation of URI."
+                 (memory-resource-tests--edit
+                  registry context uri (revision (read-resource uri)) operation))
+
+               (remember (title content &rest fields)
+                 "Create a workspace memory with optional evidence FIELDS."
+                 (edit "memory:workspace"
+                       (apply #'json-object
+                              "op" "memory-remember"
+                              "title" title
+                              "content" content
+                              fields)))
+
+               (created-uri (result)
+                 "Return the exact URI of a created memory."
+                 (memory-resource-tests--field
+                  (tool-result-content result) "Exact URI: "))
+
+               (failure-p (result text)
+                 "Return true when RESULT failed and mentions TEXT."
+                 (and (not (tool-result-success-p result))
+                      (search text (tool-result-content result))
+                      t)))
+        (let* ((deploy (remember "Deploy command"
+                                 "Deploy with make release-prod."
+                                 "sources"
+                                 (vector (json-object "file" "NOTES.md"
+                                                      "quote" "with make release-prod")
+                                         (json-object "user" "always use tabs"))))
+               (deploy-uri (created-uri deploy))
+               (deploy-identifier (memory-resource-tests--uri-identifier deploy-uri))
+               (derived (remember "Release day"
+                                  "Releases need a tag and make release-prod."
+                                  "premises" (vector deploy-uri)))
+               (derived-uri (created-uri derived)))
+          (test-assert (and (tool-result-success-p deploy)
+                            (= 2 (length (memory-sources
+                                          (memory-find configuration deploy-identifier)))))
+                       "memory-remember records a verified file quote and user statement")
+          (test-assert (search "sources:" (tool-result-content (read-resource deploy-uri)))
+                       "an exact memory read lists its sources")
+          (test-assert (and (tool-result-success-p derived)
+                            (search "premises:" (tool-result-content
+                                                 (read-resource derived-uri))))
+                       "a premise named by its memory URI is recorded and shown")
+          (test-assert (search "relied on by:" (tool-result-content
+                                                (read-resource deploy-uri)))
+                       "an exact memory read names the memories derived from it")
+          (dolist (case
+                   (list
+                    (list "a quote absent from the cited file"
+                          (remember "Wrong" "Wrong."
+                                    "sources" (vector (json-object
+                                                       "file" "NOTES.md"
+                                                       "quote" "make release-staging")))
+                          "does not occur")
+                    (list "words the user never said"
+                          (remember "Invented" "Invented."
+                                    "sources" (vector (json-object
+                                                       "user" "always use spaces")))
+                          "user's messages")
+                    (list "a source naming two kinds"
+                          (remember "Ambiguous" "Ambiguous."
+                                    "sources" (vector (json-object
+                                                       "file" "NOTES.md"
+                                                       "url" "https://example.com")))
+                          "exactly one of")
+                    (list "an unknown premise"
+                          (remember "Orphan" "Orphan."
+                                    "premises" (vector "no-such-memory"))
+                          "does not exist")))
+            (destructuring-bind (label result text) case
+              (test-assert (failure-p result text)
+                           (format nil "~A is rejected correctively" label))))
+          (memory-source-tests--write notes (format nil "Deploy with make ship.~%"))
+          (test-assert (search "status: stale (NOTES.md changed)"
+                               (tool-result-content (read-resource deploy-uri)))
+                       "rereading a memory whose cited text changed reports it stale")
+          (test-assert (search "status: stale"
+                               (tool-result-content (read-resource "memory:workspace")))
+                       "collection entries report stale memories")
+          (test-assert (search "(stale)" (tool-result-content (read-resource derived-uri)))
+                       "a derived memory shows which premise is stale")
+          (let ((restated (edit deploy-uri
+                                (json-object "op" "memory-replace"
+                                             "title" "Deploy command"
+                                             "content" "Deploy with make release-prod."
+                                             "tags" (vector "deploy")))))
+            (test-assert (and (tool-result-success-p restated)
+                              (search "status: stale (NOTES.md changed)"
+                                      (tool-result-content restated)))
+                         "replacing without sources keeps a stale memory stale"))
+          (let ((replaced (edit deploy-uri
+                                (json-object "op" "memory-replace"
+                                             "title" "Deploy command"
+                                             "content" "Deploy with make ship."
+                                             "sources" (vector (json-object
+                                                                "file" "NOTES.md"
+                                                                "quote" "with make ship"))))))
+            (test-assert (and (tool-result-success-p replaced)
+                              (not (search "status:" (tool-result-content replaced))))
+                         "replacing with current evidence makes the memory current"))
+          (test-assert (search "changed since this memory was written"
+                               (tool-result-content (read-resource derived-uri)))
+                       "a derived memory notices that its premise was restated")
+          (let ((forgotten (edit deploy-uri (json-object "op" "memory-forget"))))
+            (test-assert (and (tool-result-success-p forgotten)
+                              (search derived-uri (tool-result-content forgotten)))
+                         "forgetting a premise names the memories that relied on it"))))))
+  nil)
+
+(-> test-memory-knowledge-resources () null)
+(defun test-memory-knowledge-resources ()
+  "Test defining, asserting, deriving, explaining, and retracting through memory:facts."
+  (with-test-configuration (base root)
+    (let* ((workspace (merge-pathnames "facts/" root))
+           (configuration (progn
+                            (ensure-directories-exist workspace)
+                            (configuration-copy base :working-directory workspace)))
+           (registry (make-default-tool-registry))
+           (conversation (conversation-create configuration :identifier "memory-facts"))
+           (context (make-instance 'tool-context
+                                   :configuration configuration
+                                   :worker nil
+                                   :conversation conversation))
+           (schedule (memory-source-tests--write
+                      (merge-pathnames "schedule.txt" workspace)
+                      (format nil "Design review at 13:00 UTC on 22 October.~%"))))
+      (conversation-append-user-message conversation "It takes half an hour to get there.")
+      (labels ((read-resource (uri &rest arguments)
+                 "Read URI with optional ARGUMENTS and return the result."
+                 (apply #'memory-resource-tests--call registry context "resource" "read"
+                        "uri" uri arguments))
+
+               (content (result)
+                 "Return RESULT's text."
+                 (tool-result-content result))
+
+               (edit (&rest operations)
+                 "Apply OPERATIONS to memory:facts against a fresh revision."
+                 (memory-resource-tests--call
+                  registry context "resource" "edit"
+                  "uri" "memory:facts"
+                  "base-revision" (memory-resource-tests--field
+                                   (content (read-resource "memory:facts")) "Revision: ")
+                  "operations" (coerce operations 'vector)))
+
+               (define (predicate arguments &optional key template)
+                 "Return a predicate-define operation."
+                 (apply #'json-object "op" "predicate-define" "predicate" predicate
+                        "arguments"
+                        (map 'vector (lambda (argument)
+                                       (json-object "name" (first argument)
+                                                    "type" (second argument)))
+                             arguments)
+                        (append (and key (list "key" (coerce key 'vector)))
+                                (and template (list "template" template))))))
+        (test-assert (search "No facts hold" (content (read-resource "memory:facts")))
+                     "an empty knowledge base lists no facts")
+        (let ((defined
+                (edit (define "event.start" '(("event" "entity") ("time" "instant"))
+                              '("event") "{event} starts at {time}")
+                      (define "event.travel" '(("event" "entity") ("duration" "duration"))
+                              '("event"))
+                      (define "event.buffer" '(("event" "entity") ("duration" "duration"))
+                              '("event"))
+                      (define "event.departure" '(("event" "entity") ("time" "instant"))
+                              '("event") "leave for {event} at {time}")
+                      (json-object "op" "fact-assert" "predicate" "event.start"
+                                   "arguments" (vector "review" "2026-10-22T13:00:00Z")
+                                   "sources" (vector (json-object "file" "schedule.txt"
+                                                                  "quote" "review at 13:00")))
+                      (json-object "op" "fact-assert" "predicate" "event.travel"
+                                   "arguments" (vector "review" "PT30M")
+                                   "sources" (vector (json-object "user" "half an hour")))
+                      (json-object "op" "fact-assert" "predicate" "event.buffer"
+                                   "arguments" (vector "review" "PT10M"))
+                      (json-object "op" "rule-propose" "id" "departure"
+                                   "premises" (vector (vector "event.start" "?event" "?start")
+                                                      (vector "event.travel" "?event" "?travel")
+                                                      (vector "event.buffer" "?event" "?buffer"))
+                                   "bindings" (vector (vector "?leave"
+                                                              (vector "-" "?start"
+                                                                      (vector "+" "?travel"
+                                                                              "?buffer"))))
+                                   "conclusion" (vector "event.departure" "?event" "?leave")))))
+          (test-assert (and (tool-result-success-p defined)
+                            (search "Defined event.start version 1" (content defined))
+                            (search "now holds: review starts at 2026-10-22 13:00 UTC"
+                                    (content defined))
+                            (search "admission was declined, so it derives nothing"
+                                    (content defined)))
+                       "one edit defines predicates, asserts facts, and proposes a rule"))
+        (knowledge-admit-rule configuration "departure")
+        (let* ((facts (content (read-resource "memory:facts")))
+               (line (find-if (lambda (line) (search "leave for review" line))
+                              (uiop:split-string facts :separator '(#\Newline))))
+               (departure (and line (json-get (json-decode line) "id"))))
+          (test-assert (and line (search "\"derived\":\"departure v1\"" line)
+                            (search "\"basis\":[\"observation+user-assertion+model-proposal\"]"
+                                    line))
+                       "the derived departure is listed with its rule and bases")
+          (let ((why (content (read-resource (format nil "memory:claim/~A" departure)))))
+            (test-assert (and (search "derived by rule departure v1 with ?leave = 2026-10-22 12:20 UTC"
+                                      why)
+                              (search "schedule.txt \"review at 13:00\" (holds)" why)
+                              (search "you said \"half an hour\" (holds)" why))
+                         "memory:claim explains the derivation down to its evidence")))
+        (test-assert (search "event.start(event entity, time instant) v1 workspace key event"
+                             (content (read-resource "memory:predicates")))
+                     "memory:predicates lists the vocabulary")
+        (test-assert (search "departure v1 workspace: active version 1"
+                             (content (read-resource "memory:rules")))
+                     "memory:rules lists the admitted rule")
+        (test-assert (search "count: 4 (showing 1;"
+                             (content (read-resource "memory:facts" "query" "review"
+                                                     "max-results" 1)))
+                     "a query and max-results narrow the listing")
+        (test-assert (search "First look: 4 facts hold now"
+                             (content (read-resource "memory:changes")))
+                     "the first memory:changes read records what this conversation saw")
+        (memory-source-tests--write schedule
+                                    (format nil "Design review at 14:00 UTC on 22 October.~%"))
+        (let ((moved (edit (json-object "op" "fact-assert" "predicate" "event.start"
+                                        "arguments" (vector "review" "2026-10-22T14:00:00Z")
+                                        "sources" (vector (json-object
+                                                           "file" "schedule.txt"
+                                                           "quote" "review at 14:00"))))))
+          (test-assert (search "now holds: leave for review at 2026-10-22 13:20 UTC"
+                               (content moved))
+                       "asserting the new start reports the recomputed departure"))
+        (let ((changes (content (read-resource "memory:changes"))))
+          (test-assert (search "changed: leave for review at 2026-10-22 13:20 UTC, was leave for review at 2026-10-22 12:20 UTC"
+                               changes)
+                       "memory:changes reports the moved departure since the last read"))
+        (test-assert (search "Nothing changed since" (content (read-resource "memory:changes")))
+                     "each change is reported once")
+        (dolist (case (list (list "an undefined predicate"
+                                  (edit (json-object "op" "fact-assert" "predicate" "room.size"
+                                                     "arguments" (vector "a" 1)))
+                                  "Define predicate room.size")
+                            (list "an unknown basis"
+                                  (edit (json-object "op" "fact-assert" "predicate" "event.buffer"
+                                                     "arguments" (vector "review" "PT5M")
+                                                     "basis" "rumor"))
+                                  "basis must be")
+                            (list "a later failing operation"
+                                  (edit (json-object "op" "fact-assert" "predicate" "event.buffer"
+                                                     "arguments" (vector "standup" "PT5M"))
+                                        (json-object "op" "fact-assert" "predicate" "event.buffer"
+                                                     "arguments" (vector "standup" "soon")))
+                                  "Operation 2 failed: Argument duration of event.buffer")))
+          (destructuring-bind (label result text) case
+            (test-assert (and (not (tool-result-success-p result))
+                              (search text (content result)))
+                         (format nil "~A fails correctively" label))))
+        (flet ((asserted-bases (result)
+                 "Return the bases of the supports of the claim RESULT asserted."
+                 (let* ((text (content result))
+                        (start (+ (search "Asserted " text) (length "Asserted ")))
+                        (claim (subseq text start (position #\: text :start start)))
+                        (base (knowledge-base-read configuration)))
+                   (sort (remove-duplicates
+                          (mapcar (lambda (support)
+                                    (getf (knowledge-base-support base support) :basis))
+                                  (getf (knowledge-base-claim base claim) :supports)))
+                         #'string<))))
+          (let ((unretrieved (edit (json-object "op" "fact-assert" "predicate" "event.buffer"
+                                                "arguments" (vector "standup" "PT5M")
+                                                "sources" (vector (json-object
+                                                                   "url" "https://example.com/agenda"
+                                                                   "quote" "five minutes early"))))))
+            (test-assert (and (search "https://example.com/agenda was not retrieved with that text in this conversation"
+                                      (content unretrieved))
+                              (equal (asserted-bases unretrieved) '(:model-proposal)))
+                         "a page this conversation never retrieved supports only the model's proposal"))
+          (test-call-with-function-replacements
+           (list (list 'web-gist--retrieve
+                       (lambda (url)
+                         (declare (ignore url))
+                         "Agenda: be five minutes early to standup.")))
+           (lambda ()
+             (let* ((fetch-context (make-instance 'tool-context
+                                                 :configuration configuration :worker nil
+                                                 :conversation conversation :call-id "fetch-1"))
+                    (result (memory-resource-tests--call
+                             registry fetch-context "web_extra" "gist"
+                             "url" "https://example.com/agenda")))
+               (conversation-append-tool-result conversation "fetch-1"
+                                                :tool-name "web_extra.gist"
+                                                :output (tool-result-content result)
+                                                :success-p (tool-result-success-p result)))))
+          (let ((retrieved (edit (json-object "op" "fact-assert" "predicate" "event.buffer"
+                                              "arguments" (vector "standup" "PT5M")
+                                              "sources" (vector (json-object
+                                                                 "url" "https://example.com/agenda"
+                                                                 "quote" "five minutes early"))))))
+            (test-assert (and (not (search "not retrieved" (content retrieved)))
+                              (member :observation (asserted-bases retrieved)))
+                         "a page retrieved in this conversation with the quoted text is an observation"))
+          (let ((raised (edit (json-object "op" "fact-assert" "predicate" "event.buffer"
+                                           "arguments" (vector "retro" "PT5M")
+                                           "basis" "observation"
+                                           "sources" (vector (json-object "user" "half an hour"))))))
+            (test-assert (and (search "The user source supports it as user-assertion, not observation."
+                                      (content raised))
+                              (equal (asserted-bases raised) '(:user-assertion)))
+                         "a requested basis never exceeds what its source establishes")))
+        (test-assert (search "Operations 1 to 1 were applied"
+                             (content (edit (json-object "op" "fact-assert"
+                                                         "predicate" "event.buffer"
+                                                         "arguments" (vector "lunch" "PT5M"))
+                                            (json-object "op" "nonsense"))))
+                     "a failure names the operations already applied")
+        (let ((unobserved (memory-resource-tests--call
+                           registry context "resource" "edit"
+                           "uri" "memory:facts"
+                           "base-revision" (memory-resource-tests--field
+                                            (content (read-resource "memory:workspace"))
+                                            "Revision: ")
+                           "operations" (vector (json-object "op" "fact-retract"
+                                                             "id" "c0")))))
+          (test-assert (and (not (tool-result-success-p unobserved))
+                            (search "Read memory:facts" (content unobserved)))
+                       "an edit needs a memory:facts revision from this conversation")))))
+  (memory-resource-tests--check-url-receipts)
+  (memory-resource-tests--check-url-receipts :long-p t)
+  (memory-resource-tests--check-url-receipts :long-p t :spill-p nil)
+  nil)
+
+(-> memory-resource-tests--check-url-receipts
+    (&key (:long-p boolean) (:spill-p boolean)) null)
+(defun memory-resource-tests--check-url-receipts (&key long-p (spill-p t))
+  "Test completed retrievals, retained quotations, authenticity, and original observation times."
+  (with-test-configuration (base root)
+    (let* ((configuration (configuration-copy base :working-directory root :knowledge-mode "active"))
+           (registry (make-default-tool-registry :configuration configuration))
+           (conversation (conversation-create configuration))
+           (context (make-instance 'tool-context :configuration configuration :worker nil
+                                                :conversation conversation))
+           (url "https://example.com/ready")
+           (text (if long-p
+                     (let ((prefix "The report is ready for publication.")
+                           (suffix "The appendix is verified."))
+                       (concatenate 'string prefix
+                                    (make-string (- 9000 (length prefix) (length suffix))
+                                                 :initial-element #\Space)
+                                    suffix))
+                     "The report is ready for publication."))
+           (now 100000)
+           (*knowledge-clock* (lambda () now)))
+      (knowledge-define-schema configuration
+                               (knowledge-make-schema :predicate "site.ready"
+                                                      :arguments '((:name "site" :type :entity))))
+      (labels ((assert-fact (&optional quote (page "page"))
+                 "Assert from URL through a fresh resource revision and return its evaluated node."
+                 (let* ((read (memory-resource-tests--call registry context "resource" "read"
+                                                          "uri" "memory:facts"))
+                        (source (if quote (json-object "url" url "quote" quote)
+                                    (json-object "url" url)))
+                        (result (memory-resource-tests--call
+                                 registry context "resource" "edit" "uri" "memory:facts"
+                                 "base-revision" (memory-resource-tests--field
+                                                  (tool-result-content read) "Revision: ")
+                                 "operations" (vector (json-object
+                                                       "op" "fact-assert" "predicate" "site.ready"
+                                                       "arguments" (vector page)
+                                                       "sources" (vector source))))))
+                   (test-assert (tool-result-success-p result) "the sourced assertion is recorded")
+                   (knowledge-view-node
+                    (knowledge-view-current configuration)
+                     (knowledge-claim-identifier (list "site.ready" page) :scope ':workspace
+                                                 :workspace (knowledge--workspace configuration)))))
+
+               (retrieve (call-id &key fail-p corrupt-p)
+                 "Fetch a scripted page and persist its actual result, optionally failing or corrupting it."
+                 (test-call-with-function-replacements
+                  (append
+                   (unless spill-p
+                     (list (list 'tool--spill-result-text
+                                 (lambda (context name output)
+                                   (declare (ignore context name output))
+                                   nil))))
+                   (list (list 'web-gist--retrieve
+                               (lambda (requested)
+                                 (test-assert (equal requested url) "the retriever receives the exact URL")
+                                 (when fail-p
+                                   (error 'tool-error :tool-name "web_extra.gist" :message "Unavailable."))
+                                 text))))
+                  (lambda ()
+                    (let* ((fetch-context (make-instance 'tool-context
+                                                        :configuration configuration :worker nil
+                                                        :conversation conversation :call-id call-id))
+                           (result (memory-resource-tests--call registry fetch-context
+                                                                "web_extra" "gist" "url" url)))
+                      (conversation-append-tool-result
+                       conversation call-id :tool-name "web_extra.gist"
+                       :output (if corrupt-p "Different result, ready for publication." (tool-result-content result))
+                       :success-p (tool-result-success-p result))
+                      (when (and long-p (not fail-p))
+                        (test-assert (and (< (length (tool-result-content result)) 8300)
+                                          (not (search "The appendix is verified."
+                                                       (tool-result-content result))))
+                                     "the durable presentation contains only a bounded prefix and notice"))
+                      result)))))
+        ;; A successful write mentioning a source is not a retrieval, quoted or unquoted.
+        (conversation-append-provider-item
+         conversation (json-object "type" "function_call" "call_id" "write-1"
+                                   "namespace" "resource" "name" "edit"
+                                   "arguments" (json-encode (json-object "url" url))))
+        (conversation-append-tool-result conversation "write-1" :tool-name "resource.edit"
+                                         :output text :success-p t)
+        (dolist (quote (list nil "ready for publication"))
+          (test-assert (not (knowledge-node-observed-p (assert-fact quote)))
+                       "a memory write cannot certify its own source"))
+        (retrieve "failed" :fail-p t)
+        (test-assert (not (knowledge-node-observed-p (assert-fact)))
+                     "a failed retrieval supplies no observation")
+        (retrieve "corrupt" :corrupt-p t)
+        (test-assert (not (knowledge-node-observed-p (assert-fact)))
+                     "a result with a different digest does not satisfy the receipt")
+        (retrieve "fetched")
+        (test-assert (knowledge-node-observed-p (assert-fact "ready for publication"))
+                     "a completed matching retrieval supports an observation")
+        (test-assert (null (memory-knowledge--url-receipt conversation url "not in the retrieved page"))
+                     "the quote must occur in the identified result")
+        (when long-p
+          (test-assert (= (length text) 9000) "the retrieval exceeds the presentation limit")
+          (test-assert (eql spill-p
+                            (knowledge-node-observed-p
+                             (assert-fact "The appendix is verified." "appendix")))
+                       "a tail quotation requires verified retained overflow content")
+          (test-assert (not (knowledge-node-observed-p
+                            (assert-fact "characters omitted" "notice")))
+                       "the presentation notice is not retrieved evidence"))
+        (incf now 10)
+        (test-assert (= 100000
+                        (getf (memory-knowledge--url-receipt
+                               conversation url "ready for publication" :configuration configuration)
+                              :observed-at))
+                     "receipt resolution preserves the original retrieval time")
+        (setf now (+ 100001 *knowledge-url-lifetime*))
+        (test-assert (eq (knowledge-node-applicability (assert-fact "ready for publication")) ':expired)
+                     "citing an old retrieval does not renew its expiry")
+        (retrieve "refetched")
+        (test-assert (eq (knowledge-node-applicability (assert-fact "ready for publication")) ':current)
+                     "fetching the page again renews its evidence")
+        (when (and long-p spill-p)
+          (let* ((receipt (memory-knowledge--url-receipt
+                           conversation url "The appendix is verified." :configuration configuration))
+                 (object (rlm-context-object-find configuration
+                                                  (subseq (getf receipt :content-object) 8))))
+            (test-assert (= now (getf receipt :observed-at))
+                         "fresh retrieval evidence has the new retrieval time")
+            (with-open-file (stream (rlm-context-object-pathname object)
+                                    :direction ':output :if-exists ':supersede)
+              (write-string "Corrupted retained content." stream))
+            (test-assert (null (memory-knowledge--url-receipt
+                                conversation url "The appendix is verified."
+                                :configuration configuration))
+                         "corrupt retained content cannot certify a quotation"))))))
+  nil)
+
+(-> test-memory-knowledge-rule-admission () null)
+(defun test-memory-knowledge-rule-admission ()
+  "Test that a proposed rule is admitted exactly when command authorization allows it."
+  (with-test-configuration (configuration)
+    (knowledge-tests--define-appointments configuration)
+    (let* ((registry (make-default-tool-registry))
+           (conversation (conversation-create configuration :identifier "rule-admission"))
+           (requests nil))
+      (flet ((propose (decision description)
+               "Propose a departure rule version as a context deciding DECISION would."
+               (let ((context (make-instance 'tool-context
+                                             :configuration configuration
+                                             :worker nil
+                                             :conversation conversation
+                                             :command-authorization-function
+                                             (lambda (command directory)
+                                               (declare (ignore directory))
+                                               (push command requests)
+                                               decision))))
+                 (memory-resource-tests--call
+                  registry context "resource" "edit"
+                  "uri" "memory:facts"
+                  "base-revision" (memory-resource-tests--field
+                                   (tool-result-content
+                                    (memory-resource-tests--call registry context "resource"
+                                                                 "read" "uri" "memory:facts"))
+                                   "Revision: ")
+                  "operations" (vector (json-object
+                                        "op" "rule-propose" "id" "departure"
+                                        "description" description
+                                        "premises" (vector (vector "event.start" "?e" "?s")
+                                                           (vector "event.travel" "?e" "?t"))
+                                        "bindings" (vector (vector "?l" (vector "-" "?s" "?t")))
+                                        "conclusion" (vector "event.departure" "?e" "?l")))))))
+        (test-assert (and (search "admission was declined" (tool-result-content
+                                                            (propose ':deny "first")))
+                          (null (knowledge-base-active-rules (knowledge-base-read configuration)
+                                                             :workspace (namestring
+                                                                         (config :working-directory
+                                                                                 configuration)))))
+                     "a declined rule stays inactive")
+        (test-assert (equal (first requests)
+                            "rule.admit -- departure v1: event.start(?e, ?s) and event.travel(?e, ?t) with ?l = (?s - ?t) => event.departure(?e, ?l)")
+                     "the person approves a readable statement of the rule")
+        (test-assert (search "Admitted rule departure version 2"
+                             (tool-result-content (propose ':sandboxed "second")))
+                     "an allowed proposal is admitted at once")
+        (test-assert (search "unchanged and active"
+                             (tool-result-content (propose ':deny "second")))
+                     "proposing the active rule again asks nothing"))))
   nil)

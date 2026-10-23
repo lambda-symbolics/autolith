@@ -229,7 +229,12 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
     :initform nil
     :accessor terminal-ui-context-used
     :type (option (integer 0))
-    :documentation "The newest provider-reported context usage in tokens.")
+    :documentation "The newest provider-reported or estimated context usage in tokens.")
+   (context-estimated-p
+    :initform nil
+    :accessor terminal-ui-context-estimated-p
+    :type boolean
+    :documentation "Whether the context usage is a portable estimate rather than provider usage.")
    (context-window
     :initform nil
     :accessor terminal-ui-context-window
@@ -366,6 +371,11 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
     :accessor terminal-ui-stream-tail
     :type (or null string list)
     :documentation "Unfinished streamed text, styled spans, or styled rows continuing the transcript block above.")
+   (compact-success-tail-p
+    :initform nil
+    :accessor terminal-ui-compact-success-tail-p
+    :type boolean
+    :documentation "Whether transcript output ends in a single-line tool success awaiting separation.")
    (finalized-identifiers
     :initform (make-hash-table :test #'equal)
     :reader terminal-ui-finalized-identifiers
@@ -488,8 +498,11 @@ Native scrollback keeps appended output, so the inline UI appends ENTRY at
 once; the fullscreen UI writes it to the normal screen when it leaves the
 alternate buffer, since anything shown inside that buffer vanishes with it."))
 
-(defgeneric terminal-ui--append-output (ui text display &key regions)
+(defgeneric terminal-ui--append-output
+    (ui text display &key regions compact-first-p compact-last-p)
   (:documentation
    "Append plain TEXT and trusted styled DISPLAY to UI's transcript.
 
-REGIONS are the (START END ACTION) click regions indexing TEXT."))
+REGIONS are the (START END ACTION) click regions indexing TEXT. COMPACT-FIRST-P
+and COMPACT-LAST-P identify chunks beginning and ending in single-line tool
+successes; otherwise append a pending separator before the chunk."))

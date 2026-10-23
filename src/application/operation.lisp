@@ -530,9 +530,18 @@ local-user override."
 
 (defmethod application-operation-completion-argument
     ((operation application-command-operation))
-  "Return a command's registered argument hint with its closing parenthesis."
-  (let ((hint (application-command-argument
-               (application-operation-backend operation))))
+  "Return a command's native Lisp argument hint with its closing parenthesis."
+  (let* ((command (application-operation-backend operation))
+         (options (application-command-static-options command))
+         (hint
+           (if options
+               (multiple-value-bind (minimum maximum)
+                   (application-command--lambda-list-arity
+                    (application-command-lambda-list command))
+                 (declare (ignore maximum))
+                 (application-command--static-option-hint
+                  options (zerop minimum) :native-p t))
+               (application-command-argument command))))
     (and hint (format nil "~A)" hint))))
 
 (defmethod application-operation-completion-argument ((operation application-local-operation))
@@ -797,7 +806,7 @@ argument objects to construct a label; only the outer argument list is copied."
     (list
      (let ((name (application-command-name command)))
        (make-instance 'application-command-invocation
-                      :input name
+                      :input (format nil "(~A)" (application-operation--command-name command))
                       :syntax ':lisp
                       :name name
                       :remainder ""

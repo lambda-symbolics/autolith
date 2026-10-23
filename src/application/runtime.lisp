@@ -57,6 +57,11 @@
     :accessor application-goal
     :type list
     :documentation "The session goal plist holding objective, status, and continuations.")
+   (context-estimate-cache
+    :initform nil
+    :accessor application-context-estimate-cache
+    :type list
+    :documentation "The last estimate key and token count, without rendered request payloads.")
    (idle-compaction-episode
     :initform nil
     :accessor application-idle-compaction-episode
@@ -67,11 +72,11 @@
     :accessor application-prompt-cache-baseline
     :type (option prompt-cache-baseline)
     :documentation "What the next provider request should find in the prompt cache.")
-   (prompt-cache-conversation-id
+   (prompt-cache-conversation
     :initform nil
-    :accessor application-prompt-cache-conversation-id
-    :type (option string)
-    :documentation "The conversation whose persisted usage seeded the baseline.")
+    :accessor application-prompt-cache-conversation
+    :type (option conversation)
+    :documentation "The loaded conversation whose local requests establish the baseline.")
    (prompt-cache-request-started-at
     :initform nil
     :accessor application-prompt-cache-request-started-at
@@ -576,7 +581,7 @@ exchange without scrolling through reasoning and tool activity.")
                 (lambda (channel payload)
                   (case channel
                     ((:task-subagent-lifecycle :task-subagent-progress
-                      :tool-execution-lifecycle)
+                      :tool-execution-lifecycle :tool-execution-progress)
                      (application--refresh-task-presentation
                       application orchestrator))
                     (:task-subagent-verbal-response
@@ -932,11 +937,17 @@ newly acquired lease."
 (-> application-create
     (configuration &key (:conversation-id (option string))
                         (:permission-mode (member :ask :auto :sandboxed :full-access))
-                        (:pristine-p boolean))
+                        (:pristine-p boolean)
+                        (:image-replay-failures list))
     application)
 (defun application-create
-    (configuration &key conversation-id (permission-mode ':ask) pristine-p)
-  "Create a connected application, loading CONVERSATION-ID with PERMISSION-MODE."
+    (configuration &key conversation-id (permission-mode ':ask) pristine-p
+                        (image-replay-failures nil image-state-loaded-p))
+  "Create a connected application, loading CONVERSATION-ID with PERMISSION-MODE.
+
+Supplying IMAGE-REPLAY-FAILURES means startup already loaded private image state
+for this configuration and pristine mode. Reuse that replay's diagnostics and
+lineage instead of loading it again."
   (let ((preferred-configuration configuration))
     (context-runtime-reset)
     (configuration-ensure-directories preferred-configuration)
@@ -954,9 +965,11 @@ newly acquired lease."
            (recovery-rendered-sequence (second recovery-state))
            (recovery-history-floor-sequence (third recovery-state))
            (mutation-replay-failures
-             (if pristine-p
-                 (image-state-load preferred-configuration :pristine-p t)
-                 (image-state-load preferred-configuration)))
+             (if image-state-loaded-p
+                 image-replay-failures
+                 (if pristine-p
+                     (image-state-load preferred-configuration :pristine-p t)
+                     (image-state-load preferred-configuration))))
            (extension-registry-snapshot nil)
            (registry nil)
            (worker nil)
@@ -1358,6 +1371,7 @@ newly acquired lease."
   (tool-registry-detach-runtime-state
    (application-tool-registry application))
   (setf (application-provider application) nil
+        (application-context-estimate-cache application) nil
         (application-worker application) nil
         (application-agent application) nil
         (application-ui application) nil
@@ -1366,6 +1380,59 @@ newly acquired lease."
         (application-input-controller application) nil
         (application-update-check-thread application) nil)
   application)
+
+(-> application--context-estimate-key (application keyword) list)
+(defun application--context-estimate-key (application family)
+  "Identify known request inputs without rebuilding prompt, session, or schemas.
+
+Conversation appends and request starts delimit mutable session snapshots.
+Configuration replacement, prompt settings, tool replacement, and hurry-up
+changes also invalidate the cache. External files are sampled at these boundaries."
+  (let ((configuration (application-configuration application))
+        (conversation (application-conversation application)))
+    (list configuration
+          (loop for setting in '(:working-directory :source-root :immutable-p
+                                 :relax-p :web-search-mode :simple-technical-english-p)
+                collect (config setting configuration))
+          conversation
+          (conversation-next-sequence conversation)
+          (conversation-log-generation conversation)
+          (conversation-ephemeral-input-entries conversation)
+          family
+          (application-hurry-up-p application)
+          (application-prompt-cache-request-started-at application)
+          (and (slot-boundp application 'tool-registry)
+               (let ((registry (application-tool-registry application)))
+                 (cons registry (tool-registry-tools registry)))))))
+
+(-> application-context-usage (application) (values (integer 0) boolean))
+(defun application-context-usage (application)
+  "Return reported context usage, otherwise a cached portable estimate."
+  (let* ((conversation (application-conversation application))
+         (reported (conversation-last-total-tokens conversation)))
+    (when (plusp reported)
+      (return-from application-context-usage (values reported nil)))
+    (let* ((configuration (application-configuration application))
+           (provider (and (slot-boundp application 'provider)
+                          (application-provider application)))
+           (family (if provider
+                       (provider-family provider)
+                       (model-family (config :model configuration)
+                                     (config :model-provider configuration))))
+           (key (application--context-estimate-key application family))
+           (cached (application-context-estimate-cache application)))
+      (unless (equal key (first cached))
+        (setf cached
+              (list key
+                    (context-estimate-known-tokens
+                     configuration conversation
+                     :hurry-up-p (application-hurry-up-p application)
+                     :family family
+                     :tool-registry
+                     (and (slot-boundp application 'tool-registry)
+                          (application-tool-registry application))))
+              (application-context-estimate-cache application) cached))
+      (values (second cached) t))))
 
 (-> application-refresh-context-meter (application) null)
 (defun application-refresh-context-meter (application)
@@ -1377,14 +1444,16 @@ newly acquired lease."
       (when ui
         (terminal-ui-set-idle-status-details
          ui (application--status-details application))
-        (let ((configuration (application-configuration application)))
-          (terminal-ui-set-context-usage
-           ui
-           :used (conversation-last-total-tokens
-                  (application-conversation application))
-           :window (config :context-window configuration)
-           :compaction-limit
-           (configuration-compaction-token-limit configuration))))))
+        (multiple-value-bind (used estimated-p)
+            (application-context-usage application)
+          (let ((configuration (application-configuration application)))
+            (terminal-ui-set-context-usage
+             ui
+             :used used
+             :estimated-p estimated-p
+             :window (config :context-window configuration)
+             :compaction-limit
+             (configuration-compaction-token-limit configuration)))))))
   nil)
 
 (-> application--install-configuration
@@ -2280,7 +2349,7 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
        (application--transcript-entry
         application
         :style ':tool
-        :header "▸ web search"
+        :header "▸ (web search)"
         :detail (let ((detail (web-search-call-detail item)))
                   (and (non-empty-string-p detail)
                        detail))))
@@ -2730,7 +2799,7 @@ may fill the remainder."
                         (terminal-span
                          :hint
                          (format nil
-                                 "∙ showing ~D newest ~A; /history loads an earlier page"
+                                 "∙ showing ~D newest ~A; use (history) to load an earlier page"
                                  (length records)
                                  (if (plusp after-sequence)
                                      "entries added after recovery"
@@ -2960,7 +3029,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                  (list
                   (terminal-span
                    :hint
-                   "∙ more earlier history remains; run /history again"))))
+                   "∙ more earlier history remains; run (history) again"))))
               (when (and (zerop presented-count)
                          (<= candidate-count limit))
                 (application-present
@@ -3255,6 +3324,43 @@ continuation turns, so the notice names what woke the model."
             ':strong
             (sanitize-text name :single-line-p t)))))))
 
+(-> application--related-memories-notice
+    ((integer 0) &key (:stale (integer 0)) (:unverified (integer 0)) (:facts (integer 0)))
+    string)
+(defun application--related-memories-notice (count &key (stale 0) (unverified 0) (facts 0))
+  "Return the notice for COUNT offered memories and FACTS offered facts.
+
+STALE and UNVERIFIED count memories whose evidence changed or could not be
+checked."
+  (format nil "@ ~{~A~^ · ~}"
+          (remove nil
+                  (list (when (plusp count)
+                          (format nil "~D relevant memor~:@P exist~:[~;s~]" count (= count 1)))
+                        (when (plusp stale)
+                          (format nil "~D stale" stale))
+                        (when (plusp unverified)
+                          (format nil "~D unverified" unverified))
+                        (when (plusp facts)
+                          (format nil "~D ~:[~;relevant ~]fact~P"
+                                  facts (zerop count) facts))))))
+
+(-> application--knowledge-changes-notice ((integer 1)) string)
+(defun application--knowledge-changes-notice (count)
+  "Return the notice that COUNT facts given earlier changed."
+  (format nil "@ ~D fact~:P given earlier changed" count))
+
+(-> application--procedures-learned-notice (list) string)
+(defun application--procedures-learned-notice (learned)
+  "Return the notice naming the procedures, (NAME VERSION TURNS), just LEARNED."
+  (format nil "@ ~{~A~^ · ~} · (procedures)"
+          (mapcar (lambda (entry)
+                    (destructuring-bind (name version turns) entry
+                      (if (= version 1)
+                          (format nil "learned procedure ~A from ~D turns" name turns)
+                          (format nil "procedure ~A v~D learned from ~D turns"
+                                  name version turns))))
+                  learned)))
+
 (-> application-agent-observer
     (application
      &key (:steering-function (option function))
@@ -3274,6 +3380,7 @@ continuation turns, so the notice names what woke the model."
   (let ((ui (application-ui application))
         (activity-label (application-thinking-label))
         (related-memories-shown-p nil)
+        (procedure-offers-shown-p nil)
         (request-empty-p nil)
         (reasoning-text (text-buffer-create))
         (presented-reasoning-text nil)
@@ -3365,7 +3472,8 @@ continuation turns, so the notice names what woke the model."
        (lambda (status details)
          (case status
            (:user-message-persisted
-            (setf related-memories-shown-p nil)
+            (setf related-memories-shown-p nil
+                  procedure-offers-shown-p nil)
             (let ((pending-input-identifier
                     (getf details :pending-input-identifier)))
               (when (and pending-input-identifier
@@ -3409,14 +3517,52 @@ continuation turns, so the notice names what woke the model."
             (application-publish-recovery-session application))
            (:related-memories
             (unless related-memories-shown-p
-              (let ((count (getf details :count)))
-                (application-present
-                 application
-                 (list (terminal-span
-                        ':dim
-                        (format nil "@ ~D relevant memor~:@P exist~:[~;s~]"
-                                count (= count 1)))))
-                (setf related-memories-shown-p t))))
+              (application-present
+               application
+               (list (terminal-span
+                      (if (or (plusp (getf details :stale 0))
+                              (plusp (getf details :unverified 0)))
+                          ':notice
+                          ':dim)
+                      (application--related-memories-notice
+                       (getf details :count)
+                       :stale      (getf details :stale 0)
+                       :unverified (getf details :unverified 0)
+                       :facts      (getf details :facts 0)))))
+              (setf related-memories-shown-p t)))
+           (:knowledge-changes
+            (application-present
+             application
+             (list (terminal-span
+                    ':notice
+                    (application--knowledge-changes-notice (getf details :count))))))
+           (:procedure-offers
+            (unless procedure-offers-shown-p
+              (application-present
+               application
+               (list (terminal-span
+                      ':brand
+                      (sanitize-text
+                       (format nil "@ learned procedure~P ~{~A~^, ~} fit~:[s~;~] this request"
+                               (length (getf details :names)) (getf details :names)
+                               (rest (getf details :names)))
+                       :single-line-p t))))
+              (setf procedure-offers-shown-p t)))
+           (:procedures-learned
+            (application-present
+             application
+             (list (terminal-span ':success
+                                  (sanitize-text
+                                   (application--procedures-learned-notice
+                                    (getf details :procedures))
+                                   :single-line-p t)))))
+           (:plan-changes
+            (application-present
+             application
+             (list (terminal-span
+                    ':notice
+                    (format nil "@ ~D plan step~:P changed with ~:*~[~;its~:;their~] facts"
+                            (getf details :count))))))
            (:provider-progress
             (terminal-ui-note-status-progress ui))
            (:provider-request-started
@@ -3468,7 +3614,6 @@ continuation turns, so the notice names what woke the model."
            (:provider-request-completed
             (when (plusp (getf details :tool-call-count 0))
               (setf request-empty-p nil))
-            (application-refresh-context-meter application)
             (reasoning-flush)
             (let ((completed-stream-text
                     (and stream-open-p (text-buffer-string stream-text)))
@@ -3478,6 +3623,7 @@ continuation turns, so the notice names what woke the model."
                application
                :streamed-assistant-text completed-stream-text
                :streamed-reasoning-text completed-reasoning-text))
+            (application-refresh-context-meter application)
             (application-note-prompt-cache-request-completed
              application details))
            (:tool-call-started
@@ -3505,7 +3651,8 @@ continuation turns, so the notice names what woke the model."
                       application details)))))
             (application-set-activity application activity-label))
            (:steering-applied
-            (setf related-memories-shown-p nil)
+            (setf related-memories-shown-p nil
+                  procedure-offers-shown-p nil)
             (application-render-records application)
             (application-set-activity application activity-label))
            (:compaction-started
@@ -3514,6 +3661,7 @@ continuation turns, so the notice names what woke the model."
             (terminal-ui-set-compacting ui t))
            (:compaction-completed
             (terminal-ui-set-compacting ui nil)
+            (application-refresh-context-meter application)
             ;; The rewritten prompt cannot hit the old cache, so the expected
             ;; miss on the next request is not worth a notice.
             (setf (application-prompt-cache-baseline application) nil)
@@ -3535,6 +3683,30 @@ continuation turns, so the notice names what woke the model."
        :tool-authorization-callback
        (lambda (tool arguments)
          (application-authorize-tool application tool arguments))))))
+
+;;; Tool calls made on the application's behalf
+
+(-> application-tool-context (application) tool-context)
+(defun application-tool-context (application)
+  "Create a tool context with APPLICATION's ordinary permission boundary.
+
+Calls made through it ask the same command and tool authorization as the
+model's calls in a turn."
+  (let ((observer (application-agent-observer application)))
+    (make-instance 'tool-context
+                   :configuration (application-configuration application)
+                   :conversation (application-conversation application)
+                   :registry (application-tool-registry application)
+                   :worker (application-worker application)
+                   :agent (application-agent application)
+                   :observer observer
+                   :command-authorization-function
+                   (lambda (command directory)
+                     (agent-observer-authorize-command observer command directory))
+                   :tool-authorization-function
+                   (lambda (tool arguments)
+                     (agent-observer-authorize-tool observer tool arguments)))))
+
 
 ;;;; -- Session Titles --
 
@@ -3759,7 +3931,7 @@ wake the model is still queued, running or undelivered."
          application
          (format nil
                  "The goal paused after ~D automatic continuations. ~
-                  Use /goal resume or send a message to keep going."
+                  Use (goal :resume) or send a message to keep going."
                  *application-goal-continuation-limit*))
         (return))
       ;; A running job's completion wakes the model and resumes the goal.

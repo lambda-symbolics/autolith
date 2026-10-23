@@ -587,13 +587,19 @@ request that carries its expansion."
                (when pending-input-identifier
                  (list :pending-input-identifier pending-input-identifier)))))
            (unwind-protect
-                (agent--run-provider-loop
-                 agent observer
-                 :goal-context goal-context
-                 :tools-p tools-p
-                 :tool-allowlist tool-allowlist
-                 :tool-restriction-p tool-restriction-p
-                 :request-number compaction-requests)
+                (progn
+                  (agent-run-fitting-procedure agent observer
+                                               (or (user-message-input-text content) "")
+                                               :automatic-p automatic-p
+                                               :tools-p tools-p
+                                               :tool-restriction-p tool-restriction-p)
+                  (agent--run-provider-loop
+                   agent observer
+                   :goal-context goal-context
+                   :tools-p tools-p
+                   :tool-allowlist tool-allowlist
+                   :tool-restriction-p tool-restriction-p
+                   :request-number compaction-requests))
              (conversation-clear-ephemeral-input-items conversation)
              (setf (conversation-turn-state conversation) nil))))))))
 
@@ -637,7 +643,22 @@ retries stay auditable next to the request they belong to."
       (memory-context-event
        (agent-observer-status
         observer :related-memories
-        (list :count (memory-context-event-count event))))
+        (list :count      (memory-context-event-count event)
+              :stale      (memory-context-event-stale-count event)
+              :unverified (memory-context-event-unverified-count event)
+              :facts      (memory-context-event-fact-count event))))
+      (knowledge-change-event
+       (agent-observer-status
+        observer :knowledge-changes
+        (list :count (knowledge-change-event-count event))))
+      (plan-change-event
+       (agent-observer-status
+        observer :plan-changes
+        (list :count (plan-change-event-count event))))
+      (procedure-offer-event
+       (agent-observer-status
+        observer :procedure-offers
+        (list :names (procedure-offer-event-names event))))
       (provider-attempt-failed-event
        (let ((details
                (list :request-number request-number
@@ -1803,6 +1824,8 @@ loop, so compaction ahead of the user message shares the turn's budget."
            observer result request-number)
           (agent--note-turn-state conversation result)
           (agent-observer-status observer :provider-request-completed completion-details)
+          (knowledge-usage-capture conversation calls request-number
+                                   (provider-result-usage result))
           (when (or (agent-turn-complete-p agent result)
                     (and (null calls) (mission-agent-terminal-p agent)))
             (agent-observer-status
@@ -1814,6 +1837,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
                     :tool-calls tool-calls
                     :response-id (provider-result-response-id result))
               (agent-turn-completion-details agent)))
+            (agent-learn-procedures agent observer tool-calls)
             (return result))
           (cond
             ((null calls)
@@ -1843,6 +1867,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
                            :tool-calls tool-calls
                            :response-id (provider-result-response-id result))
                      (agent-turn-completion-details agent)))
+                   (agent-learn-procedures agent observer tool-calls)
                    (return result))
                  (agent--apply-steering-input
                   agent observer request-number)))))))))

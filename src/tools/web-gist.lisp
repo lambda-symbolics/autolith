@@ -31,15 +31,39 @@
 (defmethod tool-execute ((tool web-gist-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Fetch one web page and return its Markdown representation."
-  (declare (ignore tool context))
+  "Fetch one page and identify its retrieved content separately from its bounded presentation."
+  (declare (ignore tool))
   (let ((url (tool-argument arguments "url" :required t)))
     (unless (non-empty-string-p url)
       (error 'tool-error
              :message "web_extra.gist requires a non-empty string url."
              :tool-name "web_extra.gist"))
     (handler-case
-        (tool-success (web-gist--retrieve url))
+        (let* ((output (web-gist--retrieve url))
+               (observed-at (knowledge-now))
+               (overflow-function *tool-result-overflow-function*)
+               (content-object nil)
+               (result
+                 (let ((*tool-result-overflow-function*
+                         (when overflow-function
+                           (lambda (text)
+                             (setf content-object (funcall overflow-function text))))))
+                   (tool-success output))))
+          (when (and (tool-context-conversation context)
+                     (tool-context-call-id context)
+                     (knowledge-capture-p (tool-context-configuration context)))
+            (conversation-append-record
+             (tool-context-conversation context)
+             (list :web-retrieval
+                   :tool "web_extra.gist"
+                   :url url
+                   :call-id (tool-context-call-id context)
+                   :result-digest (memory-source-text-digest output)
+                   :output-digest (memory-source-text-digest (tool-result-content result))
+                   :retained-length (min 8000 (length output))
+                   :content-object content-object
+                   :observed-at observed-at)))
+          result)
       (error (condition)
         (error 'tool-error
                :message (format nil "web_extra.gist could not retrieve ~A: ~A"

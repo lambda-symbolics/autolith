@@ -143,7 +143,7 @@
       (mission-test--write-file input "first state")
       (application-mission-start application (mission-test--specification :gates gates))
       (test-call-with-function-replacements
-       (list (list 'mission--tool-context (lambda (app) (mission-test--context app)))
+       (list (list 'application-tool-context (lambda (app) (mission-test--context app)))
              (list 'mission-gate-execute
                    (lambda (gate context)
                      (declare (ignore context))
@@ -162,7 +162,7 @@
          (test-assert (zerop (getf (application-goal application) :turns-used)) "gate retries do not consume model turns")))
       (application-mission-start application (mission-test--specification :gates (list (first gates))))
       (test-call-with-function-replacements
-       (list (list 'mission--tool-context (lambda (app) (mission-test--context app)))
+       (list (list 'application-tool-context (lambda (app) (mission-test--context app)))
              (list 'mission-gate-execute (lambda (gate context) (declare (ignore gate context)) (values nil "failed"))))
        (lambda ()
          (application-mission-verify application)
@@ -178,7 +178,7 @@
     (let ((application (mission-test--application configuration)))
       (application-mission-start application (mission-test--specification))
       (test-call-with-function-replacements
-       (list (list 'mission--tool-context (lambda (app) (mission-test--context app))))
+       (list (list 'application-tool-context (lambda (app) (mission-test--context app))))
        (lambda ()
          (application--note-goal-turn application (mission-test--result "[GOAL-COMPLETE]"))
          (test-assert (getf (application-goal application) :model-complete-p) "completion requests verification")
@@ -250,7 +250,7 @@
       (mission-test--write-file input "before")
       (application-mission-start application (mission-test--specification :gates gates))
       (test-call-with-function-replacements
-       (list (list 'mission--tool-context (lambda (app) (mission-test--context app)))
+       (list (list 'application-tool-context (lambda (app) (mission-test--context app)))
              (list 'mission-gate-execute
                    (lambda (gate context)
                      (declare (ignore context))
@@ -294,7 +294,7 @@
             :gates (list artifact
                          (list :id "mutation" :kind ':command :command (first case)))))
           (test-call-with-function-replacements
-           (list (list 'mission--tool-context (lambda (app) (mission-test--context app))))
+           (list (list 'application-tool-context (lambda (app) (mission-test--context app))))
            (lambda ()
              (application-mission-verify application)
              (let* ((goal (application-goal application))
@@ -324,7 +324,7 @@
            (invalidation-thread nil))
       (application-mission-start application (mission-test--specification :gates (list gate)))
       (test-call-with-function-replacements
-       (list (list 'mission--tool-context (lambda (app) (mission-test--context app)))
+       (list (list 'application-tool-context (lambda (app) (mission-test--context app)))
              (list 'mission-gate-execute
                    (lambda (gate context)
                      (declare (ignore gate context))
@@ -380,7 +380,7 @@
            (failure nil))
       (application-mission-start application (mission-test--specification :gates (list gate)))
       (test-call-with-function-replacements
-       (list (list 'mission--tool-context (lambda (app) (mission-test--context app)))
+       (list (list 'application-tool-context (lambda (app) (mission-test--context app)))
              (list 'mission-gate-execute
                    (lambda (gate tool-context)
                      (declare (ignore gate tool-context))
@@ -452,7 +452,7 @@
                        (mission-error () t))
                      "slash mission data rejects evaluation, extra forms and malformed fields"))
       (test-call-with-function-replacements
-       (list (list 'mission--tool-context (lambda (app) (mission-test--context app))))
+       (list (list 'application-tool-context (lambda (app) (mission-test--context app))))
        (lambda ()
          (test-assert
           (tool-result-success-p

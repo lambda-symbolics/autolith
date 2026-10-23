@@ -33,50 +33,6 @@
        (when (> (length rows) limit)
          (list (list (terminal-span ':dim "… more content"))))))))
 
-(-> application--diff-output-rows (string integer) (option list))
-(defun application--diff-output-rows (text limit)
-  "Render a unified diff with shared change gutters and path-aware source tokens."
-  (let* ((lines (application--display-lines text))
-         (first (first lines)))
-    (when (and first
-               (or (uiop:string-prefix-p "diff --git " first)
-                   (and (uiop:string-prefix-p "--- " first)
-                        (search (format nil "~%+++ ") text)))
-               (search "@@" text))
-      (let ((path nil))
-        (append
-         (loop for line in (subseq lines 0 (min limit (length lines)))
-               collect
-               (cond
-                 ((or (uiop:string-prefix-p "--- " line)
-                      (uiop:string-prefix-p "+++ " line))
-                  (let ((name (subseq line 4)))
-                    (setf path (if (or (uiop:string-prefix-p "a/" name)
-                                      (uiop:string-prefix-p "b/" name))
-                                   (subseq name 2)
-                                   name)))
-                  (list (terminal-span ':dim "│ ") (terminal-span ':strong line)))
-                 ((and (plusp (length line))
-                       (find (char line 0) "+- " :test #'char=))
-                  (let* ((content (subseq line 1))
-                         (kind (case (char line 0)
-                                 (#\+ ':added)
-                                 (#\- ':removed)
-                                 (otherwise ':context))))
-                  (append
-                   (list (syntax--terminal-span
-                          (case kind
-                            (:added ':added-gutter)
-                            (:removed ':removed-gutter)
-                            (otherwise ':context-gutter))
-                          (format nil "~C │ " (char line 0))))
-                   (or (and path (syntax--highlight-spans content :pathname path))
-                       (list (terminal-span ':plain content))))))
-                 (t
-                  (list (terminal-span ':dim "│ ") (terminal-span ':hint line)))))
-         (when (> (length lines) limit)
-           (list (list (terminal-span ':dim "… more diff lines")))))))))
-
 (-> application--code-output-rows
     (application string &key (:limit integer) (:json-p boolean))
     (option list))
@@ -89,7 +45,6 @@ recursive field layout of the generic result presenter. Shell output is not
 assumed to be shell source."
   (let ((trimmed (string-left-trim '(#\Space #\Tab #\Newline #\Return) text)))
     (or (application--fenced-output-rows application text limit)
-        (application--diff-output-rows trimmed limit)
         (when (uiop:string-prefix-p "(:" trimmed)
           (application--source-preview-rows
            text :language *application-common-lisp-language* :limit limit))
@@ -131,65 +86,6 @@ assumed to be shell source."
         (json-error ()
           nil)))))
 
-(defparameter *application-provider-form-limits*
-  (make-json-limits :maximum-characters            65536
-                    :maximum-depth                 17
-                    :maximum-string-characters     24576
-                    :maximum-object-key-characters 512
-                    :maximum-object-members        128
-                    :maximum-array-elements        128)
-  "Bounds on provider arguments decoded solely for Lisp display.
-
-The depth counts the argument object itself, so values nest sixteen deep.")
-
-(defparameter *application-provider-form-characters* 32768
-  "The largest complete provider-call Lisp form materialized for display.")
-
-(defparameter *application-provider-form-name-characters* 160
-  "The largest provider namespace or operation name rendered as Lisp.")
-
-(-> application--provider-form-string-p (t) boolean)
-(defun application--provider-form-string-p (value)
-  "Return whether VALUE is a string of characters safe in a provider-call Lisp form."
-  (and (stringp value)
-       (every (lambda (character)
-                (or (graphic-char-p character)
-                    (member character '(#\Newline #\Return #\Tab)
-                            :test #'char=)))
-              value)))
-
-(define-condition application-provider-form-limit (condition)
-  ((reason
-    :initarg :reason
-    :reader application-provider-form-limit-reason
-    :type string
-    :documentation "The bounded rendering policy which the provider call exceeded."))
-  (:report
-   (lambda (condition stream)
-     (format stream "Provider call Lisp rendering stopped: ~A"
-             (application-provider-form-limit-reason condition))))
-  (:documentation
-   "A provider call cannot be rendered as complete Lisp within bounds."))
-
-(-> application--provider-form-limit (string) null)
-(defun application--provider-form-limit (reason)
-  "Signal that complete provider-call Lisp rendering exceeded REASON."
-  (error 'application-provider-form-limit :reason reason))
-
-(-> application--provider-call-preserved-arguments
-    (json-object)
-    (option json-object))
-(defun application--provider-call-preserved-arguments (call)
-  "Decode exactly one bounded CALL argument object while preserving JSON values."
-  (let ((source (json-get call "arguments")))
-    (when (non-empty-string-p source)
-      (handler-case
-          (let ((arguments (json-decode source
-                                        :limits *application-provider-form-limits*)))
-            (and (json-object-p arguments) arguments))
-        (json-error ()
-          nil)))))
-
 (-> application--lisp-simple-symbol-name-p (string) boolean)
 (defun application--lisp-simple-symbol-name-p (name)
   "Return whether NAME is a conservative unescaped Lisp symbol token."
@@ -219,145 +115,20 @@ The depth counts the argument object itself, so values nest sixteen deep.")
       name
       (application--lisp-escaped-symbol-name name)))
 
-(-> application--lisp-readable-atom (t) string)
-(defun application--lisp-readable-atom (value)
-  "Return atomic VALUE using deterministic readable Common Lisp syntax."
-  (with-standard-io-syntax
-    (write-to-string value :escape t :readably t)))
-
 (-> application--lisp-key-token (string) string)
 (defun application--lisp-key-token (name)
   "Return JSON property NAME as one reader-safe Lisp keyword token."
   (format nil ":~A" (application--lisp-symbol-token name)))
 
-(-> application--provider-form-write (stream string cons) null)
-(defun application--provider-form-write (stream text budget)
-  "Write TEXT to STREAM while consuming the remaining character BUDGET."
-  (when (> (length text) (first budget))
-    (application--provider-form-limit "the total character limit"))
-  (decf (first budget) (length text))
-  (write-string text stream)
-  nil)
-
-(-> application--json-lisp-value-write (stream t cons) null)
-(defun application--json-lisp-value-write (stream value budget)
-  "Write deterministic Lisp recreating decoded JSON VALUE to STREAM within BUDGET.
-
-VALUE was decoded under *APPLICATION-PROVIDER-FORM-LIMITS*, which already
-bounds its nesting, container sizes, string lengths and key lengths."
-  (cond
-    ((eq value t)
-     (application--provider-form-write stream "t" budget))
-    ((json-false-p value)
-     (application--provider-form-write stream "nil" budget))
-    ((null value)
-     (application--provider-form-write stream ":null" budget))
-    ((stringp value)
-     (unless (application--provider-form-string-p value)
-       (application--provider-form-limit "the string character boundary"))
-     (application--provider-form-write
-      stream (application--lisp-readable-atom value) budget))
-    ((json-object-p value)
-     (let ((keys (sort (loop for key being the hash-keys of value
-                             collect key)
-                       #'string<)))
-       (unless (every (lambda (key)
-                        (every #'graphic-char-p key))
-                      keys)
-         (application--provider-form-limit "the object key boundary"))
-       (application--provider-form-write stream "(json-object" budget)
-       (dolist (key keys)
-         (application--provider-form-write stream " " budget)
-         (application--provider-form-write
-          stream (application--lisp-readable-atom key) budget)
-         (application--provider-form-write stream " " budget)
-         (application--json-lisp-value-write stream (json-get value key) budget))
-       (application--provider-form-write stream ")" budget)))
-    ((vectorp value)
-     (application--provider-form-write stream "(vector" budget)
-     (loop for item across value
-           do
-              (application--provider-form-write stream " " budget)
-              (application--json-lisp-value-write stream item budget))
-     (application--provider-form-write stream ")" budget))
-    (t
-     (application--provider-form-write
-      stream (application--lisp-readable-atom value) budget)))
-  nil)
-
-(-> application--provider-call-equivalent-form (json-object) (option string))
-(defun application--provider-call-equivalent-form (call)
-  "Return a complete bounded Lisp form, or NIL when CALL cannot be represented."
-  (let ((arguments (application--provider-call-preserved-arguments call))
-        (namespace (json-get call "namespace"))
-        (name (json-get call "name")))
-    (when (and arguments
-               (non-empty-string-p namespace)
-               (non-empty-string-p name)
-               (<= (length namespace)
-                   *application-provider-form-name-characters*)
-               (<= (length name)
-                   *application-provider-form-name-characters*))
-      (handler-case
-          (let ((canonical-name (or *application-tool-presentation-label*
-                                    (format nil "~A.~A" namespace name)))
-                (keys (sort (loop for key being the hash-keys of arguments
-                                  collect key)
-                            #'string<))
-                (budget (list *application-provider-form-characters*)))
-            (unless (every (lambda (key)
-                             (and (non-empty-string-p key)
-                                  (every #'graphic-char-p key)
-                                  (string= key (string-downcase key))))
-                           keys)
-              (application--provider-form-limit
-               "the local operation key boundary"))
-            (with-output-to-string (stream)
-              (application--provider-form-write stream "(" budget)
-              (application--provider-form-write
-               stream (application--lisp-symbol-token canonical-name) budget)
-              (dolist (key keys)
-                (application--provider-form-write stream " " budget)
-                (application--provider-form-write
-                 stream (application--lisp-key-token key) budget)
-                (application--provider-form-write stream " " budget)
-                (application--json-lisp-value-write
-                 stream (json-get arguments key) budget))
-              (application--provider-form-write stream ")" budget)))
-        (application-provider-form-limit ()
-          nil)
-        (error ()
-          nil)))))
-
-(-> application--provider-call-equivalent-rows (json-object) list)
-(defun application--provider-call-equivalent-rows (call)
-  "Return bounded syntax-highlighted rows for CALL's deterministic Lisp form."
-  (let ((form (application--provider-call-equivalent-form call)))
-    (when form
-      (let ((highlighted
-              (and *application-common-lisp-language*
-                   (syntax--highlight-lines
-                    form :language *application-common-lisp-language*))))
-        (if highlighted
-            (let* ((visible-count
-                     (min *application-tool-call-lines* (length highlighted)))
-                   (omitted (- (length highlighted) visible-count)))
-              (append
-               (loop for index below visible-count
-                     collect (aref highlighted index))
-               (when (plusp omitted)
-                 (list
-                  (list
-                   (terminal-span
-                    ':dim
-                    (format nil "… +~D more line~:P" omitted)))))))
-            (application--preview-rows
-             form ':code *application-tool-call-lines*))))))
-
 (-> application--tool-header (application string) string)
 (defun application--tool-header (application header)
-  "Return HEADER sanitized and clipped to APPLICATION's transcript width."
-  (let* ((safe-header (sanitize-text header :single-line-p t))
+  "Parenthesize call names, then sanitize and clip HEADER to transcript width."
+  (let* ((call-header
+           (if (and *application-provider-call-presentation*
+                    (uiop:string-prefix-p "▸ " header))
+               (format nil "▸ (~A)" (subseq header 2))
+               header))
+         (safe-header (sanitize-text call-header :single-line-p t))
          (maximum-width
            (max 1
                 (1- (terminal-columns
@@ -386,37 +157,21 @@ bounds its nesting, container sizes, string lengths and key lengths."
 
 (-> application--tool-entry
     (application &key (:style terminal-style) (:header string)
-                 (:detail (option string)) (:rows list)
-                 (:provider-form-replaces-rows-p boolean))
+                 (:detail (option string)) (:rows list))
     list)
 (defun application--tool-entry
-    (application &key (style ':plain) (header "") detail rows
-                      (provider-form-replaces-rows-p nil))
+    (application &key (style ':plain) (header "") detail rows)
   "Return a transcript header followed by concise styled tool ROWS."
-  (let* ((provider-context-p
-           (and *application-provider-call-presentation* t))
-         (provider-form-rows
-           (and provider-context-p
-                (application--provider-call-equivalent-rows
-                 *application-provider-call-presentation*)))
-         (effective-rows
-           (cond
-             ((and provider-form-rows provider-form-replaces-rows-p)
-              provider-form-rows)
-             (provider-form-rows
-              (append provider-form-rows (when rows (list nil)) rows))
-             (t
-              rows))))
-    (append
-     (application--transcript-entry
-      application
-      :style style
-      :header (application--tool-header application header)
-      :detail detail)
-     (loop for row in effective-rows
-           append (list (terminal-span ':plain (string #\Newline)))
-           when row
-             append (application--tool-row-spans application row)))))
+  (append
+   (application--transcript-entry
+    application
+    :style style
+    :header (application--tool-header application header)
+    :detail detail)
+   (loop for row in rows
+         append (list (terminal-span ':plain (string #\Newline)))
+         when row
+           append (application--tool-row-spans application row))))
 
 (-> application--tool-field-rows (application list) list)
 (defun application--tool-field-rows (application fields)
@@ -426,8 +181,12 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
   (let* ((safe-fields
            (loop for field in fields
                  collect (list :label
-                               (sanitize-text (or (getf field :label) "")
-                                              :single-line-p t)
+                               (let ((label (sanitize-text
+                                             (or (getf field :label) "")
+                                             :single-line-p t)))
+                                 (if *application-provider-call-presentation*
+                                     (application--lisp-key-token label)
+                                     label))
                                :value
                                (sanitize-text (or (getf field :value) "")
                                               :single-line-p t)
@@ -458,7 +217,7 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
                   collect
                   (append
                    (list (terminal-span
-                          ':dim
+                          (if *application-provider-call-presentation* ':syntax-keyword ':dim)
                           (layout-fit-text
                            (if first-p (getf field :label) "")
                            label-width)))
@@ -648,29 +407,94 @@ structural discriminator as a readable heading instead."
                ':dim
                (format nil "… +~D more field~:P" omitted))))))))
 
-(-> application--generic-argument-rows
-    (application (option json-object))
+(-> application--argument-fields
+    (json-object &key (:excluded-keys list))
     list)
-(defun application--generic-argument-rows (application arguments)
-  "Return readable recursively structured rows for generic tool ARGUMENTS."
-  (when arguments
-    (application--structured-object-rows application arguments)))
+(defun application--argument-fields (arguments &key excluded-keys)
+  "Flatten bounded ARGUMENTS into fields sharing one aligned value column."
+  (labels ((field (label value)
+             "Return one bounded scalar or summary field."
+             (list (list :label label
+                         :value (bounded-string
+                                 (application--presentation-value value)
+                                 :limit 2000)
+                         :style (if (string= label "restart")
+                                    ':notice
+                                    (application--structured-value-style label value)))))
 
-(-> application--restart-call-rows ((option json-object)) list)
-(defun application--restart-call-rows (arguments)
-  "Return a separate restart selection area from tool ARGUMENTS."
-  (let ((restart (and arguments (json-get arguments "restart")))
-        (value (and arguments (json-get arguments "restart-value"))))
-    (when (non-empty-string-p restart)
+           (expand-value (label value depth)
+             "Expand VALUE beneath LABEL within the nesting and item limits."
+             (cond
+               ((json-object-p value)
+                (if (and (plusp depth) (plusp (hash-table-count value)))
+                    (expand-object value label (1- depth))
+                    (field label value)))
+               ((and (vectorp value) (not (stringp value)))
+                (if (and (plusp depth) (plusp (length value)))
+                    (append
+                     (loop for index below (min (length value)
+                                                *application-tool-structure-items*)
+                           append (expand-value
+                                   (format nil "~A[~D]" label (1+ index))
+                                   (aref value index) (1- depth)))
+                     (when (> (length value) *application-tool-structure-items*)
+                       (field label (format nil "… +~D more items"
+                                            (- (length value)
+                                               *application-tool-structure-items*)))))
+                    (field label value)))
+               (t
+                (field label value))))
+
+           (expand-object (object prefix depth)
+             "Expand OBJECT's fields in stable presentation order."
+             (let* ((keys (sort (loop for key being the hash-keys of object
+                                     unless (and (null prefix)
+                                                 (member key excluded-keys
+                                                         :test #'string=))
+                                       collect key)
+                               #'application--structured-key-less-p))
+                    (count (min (length keys) *application-tool-structure-items*)))
+               (append
+                (loop for key in (subseq keys 0 count)
+                      append (expand-value (if prefix
+                                               (format nil "~A.~A" prefix key)
+                                               key)
+                                           (gethash key object) depth))
+                (when (> (length keys) count)
+                  (field (or prefix "arguments")
+                         (format nil "… +~D more fields" (- (length keys) count))))))))
+    (expand-object arguments nil *application-tool-structure-depth*)))
+
+(-> application--generic-argument-rows
+    (application (option json-object) &key (:excluded-keys list))
+    list)
+(defun application--generic-argument-rows (application arguments &key excluded-keys)
+  "Return aligned argument fields followed immediately by multiline previews."
+  (when arguments
+    (let* ((fields (application--argument-fields arguments :excluded-keys excluded-keys))
+           (multiline (remove-if-not
+                       (lambda (field) (find #\Newline (getf field :value))) fields)))
       (append
-       (list nil
-             (application--tool-section-row "restart")
-             (list (terminal-span ':notice (format nil "│ ~A" restart))))
-       (when (non-empty-string-p value)
-         (append (list (application--tool-section-row "restart value"))
-                  (application--source-preview-rows
-                   value :language *application-common-lisp-language*
-                   :limit *application-tool-call-lines*)))))))
+       (application--tool-field-rows
+        application (remove-if (lambda (field) (member field multiline)) fields))
+       (loop for field in multiline
+             append (cons
+                     (application--tool-section-row
+                      (application--lisp-key-token
+                       (sanitize-text (getf field :label) :single-line-p t)))
+                     (application--preview-rows
+                      (getf field :value) (getf field :style)
+                      *application-tool-call-lines* :gutter "│ ")))))))
+
+(-> application--restart-value-rows ((option json-object)) list)
+(defun application--restart-value-rows (arguments)
+  "Return a source rail for an explicitly supplied restart value."
+  (let ((value (and arguments (json-get arguments "restart-value"))))
+    (when (non-empty-string-p value)
+      (cons (application--tool-section-row ":restart-value")
+            (application--source-preview-rows
+             value :language *application-common-lisp-language*
+             :limit *application-tool-call-lines*)))))
 
 (-> application--generic-tool-call-entry (application json-object) list)
 (defun application--generic-tool-call-entry (application call)
@@ -686,7 +510,7 @@ structural discriminator as a readable heading instead."
 
 (defmethod application-tool-call-entry :around
     ((tool t) (application application) (call hash-table))
-  "Render provider CALL as highlighted Lisp above its specialized detail rows."
+  "Use Lisp keyword labels for CALL's argument fields, without changing results."
   (declare (ignore tool application))
   (let ((*application-provider-call-presentation* call))
     (call-next-method)))
@@ -725,9 +549,8 @@ structural discriminator as a readable heading instead."
      :style ':tool
      :header "▸ papercut.report"
      :rows (when title
-             (list (list (terminal-span
-                          ':strong
-                          (sanitize-text title :single-line-p t))))))))
+             (application--tool-field-rows
+              application (list (list :label "title" :value title :style ':strong)))))))
 
 
 ;;; Tool call specializations
@@ -748,25 +571,11 @@ structural discriminator as a readable heading instead."
      :style ':tool
      :header (format nil "▸ ~A" (function-call-canonical-name call))
      :rows (append
-             (application--source-preview-rows
-              source
-              :language *application-common-lisp-language*)
-            (application--restart-call-rows arguments)))))
-
-(-> application--simple-call-entry (application json-object string) list)
-(defun application--simple-call-entry (application call argument-name)
-  "Return CALL with one concise ARGUMENT-NAME row when Lisp rendering fails."
-  (let* ((arguments (application--function-call-arguments call))
-         (value (and arguments (json-get arguments argument-name))))
-    (application--tool-entry
-     application
-     :style ':tool
-     :header (format nil "▸ ~A" (function-call-canonical-name call))
-     :provider-form-replaces-rows-p t
-     :rows (when value
-             (list (list (terminal-span
-                          ':code
-                          (application--presentation-value value))))))))
+            (application--generic-argument-rows
+             application arguments :excluded-keys (list argument-name "restart-value"))
+            (application--source-preview-rows
+             source :language *application-common-lisp-language*)
+            (application--restart-value-rows arguments)))))
 
 ;; Codex PlanUpdateCell reference: 5c19155cbd93bfa099016e7487259f61669823ff.
 (-> application--plan-update-text (t) (option string))
@@ -896,7 +705,7 @@ structural discriminator as a readable heading instead."
 
 (defmethod application-tool-call-entry
     ((tool plan-update-tool) (application application) (call hash-table))
-  "Present plan.update as highlighted Lisp followed by its wrapped checklist."
+  "Present plan.update as a wrapped checklist."
   (declare (ignore tool))
   (let ((rows
           (application--plan-update-rows
@@ -1623,7 +1432,7 @@ OPERATION's own declared target line so they stay numbered."
                               operation
                               (1+ index))))
                       (or change-rows
-                          (application--structured-object-rows
+                          (application--generic-argument-rows
                            application operation :excluded-keys '("op")))))
                    (application--structured-value-rows
                     application
@@ -1667,7 +1476,7 @@ OPERATION's own declared target line so they stay numbered."
                               operation
                               (1+ index))))
                       (or change-rows
-                          (application--structured-object-rows
+                          (application--generic-argument-rows
                            application operation :excluded-keys '("op")))))
                    (application--structured-value-rows
                     application
@@ -1683,23 +1492,7 @@ OPERATION's own declared target line so they stay numbered."
     ((tool resource-read-tool) (application application) (call hash-table))
   "Present resource.read as a URI and optional bounded line window."
   (declare (ignore tool))
-  (let* ((arguments (application--function-call-arguments call))
-         (uri (or (and arguments (json-get arguments "uri")) ""))
-         (start (and arguments (json-get arguments "start-line")))
-         (count (and arguments (json-get arguments "line-count"))))
-    (application--tool-entry
-     application
-     :style ':tool
-     :header "▸ resource.read"
-     :rows
-     (application--tool-field-rows
-      application
-      (append
-       (list (list :label "uri" :value uri :style ':code))
-       (when (integerp start)
-         (list (list :label "start line" :value (princ-to-string start))))
-       (when (integerp count)
-         (list (list :label "line count" :value (princ-to-string count)))))))))
+  (application--generic-tool-call-entry application call))
 
 
 (-> application--shell-command-rows (string) list)
@@ -1711,30 +1504,18 @@ OPERATION's own declared target line so they stay numbered."
 
 (defmethod application-tool-call-entry
     ((tool shell-run-tool) (application application) (call hash-table))
-  "Present a shell.run command as shell text with optional execution metadata."
+  "Present shell.run arguments immediately above the shell source rail."
   (declare (ignore tool))
   (let* ((arguments (application--function-call-arguments call))
-         (command (or (and arguments (json-get arguments "command")) ""))
-         (directory (and arguments (json-get arguments "directory")))
-         (timeout (and arguments (json-get arguments "timeout-seconds")))
-         (metadata
-           (let ((fields
-                   (append
-                    (when (non-empty-string-p directory)
-                      (list (list :label "directory"
-                                  :value directory
-                                  :style ':code)))
-                    (when (integerp timeout)
-                      (list (list :label "timeout"
-                                  :value (format nil "~D seconds" timeout)))))))
-             (append (when fields (list nil))
-                     (application--tool-field-rows application fields)))))
+         (command (or (and arguments (json-get arguments "command")) "")))
     (application--tool-entry
      application
      :style ':tool
      :header "▸ shell.run"
-     :rows (append (application--shell-command-rows command)
-                   metadata))))
+     :rows (append
+            (application--generic-argument-rows
+             application arguments :excluded-keys '("command"))
+            (application--shell-command-rows command)))))
 
 (defmethod application-tool-call-entry
     ((tool lisp-eval-tool) (application application) (call hash-table))
@@ -1774,7 +1555,6 @@ OPERATION's own declared target line so they stay numbered."
   "Present a self.set binding and syntax-highlighted value form."
   (declare (ignore tool))
   (let* ((arguments (application--function-call-arguments call))
-         (symbol (or (and arguments (json-get arguments "symbol")) ""))
          (value
            (application--presentation-value
             (or (and arguments (json-get arguments "value")) ""))))
@@ -1783,64 +1563,11 @@ OPERATION's own declared target line so they stay numbered."
      :style ':tool
      :header "▸ self.set"
      :rows (append
-            (application--tool-field-rows
-             application
-             (list (list :label "symbol" :value symbol :style ':code)))
-            (list (application--tool-section-row "value"))
-             (application--source-preview-rows
-              value
-              :language *application-common-lisp-language*)
-            (application--restart-call-rows arguments)))))
-
-(defmethod application-tool-call-entry
-    ((tool lisp-load-system-tool) (application application) (call hash-table))
-  "Present the requested Lisp system."
-  (declare (ignore tool))
-  (application--simple-call-entry application call "system"))
-
-(defmethod application-tool-call-entry
-    ((tool lisp-run-tests-tool) (application application) (call hash-table))
-  "Present the Lisp system whose tests will run."
-  (declare (ignore tool))
-  (application--simple-call-entry application call "system"))
-
-(defmethod application-tool-call-entry
-    ((tool lisp-describe-tool) (application application) (call hash-table))
-  "Present the Lisp designator being described."
-  (declare (ignore tool))
-  (application--simple-call-entry application call "designator"))
-
-(defmethod application-tool-call-entry
-    ((tool lisp-source-tool) (application application) (call hash-table))
-  "Present the Lisp definition whose source is requested."
-  (declare (ignore tool))
-  (application--simple-call-entry application call "name"))
-
-(defmethod application-tool-call-entry
-    ((tool lisp-apropos-tool) (application application) (call hash-table))
-  "Present the name query being searched in the active image."
-  (declare (ignore tool))
-  (application--simple-call-entry application call "query"))
-
-(defmethod application-tool-call-entry
-    ((tool self-rollback-tool) (application application) (call hash-table))
-  "Present the retained generation selected for rollback."
-  (declare (ignore tool))
-  (application--simple-call-entry application call "generation"))
-
-(defmethod application-tool-call-entry
-    ((tool self-commit-tool) (application application) (call hash-table))
-  "Present a private image-commit title without raw JSON."
-  (declare (ignore tool))
-  (let* ((arguments (application--function-call-arguments call))
-         (title (or (and arguments (json-get arguments "title")) "")))
-    (application--tool-entry
-     application
-     :style ':tool
-     :header "▸ self.commit"
-     :rows (application--tool-field-rows
-            application
-            (list (list :label "title" :value title))))))
+           (application--generic-argument-rows
+            application arguments :excluded-keys '("value" "restart-value"))
+           (application--source-preview-rows
+            value :language *application-common-lisp-language*)
+           (application--restart-value-rows arguments)))))
 
 
 ;;; Tool result layout
@@ -2035,11 +1762,17 @@ OPERATION's own declared target line so they stay numbered."
                 retry-text ':hint *application-tool-output-lines*
                 :gutter "│ "))))))
 
-(-> application--failure-result-rows (string) list)
-(defun application--failure-result-rows (output)
-  "Return structured condition details for failed tool OUTPUT."
-  (let ((restart-marker (format nil "Available restarts:~%"))
-        (backtrace-marker (format nil "~%~%Backtrace:~%")))
+(-> application--failure-result-rows
+    (string &key (:tool-name (option string)))
+    list)
+(defun application--failure-result-rows (output &key tool-name)
+  "Return condition details, omitting TOOL-NAME's redundant failure prefix."
+  (let* ((prefix (and tool-name (format nil "~A failed: " tool-name)))
+         (output (if (and prefix (uiop:string-prefix-p prefix output))
+                     (subseq output (length prefix))
+                     output))
+         (restart-marker (format nil "Available restarts:~%"))
+         (backtrace-marker (format nil "~%~%Backtrace:~%")))
     (cond
       ((search restart-marker output)
        (application--debugger-rows output))
@@ -2350,7 +2083,8 @@ re-emitting untrusted serialized JSON."
                (application--mcp-content-rows application record)
                (if (application--tool-result-success-p record)
                    (application--structured-output-rows application output)
-                   (application--failure-result-rows output))))))
+                   (application--failure-result-rows
+                    output :tool-name (getf (rest record) :tool)))))))
 
 (-> application--tool-execution-handoff-entry (application list list) list)
 (defun application--tool-execution-handoff-entry (application record handoff)

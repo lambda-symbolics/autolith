@@ -65,6 +65,16 @@ next
 @@brand:{{{:current}}}/{{{:count}}}@@  @@lisp-prompt:Enter@@ {{{:action}}}  @@lisp-prompt:Esc@@ skip
 #+end_onboarding_text
 
+#+name: footer-scroll-compact
+#+begin_onboarding_text
+@@brand:{{{:current}}}/{{{:count}}}@@ @@lisp-prompt:Enter@@ {{{:action}}} @@lisp-prompt:Esc PgUp/PgDn@@
+#+end_onboarding_text
+
+#+name: footer-scroll-small
+#+begin_onboarding_text
+@@brand:{{{:current}}}/{{{:count}}}@@ @@lisp-prompt:Esc PgUp/PgDn@@
+#+end_onboarding_text
+
 #+name: footer-small
 #+begin_onboarding_text
 @@brand:{{{:current}}}/{{{:count}}}@@ @@lisp-prompt:Enter Esc@@
@@ -416,6 +426,77 @@ To finish this example, inspect the result, then record your acceptance:
 
 For automated checks, link criteria to verification gates. To finish a mission, pass all criteria and gates.
 Use =(mission :cancel "Reason")= to stop instead.
+
+* Keep evidence with what you remember
+:PROPERTIES:
+:ID: symbolic-evidence
+:VERSION: 1
+:END:
+Autolith keeps *prose memories* and *structured facts* with their sources. A fact can have several independent supports.
+
+=(memories)=           browse memories and facts
+=(memories "deploy")=  filter by topic
+=(why "ID")=           inspect sources and dependencies
+
+If a cited file changes, a premise stops holding, or evidence expires, you'll see a stale or invalid status. Ask Autolith to recheck the source before relying on it.
+
+@@brand:read the evidence -> record it -> recheck when it changes@@
+
+* Follow facts through rules
+:PROPERTIES:
+:ID: symbolic-rules
+:VERSION: 1
+:END:
+An admitted *rule* derives facts locally. Move a meeting and its calculated departure time changes without a model request.
+
+=(rules)=                   inspect versions and admission
+=(admit-rule "departure")=  approve a proposed rule
+=(what-changed)=            inspect changes and their causes
+
+Use =(why "ID")= to follow a conclusion back through its premises. Assumptions keep their status through derivation. Conflicting facts are shown together; missing evidence means unknown.
+
+@@dim:The next-turn notice counts recalled facts and reports changes to facts used earlier.@@
+
+* Check plans and calls against facts
+:PROPERTIES:
+:ID: symbolic-actions
+:VERSION: 1
+:END:
+*Plan steps* can require facts and use their values in step text. Unsatisfied requirements appear as blocked. If evidence for a completed step changes, inspect the warning before continuing.
+
+*Mission fact gates* check accepted evidence. *Action contracts* check requirements before a tool call and describe its predicted effects and observed results.
+
+Approve each proposed contract's exact version, observation mappings, and acceptance policy. A changed definition needs fresh admission.
+
+=(mission :status)=  inspect gates and evidence
+
+* Reuse a learned sequence
+:PROPERTIES:
+:ID: symbolic-procedures
+:VERSION: 1
+:END:
+After three successful turns repeat the same tool-call sequence, Autolith can learn a *parameterized procedure* locally.
+
+=(procedures)=  inspect calls, admission, runs, and measured savings
+
+When one fits your request, you'll see a notice. Its first run needs admission; each call also needs its usual approval and contract checks.
+
+Automatic reuse requires successful runs of the *exact admitted version* with measured savings in both model requests and tokens.
+
+Use =(retire-procedure "NAME")= to stop using and learning that procedure.
+
+* Diagnose before repairing
+:PROPERTIES:
+:ID: symbolic-diagnosis
+:VERSION: 1
+:END:
+Enable *Diagnostic probes* in =(settings)= to let Autolith compare hypotheses using structured observations.
+
+It checks known facts first, then runs a bounded set of probes to distinguish the remaining causes. Read the probe results, eliminated hypotheses, and suggested repair in the report. An unresolved case is shown as open.
+
+=(diagnoses)=  inspect saved diagnoses and recent cases
+
+@@dim:Structured knowledge must be active. Each probe needs its ordinary tool approval and must satisfy its action contract.@@
 
 * Large inputs, focused reasoning
 :PROPERTIES:

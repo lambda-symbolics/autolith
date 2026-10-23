@@ -64,9 +64,12 @@
              "The pristine or saved worker image; defaults to pristine.")))
     (tool-object-schema properties nil)))
 
-(-> default-tools--resource-operation-schema () json-object)
-(defun default-tools--resource-operation-schema ()
-  "Return the closed workspace, scratchpad, agenda, memory, and papercut resource.edit variants."
+(-> default-tools--resource-operation-schema (&key (:knowledge-p boolean)) json-object)
+(defun default-tools--resource-operation-schema (&key (knowledge-p t))
+  "Return the closed workspace, scratchpad, agenda, memory, and papercut resource.edit variants.
+
+KNOWLEDGE-P adds the memory:facts operations defining predicates, asserting and
+retracting facts, and proposing rules."
   (labels ((line-property (description)
              "Return one positive original-snapshot line schema."
              (let ((schema (tool-integer-property description)))
@@ -111,6 +114,32 @@
               '("global" "workspace")
               "Optional complete replacement scope."))
 
+           (memory-sources-property ()
+             "Return the bounded persistent-memory evidence schema."
+             (let ((schema
+                     (cl-llm-provider-api:provider-array-schema
+                      (tool-object-schema
+                       (json-object
+                        "file" (tool-string-property "A cited file path.")
+                        "url" (tool-string-property "A cited http or https address.")
+                        "user" (tool-string-property
+                                "The user's exact words in this conversation.")
+                        "quote" (tool-string-property
+                                 "The exact supporting passage of the file or page; a file quote must occur in the file now."))
+                       nil)
+                      "Optional evidence the memory was written from; each object names one of file, url, or user. A memory whose quoted file text changes is reported stale. Replacing without sources keeps the recorded ones, so a stale memory stays stale until current sources are supplied; empty removes them.")))
+               (setf (gethash "maxItems" schema) *memory-source-count-limit*)
+               schema))
+
+           (memory-premises-property ()
+             "Return the bounded persistent-memory premise schema."
+             (let ((schema
+                     (cl-llm-provider-api:provider-array-schema
+                      (tool-string-property "One premise memory identifier.")
+                      "Optional memories this one is derived from; it is reported stale when one changes. Replacing without premises keeps the recorded premise versions; supply them again only after checking the memory still follows from them.")))
+               (setf (gethash "maxItems" schema) *memory-premise-count-limit*)
+               schema))
+
            (operation-schema (name properties required &key any-required)
              "Return one closed resource edit operation variant."
              (setf (gethash "op" properties)
@@ -135,7 +164,113 @@
      "description"
      "One structured operation for the observed resource type."
      "oneOf"
-     (vector
+     (concatenate
+      'vector
+      (when knowledge-p
+        (list
+      (operation-schema
+       "predicate-define"
+       (json-object
+        "predicate" (tool-string-property "Lowercase dotted name such as event.start.")
+        "arguments" (cl-llm-provider-api:provider-array-schema
+                     (tool-object-schema
+                      (json-object
+                       "name" (tool-string-property "Lowercase argument name.")
+                       "type" (cl-llm-provider-api:provider-enum-schema
+                               *memory-knowledge-type-names* "The argument's value type.")
+                       "unit" (tool-string-property
+                               "For a quantity, a unit whose dimension values must have."))
+                      '("name" "type"))
+                     "Typed arguments in order.")
+        "key" (cl-llm-provider-api:provider-array-schema
+               (tool-string-property "An argument name.")
+               "Arguments identifying the subject; facts agreeing on them and differing elsewhere conflict.")
+        "template" (tool-string-property "Sentence with {argument} placeholders.")
+        "description" (tool-string-property "What the predicate means.")
+        "scope" (memory-scope-property))
+       '("predicate" "arguments"))
+      (operation-schema
+       "fact-assert"
+       (json-object
+        "predicate" (tool-string-property "A defined predicate.")
+        "arguments" (json-object "type" "array"
+                                 "items" (json-object "description" "One argument value.")
+                                 "description" "Values in argument order: strings, numbers, ISO instants and dates, durations such as PT30M, quantities as {magnitude, unit}.")
+        "negated" (tool-boolean-property "Assert that the fact does not hold.")
+        "sources" (memory-sources-property)
+        "basis" (cl-llm-provider-api:provider-enum-schema
+                 '("observation" "user-assertion" "assumption" "model-proposal")
+                 "Why it is believed. The sources decide it: a file is an observation, the user's words a user assertion, a page an observation only once retrieved with that text in this conversation, and no source a model proposal. Give assumption or model-proposal to claim less.")
+        "valid-from" (tool-string-property "ISO instant from which the fact holds.")
+        "valid-until" (tool-string-property "ISO instant after which it no longer holds.")
+        "scope" (memory-scope-property))
+       '("predicate" "arguments"))
+      (operation-schema
+       "method-define"
+       (json-object
+        "id" (tool-string-property "Lowercase method name; defining it again replaces it.")
+        "task" (json-object "type" "array"
+                            "items" (json-object "description" "A task name, then variables or values.")
+                            "description" "The task this method does, such as [\"prepare\", \"?event\"].")
+        "when" (json-object "type" "array"
+                            "items" (json-object "description" "One fact pattern.")
+                            "description" "Fact patterns that must hold for this method to apply.")
+        "steps" (json-object "type" "array"
+                             "items" (json-object "description" "{\"task\": [NAME, ARGS...]} or {\"step\": TEXT, \"requires\": [...], \"verify\": PATTERN}.")
+                             "description" "Ordered subtasks and plain steps; {?var} in step text is filled from facts.")
+        "description" (tool-string-property "What the method achieves.")
+        "scope" (memory-scope-property))
+       '("id" "task" "steps"))
+      (operation-schema
+       "contract-define"
+       (json-object
+        "id" (tool-string-property "Lowercase contract name; defining it again replaces it.")
+        "tool" (tool-string-property "The tool the contract describes, such as shell.run or an MCP tool.")
+        "when" (json-object "type" "object"
+                            "description" "Argument names mapped to required values or to variables they bind.")
+        "requires" (json-object "type" "array"
+                                "items" (json-object "description" "One fact pattern.")
+                                "description" "Fact patterns that must hold before the call; otherwise it is refused.")
+        "effects" (json-object "type" "array"
+                               "items" (json-object "description" "One fact pattern.")
+                               "description" "Facts the call is expected to cause, recorded as predictions.")
+        "observes" (json-object "type" "array"
+                                "items" (json-object "description" "{\"predicate\": NAME, \"arguments\": [VALUE, ?var, $arg.NAME, or $result.PATH]}.")
+                                "description" "Facts read from the call's arguments and JSON result after it succeeds.")
+        "accepts" (json-object "type" "array"
+                               "items" (cl-llm-provider-api:provider-enum-schema
+                                        '("observation" "user-assertion" "assumption" "model-proposal")
+                                        "A basis a requirement may rest on.")
+                               "description" "Bases requirements may rest on; default observation and user-assertion. Add model-proposal to let earlier calls' predicted effects count.")
+        "description" (tool-string-property "What the contract states.")
+        "scope" (memory-scope-property))
+       '("id" "tool"))
+      (operation-schema
+       "fact-retract"
+       (json-object
+        "id" (tool-string-property "A claim or support identifier.")
+        "reason" (tool-string-property "Why it no longer holds."))
+       '("id"))
+      (operation-schema
+       "rule-propose"
+       (json-object
+        "id" (tool-string-property "Lowercase rule name; proposing it again makes a new version.")
+        "premises" (json-object "type" "array"
+                                "items" (json-object "description" "One premise pattern.")
+                                "description" "Patterns such as [\"event.start\", \"?event\", \"?start\"], or [\"not\", PATTERN] matching an explicitly asserted negation.")
+        "guards" (json-object "type" "array"
+                              "items" (json-object "description" "One comparison.")
+                              "description" "Comparisons such as [\"<\", \"?a\", \"?b\"].")
+        "bindings" (json-object "type" "array"
+                                "items" (json-object "description" "One variable and its expression.")
+                                "description" "New variables such as [\"?leave\", [\"-\", \"?start\", \"?travel\"]], computed with + - * / min max abs date start-of-day weekday days hours minutes in-unit.")
+        "conclusion" (json-object "type" "array"
+                                  "items" (json-object "description" "A predicate name, variable, or value.")
+                                  "description" "The pattern the rule concludes, using bound variables.")
+        "description" (tool-string-property "What the rule does.")
+        "scope" (memory-scope-property))
+       '("id" "premises" "conclusion"))))
+      (vector
        (operation-schema
         "replace-lines"
         (json-object
@@ -213,7 +348,9 @@
        (json-object
         "title" (tool-string-property "Complete persistent-memory title.")
         "content" (tool-string-property "Complete persistent-memory content.")
-        "tags" (memory-tags-property))
+        "tags" (memory-tags-property)
+        "sources" (memory-sources-property)
+        "premises" (memory-premises-property))
        '("title" "content"))
       (operation-schema
        "memory-replace"
@@ -221,7 +358,9 @@
         "title" (tool-string-property "Complete replacement memory title.")
         "content" (tool-string-property "Complete replacement memory content.")
         "tags" (memory-tags-property)
-        "scope" (memory-scope-property))
+        "scope" (memory-scope-property)
+        "sources" (memory-sources-property)
+        "premises" (memory-premises-property))
        '("title" "content"))
       (operation-schema
        "memory-forget"
@@ -255,11 +394,13 @@
         "resolution" (tool-string-property
                       "Complete bounded private local closure resolution.")
         "diagnostic" (default-tools--diagnostic-property))
-       '("resolution"))))))
+       '("resolution")))))))
 
-(-> default-tools--register-workspace (tool-registry) tool-registry)
-(defun default-tools--register-workspace (registry)
-  "Register the default resource and image-inspection tools in REGISTRY."
+(-> default-tools--register-workspace (tool-registry &key (:knowledge-p boolean)) tool-registry)
+(defun default-tools--register-workspace (registry &key (knowledge-p t))
+  "Register the default resource and image-inspection tools in REGISTRY.
+
+KNOWLEDGE-P offers structured knowledge through memory: resources."
   (tool-registry-describe-namespace
    registry "resource"
    "Revision-gated observation and structured editing of model-addressable resources.")
@@ -278,7 +419,7 @@
      (make-instance 'agenda-resolver :scheme "agenda"))
     (resource-registry-register
      resource-registry
-     (make-instance 'memory-resolver :scheme "memory"))
+     (make-instance 'memory-resolver :scheme "memory" :knowledge-p knowledge-p))
     (resource-registry-register
      resource-registry
      (make-instance 'papercut-resolver :scheme "papercut"))
@@ -338,7 +479,8 @@
                            "description"
                            "Resource-specific operations. Agenda, memory, and papercut resources accept exactly one; line-edited text and observed missing files accept non-overlapping original-line operations; scratchpad: resources additionally accept one scratchpad-delete operation."
                            "minItems" 1
-                           "items" (default-tools--resource-operation-schema)))
+                           "items" (default-tools--resource-operation-schema
+                                    :knowledge-p knowledge-p)))
             '("uri" "base-revision" "operations"))
            :resource-registry resource-registry)
           (list
@@ -531,9 +673,81 @@
      '("operation"))))
   registry)
 
-(-> default-tools--register-plan (tool-registry) tool-registry)
-(defun default-tools--register-plan (registry)
-  "Register workspace plan tools in REGISTRY."
+(-> default-tools--register-procedure (tool-registry) tool-registry)
+(defun default-tools--register-procedure (registry)
+  "Register the tool running learned procedures in REGISTRY."
+  (tool-registry-describe-namespace
+   registry "procedure"
+   "Tool-call sequences Autolith learned from recurring work, run in one step.")
+  (default-tools--register
+   registry
+   (list 'procedure-run-tool
+         "procedure" "run"
+         "Make a learned procedure's tool calls in one step, each with its usual authorization, and report every call and result. Use it when Autolith says a procedure fits the request, or one listed by memory:procedures does. A procedure never admitted asks for admission first. If a call fails the run stops and reports where; continue with ordinary calls."
+         (tool-object-schema
+          (json-object
+           "id" (tool-string-property "The procedure's name.")
+           "parameters" (json-object "type" "object"
+                                     "description" "The procedure's parameters by name, such as {\"quarter\": \"q3\"}."))
+          '("id"))))
+  registry)
+
+(-> default-tools--register-diagnosis (tool-registry) tool-registry)
+(defun default-tools--register-diagnosis (registry)
+  "Register the tool testing hypotheses with probes in REGISTRY."
+  (tool-registry-describe-namespace
+   registry "diagnosis"
+   "Hypothesis tests that run the probe calls telling causes apart.")
+  (let ((pattern-array
+          (json-object "type" "array"
+                       "items" (json-object "type" "array"
+                                            "items" (json-object
+                                                     "description" "A predicate, then values or parameters such as ?service.")
+                                            "description" "One fact pattern, or [\"not\", PATTERN]."))))
+    (default-tools--register
+     registry
+     (list 'diagnosis-run-tool
+           "diagnosis" "run"
+           "Find which of up to 4 hypotheses explains a failure before repairing it. Each hypothesis predicts facts; each probe is a tool call whose contract observes facts from its result (define contracts with contract-define on memory:facts). Known facts are checked first, then the probe telling apart the most remaining hypotheses per cost runs, at most 3, with no model request between them. A hypothesis is ruled out only by a fact contradicting its prediction. Reports the remaining hypothesis and its repair, or what is still open, and which facts decided."
+           (tool-object-schema
+            (json-object
+             "diagnosis" (tool-string-property "The name of a saved diagnosis to run.")
+             "bindings" (json-object "type" "object"
+                                     "description" "Values for the diagnosis's parameters, such as {\"service\": \"billing\"}.")
+             "hypotheses" (json-object
+                           "type" "array"
+                           "items" (tool-object-schema
+                                    (json-object
+                                     "id" (tool-string-property "Lowercase hypothesis name.")
+                                     "predicts" pattern-array
+                                     "repair" (tool-string-property "What to do if it is the cause.")
+                                     "description" (tool-string-property "What the hypothesis says."))
+                                    '("id" "predicts"))
+                           "description" "The hypotheses, when no saved diagnosis is named.")
+             "probes" (json-object
+                       "type" "array"
+                       "items" (tool-object-schema
+                                (json-object
+                                 "tool" (tool-string-property "The probe's tool, such as service.ping.")
+                                 "arguments" (json-object "type" "object"
+                                                          "description" "Its arguments; ?name takes a parameter.")
+                                 "cost" (json-object "type" "number"
+                                                     "description" "Its relative cost; default 1."))
+                                '("tool"))
+                       "description" "The tool calls that can observe predicted facts.")
+             "parameters" (json-object "type" "array"
+                                       "items" (tool-string-property "A parameter name.")
+                                       "description" "Parameters the hypotheses and probes use, for save_as.")
+             "save_as" (tool-string-property "Save the given hypotheses and probes under this name to run again."))
+            nil))))
+  registry)
+
+(-> default-tools--register-plan (tool-registry &key (:knowledge-p boolean)) tool-registry)
+(defun default-tools--register-plan (registry &key (knowledge-p t))
+  "Register workspace plan tools in REGISTRY.
+
+KNOWLEDGE-P lets steps name the facts they require and the fact that verifies
+them."
   (let ((empty-schema (tool-object-schema (json-object) nil)))
     (dolist
         (specification
@@ -546,7 +760,8 @@
           (list
            'plan-update-tool
            "plan" "update"
-           "Replace the current workspace plan with ordered steps, or clear it with an empty steps array. Each step has text and status pending, doing, or done. Optional explanation summarizes the plan."
+           (format nil "Replace the current workspace plan with ordered steps, or clear it with an empty steps array. Each step has text and status pending, doing, or done. Optional explanation summarizes the plan.~:[~; A step may name the facts it requires: their variables fill {?var} in its text from current facts, and the plan reports a step blocked while nothing satisfies them or done on facts that later stopped holding.~]"
+                   knowledge-p)
            (tool-object-schema
             (json-object
              "steps"
@@ -557,13 +772,26 @@
               (json-object
                "type" "object"
                "properties"
-               (json-object
-                "step" (tool-string-property
-                        "The work this plan point describes.")
-                "status"
-                (json-object
-                 "type" "string"
-                 "description" "pending, doing/in_progress, or done/completed."))
+               (let ((properties
+                       (json-object
+                        "step" (tool-string-property
+                                "The work this plan point describes.")
+                        "status"
+                        (json-object
+                         "type" "string"
+                         "description" "pending, doing/in_progress, or done/completed."))))
+                 (when knowledge-p
+                   (setf (gethash "id" properties)
+                         (tool-string-property "A stable step name; keeps its record across updates.")
+                         (gethash "requires" properties)
+                         (json-object "type" "array"
+                                      "items" (json-object "description" "One fact pattern.")
+                                      "description" "Fact patterns such as [\"event.departure\", \"review\", \"?leave\"] the step needs.")
+                         (gethash "verify" properties)
+                         (json-object "type" "array"
+                                      "items" (json-object "description" "A predicate, variable, or value.")
+                                      "description" "A fact pattern whose observation confirms the step was done.")))
+                 properties)
                "required" (json-array "step" "status")
                "additionalProperties" (json-false)))
              "explanation"
@@ -571,6 +799,18 @@
               "Optional short explanation of the plan."))
              '("steps")))))
       (default-tools--register registry specification)))
+  (when knowledge-p
+    (default-tools--register
+     registry
+     (list 'plan-expand-tool
+           "plan" "expand"
+           "Replace the current workspace plan with a task expanded locally by its methods (see memory:methods), checked against current facts. Reports a task no method describes, methods that do not apply, or a search that ran out of budget, without changing the plan."
+           (tool-object-schema
+            (json-object
+             "task" (json-object "type" "array"
+                                 "items" (json-object "description" "The task name, then its argument values.")
+                                 "description" "The task to plan, such as [\"prepare\", \"review\"]."))
+            '("task")))))
   registry)
 
 (-> default-tools--register-lisp (tool-registry) tool-registry)
@@ -942,13 +1182,21 @@ emacs.* tools and emacs: resources only when it names a reachable Emacs server
 socket."
   (let ((registry (make-instance 'tool-registry))
         (search-worker (search-worker-create :configuration configuration)))
-    (default-tools--register-workspace registry)
+    (default-tools--register-workspace registry
+                                       :knowledge-p (knowledge-active-p configuration))
     (default-tools--register-web registry)
     (default-tools--register-search registry search-worker)
     (default-tools--register-shell registry)
     (default-tools--register-papercut registry)
     (default-tools--register-agenda registry)
-    (default-tools--register-plan registry)
+    (default-tools--register-plan registry
+                                  :knowledge-p (knowledge-active-p configuration))
+    (when (knowledge-active-p configuration)
+      (default-tools--register-procedure registry))
+    (when (and configuration
+               (knowledge-active-p configuration)
+               (config :diagnosis-p configuration))
+      (default-tools--register-diagnosis registry))
     (default-tools--register-lisp registry)
     (when (and configuration (lsp-configuration-enabled-p configuration))
       (lsp-register-tools registry))

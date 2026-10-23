@@ -588,3 +588,158 @@
                        (configuration-missing () t))
                      "config without any session signals a missing configuration"))))
   nil)
+
+
+;;;; -- Private Startup Replay --
+
+(-> user-init-tests--startup-definitions () list)
+(defun user-init-tests--startup-definitions ()
+  "Return private definitions for fresh-process startup and authentication checks."
+  '((defvar *user-init-tests--replay-count* 0
+      "Number of private replays in this fresh process.")
+    (defun openai-compatible--authenticate (provider &key stream open-browser-p)
+      "Intercept authentication before browser access or credential publication."
+      (declare (ignore stream open-browser-p))
+      (assert (string= (provider-account-label provider) "startup-private"))
+      (assert (= *user-init-tests--replay-count* 1))
+      "PRIVATE-STARTUP-AUTHENTICATED")
+    (defparameter *user-init-tests--replay-lineage*
+      (progn
+        (incf *user-init-tests--replay-count*)
+        (register-openai-compatible-provider
+         :name "startup-private"
+         :endpoint "https://startup.invalid/v1/chat/completions"
+         :models '("startup-private/model"))
+        *active-image-lineage-identifier*)
+      "Lineage selected before private initializers ran.")
+    (defun user-init-tests--register-provider ()
+      "Register a provider through executable init after private replay."
+      (register-openai-compatible-provider
+       :name "startup-init"
+       :endpoint "https://startup.invalid/v1/chat/completions"
+       :models '("startup-init/model")))
+    (defun application-run
+        (application &key initial-command initial-input recovery-diagnosis
+                          resume-offer-p)
+      "Check authentication's continuation without entering the terminal loop."
+      (declare (ignore initial-command initial-input recovery-diagnosis
+                       resume-offer-p))
+      (unwind-protect
+           (progn
+             (assert (= *user-init-tests--replay-count* 1))
+             (assert (equal *user-init-tests--replay-lineage*
+                            *active-image-lineage-identifier*))
+             (let ((failures (application-mutation-replay-failures application)))
+               (assert
+                (if (uiop:getenv "AUTOLITH_TEST_REPLAY_FAILURE")
+                    (and (= (length failures) 1)
+                         (search "startup-replay-sentinel"
+                                 (rest (first failures))))
+                    (null failures))))
+             (format t "PRIVATE-STARTUP-SESSION~%"))
+        (application--discard-connection-resources
+         application (application-tool-registry application)
+         (application-worker application))
+        (application-release-conversation-lease application))
+      nil)))
+
+(-> user-init-tests--run-startup (configuration list &key (:failure-p boolean))
+    (values integer string))
+(defun user-init-tests--run-startup (configuration arguments &key failure-p)
+  "Run a real CLI with isolated user roots and return its status and output."
+  (let ((root (test-configuration-root configuration)))
+    (test-run-program-with-environment
+     (active-image-process-command configuration arguments)
+     (append
+      (loop for (name key) in '(("XDG_CONFIG_HOME" :config-root)
+                               ("XDG_DATA_HOME" :data-root)
+                               ("XDG_STATE_HOME" :state-root)
+                               ("XDG_CACHE_HOME" :cache-root))
+            collect (format nil "~A=~A" name
+                            (namestring (uiop:pathname-parent-directory-pathname
+                                         (config key configuration)))))
+      (list (format nil "HOME=~A" (namestring root))
+            (format nil "CODEX_HOME=~A" (namestring root))
+            "AUTOLITH_SITE_CONFIG_ROOT="
+            (format nil "AUTOLITH_MODEL=~A" (config :model configuration))
+            (format nil "AUTOLITH_REASONING_EFFORT=~A"
+                    (config :reasoning-effort configuration))
+            "AUTOLITH_TELEMETRY_ENABLED=false")
+      (when failure-p (list "AUTOLITH_TEST_REPLAY_FAILURE=1"))))))
+
+(-> test-private-startup-replay () null)
+(defun test-private-startup-replay ()
+  "Test selected private definitions before standalone models, init, and auth."
+  (with-test-configuration (configuration)
+    (let ((configuration
+            (apply #'configuration-copy configuration
+                   (loop for key in '(:config-root :data-root :state-root :cache-root)
+                         append (list key (merge-pathnames "autolith/"
+                                                           (config key configuration))))))
+          (*active-image-commit-identifier* nil)
+          (*active-image-history-commit* nil)
+          (*active-image-lineage-identifier* nil)
+          (*image-state-initialized-p* nil)
+          (*image-replay-skips* nil))
+      (configuration-ensure-directories configuration)
+      (image-commit-publish
+       configuration :title "Exercise private CLI startup"
+       :additional-entries
+       (loop for form in (user-init-tests--startup-definitions)
+             collect (list :kind ':definition :id (make-identifier)
+                           :target (definition-key form) :package "AUTOLITH"
+                           :source (with-standard-io-syntax
+                                     (let ((*package* (find-package :autolith)))
+                                       (prin1-to-string form))))))
+      (with-open-file (stream (configuration-user-init-path configuration)
+                              :direction ':output :if-exists ':supersede)
+        (write-line "(write-line \"PRIVATE-STARTUP-INIT\")" stream)
+        (write-line "(user-init-tests--register-provider)" stream))
+      (flet ((run (arguments &key pristine-p failure-p)
+               "Check CLI output from one fresh process."
+               (multiple-value-bind (status output)
+                   (user-init-tests--run-startup configuration arguments
+                                                 :failure-p failure-p)
+                 (test-assert
+                  (= status (if (and pristine-p (member "auth" arguments
+                                                        :test #'string=))
+                                64 0))
+                  (format nil "~S exits with expected status: ~A" arguments output))
+                 (cond
+                   (pristine-p
+                    (test-assert (not (search "PRIVATE-STARTUP-INIT" output))
+                                 "pristine commands bypass executable init")
+                    (when (member "models" arguments :test #'string=)
+                      (test-assert (not (search "startup-private/model" output))
+                                   "pristine models bypass private initializers")))
+                   ((member "models" arguments :test #'string=)
+                    (test-assert
+                     (and (search "startup-private/model" output)
+                          (search "startup-init/model" output))
+                     "models includes private and init-registered providers"))
+                   (t
+                    (test-assert
+                     (and (search "PRIVATE-STARTUP-AUTHENTICATED" output)
+                          (search "PRIVATE-STARTUP-SESSION" output))
+                     "auth uses private helpers and continues with one replay and lineage")))
+                 (when (and failure-p (member "models" arguments :test #'string=))
+                   (test-assert (search "startup-replay-sentinel" output)
+                                "standalone models reports private replay failures")))))
+        (run '("models"))
+        (run '("--pristine" "models") :pristine-p t)
+        (run '("auth" "startup-private"))
+        (run '("--pristine" "auth" "startup-private") :pristine-p t)
+        ;; Deliberately publish a broken replay after the working definitions.
+        (let ((*image-commit-replay-probe-function*
+                (lambda (configuration script identifier)
+                  (declare (ignore configuration script identifier))
+                  nil)))
+          (image-commit-publish
+           configuration :title "Exercise startup replay diagnostics"
+           :additional-entries
+           (list (list :kind ':legacy :id (make-identifier)
+                       :target "startup-failure"
+                       :source "(error \"startup-replay-sentinel\")"))))
+        (run '("models") :failure-p t)
+        (run '("auth" "startup-private") :failure-p t))))
+  nil)

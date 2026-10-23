@@ -449,6 +449,16 @@ parent, and borrowed capabilities are released at terminal state."))
     :accessor tool-execution-job-summary
     :type string
     :documentation "The bounded operation summary retained for inspection.")
+   (activity
+    :initform nil
+    :accessor tool-execution-job-activity
+    :type (option string)
+    :documentation "The latest bounded content-free execution phase, under the job lock.")
+   (activity-at
+    :initform nil
+    :accessor tool-execution-job-activity-at
+    :type (option integer)
+    :documentation "The monotonic time of the latest real phase update, under the job lock.")
    (operation-function
     :initarg :operation-function
     :accessor tool-execution-job-operation-function

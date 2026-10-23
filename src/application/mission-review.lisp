@@ -211,7 +211,7 @@ cumulative across changed snapshots, not reset by retries or restart."
   "Run changed ID once. Unchanged completed, failed and interrupted runs are reused.
 Every finding needs an explicit primary resolve/reject decision before acceptance."
   (let* ((context (mission-review--context application))
-         (boundary (or tool-context (mission--tool-context application)))
+         (boundary (or tool-context (application-tool-context application)))
          (policy (mission-review--policy context id)))
     (unless (eq (tool-context-agent boundary) (application-agent application))
       (mission--reject ':review-authority "Only the primary agent may trigger a checkpoint."))
@@ -322,7 +322,7 @@ without claiming failed harness checks. No configured review means no model call
 Final acceptance retains the request lock from this check through its transition;
 policy admission and fingerprint selection use the same request-before-state order."
   (let* ((context (mission-review--context application))
-         (boundary (mission--tool-context application)))
+         (boundary (application-tool-context application)))
     (with-recursive-lock-held ((mission-context-request-lock context))
       (with-recursive-lock-held ((mission-context-lock context))
         (every

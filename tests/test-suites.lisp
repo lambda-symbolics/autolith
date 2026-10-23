@@ -231,6 +231,8 @@
   test-configuration-source-platform-reading)
 
 (define-test-suite fullscreen
+  test-terminal-compact-success-groups
+  test-terminal-compact-success-stream-and-retry
   test-terminal-fullscreen-viewport
   test-terminal-fullscreen-new-conversation
   test-terminal-fullscreen-small-windows
@@ -326,6 +328,104 @@
   test-memory-persistence
   test-memory-context-notices)
 
+(define-test-suite memory-source
+  test-memory-source-records
+  test-memory-premise-records
+  test-memory-source-status
+  test-memory-premise-status
+  test-memory-recall-status
+  test-memory-commands
+  test-memory-premise-export)
+
+(define-test-suite memory-manager-model
+  test-memory-manager-model-listing
+  test-memory-manager-model-note-mutations
+  test-memory-manager-model-conflicts
+  test-memory-manager-model-fact-mutations)
+
+(define-test-suite memory-manager
+  test-memory-manager-navigation
+  test-memory-manager-layout
+  test-memory-manager-note-form
+  test-memory-manager-unsaved-form
+  test-memory-manager-lifecycle
+  test-memory-manager-command)
+(define-test-suite knowledge
+  test-knowledge-terms
+  test-knowledge-schemas
+  test-knowledge-store
+  test-knowledge-applicability
+  test-knowledge-quotation-context
+  test-knowledge-rule-validation
+  test-knowledge-rule-computations
+  test-knowledge-rule-lifecycle
+  test-knowledge-derivation
+  test-knowledge-justifications-and-conflicts
+  test-knowledge-evaluation-bounds
+  test-knowledge-explanations
+  test-knowledge-changes
+  test-knowledge-memory-premises
+  test-knowledge-recall
+  test-knowledge-commands
+  test-knowledge-activation
+  test-knowledge-mission-observations
+  test-knowledge-transfer
+  test-knowledge-usage-attribution
+  test-knowledge-view-cache
+  test-knowledge-plan-steps
+  test-knowledge-plan-changes
+  test-knowledge-task-methods
+  test-knowledge-fact-gates
+  test-knowledge-cross-scope-conflicts
+  test-knowledge-admissible-support
+  test-knowledge-expiry-lifecycle
+  test-knowledge-action-contracts
+  test-contract-requirement-bindings)
+
+(define-test-suite knowledge-replacement
+  test-knowledge-replacement-renewal
+  test-knowledge-replacement-source-identity)
+
+(define-test-suite symbolic-presentation
+  test-symbolic-session-notices
+  test-symbolic-command-styles)
+
+(define-test-suite knowledge-fixtures
+  test-knowledge-appointment-fixtures
+  test-knowledge-document-fixtures
+  test-knowledge-sales-fixtures
+  test-knowledge-scale)
+
+(define-test-suite learning
+  test-action-traces
+  test-procedure-templates
+  test-procedure-lifecycle
+  test-procedure-mining
+  test-procedure-learning
+  test-procedure-running
+  test-procedure-automatic-runs
+  test-procedure-build-then-use
+  test-procedure-grounded-preflight
+  test-procedure-preflight-rule-bindings
+  test-procedure-preflight-conflict-closure
+  test-procedure-preflight-shared-future-conflicts
+  test-procedure-preflight-proof-dependencies
+  test-procedure-commands
+  test-procedure-fixture)
+
+(define-test-suite diagnosis
+  test-diagnosis-predictions
+  test-diagnosis-remote-service
+  test-diagnosis-setting
+  test-diagnosis-commands)
+
+(define-test-suite contracts
+  test-contract-repeated-variables
+  test-contract-resource-admission
+  test-contract-admission-reload
+  test-contract-import-duplicate-properties
+  test-contract-import-preserves-local-admission
+  test-contract-record-supersession)
 (define-test-suite papercut
   test-papercuts)
 
@@ -335,6 +435,7 @@
 (define-test-suite user-init
   test-site-configuration-root
   test-site-configuration-noninteractive-commands
+  test-private-startup-replay
   test-user-init
   test-user-init-settings
   test-local-source-tree-registration
@@ -380,7 +481,10 @@
 
 (define-test-suite context
   test-session-state-context-contributor
-  test-request-local-context)
+  test-request-local-context
+  test-known-context-estimate
+  test-context-estimate-cache
+  test-context-estimate-provider-family)
 
 (define-test-suite context-rule
   test-context-rule-selection
@@ -427,6 +531,7 @@
 (define-test-suite skill-tool
   test-skill-load-tool
   test-skill-provider-context
+  test-skill-cache-prefix
   test-skill-edit-tool
   test-skill-load-presentation)
 
@@ -568,6 +673,11 @@
   test-provider-qualified-model-application)
 
 (define-test-suite provider
+  test-codex-context-anchoring
+  test-codex-context-boundaries
+  test-codex-context-request
+  test-codex-rendered-context-request
+  test-codex-anchored-contributions-request
   test-provider-deferred-tool-models
   test-provider-deferred-tool-loading
   test-provider-request
@@ -683,7 +793,10 @@
 (define-test-suite memory-resource
   test-memory-resources
   test-memory-resource-mutations
-  test-memory-resource-filtered-read-write)
+  test-memory-resource-filtered-read-write
+  test-memory-resource-sources
+  test-memory-knowledge-resources
+  test-memory-knowledge-rule-admission)
 
 (define-test-suite papercut-resource
   test-papercut-resources)
@@ -867,6 +980,8 @@
   test-task-child-shared-agent-loop)
 
 (define-test-suite inference
+  test-rlm-job-activity
+  test-rlm-stream-progress
   test-rlm-frame-budget-activity
   test-rlm-budget-exhaustion-guidance
   test-rlm-value-preview
@@ -1017,6 +1132,7 @@
   test-terminal-timed-status
   test-terminal-compaction-indicator
   test-terminal-agent-activities
+  test-terminal-rlm-activities
   test-terminal-command-activities
   test-terminal-stream-update
   test-terminal-command-completion
@@ -1123,6 +1239,7 @@
   test-lisp-source-result-highlighting
   test-evaluation-value-highlighting
   test-tool-code-output-highlighting
+  test-raw-diff-output-presentation
   test-resource-source-highlighting
   test-search-source-highlighting
   test-lsp-result-severity-presentation

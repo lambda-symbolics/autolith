@@ -701,12 +701,14 @@ caller."
 
 (-> application-lisp--value-spans (string) list)
 (defun application-lisp--value-spans (value)
-  "Highlight a rendered VALUE, with a plain-code fallback for syntax failures."
-  (or (handler-case
-          (syntax--highlight-spans value
-                                   :language *application-common-lisp-language*)
-        (error () nil))
-      (list (terminal-span ':code value))))
+  "Highlight a rendered VALUE, including canonical Common Lisp booleans."
+  (if (member value '("NIL" "T") :test #'string-equal)
+      (list (terminal-span ':syntax-number value))
+      (or (handler-case
+              (syntax--highlight-spans value
+                                       :language *application-common-lisp-language*)
+            (error () nil))
+          (list (terminal-span ':code value)))))
 
 (-> application-lisp--render-values
     (list (option application)) (values list list))

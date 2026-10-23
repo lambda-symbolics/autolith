@@ -83,6 +83,21 @@ deliver goal context plus rendered context as trailing =developer= input
 items, exactly as the =:input= placement already does. This is a
 placement-only change; content is identical.
 
+Implementation update: Codex now keeps the system prompt in top-level
+=instructions= and goal/context-tail as developer input items, alongside
+separately projected anchored contributions. Identical currently supplied goal
+and tail are anchored at their first tool-round boundary, so =U+A+C=,
+=U+A+C+T1=, =U+A+C+T1+T2= extend the complete preceding input rather than
+repeatedly moving =C= to the tail (=A= is opted-in anchored context). The exact
+suffix guard uses only the actual goal and remaining tail from that assembly,
+not the full rendering that includes =A=. Context changes, omission or partial
+omission, user/developer/system boundaries, rewritten or shortened history,
+and compaction reset placement. Placement evidence contains positions and
+digests only; no previous prompt is replayed and durable history is unchanged.
+This addresses request-prefix stability, not a guarantee of backend cache hits.
+The assembly descriptions and measurements above describe the historical
+review revision, not the current Codex wire layout.
+
 ** 2. The Anthropic client never sets =cache_control= (critical on that route)
 
 There is no =cache_control= anywhere under =src/=. Anthropic prompt caching

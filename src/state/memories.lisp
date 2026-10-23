@@ -20,6 +20,15 @@
 (defparameter *memory-search-term-limit* 24
   "The maximum distinct terms considered by one memory query.")
 
+(defparameter *memory-search-term-punctuation* ".,;:!?\"'`()[]{}<>"
+  "Characters stripped from both ends of a memory search term.
+
+Ordinary prose wraps words in punctuation, as in \"how do I deploy?\", while
+names such as release-prod or config.toml keep their inner punctuation.")
+
+(defparameter *memory-short-identifier-length* 8
+  "The identifier prefix shown to people for one memory.")
+
 (defvar *memory-lock* (make-recursive-lock "Autolith persistent memories")
   "Serialize same-process memory reads, appends, and guarded transactions.")
 
@@ -68,7 +77,19 @@
     :initarg :source-conversation
     :reader memory-source-conversation
     :type (option string)
-    :documentation "The conversation that most recently wrote the memory."))
+    :documentation "The conversation that most recently wrote the memory.")
+   (sources
+    :initarg :sources
+    :initform nil
+    :reader memory-sources
+    :type list
+    :documentation "Portable records of the evidence the memory was written from.")
+   (premises
+    :initarg :premises
+    :initform nil
+    :reader memory-premises
+    :type list
+    :documentation "The memories this one was derived from, with their observed digests."))
   (:documentation "One active persistent memory reconstructed from the memory log."))
 
 (defclass memory-match ()
@@ -133,18 +154,26 @@
 
 (-> memory--record (memory) list)
 (defun memory--record (memory)
-  "Return the complete portable replacement record for MEMORY."
-  (list :memory
-        :version *memory-format-version*
-        :id (memory-identifier memory)
-        :created-at (memory-created-at memory)
-        :updated-at (memory-updated-at memory)
-        :scope (memory-scope memory)
-        :workspace (memory-workspace memory)
-        :title (memory-title memory)
-        :content (memory-content memory)
-        :tags (memory-tags memory)
-        :source-conversation (memory-source-conversation memory)))
+  "Return the complete portable replacement record for MEMORY.
+
+Sources and premises are optional fields present only when the memory has
+them, so other memories keep their exact earlier record form."
+  (append
+   (list :memory
+         :version *memory-format-version*
+         :id (memory-identifier memory)
+         :created-at (memory-created-at memory)
+         :updated-at (memory-updated-at memory)
+         :scope (memory-scope memory)
+         :workspace (memory-workspace memory)
+         :title (memory-title memory)
+         :content (memory-content memory)
+         :tags (memory-tags memory)
+         :source-conversation (memory-source-conversation memory))
+   (when (memory-sources memory)
+     (list :sources (copy-tree (memory-sources memory))))
+   (when (memory-premises memory)
+     (list :premises (copy-tree (memory-premises memory))))))
 
 (-> memory--record->memory (pathname list) memory)
 (defun memory--record->memory (pathname record)
@@ -158,7 +187,9 @@
         (title (getf (rest record) :title))
         (content (getf (rest record) :content))
         (tags (getf (rest record) :tags))
-        (source-conversation (getf (rest record) :source-conversation)))
+        (source-conversation (getf (rest record) :source-conversation))
+        (sources (getf (rest record) :sources))
+        (premises (getf (rest record) :premises)))
     (unless (and (eql version *memory-format-version*)
                  (non-empty-string-p identifier)
                  (typep created-at 'timestamp)
@@ -169,7 +200,12 @@
                      (non-empty-string-p workspace)
                      (null workspace))
                  (or (null source-conversation)
-                     (non-empty-string-p source-conversation)))
+                     (non-empty-string-p source-conversation))
+                 (memory-sources-valid-p sources scope)
+                 (memory-premises-valid-p premises)
+                 (not (find identifier premises
+                            :key (lambda (premise) (getf premise :id))
+                            :test #'equal)))
       (error 'memory-error
              :message "A persistent memory record has invalid metadata."
              :pathname pathname
@@ -186,7 +222,9 @@
                        :content (memory--validate-text
                                  content "content" *memory-content-limit*)
                        :tags (memory--validate-tags tags)
-                       :source-conversation source-conversation)
+                       :source-conversation source-conversation
+                       :sources (copy-tree sources)
+                       :premises (copy-tree premises))
       (memory-error (condition)
         (error 'memory-error
                :message (autolith-error-message condition)
@@ -309,6 +347,198 @@
         :test #'string=
         :key #'memory-identifier))
 
+(-> memory--premise-visible-p (memory memory-scope (option string)) boolean)
+(defun memory--premise-visible-p (premise scope workspace)
+  "Return true when PREMISE applies wherever a SCOPE memory in WORKSPACE does."
+  (and (or (eq (memory-scope premise) ':global)
+           (and (eq scope ':workspace)
+                (equal (memory-workspace premise) workspace)))
+       t))
+
+(-> memory--reaches-p (list string string) boolean)
+(defun memory--reaches-p (active start target)
+  "Return true when memory START depends on TARGET through ACTIVE premises."
+  (let ((visited (make-hash-table :test #'equal)))
+    (labels ((visit (identifier)
+               (cond
+                 ((string= identifier target)
+                  t)
+                 ((gethash identifier visited)
+                  nil)
+                 (t
+                  (setf (gethash identifier visited) t)
+                  (let ((memory (find identifier active
+                                      :test #'string=
+                                      :key #'memory-identifier)))
+                    (and memory
+                         (some (lambda (premise)
+                                 (visit (getf premise :id)))
+                               (memory-premises memory))
+                         t))))))
+      (visit start))))
+
+(-> memory--resolve-premises
+    (configuration list
+     &key (:identifier (option string)) (:premises list)
+          (:scope memory-scope) (:workspace (option string)))
+    list)
+(defun memory--resolve-premises
+    (configuration active &key identifier premises scope workspace)
+  "Return premise records for the memory and claim IDs in PREMISES as they are now.
+
+Each premise must be an active memory or a stored knowledge claim visible from
+SCOPE and WORKSPACE, and no premise memory may depend on the memory IDENTIFIER
+being written."
+  (flet ((fail (premise control &rest arguments)
+           (error 'memory-error
+                  :message (apply #'format nil control arguments)
+                  :pathname (configuration-memory-path configuration)
+                  :identifier premise)))
+    (unless (and (proper-list-p premises)
+                 (every #'non-empty-string-p premises))
+      (fail nil "Memory premises must be memory or claim identifiers."))
+    (when (> (length premises) *memory-premise-count-limit*)
+      (fail nil "A memory may have at most ~D premises." *memory-premise-count-limit*))
+    (loop with view = nil
+          for premise-identifier in (remove-duplicates premises
+                                                       :test #'string=
+                                                       :from-end t)
+          for premise = (find premise-identifier active
+                              :test #'string=
+                              :key #'memory-identifier)
+          for claim = (and (null premise)
+                           (knowledge-view-node
+                            (or view
+                                (setf view (knowledge-evaluate
+                                            (knowledge-base-read configuration)
+                                            :workspace (knowledge--workspace configuration)
+                                            :check (evidence-check-create
+                                                    :memories active))))
+                            premise-identifier))
+          when claim
+            do (unless (knowledge-visible-p (knowledge-node-scope claim)
+                                            (knowledge-node-workspace claim)
+                                            (and (eq scope ':workspace) workspace))
+                 (fail premise-identifier
+                       "Premise claim ~A belongs to another workspace; a global memory may rely only on global claims."
+                       premise-identifier))
+            and collect (list :id premise-identifier
+                              :digest (memory-source-text-digest premise-identifier)
+                              :kind ':claim
+                              :text (knowledge-node-text claim))
+          else
+            do (cond
+               ((null premise)
+                (fail premise-identifier
+                      "Premise memory or claim ~A does not exist." premise-identifier))
+               ((and identifier (string= premise-identifier identifier))
+                (fail premise-identifier
+                      "A memory cannot be its own premise."))
+               ((not (memory--premise-visible-p premise scope workspace))
+                (fail premise-identifier
+                      "Premise memory ~A belongs to another workspace; a global memory may rely only on global memories."
+                      premise-identifier))
+               ((and identifier (memory--reaches-p active premise-identifier identifier))
+                (fail premise-identifier
+                      "Premise memory ~A already relies on this memory." premise-identifier)))
+            and collect (list :id premise-identifier
+                              :digest (memory-content-digest (memory-title premise)
+                                                             (memory-content premise))))))
+
+(-> memory--keep-premises
+    (configuration list list &key (:scope memory-scope) (:workspace (option string)))
+    list)
+(defun memory--keep-premises (configuration active premises &key scope workspace)
+  "Return recorded PREMISES unchanged after checking they suit SCOPE and WORKSPACE.
+
+Keeping the recorded digests means a changed premise still makes the memory
+stale. A premise forgotten since then stays recorded and keeps it stale."
+  (let ((knowledge nil))
+    (dolist (premise premises)
+      (let* ((memory (find (getf premise :id) active
+                           :test #'string=
+                           :key #'memory-identifier))
+             (claim (and (eq (getf premise :kind) ':claim)
+                         (knowledge-base-claim
+                          (or knowledge
+                              (setf knowledge (knowledge-base-read configuration)))
+                          (getf premise :id)))))
+        ;; A derived claim premise has no stored owner; only global memories
+        ;; are restricted, and they may cite only global stored claims.
+        (when (or (and memory (not (memory--premise-visible-p memory scope workspace)))
+                  (and (eq scope ':global)
+                       (eq (getf premise :kind) ':claim)
+                       (not (and claim (eq (getf claim :scope) ':global)))))
+          (error 'memory-error
+                 :message (format nil "Premise ~A belongs to another workspace; a global memory may rely only on global premises."
+                                  (getf premise :id))
+                 :pathname (configuration-memory-path configuration)
+                 :identifier (getf premise :id))))))
+  (copy-tree premises))
+
+(-> memory--place-sources
+    (configuration list &key (:from (option string)) (:to (option string)))
+    list)
+(defun memory--place-sources (configuration sources &key from to)
+  "Return SOURCES with file paths recorded for a memory in workspace TO.
+
+Relative paths are resolved from workspace FROM. A file inside TO becomes
+relative to it; every other file path becomes absolute."
+  (unless (memory-sources-valid-p sources ':workspace)
+    (error 'memory-error
+           :message "Memory sources are invalid."
+           :pathname (configuration-memory-path configuration)
+           :identifier nil))
+  (mapcar
+   (lambda (source)
+     (if (eq (first source) :file)
+         (let* ((pathname (memory-source-file-pathname source from))
+                (relative (and to
+                               (uiop:subpathp pathname
+                                              (uiop:ensure-directory-pathname to))))
+                (placed (copy-list source)))
+           (setf (getf (rest placed) :path)
+                 (if relative
+                     (uiop:unix-namestring relative)
+                     (uiop:native-namestring pathname))
+                 (getf (rest placed) :relative)
+                 (and relative t))
+           placed)
+         (copy-tree source)))
+   sources))
+
+(-> memory-short-identifier (memory) string)
+(defun memory-short-identifier (memory)
+  "Return the abbreviated identifier people type to select MEMORY."
+  (let ((identifier (memory-identifier memory)))
+    (subseq identifier 0 (min *memory-short-identifier-length* (length identifier)))))
+
+(-> memory-resolve (configuration string) (values (option memory) keyword list))
+(defun memory-resolve (configuration identifier)
+  "Resolve an exact identifier or unique prefix among the relevant memories.
+
+The second value is :FOUND, :MISSING, or :AMBIGUOUS; the third lists the
+matching memories when the prefix is ambiguous."
+  (let* ((text (string-trim '(#\Space #\Tab) identifier))
+         (memories (if (non-empty-string-p text)
+                       (memory-list configuration :visibility ':relevant)
+                       nil))
+         (exact (find text memories :key #'memory-identifier :test #'string-equal))
+         (matches (remove-if-not (lambda (memory)
+                                   (uiop:string-prefix-p
+                                    (string-downcase text)
+                                    (string-downcase (memory-identifier memory))))
+                                 memories)))
+    (cond
+      (exact
+       (values exact ':found nil))
+      ((null matches)
+       (values nil ':missing nil))
+      ((null (rest matches))
+       (values (first matches) ':found nil))
+      (t
+       (values nil ':ambiguous matches)))))
+
 (-> memory-remember
     (configuration
      &key
@@ -317,11 +547,21 @@
      (:content string)
      (:scope (option memory-scope))
      (:tags list)
-     (:source-conversation (option string)))
+     (:source-conversation (option string))
+     (:sources list)
+     (:premises list))
     memory)
 (defun memory-remember
-    (configuration &key identifier title content scope tags source-conversation)
-  "Create or completely replace one durable memory and return its active value."
+    (configuration &key identifier title content scope tags source-conversation
+                        (sources nil sources-p) (premises nil premises-p))
+  "Create or completely replace one durable memory and return its active value.
+
+SOURCES are complete source records; file paths may be absolute and are
+recorded relative to the memory's workspace when inside it. PREMISES are memory
+identifiers, recorded with their current digests. A replacement that omits
+SOURCES or PREMISES keeps the recorded versions unchanged, so restating or
+retagging a stale memory leaves it stale; supplying them again rebinds the
+memory to the evidence as it is now."
   (let ((validated-title
           (memory--validate-text title "title" *memory-title-limit*))
         (validated-content
@@ -354,6 +594,45 @@
                   (selected-scope (or scope
                                       (and existing (memory-scope existing))
                                       :workspace))
+                  (workspace
+                    (if (eq selected-scope :workspace)
+                        (if (and existing
+                                 (null scope)
+                                 (eq (memory-scope existing) :workspace))
+                            (memory-workspace existing)
+                            (namestring
+                             (config :working-directory configuration)))
+                        nil))
+                  (placed-sources
+                    (memory--place-sources
+                     configuration
+                     (cond
+                       (sources-p
+                        sources)
+                       (existing
+                        (memory-sources existing))
+                       (t
+                        nil))
+                     :from (if sources-p
+                               workspace
+                               (and existing (memory-workspace existing)))
+                     :to workspace))
+                  (premise-records
+                    (cond
+                      (premises-p
+                       (memory--resolve-premises
+                        configuration active
+                        :identifier identifier
+                        :premises   premises
+                        :scope      selected-scope
+                        :workspace  workspace))
+                      (existing
+                       (memory--keep-premises
+                        configuration active (memory-premises existing)
+                        :scope     selected-scope
+                        :workspace workspace))
+                      (t
+                       nil)))
                   (memory
                     (make-instance
                      'memory
@@ -361,19 +640,13 @@
                      :created-at (if existing (memory-created-at existing) now)
                      :updated-at now
                      :scope selected-scope
-                     :workspace (if (eq selected-scope :workspace)
-                                    (if (and existing
-                                             (null scope)
-                                             (eq (memory-scope existing) :workspace))
-                                        (memory-workspace existing)
-                                        (namestring
-                                         (config :working-directory
-                                          configuration)))
-                                    nil)
+                     :workspace workspace
                      :title validated-title
                      :content validated-content
                      :tags validated-tags
-                     :source-conversation source-conversation)))
+                     :source-conversation source-conversation
+                     :sources placed-sources
+                     :premises premise-records)))
              (values (list (memory--record memory)) memory t))))))))
 
 (-> memory-forget
@@ -409,7 +682,9 @@
 
 (-> memory--search-terms (string) list)
 (defun memory--search-terms (query)
-  "Return bounded, distinct lowercase whitespace-delimited terms from QUERY."
+  "Return bounded, distinct lowercase whitespace-delimited terms from QUERY.
+
+Punctuation surrounding a term is ignored."
   (unless (non-empty-string-p query)
     (error 'memory-error
            :message "A memory search query must be non-empty."
@@ -417,9 +692,13 @@
            :identifier nil))
   (let ((terms
           (remove-duplicates
-           (mapcar #'string-downcase
+           (mapcar (lambda (term)
+                     (string-downcase
+                      (string-trim *memory-search-term-punctuation* term)))
                    (remove-if-not
-                    #'non-empty-string-p
+                    (lambda (term)
+                      (non-empty-string-p
+                       (string-trim *memory-search-term-punctuation* term)))
                     (uiop:split-string
                      query
                      :separator '(#\Space #\Tab #\Newline #\Return))))

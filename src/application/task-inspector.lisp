@@ -116,9 +116,9 @@
          (page (subseq rows start end))
          (heading (format nil "tasks · ~D total · ~D to ~D" total
                           (if page (1+ start) 0) end))
-         (navigation (format nil "list OFFSET LIMIT~@[ · next: /tasks list ~D ~D~]"
+         (navigation (format nil "(tasks :list :offset OFFSET :limit LIMIT)~@[ · next: (tasks :list :offset ~D :limit ~D)~]"
                              (and (< end total) end) limit))
-         (actions "get ID | transcript ID [OFFSET LIMIT] | send ID MESSAGE | cancel ID | revive ID authorize | abandon ID authorize"))
+         (actions "(tasks :get \"ID\") | (tasks :transcript \"ID\" :offset OFFSET :limit LIMIT) | (tasks :send \"ID\" :message \"MESSAGE\") | (tasks :cancel \"ID\") | (tasks :revive \"ID\" :authorize t) | (tasks :abandon \"ID\" :authorize t)"))
     (if application
         (application--tool-entry
          application :style ':notice :header heading
@@ -243,7 +243,7 @@ clamped at EOF. Live children use their deterministic conversation identity."
                                                (if (getf window :eof-p) "end" "more")))
                           (list :label "next"
                                 :value (if (getf window :eof-p) "end of transcript"
-                                           (format nil "/tasks transcript ~A ~D ~D"
+                                           (format nil "(tasks :transcript ~S :offset ~D :limit ~D)"
                                                    id (getf window :next-offset) limit))
                                 :style ':hint)))
                    (list nil)

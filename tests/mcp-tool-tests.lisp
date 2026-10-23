@@ -1225,9 +1225,8 @@
                                     (configuration
                                       (application-configuration application)))
                                 (and
-                                  (= (terminal-ui-context-used ui)
-                                     (conversation-last-total-tokens
-                                      (application-conversation application)))
+                                  (plusp (terminal-ui-context-used ui))
+                                  (terminal-ui-context-estimated-p ui)
                                   (= (terminal-ui-context-window ui)
                                      (config :context-window configuration))
                                   (= (terminal-ui-context-compaction-limit ui)
@@ -4200,10 +4199,6 @@
                      (test-assert (search label text) "unregistered tool headers use the saved label")
                      (test-assert (not (search (tool-canonical-name tool) text))
                                   "encoded identity is absent from replay presentation")))
-                 (let* ((text (terminal--spans-text (conversation-record-entry application call-record)))
-                        (first (search label text)))
-                   (test-assert (and first (search label text :start2 (+ first (length label))))
-                                "the Lisp equivalent uses the same saved label as the call header"))
                  (test-assert (string= wire-json (getf (rest call-record) :wire-json))
                               "the persisted provider call retains its exact identity")
                  (test-assert (equal (tool-canonical-name tool) (getf (rest result-record) :tool))

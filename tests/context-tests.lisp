@@ -360,3 +360,188 @@
            (context-tests--serialized-invocation configuration conversation))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+
+(-> test-known-context-estimate () null)
+(defun test-known-context-estimate ()
+  "Account for known prompt, session state, history, and schemas before usage arrives."
+  (with-test-configuration (configuration)
+    (let ((conversation (conversation-create configuration))
+          (registry (make-instance 'tool-registry))
+          (prompt (make-string 64 :initial-element #\p))
+          (session-state "")
+          (schemas (vector (json-object "description"
+                                        (make-string 800 :initial-element #\s)))))
+      (test-call-with-function-replacements
+       (list (list 'system-prompt
+                   (lambda (configuration)
+                     (declare (ignore configuration))
+                     prompt))
+              (list 'request-context-session-state
+                    (lambda (configuration &key hurry-up-p)
+                      (declare (ignore configuration hurry-up-p))
+                      session-state))
+             (list 'tool-registry-provider-schemas
+                   (lambda (registry &key canonical-names)
+                     (declare (ignore registry canonical-names))
+                     schemas)))
+       (lambda ()
+         (let ((base (context-estimate-known-tokens configuration conversation)))
+           (test-assert (plusp base) "a known system prompt seeds a nonzero estimate")
+           (setf session-state (make-string 400 :initial-element #\s))
+           (let ((with-state (context-estimate-known-tokens configuration conversation)))
+             (test-assert (> with-state base) "mutable session state contributes to the estimate")
+             (conversation-append-user-message
+              conversation (make-string 400 :initial-element #\u))
+             (let ((with-history (context-estimate-known-tokens configuration conversation)))
+               (test-assert (> with-history with-state)
+                            "retained conversation input contributes to the estimate")
+               (test-assert (> (context-estimate-known-tokens
+                               configuration conversation :tool-registry registry)
+                              with-history)
+                            "known tool schemas contribute to the estimate")
+               (conversation-append-summary conversation "short handoff")
+               (test-assert (< (context-estimate-known-tokens configuration conversation)
+                               with-history)
+                            "compaction estimates the replacement input rather than old history"))))))))
+  nil)
+
+
+(-> test-context-estimate-cache () null)
+(defun test-context-estimate-cache ()
+  "Cache known-input counts across progress repaints and invalidate at state boundaries."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration))
+           (registry (make-instance 'tool-registry))
+           (ui (terminal-ui-create
+                :terminal (make-instance 'recording-terminal :columns 100)))
+           (application (make-instance 'application
+                                       :configuration configuration
+                                       :conversation conversation
+                                       :provider nil :tool-registry registry :ui ui))
+           (prompt-calls 0)
+           (session-calls 0)
+           (schema-calls 0)
+           (session-hurry-up-p nil))
+      (test-call-with-function-replacements
+       (list
+        (list 'system-prompt
+              (lambda (configuration)
+                (declare (ignore configuration))
+                (incf prompt-calls)
+                (make-string 64 :initial-element #\p)))
+        (list 'request-context-session-state
+              (lambda (configuration &key hurry-up-p)
+                (declare (ignore configuration))
+                (incf session-calls)
+                (setf session-hurry-up-p hurry-up-p)
+                (if hurry-up-p (make-string 400 :initial-element #\h) "")))
+        (list 'tool-registry-provider-schemas
+              (lambda (registry &key canonical-names)
+                (declare (ignore registry canonical-names))
+                (incf schema-calls)
+                #())))
+       (lambda ()
+         (application-set-activity application "starting")
+         (dotimes (index 4)
+           (application-set-activity application (format nil "progress ~D" index)))
+         (test-assert (equal (list prompt-calls session-calls schema-calls) '(1 1 1))
+                      "unchanged progress never rebuilds known request inputs")
+         (let ((before (terminal-ui-context-used ui)))
+           (setf (config :hurry-up-p configuration) t)
+           (application-set-activity application "hurry")
+           (test-assert (and session-hurry-up-p
+                             (> (terminal-ui-context-used ui) before))
+                        "the estimate uses the application's actual hurry-up state"))
+         (conversation-append-user-message conversation "new request input")
+         (application-set-activity application "new input")
+         (test-assert (= prompt-calls 3)
+                      "conversation changes invalidate known-input counts")
+         (setf (application-tool-registry application) (make-instance 'tool-registry))
+         (application-set-activity application "new registry")
+         (test-assert (= schema-calls 4) "registry replacement refreshes schema counts")
+         (setf (config :relax-p configuration) t)
+         (application-set-activity application "new prompt setting")
+         (test-assert (= prompt-calls 5) "in-place prompt settings invalidate the estimate")
+         (setf (application-context-estimate-cache application) nil)
+         (application-set-activity application "request boundary")
+         (test-assert (= session-calls 6) "a new request samples mutable session inputs")
+         (setf (conversation-last-total-tokens conversation) 1234)
+         (application-set-activity application "reported usage")
+         (test-assert (and (= (terminal-ui-context-used ui) 1234)
+                           (not (terminal-ui-context-estimated-p ui))
+                           (= prompt-calls 6))
+                      "positive provider totals are authoritative without estimate builders")
+         (setf (conversation-last-total-tokens conversation) 0)
+         (let ((before (application-context-usage application))
+               (sequence (conversation-next-sequence conversation)))
+           (conversation--append-ephemeral-input-item
+            conversation
+            (json-object "role" "user"
+                         "content" (json-array
+                                    (json-object "type" "input_text"
+                                                 "text" (make-string 800 :initial-element #\e)))))
+           (application-set-activity application "ephemeral input")
+           (test-assert (and (= sequence (conversation-next-sequence conversation))
+                             (> (terminal-ui-context-used ui) before)
+                             (= prompt-calls 7))
+                        "ephemeral input invalidates without requiring a durable append")
+           (conversation-clear-ephemeral-input-items conversation)
+           (application-set-activity application "ephemeral input removed")
+           (test-assert (and (= (terminal-ui-context-used ui) before)
+                             (= prompt-calls 8))
+                        "clearing ephemeral input refreshes the estimate"))
+         (dotimes (index 2)
+           (tool-registry-register
+            (application-tool-registry application)
+            (make-instance 'tool :namespace "test" :name "estimate"
+                                 :description "Known estimate tool."
+                                 :parameters (json-object "type" "object")))
+           (application-set-activity application "tool replacement")
+           (test-assert (= schema-calls (+ 9 index))
+                        "in-place registration and same-name replacement refresh schema counts"))))))
+  nil)
+
+(-> test-context-estimate-provider-family () null)
+(defun test-context-estimate-provider-family ()
+  "Estimate only the checkpoint or portable handoff usable by the active provider."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration))
+           (application (make-instance 'application
+                                       :configuration configuration
+                                       :conversation conversation
+                                       :provider (make-instance 'native-scripted-provider)))
+           (checkpoint (json-object "type" "context_compaction"
+                                    "encrypted_content"
+                                    (make-string 4000 :initial-element #\c))))
+      (conversation-append-native-compaction
+       conversation checkpoint :family ':codex :summary "Portable handoff.")
+      (test-call-with-function-replacements
+       (list (list 'system-prompt
+                   (lambda (configuration)
+                     (declare (ignore configuration))
+                     ""))
+             (list 'request-context-session-state
+                   (lambda (configuration &key hurry-up-p)
+                     (declare (ignore configuration hurry-up-p))
+                     "")))
+       (lambda ()
+         (setf (config :model configuration) "grok-4.5")
+         (let ((codex (application-context-usage application)))
+           (test-assert
+            (= codex (ceiling
+                      (context--known-value-character-count
+                       (conversation-input-items-for-family conversation ':codex))
+                      4))
+            "the producing family counts its opaque checkpoint without the portable handoff")
+           (setf (application-provider application) nil)
+           (let ((grok (application-context-usage application)))
+             (test-assert
+              (= grok (ceiling
+                       (context--known-value-character-count
+                        (conversation-input-items-for-family conversation ':grok))
+                       4))
+              "a family switch counts only compatible portable history")
+             (test-assert (< grok codex)
+                          "foreign encrypted checkpoint contents do not inflate the estimate")))))))
+  nil)

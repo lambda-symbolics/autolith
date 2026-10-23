@@ -20,7 +20,8 @@ fan-out runs under TASK's shared BUDGET."))
 
 (defgeneric rlm-synthesize-inference-results
     (policy task results
-     &key contract budget capabilities provider configuration source-registry)
+     &key contract budget capabilities provider configuration source-registry
+          activity-callback)
   (:documentation
    "Compose TASK's answer from its RLM-MAP subtask RESULTS under POLICY.
 
@@ -47,10 +48,18 @@ vanishing. Returns the value and its trace identifier."))
                         (t
                          (rlm--result-sexp (getf result ':value))))))))
 
+(-> rlm--phase-activity-callback ((option function) string) (option function))
+(defun rlm--phase-activity-callback (callback phase)
+  "Prefix compact progress with a content-free policy PHASE."
+  (when callback
+    (lambda (activity)
+      (rlm--note-activity
+       callback (bounded-string (format nil "~A · ~A" phase activity) :limit 160)))))
+
 (defmethod rlm-synthesize-inference-results
     ((policy t) (task string) (results list)
      &key contract budget capabilities provider configuration
-          source-registry)
+          source-registry activity-callback)
   "Synthesize by one frame reading every subtask result as a view.
 
 This default applies to every policy, so a promoted strategy may
@@ -64,7 +73,9 @@ override decomposition alone and inherit the synthesis frame."
          :capabilities capabilities
          :provider provider
          :configuration configuration
-         :source-registry source-registry))
+         :source-registry source-registry
+         :activity-callback
+         (rlm--phase-activity-callback activity-callback "synthesis")))
 
 (-> rlm-run
     (string &key (:policy keyword)
@@ -77,12 +88,13 @@ override decomposition alone and inherit the synthesis frame."
                  (:provider (option model-provider))
                  (:configuration (option configuration))
                  (:source-registry (option tool-registry))
-                 (:concurrency (integer 1)))
+                 (:concurrency (integer 1))
+                 (:activity-callback (option function)))
     (values t string (integer 0)))
 (defun rlm-run
     (task &key (policy ':direct) context contract budget capabilities model
                effort provider configuration source-registry
-               (concurrency *rlm-map-default-concurrency*))
+               (concurrency *rlm-map-default-concurrency*) activity-callback)
   "Run TASK under POLICY: decompose, fan subtasks out, and synthesize.
 
 When POLICY declines to decompose, TASK runs as one inference frame.
@@ -106,7 +118,9 @@ token spend across the subtasks and the synthesis."
                  :capabilities capabilities
                  :provider provider
                  :configuration configuration
-                 :source-registry source-registry)
+                 :source-registry source-registry
+                 :activity-callback
+                 (rlm--phase-activity-callback activity-callback "direct"))
           (let* ((results
                    (rlm-map subtasks
                             :budget budget
@@ -114,7 +128,9 @@ token spend across the subtasks and the synthesis."
                             :provider provider
                             :configuration configuration
                             :source-registry source-registry
-                            :concurrency concurrency))
+                            :concurrency concurrency
+                            :activity-callback
+                            (rlm--phase-activity-callback activity-callback "map")))
                  (subtask-tokens
                    (loop for result in results
                          sum (or (getf result ':tokens) 0))))
@@ -126,7 +142,8 @@ token spend across the subtasks and the synthesis."
                  :capabilities capabilities
                  :provider provider
                  :configuration configuration
-                 :source-registry source-registry)
+                 :source-registry source-registry
+                 :activity-callback activity-callback)
               (values value
                       trace-identifier
                       (+ subtask-tokens (or synthesis-tokens 0)))))))))

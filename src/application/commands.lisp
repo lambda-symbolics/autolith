@@ -276,71 +276,43 @@ transcript renderer, including in fullscreen."
 
 ;;;; -- Prompt-Cache Miss Notices --
 
-(-> application--prompt-cache-miss-cause-text (list) string)
-(defun application--prompt-cache-miss-cause-text (miss)
-  "Return the likely-cause clause for the prompt-cache MISS."
-  (ecase (getf miss :cause)
-    (:model-changed
-     "the model changed since the previous request")
-    (:idle
-     (format nil "idle for ~D min; cached context may have expired"
-             (round (getf miss :idle-seconds) 60)))
-    (:context-rewritten
-     "earlier context was rewritten")
-    (:resumed
-     "the resumed conversation was no longer cached")
-    (:prefix-changed
-     "the prompt prefix changed")
-    (:prefix-stalled
-     "the cached prefix stopped growing, so the request likely reached a different provider backend")))
-
-(-> application--prompt-cache-attribution-text (list) (option string))
-(defun application--prompt-cache-attribution-text (miss)
-  "Return what the provider's attribution says about MISS's prefix, when known.
-
-Re-read instructions or tools mean the request prefix itself changed; a cached
-prefix with re-read history points at routing or an expired cache."
-  (let ((instructions (getf miss :instructions-re-read))
-        (tools (getf miss :tools-re-read)))
-    (when (or instructions tools)
-      (flet ((re-read-p (count)
-               "Return true when COUNT exceeds cache rounding."
-               (and count (> count *prompt-cache-block-tokens*))))
-        (cond
-          ((and (re-read-p instructions) (re-read-p tools))
-           "instructions and tools re-read")
-          ((re-read-p instructions)
-           "instructions re-read, tools cached")
-          ((re-read-p tools)
-           "tools re-read, instructions cached")
-          (t
-           "instructions and tools still cached"))))))
-
-(-> application--prompt-cache-miss-notice (list) string)
+(-> application--prompt-cache-miss-notice (list) list)
 (defun application--prompt-cache-miss-notice (miss)
-  "Return the one-line transcript notice for the prompt-cache MISS."
-  (format nil
-          "∙ prompt cache miss: ~A of ~A prompt tokens re-read at the uncached input price; ~A~@[; ~A~]"
-          (application--token-count-description (getf miss :re-read-tokens))
-          (application--token-count-description (getf miss :prompt-tokens))
-          (application--prompt-cache-miss-cause-text miss)
-          (application--prompt-cache-attribution-text miss)))
+  "Return measured uncached input and any accompanying local observation."
+  (list (terminal-span ':failure "! ")
+        (terminal-span ':notice "cache miss ")
+        (terminal-span ':code
+                       (application--token-count-description
+                        (getf miss :uncached-tokens)))
+        (terminal-span ':dim " / ")
+        (terminal-span ':code
+                       (application--token-count-description (getf miss :prompt-tokens)))
+        (terminal-span ':dim " input tokens uncached")
+        (terminal-span ':dim
+                       (case (getf miss :cause)
+                         (:model-changed " · model changed")
+                         (:idle " · idle interval exceeded local heuristic")
+                         (:prompt-shrank " · prompt size decreased")
+                         (:resumed " · resumed session")
+                         (otherwise "")))
+        (terminal-span ':dim
+                       (if (getf miss :stalled-p)
+                           " · cached-token count stagnant"
+                           ""))))
 
 (-> application-note-prompt-cache-request-started (application) null)
 (defun application-note-prompt-cache-request-started (application)
-  "Record the start of a provider request for prompt-cache miss detection.
+  "Start a local cache observation window without warning on resumed history.
 
-The first request of each conversation seeds the baseline from its newest
-persisted provider usage, so a resumed session notices its cold cache."
+The first completed request establishes the baseline for this loaded conversation.
+Persisted usage describes an earlier session, not a cache expectation for this one."
   (application-idle-compaction-note-started application)
   (let ((conversation (application-conversation application)))
-    (unless (equal (application-prompt-cache-conversation-id application)
-                   (conversation-identifier conversation))
-      (setf (application-prompt-cache-conversation-id application)
-            (conversation-identifier conversation)
-            (application-prompt-cache-baseline application)
-            (prompt-cache-baseline-from-conversation conversation)))
-    (setf (application-prompt-cache-request-started-at application)
+    (unless (eq (application-prompt-cache-conversation application) conversation)
+      (setf (application-prompt-cache-conversation application) conversation
+            (application-prompt-cache-baseline application) nil))
+    (setf (application-context-estimate-cache application) nil
+          (application-prompt-cache-request-started-at application)
           (get-universal-time)
           (application-prompt-cache-request-model application)
           (config :model (application-configuration application))))
@@ -368,10 +340,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
     (when baseline
       (setf (application-prompt-cache-baseline application) baseline))
     (when (and miss (application-cache-miss-notices-p application))
-      (application-present
-       application
-       (list (terminal-span ':hint
-                            (application--prompt-cache-miss-notice miss))))))
+      (application-present application (application--prompt-cache-miss-notice miss))))
   nil)
 
 (-> application--window-label ((option integer) string) string)
@@ -532,15 +501,16 @@ notice preference is on, so enabling it mid-session takes effect immediately."
                   (list "prompt cache"
                         (application--prompt-cache-description usage)))
              (list "context"
-                   (let ((used (conversation-last-total-tokens
-                                (application-conversation application)))
-                         (window (config :context-window configuration)))
-                     (format nil "~A of ~A used (~D%), compacts at ~D%"
-                             (application--token-count-description used)
-                             (application--token-count-description window)
-                             (round (* 100 used) (max 1 window))
-                             (config :compaction-threshold-percent
-                                     configuration)))))))
+                   (multiple-value-bind (used estimated-p)
+                       (application-context-usage application)
+                     (let ((window (config :context-window configuration)))
+                       (format nil "~A~A of ~A used (~D%), compacts at ~D%"
+                               (if estimated-p "~" "")
+                               (application--token-count-description used)
+                               (application--token-count-description window)
+                               (round (* 100 used) (max 1 window))
+                               (config :compaction-threshold-percent
+                                       configuration))))))))
          (width
            (application--field-label-width
             (append (mapcar #'first fields)
@@ -766,7 +736,7 @@ the effort with the same model even when the model was never chosen."
            :message
            (format nil
                    "AUTOLITH_CODEX_FAST_MODE controls Fast mode for this ~
-                    process; unset it before using /fast on or /fast off.")))
+                    process; unset it before using (fast t) or (fast nil).")))
   (let ((configuration (application-configuration application)))
     (setf (config :codex-fast-mode-p configuration) enabled-p)
     (application--install-configuration application configuration)
@@ -866,7 +836,7 @@ the effort with the same model even when the model was never chosen."
        (application-present application "Codex Fast mode is disabled and saved."))
       (t
        (error 'configuration-error
-              :message "Usage: /fast [on|off|status]."))))
+              :message "Usage: (fast), (fast t), or (fast nil)."))))
   nil)
 
 (-> application-set-reasoning-traces (application boolean) null)
@@ -907,7 +877,7 @@ the effort with the same model even when the model was never chosen."
        (application-present application "Reasoning summaries are hidden and saved."))
       (t
        (error 'configuration-error
-              :message "Usage: /trace on or /trace off."))))
+              :message "Usage: (trace t) or (trace nil)."))))
   nil)
 
 (-> application-set-turn-timestamps (application boolean) null)
@@ -938,7 +908,7 @@ the effort with the same model even when the model was never chosen."
        (application-present application "Turn timestamps are hidden and saved."))
       (t
        (error 'configuration-error
-              :message "Usage: /timestamps on or /timestamps off."))))
+              :message "Usage: (timestamps t) or (timestamps nil)."))))
   nil)
 
 (-> application-set-cache-miss-notices (application boolean) null)
@@ -968,7 +938,7 @@ the effort with the same model even when the model was never chosen."
        (application-present application "Prompt-cache miss notices are off and saved."))
       (t
        (error 'configuration-error
-              :message "Usage: /cache-misses on or /cache-misses off."))))
+              :message "Usage: (cache-misses t) or (cache-misses nil)."))))
   nil)
 
 (-> application-simple-technical-english-command
@@ -998,7 +968,7 @@ the effort with the same model even when the model was never chosen."
         "Simple Technical English is disabled and saved."))
       (t
        (error 'configuration-error
-              :message "Usage: /ste on or /ste off."))))
+              :message "Usage: (ste t) or (ste nil)."))))
   nil)
 
 (-> application-session-titles-command (application &optional t) null)
@@ -1025,7 +995,7 @@ the effort with the same model even when the model was never chosen."
         "Provider-generated session titles are disabled and saved."))
       (t
        (error 'configuration-error
-              :message "Usage: /titles on or /titles off."))))
+              :message "Usage: (titles t) or (titles nil)."))))
   nil)
 
 (-> application-compact-tool-command (application &optional t) null)
@@ -1054,7 +1024,7 @@ the effort with the same model even when the model was never chosen."
         "Compact tool presentation is disabled and saved."))
       (t
        (error 'configuration-error
-              :message "Usage: /compact-tool on or /compact-tool off."))))
+              :message "Usage: (compact-tool t) or (compact-tool nil)."))))
   nil)
 
 (-> application--credentialed-provider-names (application) list)
@@ -1465,7 +1435,7 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
                   (and (integerp created)
                        (application--calendar-description created)))
                 (getf goal :objective))
-        "No session goal is set. Use /goal OBJECTIVE to set one.")))
+        "No session goal is set. Use (goal \"OBJECTIVE\") to set one.")))
 
 (-> application--goal-update-argument (string) (option string))
 (defun application--goal-update-argument (remainder)
@@ -1489,19 +1459,19 @@ Return true only when the objective was rewritten."
       ((null goal)
        (application-present
         application
-        "No session goal to update. Use /goal OBJECTIVE to set one.")
+        "No session goal to update. Use (goal \"OBJECTIVE\") to set one.")
        nil)
       ((mission-goal-p goal)
-       (application-present application "Use /mission start with updated objective and acceptance policy.")
+       (application-present application "Use (mission :start SPECIFICATION) with an updated objective and acceptance policy.")
        nil)
       ((zerop (length objective))
-       (application-present application "Usage: /goal update NEW-OBJECTIVE")
+       (application-present application "Usage: (goal :update \"NEW-OBJECTIVE\")")
        nil)
       ((and (not literal-p) (uiop:string-prefix-p "/" objective))
        (application-present
         application
         (format nil "~S looks like a command, not an objective. ~
-                     Usage: /goal update NEW-OBJECTIVE"
+                     Usage: (goal :update \"NEW-OBJECTIVE\")"
                 objective))
        nil)
       (t
@@ -1851,7 +1821,7 @@ are forwarded to TERMINAL-UI-SELECT."
        :hint browse-hint
        :initial-value current-identifier
        :on-event #'on-event
-       :usage "Usage: /resume ID"
+       :usage "Usage: (resume \"ID\")"
        :empty-notice "No saved conversations exist."))))
 
 (-> application--pick-model (application &key (:provider (option string))) (values (option string) (option string)))
@@ -1865,7 +1835,7 @@ are forwarded to TERMINAL-UI-SELECT."
             application :title "pick the model" :items items :visible-count 15
             :initial-name (and registration
                                (provider-model-selection-id (config :model configuration) registration))
-            :search-p t :usage "Usage: /model PROVIDER/MODEL"
+            :search-p t :usage "Usage: (model \"MODEL\" :provider \"PROVIDER\")"
             :empty-notice "No registered provider models exist."))
          (item (find selection items :key (lambda (item) (getf item :name)) :test #'equal)))
     (values (getf item :model) (getf item :provider))))
@@ -1880,7 +1850,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :items (application--effort-items application)
      :initial-name (config :reasoning-effort configuration)
      :search-p t
-     :usage "Usage: /effort LEVEL"
+     :usage "Usage: (effort \"LEVEL\")"
      :empty-notice "No supported reasoning efforts exist.")))
 
 (-> application--project-adaptation-offer-items () list)
@@ -2007,7 +1977,7 @@ are forwarded to TERMINAL-UI-SELECT."
    :items (application--authentication-provider-items application)
    :visible-count (application--authentication-provider-visible-count application)
    :initial-name (configuration-model-provider-name (application-configuration application))
-   :search-p t :usage "Usage: /auth PROVIDER"
+   :search-p t :usage "Usage: (auth \"PROVIDER\")"
    :empty-notice "No registered providers exist."))
 
 (-> application--authentication-provider (application string) model-provider)
@@ -2455,7 +2425,7 @@ are forwarded to TERMINAL-UI-SELECT."
        (application-present application (list (terminal-span ':success "Saved command approvals were cleared."))))
       (t
        (error 'configuration-error
-              :message "Usage: /permissions [ask|auto|sandbox|full|list|clear]."))))
+              :message "Usage: (permissions), or (permissions :MODE) with :ask, :auto, :sandbox, :full, :list, or :clear."))))
   nil)
 
 (-> application-set-hurry-up (application boolean) null)
@@ -2496,7 +2466,7 @@ are forwarded to TERMINAL-UI-SELECT."
        (application-set-hurry-up application nil))
       (t
        (error 'configuration-error
-              :message "Usage: /hurry-up on or /hurry-up off."))))
+              :message "Usage: (hurry-up t) or (hurry-up nil)."))))
   nil)
 
 ;;;; -- Settings Page --
@@ -2559,6 +2529,11 @@ the settings page and the slash commands behave identically."
          (setf (application-compact-view-p application) value)
          (application-reset-history-pagination application))
        (application-publish-recovery-session application))
+      ((:knowledge-mode :diagnosis-p)
+       (setf (config name configuration) value)
+       ;; The model's resource operations and documentation depend on the
+       ;; mode, so the session's tools are rebuilt for the next request.
+       (application-reload-mcp application))
       (:hurry-up-p (application-set-hurry-up application value))
       (:relax-p
        (application-set-relax application value))
@@ -2643,7 +2618,7 @@ The current value and its source sit in aligned columns of their own."
                    :items (application--setting-items application)
                    :visible-count 15
                    :search-p t
-                   :usage "Usage: /settings [NAME [VALUE]]"
+                   :usage "Usage: (settings), (settings :NAME), or (settings :NAME VALUE)"
                    :empty-notice "No settings are registered.")))
       (unless chosen
         (return))
@@ -2668,7 +2643,7 @@ The current value and its source sit in aligned columns of their own."
                                          setting
                                          (config name (application-configuration application)))
                           :search-p t
-                          :usage "Usage: /settings NAME VALUE"
+                          :usage "Usage: (settings :NAME VALUE)"
                           :empty-notice "This setting offers no choices.")))
              (when option
                (application-apply-setting
@@ -2680,7 +2655,7 @@ The current value and its source sit in aligned columns of their own."
           (t
            (application-present
             application
-            (format nil "~A is ~A. Change it with /settings ~(~A~) VALUE."
+            (format nil "~A is ~A. Change it with (settings :~(~A~) VALUE)."
                     (setting-label setting)
                     (setting-render-value
                      setting (config name (application-configuration application)))
@@ -2698,7 +2673,7 @@ The current value and its source sit in aligned columns of their own."
   "Parse slash settings once using APPLICATION's schema and quoted token rules."
   (let ((arguments (and text (application-command--tokens text))))
     (unless (<= (length arguments) 2)
-      (error 'configuration-error :message "Usage: /settings [NAME [VALUE]]."))
+      (error 'configuration-error :message "Usage: (settings), (settings :NAME), or (settings :NAME VALUE)."))
     (destructuring-bind (&optional name (value nil value-supplied-p)) arguments
       (if value-supplied-p
           (let* ((configuration (application-configuration application))
@@ -3053,7 +3028,7 @@ The current value and its source sit in aligned columns of their own."
      :terminal-behavior :shared
      :callable t
      :slash-parser application--parse-boolean-control
-     :static-options (:on :off :status))
+     :static-options (t nil :status))
     (application &optional (mode ':status))
   (application-codex-fast-mode-command application mode)
   ':continue)
@@ -3066,7 +3041,7 @@ The current value and its source sit in aligned columns of their own."
      :terminal-behavior :shared
      :callable t
      :slash-parser application--parse-boolean-control
-     :static-options (:on :off))
+     :static-options (t nil))
     (application &optional (mode ':status))
   (application-trace-command application mode)
   ':continue)
@@ -3079,7 +3054,7 @@ The current value and its source sit in aligned columns of their own."
      :terminal-behavior :shared
      :callable t
      :slash-parser application--parse-boolean-control
-     :static-options (:on :off))
+     :static-options (t nil))
     (application &optional (mode ':status))
   (application-turn-timestamps-command application mode)
   ':continue)
@@ -3092,7 +3067,7 @@ The current value and its source sit in aligned columns of their own."
      :terminal-behavior :shared
      :callable t
      :slash-parser application--parse-boolean-control
-     :static-options (:on :off))
+     :static-options (t nil))
     (application &optional (mode ':status))
   (application-simple-technical-english-command application mode)
   ':continue)
@@ -3105,7 +3080,7 @@ The current value and its source sit in aligned columns of their own."
      :terminal-behavior :shared
      :callable t
      :slash-parser application--parse-boolean-control
-     :static-options (:on :off))
+     :static-options (t nil))
     (application &optional (mode ':status))
   (application-session-titles-command application mode)
   ':continue)
@@ -3118,7 +3093,7 @@ The current value and its source sit in aligned columns of their own."
      :terminal-behavior :shared
      :callable t
      :slash-parser application--parse-boolean-control
-     :static-options (:on :off))
+     :static-options (t nil))
     (application &optional (mode ':status))
   (application-cache-miss-notices-command application mode)
   ':continue)
@@ -3131,7 +3106,7 @@ The current value and its source sit in aligned columns of their own."
      :terminal-behavior :shared
      :callable t
      :slash-parser application--parse-boolean-control
-     :static-options (:on :off))
+     :static-options (t nil))
     (application &optional (mode ':status))
   (application-hurry-up-command application mode)
   ':continue)
@@ -3156,7 +3131,7 @@ The current value and its source sit in aligned columns of their own."
                     application
                     :title "command permissions"
                     :items (application--permission-mode-items application)
-                    :usage "Usage: /permissions [ask|auto|sandbox|full|list|clear]"
+                    :usage "Usage: (permissions), or (permissions :MODE) with :ask, :auto, :sandbox, :full, :list, or :clear"
                     :empty-notice "No command permission modes exist.")))))
     (application-permissions-command
      application
@@ -3363,7 +3338,7 @@ The current value and its source sit in aligned columns of their own."
          (application-reload-mcp application)))
       (t
        (error 'configuration-error
-              :message "Usage: /mcp, /mcp refresh, or /mcp reload.")))
+              :message "Usage: (mcp), (mcp :refresh), or (mcp :reload).")))
     (let ((change-entry
             (application--tool-capability-change-entry
              added-tools removed-tools)))
@@ -3422,7 +3397,7 @@ The current value and its source sit in aligned columns of their own."
                     application
                     :title "select a generation for recovery"
                     :items (application--generation-items application)
-                    :usage "Usage: /rollback ID"
+                    :usage "Usage: (rollback \"ID\")"
                     :empty-notice "No retained generations exist.")))))
     (when identifier
       (generation-request-rollback
@@ -3513,7 +3488,7 @@ The current value and its source sit in aligned columns of their own."
      :terminal-behavior :shared
      :callable t
      :slash-parser application--parse-boolean-control
-     :static-options (:on :off))
+     :static-options (t nil))
     (application &optional (mode ':status))
   (application-compact-tool-command application mode)
   ':continue)
@@ -3575,7 +3550,7 @@ The current value and its source sit in aligned columns of their own."
            (progn
              (application-present
               application
-              (format nil "Unknown command ~A. Use /help."
+              (format nil "Unknown command ~A. Use (help)."
                       (application-command-invocation-name invocation)))
              ':continue))))))
 

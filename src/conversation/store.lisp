@@ -255,6 +255,12 @@
     :type list
     :documentation
     "Request-local provider items and owned attachments awaiting one response.")
+    (context-anchors
+     :initform nil
+     :accessor conversation-context-anchors
+     :type list
+     :documentation
+     "Process-local context identities and history boundaries, without instruction bodies.")
     (image-artifact-names
      :initform (make-hash-table :test #'equal)
      :reader conversation-image-artifact-names

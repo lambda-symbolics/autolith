@@ -234,11 +234,18 @@ surfaces are:
   Schema contract for the frame tools, and call, token, and depth
   allowances.
 
-Long-running tool calls publish one compact live activity hint. =rlm.infer=
-shows provider request count and remaining calls, =rlm.map= adds the active
-frame index and fan width, and =rlm.complete= reports environment startup
-before root request progress. These hints are transient status rows, not
-conversation records.
+Background RLM tool jobs appear in a separate =RLM= section above the prompt,
+beside commands and child agents. Rows show the job ID, operation, queued or
+running state, elapsed time, and latest phase. =rlm.infer= reports request counts
+and remaining calls; =rlm.map= adds frame index and fan width. =rlm.complete=
+reports environment startup and nested direct, map, and synthesis phases.
+
+Provider stream arrivals produce content-free receiving updates at most once
+per second for each request.
+
+Spinners animate between phase reports. The =no update= timer measures the
+absence of real progress reports, not animation. These rows are transient;
+task text and source contents belong in the private inference traces.
 
 Both surfaces accept =:capabilities= (the tools' =capabilities=
 argument). A frame without capabilities is a pure call over its

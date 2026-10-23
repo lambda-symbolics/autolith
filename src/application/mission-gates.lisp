@@ -11,7 +11,7 @@
          (attempt-limit (or (getf specification :attempt-limit) 3))
          (timeout (or (getf specification :timeout-seconds) 60)))
     (unless (and (non-empty-string-p (getf specification :id))
-                 (member kind '(:command :artifact :lisp))
+                 (member kind '(:command :artifact :lisp :fact))
                  (typep attempt-limit '(integer 1 64))
                  (typep timeout '(integer 1))
                  (listp inputs) (every #'non-empty-string-p inputs)
@@ -19,8 +19,15 @@
                  (case kind
                    (:command (non-empty-string-p (getf specification :command)))
                    (:artifact (non-empty-string-p (getf specification :path)))
-                   (:lisp (non-empty-string-p (getf specification :predicate)))))
-      (mission--reject ':invalid "Gates require ID, command/artifact/Lisp policy, positive retry and timeout limits; deterministic gates require explicit file inputs."))
+                   (:lisp (non-empty-string-p (getf specification :predicate)))
+                   (:fact (and (proper-list-p (getf specification :pattern))
+                               (or (stringp (first (getf specification :pattern)))
+                                   (eq (first (getf specification :pattern)) :not))
+                               (proper-list-p (getf specification :accepted))
+                               (subsetp (getf specification :accepted)
+                                        '(:observation :user-assertion :assumption
+                                          :model-proposal))))))
+      (mission--reject ':invalid "Gates require ID, command/artifact/Lisp/fact policy, positive retry and timeout limits; deterministic gates require explicit file inputs."))
     (when (and (getf specification :sha256)
                (not (and (stringp (getf specification :sha256))
                          (= (length (getf specification :sha256)) 64)
@@ -32,28 +39,13 @@
           :directory (getf specification :directory)
           :path (getf specification :path) :sha256 (getf specification :sha256)
           :predicate (getf specification :predicate)
+          :pattern (copy-tree (getf specification :pattern))
+          :accepted (copy-list (or (getf specification :accepted)
+                                   '(:observation :user-assertion)))
           :inputs (copy-list inputs) :deterministic-p (and deterministic-p t)
           :attempt-limit attempt-limit :timeout-seconds timeout
           :attempts 0 :status ':pending :fingerprint nil :invalidation 0
           :evidence nil)))
-
-(-> mission--tool-context (application) tool-context)
-(defun mission--tool-context (application)
-  "Create a gate context with the ordinary application's permission boundary."
-  (let ((observer (application-agent-observer application)))
-    (make-instance 'tool-context
-                   :configuration (application-configuration application)
-                   :conversation (application-conversation application)
-                   :registry (application-tool-registry application)
-                   :worker (application-worker application)
-                   :agent (application-agent application)
-                   :observer observer
-                   :command-authorization-function
-                   (lambda (command directory)
-                     (agent-observer-authorize-command observer command directory))
-                   :tool-authorization-function
-                   (lambda (tool arguments)
-                     (agent-observer-authorize-tool observer tool arguments)))))
 
 (-> mission--file-digest (pathname) string)
 (defun mission--file-digest (pathname)
@@ -67,14 +59,42 @@
 
 (-> mission--gate-fingerprint-unlocked (list tool-context) list)
 (defun mission--gate-fingerprint-unlocked (gate context)
-  "Fingerprint declared inputs and the artifact path while workspace mutations are locked."
+  "Fingerprint declared inputs and the artifact path while workspace mutations are locked.
+
+A fact gate's fingerprint is the set of facts satisfying it, so a gate passed
+on facts that later stop holding is checked again."
   (let ((inputs (if (eq (getf gate :kind) ':artifact)
                     (adjoin (getf gate :path) (getf gate :inputs) :test #'equal)
                     (getf gate :inputs))))
     (list (getf gate :invalidation)
           (loop for input in inputs
                 for path = (workspace-tool-path context input)
-                collect (list input (mission--file-digest path))))))
+                collect (list input (mission--file-digest path)))
+          (and (eq (getf gate :kind) ':fact)
+               (mapcar #'knowledge-node-identifier
+                       (mission--fact-gate-support gate context))))))
+
+(-> mission--fact-gate-support (list tool-context) list)
+(defun mission--fact-gate-support (gate context)
+  "Return the facts satisfying fact GATE on accepted evidence, or NIL.
+
+Facts resting only on bases the gate does not accept, such as a model's
+predicted effects, and conflicted facts never satisfy it. A negated pattern is
+satisfied by an accepted explicit negation."
+  (let* ((configuration (tool-context-configuration context))
+         (base (knowledge-base-read configuration))
+         (pattern (knowledge--pattern-from-input
+                   (getf gate :pattern)
+                   (lambda (predicate)
+                     (knowledge-base-schema base predicate
+                                            :workspace (knowledge--workspace configuration)))
+                   :negatable t)))
+    (let ((view (knowledge-view-current configuration)))
+      (rest (first (knowledge-view-solve view (list pattern)
+                                         :limit 1
+                                         :test (lambda (node)
+                                                 (knowledge-node-admissible-p
+                                                  view node :accepted (getf gate :accepted)))))))))
 
 (-> mission-gate-fingerprint (list tool-context) list)
 (defun mission-gate-fingerprint (gate context)
@@ -119,6 +139,15 @@
          (values (and passed-p t)
                  (format nil "Artifact ~A SHA-256 ~A~@[; expected ~A~]"
                          (getf gate :path) digest expected)
+                 nil)))
+      (:fact
+       (let ((facts (mission--fact-gate-support gate context)))
+         (values (and facts t)
+                 (if facts
+                     (format nil "~{~A~^; ~} hold~:[s~;~] on accepted evidence"
+                             (mapcar #'knowledge-node-text facts) (rest facts))
+                     (format nil "No fact resting on ~{~(~A~)~^ or ~} evidence satisfies ~A."
+                             (getf gate :accepted) (knowledge-pattern-text (getf gate :pattern))))
                  nil)))
       (:lisp
        (let* ((code (format nil "(assert (progn ~A))" (getf gate :predicate)))
@@ -217,6 +246,7 @@
                 (getf gate :evidence) (mission--bounded-text evidence))
           (mission--evidence context ':gate (list (getf gate :id) (getf gate :status) evidence))
           (mission--record context)
+          (mission-knowledge-record-gate context (getf gate :id) (getf gate :status))
           (when (and (not passed-p) (>= (getf gate :attempts) (getf gate :attempt-limit)))
             (mission--transition context ':exhausted (format nil "Gate ~A exhausted its attempt budget." (getf gate :id))))
           (and passed-p t)))
@@ -266,7 +296,7 @@
         (setf (getf goal :model-complete-p) t)
         (mission--evidence context ':model-complete "Harness verification requested.")
         (mission--record context))
-      (let* ((tool-context (mission--tool-context application))
+      (let* ((tool-context (application-tool-context application))
              (runtime (tool-context-execution-runtime tool-context))
              (live-jobs (and (typep runtime 'task-orchestrator)
                              (remove-if-not

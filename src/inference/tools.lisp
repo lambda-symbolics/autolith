@@ -461,16 +461,20 @@ filesystem paths are only a programmatic Lisp designator."
 
 (-> rlm--tool-activity-callback (rlm-frame-tool tool-context) (option function))
 (defun rlm--tool-activity-callback (tool context)
-  "Return a callback publishing TOOL's compact live inference activity."
+  "Capture TOOL's job reporter and publish compact real inference progress."
   (let ((observer (tool-context-observer context))
+        (reporter (tool-execution-activity-callback
+                   (tool-context-execution-runtime context)))
         (tool-name (tool-canonical-name tool)))
-    (when observer
+    (when (or observer reporter)
       (lambda (activity)
-        (agent-observer-status
-         observer
-         ':tool-call-progress
-         (list ':tool tool-name
-               ':activity (format nil "~A · ~A" tool-name activity)))))))
+        (when reporter
+          (funcall reporter activity))
+        (when observer
+          (agent-observer-status
+           observer ':tool-call-progress
+           (list ':tool tool-name
+                 ':activity (format nil "~A · ~A" tool-name activity))))))))
 
 (-> rlm--tool-routing-option (hash-table string) (option string))
 (defun rlm--tool-routing-option (arguments name)
@@ -567,9 +571,7 @@ turn, and async requests hand off at admission."
                       (rlm--tool-routing tool context arguments)))
             (provider (first routing))
             (configuration (second routing))
-            (source-registry (tool-context-registry context))
-            (activity-callback
-              (rlm--tool-activity-callback tool context)))
+            (source-registry (tool-context-registry context)))
        (rlm--tool-invoke
         context arguments
         :tool-name "rlm.infer"
@@ -587,7 +589,7 @@ turn, and async requests hand off at admission."
                         :provider provider
                         :configuration configuration
                         :source-registry source-registry
-                        :activity-callback activity-callback)
+                        :activity-callback (rlm--tool-activity-callback tool context))
                (tool-success
                 (rlm--result-sexp
                  (list ':value value
@@ -646,9 +648,7 @@ turn, and async requests hand off at admission."
                       (rlm--tool-routing tool context arguments)))
             (provider (first routing))
             (configuration (second routing))
-            (tool-configuration (tool-context-configuration context))
-            (activity-callback
-              (rlm--tool-activity-callback tool context)))
+            (tool-configuration (tool-context-configuration context)))
        (rlm--tool-invoke
         context arguments
         :tool-name "rlm.complete"
@@ -664,7 +664,7 @@ turn, and async requests hand off at admission."
                                :provider provider
                                :configuration configuration
                                :environment-owner tool-configuration
-                               :activity-callback activity-callback)
+                               :activity-callback (rlm--tool-activity-callback tool context))
                (let* ((printed (rlm--result-sexp value))
                       (value-fields
                         ;; A large final value is externalized as a stored
@@ -743,9 +743,7 @@ turn, and async requests hand off at admission."
                           arguments "concurrency"
                           *rlm-map-default-concurrency*
                           1 *rlm-map-maximum-concurrency*))
-            (source-registry (tool-context-registry context))
-            (activity-callback
-              (rlm--tool-activity-callback tool context)))
+            (source-registry (tool-context-registry context)))
        (rlm--tool-invoke
         context arguments
         :tool-name "rlm.map"
@@ -763,7 +761,7 @@ turn, and async requests hand off at admission."
                               :configuration configuration
                               :source-registry source-registry
                               :concurrency concurrency
-                              :activity-callback activity-callback)))
+                              :activity-callback (rlm--tool-activity-callback tool context))))
                (tool-success
                 (rlm--result-sexp
                  (list ':results results

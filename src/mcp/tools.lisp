@@ -1191,6 +1191,14 @@ retained value is credential-redacted or projected."
   "Persist content boundaries without duplicating result text or image data."
   (list :mcp-content :sections (mcp-content-result-sections result)))
 
+
+(defmethod tool-contract--prefix-details ((result mcp-content-result) length)
+  "Keep MCP section ranges within the external prefix retained before a diagnostic."
+  (list :mcp-content :sections
+        (loop for (kind start end) in (mcp-content-result-sections result)
+              when (<= start length)
+                collect (list kind start (min end length)))))
+
 (defparameter *mcp-image-encoded-maximum-characters* (* 48 1024 1024)
   "The maximum base64 characters accepted from one MCP image block.")
 

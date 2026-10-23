@@ -712,9 +712,9 @@ a user-local init.lisp change, or a private image commit.
   conversation-scoped vault before controller creation, starts with pending
   loading disabled, keeps crash diagnosis first, and never submits recovered
   input automatically. Startup warns while captures or storage failures remain.
-  =/vault= shows bounded chronological previews, =/vault-restore= transactionally
+  =(vault)= shows bounded chronological previews, =(vault-restore)= transactionally
   prepends captures in their exact active, restored-prefix, in-flight steering,
-  queued steering, and remaining-work order, and =/vault-discard= deletes only
+  queued steering, and remaining-work order, and =(vault-discard)= deletes only
   attributed current-conversation state. Corrupt bytes remain unchanged and
   ordinary ingress is blocked while persistence is unsafe; unattributed corrupt
   process-global legacy state remains preserved and ignored.
@@ -834,10 +834,10 @@ a user-local init.lisp change, or a private image commit.
   Callable commands declare ordinary Common Lisp lambda lists and explicit slash
   argument mappings. Noninteractive calls preserve ordinary arity errors, while
   interactive calls can supply replacement arguments through the restart
-  debugger or abort safely to the prompt. Provider calls keep their canonical
-  tool names and render deterministic syntax-highlighted Lisp without claiming
-  literal source. File changes number removed and added rows whenever exact
-  original and resulting coordinates are known.
+  debugger or abort safely to the prompt. Provider calls show parenthesized tool
+  names above aligned keyword-labeled argument tables, followed directly by
+  highlighted source rails. File changes number removed and added rows whenever
+  exact original and resulting coordinates are known.
 
   Explicit Lisp and resolved registered interactive commands attempt to append
   durable outcome records with bounded source and result fields outside ordinary

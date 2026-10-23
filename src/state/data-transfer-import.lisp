@@ -201,6 +201,21 @@
                       (data-transfer--forms-bytes
                        (cons (list kind :version 1) added)))
                   data-root :replace-p t)))))
+      (let* ((path (configuration-knowledge-path configuration))
+             (existing (data-transfer--knowledge-records configuration))
+             (added (data-transfer--merge-knowledge existing (getf archive :knowledge) path)))
+        (when added
+          (when (and (probe-file path) (nth-value 1 (log-read path)))
+            (data-transfer--fail path ':conflict "An incomplete knowledge log tail needs repair before import."))
+          (add (data-transfer--plan-write
+                path
+                (if (probe-file path)
+                    (concatenate '(vector (unsigned-byte 8)) (data-transfer--bytes path)
+                                 (vector 10)
+                                 (data-transfer--forms-bytes added))
+                    (data-transfer--forms-bytes
+                     (cons (list :knowledge :version *knowledge-format-version*) added)))
+                data-root :replace-p t))))
       (let* ((path (configuration-agenda-path configuration))
              (old (mapcar #'agenda--record->form
                           (agenda-state-records (agenda--read configuration :lock-held-p t))))

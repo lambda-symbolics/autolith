@@ -150,11 +150,25 @@ holds the same file lock as source invalidation and writes.
 | State         | Components                                               |
 |---------------+----------------------------------------------------------|
 | Conversations | headers, messages, provider items, model choices         |
-| Memories      | workspace and global facts, replacement and recall tombs |
+| Memories      | workspace and global facts, sources and premises, tombs  |
+| Knowledge     | predicates, evidence, supports, rules, retractions,      |
+|               | learned procedures and their runs, diagnoses and cases   |
+| Viewers       | the last knowledge snapshot each viewer saw (derived)    |
 | Agendas       | versioned workspace plans and memory identifiers         |
 | Papercuts     | user-visible defect reports and closure tombstones       |
 | Input vault   | queued follow-ups and steering after a crash             |
 
+- The knowledge log is append-only: a batch of records is one =:transaction=
+  form, so an interrupted write leaves none of it, and a reader folds only
+  what was appended since its cached read. It lives beside the memory log
+  rather than in it so older generations still read every memory after a
+  rollback; they never read the knowledge log. Derivations, statuses, and
+  conflicts are evaluated from the log, the cited files, and the time, and are
+  never stored.
+- Procedures are learned from tool-call traces read from conversation logs.
+  Traces are cached in memory per conversation and extended from where the
+  last read stopped; they are never written anywhere, so the transcript stays
+  the one record of what a turn did.
 - Conversation records are authoritative provider history
 - The header records the selected model and effort. Later changes are
   durable configuration records, so resume restores the latest choices
@@ -201,6 +215,22 @@ creation.
 - =src/provider/client.lisp= integrates product providers with
   =cl-llm-provider-api= wire clients and request execution. Render semantic stream
   events in the terminal and record projected provider history in conversations.
+- =src/provider/wire-protocol.lisp= anchors Codex's identical, currently supplied
+  goal and remaining developer-context tail before appended assistant/tool
+  rounds, after =context-delivery-project-items= has placed opted-in anchored
+  contributions. Exact suffix validation uses that assembly's actual tail,
+  not the full delivery rendering that also contains anchored blocks.
+  Only the current request's objects are moved; durable history is unchanged.
+  Weak conversation-keyed state retains two positions and case-sensitive
+  SHA-256 digests, not prompt text. Reuse requires the complete preceding
+  history to remain an exact prefix and no intervening user, developer, or
+  system message. Changed, omitted, partially omitted or unrecognized context,
+  rewritten/shortened history, and direct compaction requests reset placement.
+  When compaction uses a detached request view, the original conversation
+  resets on the changed history at its next ordinary request.
+  Compaction wire input itself is unchanged. The placement-state mutex does
+  not serialize conversation mutation or network requests: concurrent
+  constructors can reset cache continuity, but each uses only its own context.
 - Tools have metadata, namespaces, validation, and a result for every
   call, including failed ones
 - =src/tools/defaults.lisp= assembles the registry
@@ -362,7 +392,7 @@ preferences record; =--fullscreen= overrides it for one launch.
 - OSC 133: =A= and =B= precede input, =C= starts execution, =D;STATUS=
   closes execution. This way you can rely on smarter terminals
 - OSC 0: the interactive window title is =autolith - PATH=. Autolith writes
-  it at UI start, after localgroup attach, and after =/cwd=.
+  it at UI start, after localgroup attach, and after =(cwd "PATH")=.
 - Clinedi owns editor state, input decoding, geometry, and live repainting
 - The fullscreen viewport owns transcript wrapping, application scrolling,
   reflow anchors, and bottom-pinned composer geometry
@@ -444,6 +474,8 @@ Here's a rough, probably outdated map of the repository
 | Providers and credentials     | =src/provider/=                                                                                |
 | Tools and workspace resources | =src/tools/=, =src/resource/=, cl-exec-sandbox, clifff                                           |
 | Readable durable state        | =src/conversation/=, =src/state/=, =src/resource/{memory,agenda}.lisp=, sexp-store                 |
+| Structured knowledge          | =src/knowledge/=, =src/resource/memory-knowledge.lisp=, =src/agent/memory-context.lisp=        |
+| Procedure learning            | =src/learning/=, =src/agent/procedure-context.lisp=, =src/tools/procedure.lisp=                |
 | Workers and tasks             | =src/workers/=, =src/task/=, cl-jobpond, sbcl-workers                                            |
 | Live mutation                 | =src/self/=, =src/state/{durable-mutations,image-commits}.lisp=, surgeon                         |
 | Images and recovery           | =src/startup/active-image.lisp=, =src/state/generations.lisp=, =recovery/=, =bin/=, sbcl-generations |

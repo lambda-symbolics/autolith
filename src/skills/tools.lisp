@@ -33,9 +33,9 @@
   t)
 
 (defmethod tool-conversation-persistence ((tool skill-load-tool))
-  "Keep skill selection calls only through their next provider response."
+  "Retain selection metadata as history, without retaining skill instructions."
   (declare (ignore tool))
-  ':next-response)
+  ':durable)
 
 (defmethod tool-provider-round-trip-barrier-p ((tool skill-load-tool))
   "Require a provider round trip before any action may follow skill selection."

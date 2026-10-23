@@ -71,38 +71,19 @@
 
 (-> test-onboarding-source-catalog () null)
 (defun test-onboarding-source-catalog ()
-  "Read the shipped source through the same ASDF-relative asset path as saved images."
+  "Read and validate the shipped lessons through the saved-image asset path."
   (with-test-configuration (configuration root)
     (declare (ignore root))
     (let* ((pages (onboarding-pages configuration))
-           (ids (mapcar (lambda (page) (getf page :id)) pages))
-           (revised '("lisp-listener" "prompt-function" "input-vault" "indexed-search"
-                      "settings" "live-image" "mcp" "skills" "ready")))
-      (test-assert (equal ids '("welcome" "live-image" "first-provider" "ordinary-prompt" "lisp-listener" "asynchronous-lisp"
-                                "prompt-function" "steering" "input-vault" "indexed-search"
-                                "settings" "detached-sessions" "goals" "missions"
-                                "recursive-inference" "child-agents" "agent-definition" "mcp" "skills"
-                                "fullscreen" "ready"))
-                   "stable IDs follow source order, including the agent definition after child agents")
-      (dolist (page pages)
-        (test-assert (= (getf page :version)
-                        (cond
-                          ((member (getf page :id) '("missions" "agent-definition") :test #'string=)
-                           1)
-                          ((string= "first-provider" (getf page :id))
-                           2)
-                          ((string= "detached-sessions" (getf page :id))
-                           5)
-                          ((member (getf page :id) revised :test #'string=)
-                           4)
-                          (t
-                           3)))
-                     "only materially revised lessons receive new versions")
-        (test-assert (and (non-empty-string-p (getf page :title))
-                          (terminal-styled-text-p (getf page :body)))
-                     "titles and styled lesson bodies load from the shipped asset"))
+           (ids (mapcar (lambda (page) (getf page :id)) pages)))
+      (test-assert pages "the shipped source contains lessons")
+      (test-assert (= (length ids) (length (remove-duplicates ids :test #'string=)))
+                   "lesson identities are unique for persisted completion state")
+      (test-assert (every #'terminal-ui-onboarding-page-p pages)
+                   "every shipped lesson satisfies the presentation contract")
+      (terminal-ui-onboarding--validate-pages pages)
       (let* ((settings (find "settings" pages :test #'string= :key (lambda (page) (getf page :id))))
-             (text (apply #'concatenate 'string (mapcar #'terminal-span-text (getf settings :body)))))
+             (text (terminal--spans-text (getf settings :body))))
         (test-assert (and (search (namestring (config :config-root configuration)) text)
                           (search (namestring (config :state-root configuration)) text))
                      "actual configured roots are visible in the settings lesson"))

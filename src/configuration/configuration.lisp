@@ -342,6 +342,25 @@ exist yet, and is only put in directory form."
   :documentation "Whether requests that re-read uncached context are reported."
   :scope :durable)
 
+(define-setting :knowledge-mode (choice-setting)
+  :label "Structured knowledge"
+  :group :behavior
+  :documentation "Whether facts and rules are used (active), only recorded from observations (passive), or neither (off). Passive and off leave model requests exactly as without them."
+  :type 'non-empty-string
+  :scope :durable
+  :environment "AUTOLITH_KNOWLEDGE"
+  :options (lambda (configuration)
+             (declare (ignore configuration))
+             (list "active" "passive" "off"))
+  :default "active")
+
+(define-setting :diagnosis-p (boolean-setting)
+  :label "Diagnostic probes"
+  :group :behavior
+  :documentation "Whether the model may test hypotheses about a failure with probe tool calls (diagnosis.run). It needs active structured knowledge."
+  :scope :durable
+  :environment "AUTOLITH_DIAGNOSIS")
+
 (define-setting :idle-compaction-p (boolean-setting)
   :label "Idle cache compaction"
   :group :behavior
@@ -789,6 +808,11 @@ selects its own registration, rather than inheriting the previous provider."
 (defun configuration-memory-path (configuration)
   "Return the append-only persistent memory pathname."
   (merge-pathnames "memories.sexp" (config :data-root configuration)))
+
+(-> configuration-knowledge-path (configuration) pathname)
+(defun configuration-knowledge-path (configuration)
+  "Return the append-only structured knowledge pathname."
+  (merge-pathnames "knowledge.sexp" (config :data-root configuration)))
 
 (-> configuration-papercut-path (configuration) pathname)
 (defun configuration-papercut-path (configuration)

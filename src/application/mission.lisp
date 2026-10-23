@@ -127,6 +127,7 @@
       (setf (getf goal :status) status)
       (mission--evidence context status evidence)
       (mission--record context)))
+  (mission-knowledge-record-status context status)
   (when (member status '(:blocked :exhausted :cancelled :failed))
     (let ((jobs
             (with-recursive-lock-held ((mission-context-lock context))
@@ -285,7 +286,8 @@ The calling thread preserves provider bindings and authorization callbacks."
     (setf (application-goal application) goal)
     (let ((context (mission--attach application)))
       (mission--evidence context ':started "Explicit mission acceptance policy installed.")
-      (mission--record context)))
+      (mission--record context)
+      (mission-knowledge-record-status context ':active)))
   nil)
 
 (-> application-mission-stop (application keyword string) null)

@@ -1511,7 +1511,7 @@ user's input history, pending follow-ups, or recovery vault."
       (progn
         (application-present
          (application-input-controller-application controller)
-         "Recovered input storage is unavailable. Use /vault to inspect it or /vault-discard to discard the preserved input before submitting more work.")
+         "Recovered input storage is unavailable. Use (vault) to inspect it or (vault-discard) to discard the preserved input before submitting more work.")
         nil)))
 
 (-> application-input-controller--admit-primary-prompt-locked
@@ -1764,7 +1764,7 @@ the ordinary FIFO queue."
                         controller))
             (prompt--error
              ':storage-unavailable
-             "Recovered input storage is unavailable. Use /vault to inspect it or /vault-discard to discard the preserved input before submitting more work."
+             "Recovered input storage is unavailable. Use (vault) to inspect it or (vault-discard) to discard the preserved input before submitting more work."
              :target target))
           (unless (eq (getf snapshot :state) ':running)
             (application-prompt--child-admission-error

@@ -428,7 +428,8 @@ than the terminal emulator's native scrollback.
 
 For input with matching saved memories, a dim =@ N relevant memories exist= line
 appears below your message. Its count is the number offered to the model for that
-request. Each input gets one notice across tool calls and provider retries.
+request, followed by how many of them are stale or unverified (see the Memories section).
+Each input gets one notice across tool calls and provider retries.
 
 Input recall includes every user message, command, and Lisp submission in the
 conversation. Automatic messages and assistant output are excluded. On first use,
@@ -739,6 +740,14 @@ string notation. Tool calls return their usual values, so
 modified report strings also use string notation. Synchronous and asynchronous
 evaluation retain the same display text for replay.
 
+Provider tool calls show parenthesized names, such as =(shell.run)=, above aligned
+argument tables with Lisp keyword labels, such as =:directory= and
+=:timeout-seconds=. Shell commands and Lisp source appear in highlighted rails
+directly below the arguments, without a blank row between them.
+Consecutive single-line tool success messages share a block without blank rows.
+Unified diffs in captured output use the ordinary output rail, with their
+original change prefixes and indentation.
+
 Start input with =?= followed by whitespace to evaluate one form asynchronously
 in the active image. Use this for a blocking operation or a bare variable:
 
@@ -849,6 +858,298 @@ title matching word for word, or a title and body whose words largely overlap
 a report from the last day, answers with that existing report instead. A
 conversation re-filing within an hour of its own report is matched more
 loosely, since rewritten repeats share fewer words.
+
+** Memories
+
+Autolith remembers durable facts, preferences, and decisions per workspace or
+globally, and offers the related ones with each request. A memory can record
+where it came from:
+
+- a quoted passage of a file, or the whole file;
+- your own words in the conversation;
+- a web page;
+- other memories it was derived from, its premises.
+
+When a cited file no longer contains its quoted passage, or a premise changes
+or is forgotten, the memory becomes /stale/, and so does every memory derived
+from it. Restoring the passage makes them current again. Quotes are compared
+ignoring whitespace, so reformatting a file leaves its memories alone. Your
+words and web pages are provenance: they are never refetched, and once a
+memory cites files, those files decide whether it is current. A memory whose
+only cited files cannot be read is /unverified/. Status is worked out when a
+memory is listed or recalled, from the files as they are then; checking makes
+no model requests.
+
+#+BEGIN_SRC lisp
+(memories)            ; relevant memories, stale ones first
+(memories "deploy")   ; only those matching a query
+(memory "3afbfa1a")   ; one memory, its evidence, and what relies on it
+(forget "3afbfa1a")   ; stop recalling it
+#+END_SRC
+
+In fullscreen, open the memory manager with =(memories)=.
+Browse notes and facts side by side with their evidence; on a narrow terminal,
+press Enter to read the selected item. Use =/= to search titles, bodies, tags,
+IDs, and evidence, Tab to choose All/Notes/Facts, and Shift-Tab to choose a scope.
+Scroll an open explanation with the arrow keys or Page Up/Down. Press Esc to
+return to the list, then Esc again to close.
+
+Press =n= to create a note, =e= to edit one, =d= to forget a note or retract an
+asserted fact, and =r= to reload. Confirm deletion with =y=. In the note form,
+use Tab to move between title, tags, scope, and content; Space to choose a scope;
+Shift-Enter for a content newline; and Enter to save. A changed or deleted note
+must be reloaded before editing. Editing prose preserves its recorded evidence
+and premise versions. Inspect derived facts to find their supporting premises
+and rules. =(memory "ID")= opens the corresponding explanation directly.
+
+In inline or noninteractive sessions, these commands print textual listings and
+explanations.
+
+Any unique prefix of a memory ID selects it. =(forget)= names the memories
+that relied on the forgotten one, which are now stale. Recall marks stale
+memories for the model, which rechecks them before relying on them and
+replaces or forgets them, and the recall notice counts them:
+=@ 3 relevant memories exist · 1 stale=.
+
+The model records evidence through the =memory:= resources. =memory-remember=
+and =memory-replace= accept =sources=, objects naming one =file=, =url=, or
+=user= with an optional =quote=, and =premises=, memory IDs. A file quote must
+occur in the file and a =user= quote in your messages in this conversation
+when the memory is written. Replacing a memory without =sources= or =premises=
+keeps the recorded versions, so restating or retagging a stale memory leaves it
+stale; supplying them again rebinds it to the evidence as it is now. Workspace
+memories record files inside the workspace relatively, so they survive moving
+or importing the workspace, and a workspace export includes the global memories
+its memories rely on.
+
+*** Facts and rules
+
+Besides prose memories, Autolith keeps structured facts: a predicate applied to
+typed values, such as =event.start review 2026-10-22T13:00:00Z=. Each fact
+cites its evidence, like a memory, and says why it is believed: an
+/observation/ of a file, page, tool, or mission, a /user assertion/, an
+/assumption/, or the model's own /proposal/. Where a fact came from decides
+its basis, not what the model calls it: a file Autolith read is an
+observation, your own words a user assertion, and a web page an observation
+once =web_extra.gist= retrieves it with the quoted text. The retrieval receipt
+identifies the retrieved content, the bounded tool preview, and the original
+observation time. Quotations can cite the complete retained overflow object;
+if overflow storage is unavailable, only text in the retrieved prefix counts.
+The omission notice is presentation, not source evidence. A fact stated by
+two sources has two supports and holds while either does. Web pages expire a
+week after retrieval and tool output after a day; fetch the source again to
+renew its evidence. Your statements and recorded runs do not expire.
+
+A structured fact's file evidence applies only to the exact observed content,
+even when its quotation survives an edit elsewhere in the file. Review the new
+revision and observe it again before using it as current evidence. The original
+quotation and digest are kept for historical inspection.
+
+Rules derive facts from facts, with dates, durations, numbers, and quantities
+in units:
+
+#+BEGIN_SRC lisp
+;; departure = start - (travel + buffer)
+(:premises (("event.start" "?event" "?start")
+            ("event.travel" "?event" "?travel")
+            ("event.buffer" "?event" "?buffer"))
+ :bindings (("?leave" ("-" "?start" ("+" "?travel" "?buffer"))))
+ :conclusion ("event.departure" "?event" "?leave"))
+#+END_SRC
+
+When a premise changes, Autolith recomputes the conclusion locally, without a
+model request: move the meeting and the departure moves with it. A derived
+fact keeps the basis of its premises, so deriving from an assumption never
+yields an observation. A negated premise matches only a fact explicitly stated
+not to hold; a missing fact never satisfies it. Two facts that disagree about
+one keyed value, or a fact and its negation, are /conflicted/: both are kept
+and shown, and nothing picks a winner. Rules cannot depend on their own
+conclusions, and an evaluation that reaches its work limit reports the
+remaining conclusions as unknown rather than false.
+
+A rule the model proposes derives nothing until it is admitted. Admission
+uses the ordinary command approval: with full access it is admitted at once,
+otherwise you are asked to allow =rule.admit -- departure v1: ...=.
+
+#+BEGIN_SRC lisp
+(memories)            ; memories, then facts: conflicted and no longer holding first
+(why "c4dfffae")      ; why a fact holds: its sources, rule, and premises
+(what-changed)        ; facts that changed since you last asked, with the cause
+(rules)               ; rules, their versions, and whether they are admitted
+(admit-rule "departure")
+(retire-rule "departure")
+(forget "c4dfffae")   ; retract a fact; derived facts that relied on it go too
+#+END_SRC
+
+=(why "ID")= is =(memory "ID")=, and accepts a memory or a fact. Recall offers
+current facts related to your message to the model complete, so it can use
+them without rereading, and counts them in the notice:
+=@ 2 relevant memories exist · 3 facts=. When a fact the model was given earlier
+in a conversation changes, the next turn explains the change to it once, and
+=@ 1 fact given earlier changed= appears. A memory can name a fact as a
+premise and goes stale when the fact stops holding; a fact can cite a memory
+as evidence.
+
+The model reads =memory:facts=, =memory:claim/ID=, =memory:predicates=,
+=memory:rules=, =memory:procedures=, and =memory:changes=, and edits =memory:facts= with
+=predicate-define=, =fact-assert=, =fact-retract=, and =rule-propose=, up to 16
+per edit. Mission status and gate results are recorded as =autolith.mission.*=
+facts.
+
+The =knowledge-mode= setting is =active= by default. =passive= keeps recording
+observations such as mission results but offers nothing to the model, and =off=
+records nothing; in both, model requests are exactly as without structured
+knowledge. Change it in =(settings)= or with =AUTOLITH_KNOWLEDGE=.
+
+Knowledge is evaluated locally when it is listed or recalled, and evaluated
+again only after a cited file, the knowledge, or a validity period changes.
+Each request where knowledge took part records its share, so its cost can be
+measured:
+
+#+BEGIN_SRC lisp
+(knowledge-usage-report (application-conversation *active-application*))
+#+END_SRC
+
+Facts, rules, and predicates travel with memories in data exports; a relocated
+workspace keeps its facts.
+
+*** Plans, methods, gates, and contracts
+
+A plan step can name the facts it requires. Its text takes their values, so
+=Leave at {?leave}= requiring =event.departure review ?leave= reads =Leave at
+12:20= and follows the departure when the meeting moves, without replanning.
+A step whose requirements nothing satisfies is shown /blocked/ with the missing
+pattern. A step marked done records the facts it was done with; if they later
+stop holding, the plan says so instead of repeating the step. When such a
+change happens between turns, the model is told once at its next turn and
+=@ 1 plan step changed with its facts= appears.
+
+A /method/ says how to do a task when facts allow it: its conditions, then
+subtasks and plain steps in order. =plan.expand= turns a task such as
+=prepare review= into a checked plan locally, trying methods in order and
+expanding subtasks within a depth of 8 and 1,000 tasks. It reports a task no
+method describes, methods whose conditions do not hold (naming them), and a
+search that ran out of budget, separately, and leaves the plan unchanged then.
+
+A mission gate of kind =:fact= passes when a fact matching its pattern holds
+on accepted evidence, observations and your statements unless it says
+otherwise:
+
+#+BEGIN_SRC lisp
+(:id "departure-known" :kind :fact :pattern ("event.departure" "review" "?t"))
+#+END_SRC
+
+A model's predictions never satisfy it, nor does a fact that another accepted
+fact disputes, and a derived fact counts only if everything it rests on,
+negated premises included, is accepted. A negated pattern such as
+=(:not ("item.blocked" "a"))= passes on an accepted explicit negation. A gate
+passed on facts that stop holding before acceptance is checked again.
+
+An action /contract/ describes a tool call: argument values it applies to,
+facts it requires, facts it is expected to cause, and facts to read from its
+arguments and JSON result, such as =$arg.to= and =$result.id=. A call whose
+requirements do not hold is refused before it runs, with the reason; like a
+gate, a requirement holds only on undisputed observations or your statements,
+unless the contract's =accepts= also names =model-proposal= so that an earlier
+call's predicted effects count. A
+successful call records its expected effects as predictions and its observed
+values as observations of that call, which is how structured tool output,
+MCP results included, becomes facts. The model defines methods with
+=method-define= and proposes contracts with =contract-define= on =memory:facts=.
+For each new contract version, approve the =contract.admit= request containing
+its complete definition, including observation mappings and =accepts=. Declining
+leaves that version inactive and any previously admitted version active. Any
+edit requires fresh admission; proposing the same admitted content again does
+not. Read proposed and active versions from =memory:contracts=, and methods
+from =memory:methods=.
+
+Contract admissions are persisted for the exact definition and version. Older
+contract records without admission provenance are inactive. Exports retain
+admission metadata for provenance; imported contracts require local admission.
+Trusted Lisp callers of =knowledge-define-contract= admit their definitions by
+default; pass =:admit nil= to propose one for separate authorization.
+
+Requirements may bind variables used by effects and observations. A call needs
+one distinct binding environment; ambiguous bindings or an incomplete search
+refuse it before execution. Evidence records retain the supporting claim IDs.
+If a successful call's observation mapping fails, its plain result reports
+=externalSuccess: true=, a bounded =externalResult= excerpt, and structured
+=contractErrors= with =contractRecording: "failed"=. Rich results include a
+bounded diagnostic after their ordered content. Durable details retain the
+recording diagnostic and subtype metadata; clipped MCP sections include their
+original metadata as provenance.
+
+*** Learned procedures
+
+When three turns in a workspace make the same tool calls in the same order,
+Autolith learns a /procedure/ from them after the turn, locally and without a
+model request: arguments that never change stay as they were, a value taken
+from an earlier call's JSON result is taken from it again, and values that
+vary become parameters, matched with the words that varied in your requests.
+A procedure is kept only if each of those turns is reproduced by the
+procedure learned from the others. If another recent request worded the same
+way did something else, the wording does not show when the procedure applies,
+so it is never offered, though it can still be run. A new procedure shows
+=@ learned procedure make-sales-report from 3 turns · (procedures)=.
+
+When a later request fits, such as =Make the sales report for q5.=, the model
+is offered the one =procedure.run= call that makes the same calls with =q5=,
+and =@ learned procedure make-sales-report fits this request= appears. The
+first run asks to admit the procedure (=procedure.admit -- make-sales-report
+v1: sales.load, sales.report, notify.send=); full access admits it at once.
+Automatic execution requires completed, successful model turns running the exact
+admitted procedure version and content, with complete usage measurements showing
+both fewer model requests and fewer tokens than its learning baseline. A request
+matching its wording exactly, apart from its parameters, then runs it before the
+model's first request, shown as its =procedure.run= call, and the model answers
+from the results in one request. A wording learned with a word that varied, such as
+=Please= or =Kindly=, matches any word there, so it stays an offer the model
+may decline. Procedures are learned only from turns the model finished: every
+call succeeded, the model answered, and the turn was not cancelled.
+
+Every call still asks its own approval and passes its contracts. A run whose
+contract requirements do not hold for the request's values is refused before
+any call and is not offered; a call needing something an earlier call builds
+is checked when it is made. If a call fails, the run stops and the model
+continues the work with ordinary calls; two failed runs in a row suspend the
+procedure until you admit it again.
+
+#+BEGIN_SRC lisp
+(procedures)          ; procedures, their calls, status, and what they saved
+(run-procedure "make-sales-report" :file "q5")   ; without the model
+(admit-procedure "make-sales-report")             ; allow it, or lift a suspension
+(retire-procedure "make-sales-report")            ; never run or learn it again
+#+END_SRC
+
+=(procedures)= compares the turns a procedure was learned from with recent
+turns that ran it, in model requests and tokens. The model reads
+=memory:procedures=. Procedures are kept in the knowledge log, with every run,
+and are learned and offered only while =knowledge-mode= is =active=.
+
+*** Diagnosis
+
+With =Diagnostic probes= on in =(settings)= (or =AUTOLITH_DIAGNOSIS=1=) and
+structured knowledge active, the model can find out why something fails
+before repairing it, instead of trying repairs in turn. =diagnosis.run= takes
+up to four hypotheses, each predicting facts, and probes: tool calls whose
+contracts observe facts from their results. Facts already known are checked
+first; then the probe telling apart the most remaining hypotheses per cost
+runs, at most three, with no model request between them. A hypothesis is
+ruled out only by an undisputed observation or statement contradicting one of
+its predictions, so a case no probe can settle is reported as still open
+rather than guessed. A diagnosis
+can be saved by name and run again with new values.
+
+#+BEGIN_SRC text
+Diagnosis remote-service: stale-endpoint. Repair: Update its endpoint.
+probe 1: service.ping {"service":"billing"} ok → service.reachable(billing, true)
+probe 2: service.config {"service":"billing"} ok → endpoint.current(billing, false)
+ruled out unavailable: service.reachable(billing, true)
+ruled out credentials: endpoint.current(billing, false)
+#+END_SRC
+
+=(diagnoses)= lists saved diagnoses and recent cases: the cause found, its
+repair, and the facts that ruled out the others.
 
 ** Exporting and importing data
 
@@ -994,7 +1295,9 @@ stale Localgroup records itself.
 Autolith loads the optional user file
 =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp= after tracked code, a
 selected private image commit, and any site or trusted directory
-configuration. It reloads on retained generation reconnect.
+configuration. This order also applies to =autolith models= and =autolith auth=.
+Use =--pristine= to skip private replay and executable initialization.
+The user file reloads on retained generation reconnect.
 
 The file is ordinary Common Lisp in package =AUTOLITH=, with your full
 privileges. It is not copied into private replay or the pristine recovery
@@ -1047,7 +1350,7 @@ value, else the default.
 
 Enable the session's private context-pressure reminder with =(relax t)=, or
 =(settings :relax-p t)=. Use =(relax nil)= to disable it and =(relax)= to inspect
-its state. The slash forms are =/relax on= and =/relax off=.
+its state.
 
 The private system-prompt reminder warns that the agent's session, context and
 token estimates are unreliable and often too small. Automatic compaction is
@@ -1334,8 +1637,7 @@ Both names open the same interactive review. Inspect the generated instruction
 and literal trigger, amend the candidate, then choose workspace or global scope
 to save it. Saving an unmatched trigger and replacing an existing rule each
 require separate confirmation. Cancel to discard the candidate. Omit the text
-to enter a complaint in the editor. Slash forms =/complain TEXT= and =/wtf TEXT=
-accept the whole remainder as complaint text.
+to enter a complaint in the editor.
 
 Generation uses bounded recent assistant output and tool arguments as evidence.
 On later provider requests, matching corrections enter the ordinary request-local
@@ -1354,6 +1656,12 @@ GPT-6.1, GPT-6, and GPT-5.6 models, which compact at about 218K tokens by defaul
 #+BEGIN_EXAMPLE
 ctx [==========|..] 218K / 272K used
 #+END_EXAMPLE
+
+Before provider usage is available, =~= marks an estimate from the known system
+prompt, session state, retained conversation, and tool schemas. The estimate uses
+four characters per token. After compaction, the meter estimates the replacement
+context until the next provider report. Compaction request usage is recorded
+separately as work spent on the checkpoint and summary.
 
 At narrow widths, the meter keeps the used and window counts and drops the bar.
 
@@ -1404,23 +1712,26 @@ subscription route. Idle compaction uses the ordinary paid checkpoint and
 summary path. It can reduce the context sent after a long pause, but neither a
 cache hit nor a net saving is guaranteed.
 
-Providers bill context served from their prompt cache at a fraction of the
-uncached input price, so a request that re-reads context the previous request
-had cached costs noticeably more. =(cache-misses t)=
-enables a dim notice after any request whose cache reads fell below half of the
-previous prompt, and after any request whose cache reads stopped growing while
-the prompt grew and at least a sixteenth of the previous prompt, never less
-than 4096 tokens, was re-read. The notice gives the re-read and total prompt
-token counts and the likely cause: a model change, an idle gap during which
-cached context may have expired, rewritten earlier context, a resumed
-conversation, a changed prompt prefix, or a stalled
-prefix, which means the request reached a provider backend without the newest
-cached context. When the provider attributes cache reads to request fields, the
-notice adds whether the instructions and tools were re-read or still cached, so
-a changed prefix is told apart from lost routing. The first request after
-compaction is expected to miss and stays quiet. Autolith carries no price
-table, so the notice reports tokens rather than currency. The setting is off by
-default and persists across restarts.
+=(cache-misses t)= enables notices when cached input falls below half the
+previous prompt size, or cache reads stagnate as input grows and the shortfall
+against the previous prompt reaches both 4096 tokens and one sixteenth. Each
+notice starts with a red =!= and reports current uncached and total input tokens.
+Uncached input includes new messages and temporary context; it is not a
+measurement of repeated text. The cause is unknown. Model changes, idle intervals
+and smaller prompts are reported as local observations, not proof of eviction or
+routing failure. The first request after resuming a session or compacting is quiet
+and establishes a fresh baseline. The setting is off by default and persists
+across restarts.
+
+In Responses requests, skill catalogs and selected skill instructions keep their
+first surviving history position instead of moving after each new message.
+Autolith reads the current skill contents and checks activation on every request.
+Selected instructions expire with the logical turn; only the small selection
+call and result enter durable history. Mutable session state and other ordinary
+request context follow history. After compaction or removed history boundaries,
+Autolith places active skill context after the new history. Use =(context)= to
+inspect contribution sizes. Provider cache hits and savings depend on the
+provider and are not guaranteed.
 
 ** Providers
 
@@ -1671,8 +1982,9 @@ Provider preference fields are sent as supplied, including =order=,
   picker requires exclusive terminal input when open. The responsive reader
   continues animating until then.
 - =:static-options= replaces =:argument= for one finite positional parameter.
-  Supply native strings or keywords to derive the help hint and completions.
-  Define a slash parser to translate text choices to keyword values.
+  Supply native strings, keywords, or booleans to derive the help hint and
+  completions. Use =(t nil)= for boolean controls. Define a slash parser to
+  translate text choices to native values.
 
 ** Live definitions
 
@@ -1948,7 +2260,7 @@ including lineage, timing, reported usage, recent activity and artifact paths:
 #+END_SRC
 
 Lists show 32 tasks per page, with live work first. Use =:offset= and =:limit=
-(up to 64) to navigate, or =/tasks list OFFSET LIMIT=.
+(up to 64) to navigate.
 
 Transcript bounds are character counts, defaulting to 0 and 4000. Use the
 shown next offset for another window. The =:get=, =:send= and =:cancel= actions
