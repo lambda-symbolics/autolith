@@ -666,7 +666,7 @@
                                        :compaction-limit 840000)
         (terminal-ui-set-status active-ui "working")
         (let ((wide (row-text active-ui 120)))
-          (test-assert (search "READ  ∙ 00:00" wide)
+          (test-assert (search "REPL  ∙ 00:00" wide)
                        "a wide context row retains live activity")
           (test-assert
            (search "ctx [===.......|..] 263K / 1.05M used" wide)
@@ -679,7 +679,7 @@
            "a wide context meter is right-aligned"))
         (dolist (width '(25 30 33))
           (let ((intermediate (row-text active-ui width)))
-            (test-assert (search "READ  ∙ 00:00" intermediate)
+            (test-assert (search "REPL  ∙ 00:00" intermediate)
                          (format nil
                                  "an active ~D-column meter retains minimum activity"
                                  width))
@@ -714,16 +714,16 @@
         (let ((too-narrow (row-text active-ui 24))
               (minimum (row-text active-ui 25))
               (preferred (row-text active-ui 26)))
-          (test-assert (not (search "READ  ∙ 00:00" too-narrow))
+          (test-assert (not (search "REPL  ∙ 00:00" too-narrow))
                        "below the combined minimum, context displaces activity")
           (test-assert
-           (string= minimum "READ  ∙ 00:00 1.05M/1.05M")
+           (string= minimum "REPL  ∙ 00:00 1.05M/1.05M")
            "the combined minimum uses a one-cell activity and context gap")
           (test-assert
-           (string= preferred "READ  ∙ 00:00  1.05M/1.05M")
+           (string= preferred "REPL  ∙ 00:00  1.05M/1.05M")
            "the next width restores the preferred two-cell gap"))
         (dolist (width '(25 26 27 28 29 30 31 32 33))
-          (test-assert (search "READ  ∙ 00:00" (row-text active-ui width))
+          (test-assert (search "REPL  ∙ 00:00" (row-text active-ui width))
                        (format nil
                                "a high-usage ~D-column meter retains activity"
                                width)))
@@ -955,7 +955,7 @@
       (multiple-value-bind (text display cursor)
           (terminal-ui--live-content active-ui)
         (declare (ignore display cursor))
-        (test-assert (search "READ  ∙ 00:00" text)
+        (test-assert (search "REPL  ∙ 00:00" text)
                      "live activity starts with its spinner and elapsed clock")
         (let ((lines (uiop:split-string text :separator '(#\Newline))))
           (test-assert
@@ -974,8 +974,16 @@
       (multiple-value-bind (text display cursor)
           (terminal-ui--live-content active-ui clock)
         (declare (ignore display cursor))
-        (test-assert (search "EVAL  ∙ 00:00" text)
-                     "the spinner advances without shifting the elapsed clock"))
+        (test-assert (search "REPL  ∙ 00:00" text)
+                     "the wordmark advances without shifting the elapsed clock")
+        (let ((spans (terminal-ui--status-spinner-spans-at active-ui clock)))
+          (test-assert
+           (and (string= "REPL "
+                         (apply #'concatenate 'string
+                                (mapcar #'terminal-span-text spans)))
+                (eq ':status-accent (terminal-span-style (second spans)))
+                (string= "E" (terminal-span-text (second spans))))
+           "the second letter carries the highlight inside the fixed cells")))
       (setf clock 1)
       (test-assert (terminal-ui-refresh-status active-ui)
                    "a new elapsed second repaints activity")
@@ -1173,7 +1181,7 @@
                               lines))
                (status-index
                  (position-if (lambda (line)
-                                (search "READ " line))
+                                (search "REPL " line))
                               lines))
                (search-line (and search-index (nth search-index lines)))
                (review-line (and review-index (nth review-index lines)))

@@ -1482,18 +1482,18 @@ recalled drafts. An @ path token still offers file completion."
 
 (-> terminal-ui--status-spinner-spans-at (terminal-ui real) list)
 (defun terminal-ui--status-spinner-spans-at (ui now)
-  "Return UI's fixed-width READ/EVAL/PRINT/LOOP spinner spans at NOW."
-  (multiple-value-bind (text bright-index)
-      (ecase (terminal-ui--status-spinner-phase-at ui now)
-        (0 (values "READ " 0))
-        (1 (values "EVAL " 1))
-        (2 (values "PRINT" 2))
-        (3 (values "LOOP " 3)))
+  "Return UI's fixed-width REPL spinner spans at NOW.
+
+The wordmark spans the five cells the status row's minimum activity budget
+reserves, and the letter naming the current phase glows while the rest stays
+dim."
+  (let* ((text "REPL ")
+         (bright-index (terminal-ui--status-spinner-phase-at ui now)))
     (remove nil
             (list (and (plusp bright-index)
                        (terminal-span ':status-dim
                                       (subseq text 0 bright-index)))
-                  (terminal-span ':status-plain
+                  (terminal-span ':status-accent
                                  (subseq text bright-index
                                          (1+ bright-index)))
                   (and (< (1+ bright-index) (length text))
@@ -1775,7 +1775,7 @@ joins the meter when every segment fits."
                  (terminal-ui-status-details ui))))
          (content (or activity-content
                       (terminal-ui-idle-status-details ui)))
-         (minimum-activity-width (text-cell-width "READ  ∙ 00:00"))
+         (minimum-activity-width (text-cell-width "REPL  ∙ 00:00"))
          (complete-context-width
            (and (terminal-ui-context-window ui)
                 (text-cell-width (terminal-ui--context-compact-text ui))))
