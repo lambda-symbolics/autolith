@@ -111,6 +111,16 @@ message ModelStart {
   // Parent-issued per-user-turn routing state, not a raw provider token.
   optional string turn_state_handle = 15;
   optional bool tool_discovery = 16;
+  // Requires model-items-v1. Request-local items follow durable items, before suffix.
+  repeated TranscriptItem ephemeral_items = 17;
+  enum Purpose {
+    // Preserve ordinary generation and native compaction behavior when omitted.
+    PURPOSE_UNSPECIFIED = 0;
+    // Tool-free ordinary generation; not the native compaction operation.
+    ORDINARY_SUMMARY = 1;
+  }
+  // Requires model-items-v1. ORDINARY_SUMMARY is valid only with GENERATE.
+  Purpose purpose = 18;
 }
 
 message ConversationMessage {

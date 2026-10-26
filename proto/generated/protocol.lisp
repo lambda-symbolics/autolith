@@ -159,6 +159,11 @@
     (:kind-unspecified :index 0)
     (:generate :index 1)
     (:native-compaction :index 2))
+
+  (pi:define-enum model-start.purpose
+      ()
+    (:purpose-unspecified :index 0)
+    (:ordinary-summary :index 1))
   ;; Fields
   (pi:define-oneof -max-output-tokens (:synthetic-p t)
     (max-output-tokens
@@ -198,7 +203,11 @@
   (kind
    :index 11 :type model-start.kind :kind :enum :label (:optional) :field-presence :implicit :json-name "kind" :default :kind-unspecified)
   (hosted-tools
-   :index 14 :type hosted-tool :kind :message :label (:repeated :list) :field-presence :implicit :json-name "hostedTools"))
+   :index 14 :type hosted-tool :kind :message :label (:repeated :list) :field-presence :implicit :json-name "hostedTools")
+  (ephemeral-items
+   :index 17 :type transcript-item :kind :message :label (:repeated :list) :field-presence :implicit :json-name "ephemeralItems")
+  (purpose
+   :index 18 :type model-start.purpose :kind :enum :label (:optional) :field-presence :implicit :json-name "purpose" :default :purpose-unspecified))
 
 (pi:define-message conversation-message
     ()
@@ -838,6 +847,7 @@ duration
 effective-grants
 elapsed-seconds
 envelope
+ephemeral-items
 event-id
 expected-revision
 explanation
@@ -906,6 +916,9 @@ model-start
 model-start.kind
 model-start.kind-int-to-keyword
 model-start.kind-keyword-to-int
+model-start.purpose
+model-start.purpose-int-to-keyword
+model-start.purpose-keyword-to-int
 name
 namespace
 namespace-description
@@ -933,6 +946,7 @@ progress
 protocol
 protocol-major
 provider-usage
+purpose
 query
 ready
 ready-to-stop

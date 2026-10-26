@@ -237,19 +237,54 @@ unfinished work interrupted. Exact heap continuity is not required.
 
 Negotiate =model-items-v1= before using the ordered-item model service. With
 this feature, =ModelStart.kind= must be =GENERATE= or =NATIVE_COMPACTION=,
-=messages= must be empty, and =items= is the sole ordered history. Without it,
-use the original message service and reject the added model fields. Do not
-route a provider that needs opaque replay through the original message service.
+=messages= must be empty, and the ordered history consists of =items= followed
+by =ephemeral_items=. Without it, use the original message service and reject
+the added model fields, including nonempty =ephemeral_items= and nonzero
+=purpose=. Do not route a provider that needs opaque replay through the
+original message service. The unpublished =model-items-v1= extension includes
+both fields; advertising it means support for their validation and projection,
+not only the earlier ordered-item fields. No separate feature token is needed.
 For the item service, =ModelComplete.message= must be absent, even for an empty
 result. The final =output_items= list is authoritative, not the display deltas.
 
-The agent selects history items and their order, the stable instruction prefix,
-and the request-local suffix. Map these to =wire-request.items=, =prefix=, and
-=suffix= in =cl-llm-provider-api=. The parent selects the actual model from
-=profile_id=. It applies the provider's instruction placement and cache
-breakpoint rules without flattening the prefix and suffix into history.
-Anchored context belongs in =items=; volatile context belongs in
-=request_suffix=. A native compaction suffix contains the compaction instructions.
+The agent selects durable history =items=, request-local =ephemeral_items=,
+the stable instruction prefix, and the request-local suffix. Preserve order
+within each list. Map durable items to =wire-request.items= and instruction
+texts to =prefix= and =suffix= in =cl-llm-provider-api=. For Anthropic, map
+=ephemeral_items= to the typed =:ephemeral-items= library option. Apply the
+history cache breakpoint to durable items before appending ephemeral items,
+then append suffix text. Do not flatten ephemeral items into text or include
+them in the durable cache prefix. For other families, append ephemeral items
+to durable items before the existing family projection and suffix placement.
+Apply the same transcript validation, size limits, and replay-handle authority
+rules to both item lists. Request-local placement does not append items to the
+durable session or grant additional handle authority.
+
+The parent selects the actual model from =profile_id=. It applies the
+provider's instruction placement and cache breakpoint rules without flattening
+the prefix and suffix into history. Anchored context belongs in =items=;
+volatile text belongs in =request_suffix=. A native compaction suffix contains
+the compaction instructions.
+
+=ModelStart.purpose= is a bounded logical setting, not provider cache control.
+Omitted or =PURPOSE_UNSPECIFIED= preserves the existing =GENERATE= behavior;
+it does not request a summary. =ORDINARY_SUMMARY= is valid only with
+=kind= set to =GENERATE=. It requests tool-free ordinary summary generation,
+equivalent to the existing =compaction-p t= projection. The agent supplies the
+selected durable history and compaction instructions in the family-appropriate
+prefix or suffix. It omits ephemeral context and normal goal/context delivery. Reject
+nonempty =ephemeral_items=, =tools=, or =hosted_tools=, enabled =tool_discovery=,
+and a requested reasoning summary for this purpose. The parent disables
+Anthropic caching for this request, including system, history, and tool cache
+markers, and applies the other families' existing ordinary-summary projection.
+The agent cannot set arbitrary cache fields. Reject unknown purpose values.
+
+=NATIVE_COMPACTION= is a separate operation and requires =purpose= set to
+=PURPOSE_UNSPECIFIED=. Do not substitute ordinary summary generation when a
+profile does not support native compaction. The agent can first request a
+native checkpoint, then select that checkpoint for a separate portable
+=GENERATE= request with =purpose= set to =ORDINARY_SUMMARY=, as in the existing
+native-checkpoint-then-portable-summary sequence.
 
 The parent validates the profile, context size, tool schemas, and resource
 budgets. Its profile allowlists output limits, temperature, reasoning effort,
