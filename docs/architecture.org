@@ -89,6 +89,16 @@ stream closure succeeded. The acceptance hook must complete replay acceptance an
 session-note publication before returning true. The collector retains accepted
 completion data if terminal emission fails.
 
+Use =make-model-replay-collector= to connect the collector to the replay and
+session journals. Its hooks write each event once and verify the saved identity
+before emission. Continuation and turn-state handles are private, kind-specific,
+and usable only after acceptance and session publication. Turn-state handles also
+require the owning turn. A terminal failure commits its event and final request
+state together. Use the request-scoped =make-model-replay-resolver= when projecting
+a later model request. The collector checks public event budgets before retaining
+items or state, and reserves space for a terminal failure. Reconcile unknown
+journal write outcomes before further publication.
+
 The optional =autolith-protocol-client= system supplies the agent-side client
 over explicit private streams. It supports negotiation, session reads and
 appends, turn lifecycle, and transient output. These libraries do not yet supply
