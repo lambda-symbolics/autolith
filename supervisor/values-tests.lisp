@@ -12,6 +12,79 @@
                   (protocol-value-error-reason condition)))))
   nil)
 
+(declaim (ftype (function () null) protocol-test--message-data))
+
+(defun protocol-test--message-data ()
+  "Check schema projection, detached values, presence, and shared bounds."
+  (let* ((usage-data (make-hash-table :test 'equal))
+         (call       (cl-protobufs.autolith.parent.v1:make-tool-call
+                      :call-id "call-A" :name "lookup" :arguments-json "{malformed"))
+         (first      (cl-protobufs.autolith.parent.v1:make-output-item
+                      :family "responses" :item-index 0 :tool-call call))
+         (second     (cl-protobufs.autolith.parent.v1:make-output-item
+                      :family "responses" :item-index 1 :tool-call
+                      (cl-protobufs.autolith.parent.v1:make-tool-call
+                       :call-id "call-B" :name "lookup" :arguments-json ""))))
+    (setf (gethash "false" usage-data) nil
+          (gethash "null" usage-data) ':protocol-null
+          (gethash "bytes" usage-data) (protocol-test--bytes '(0 128 255))
+          (gethash "signed_zero" usage-data) -0.0d0)
+    (let* ((message   (cl-protobufs.autolith.parent.v1:make-model-complete
+                       :reason ':tool-calls :turn-completion ':continued
+                       :usage        (cl-protobufs.autolith.parent.v1:make-usage
+                                      :input-tokens 0 :provider-usage (protocol-data->map usage-data))
+                       :output-items (list first second)))
+           (data      (protocol-message->data message))
+           (usage     (gethash "usage" data))
+           (originals (gethash "provider_usage" usage))
+           (items     (gethash "output_items" data))
+           (decoded   (cl-protobufs:deserialize-from-bytes
+                       'cl-protobufs.autolith.parent.v1:model-complete
+                       (cl-protobufs:serialize-to-bytes message))))
+      (assert (string= "tool_calls" (gethash "reason" data)))
+      (assert (string= "continued" (gethash "turn_completion" data)))
+      (assert (= 0 (gethash "input_tokens" usage)))
+      (assert (not (nth-value 1 (gethash "output_tokens" usage))))
+      (assert (not (nth-value 1 (gethash "continuation_handle" data))))
+      (assert (nth-value 1 (gethash "false" originals)))
+      (assert (null (gethash "false" originals)))
+      (assert (eq ':protocol-null (gethash "null" originals)))
+      (assert (equalp (protocol-test--bytes '(0 128 255)) (gethash "bytes" originals)))
+      (assert (minusp (float-sign (gethash "signed_zero" originals))))
+      (assert (= 0 (gethash "item_index" (aref items 0))))
+      (assert (equal '("call-A" "call-B")
+                     (loop for item across items collect (gethash "call_id" (gethash "tool_call" item)))))
+      (assert (equalp data (protocol-message->data decoded)))
+      (setf (char (gethash "arguments_json" (gethash "tool_call" (aref items 0))) 0) #\X
+            (aref (gethash "bytes" originals) 0) 42)
+      (assert (string= "{malformed" (cl-protobufs.autolith.parent.v1:tool-call.arguments-json call)))
+      (assert (= 0 (aref (gethash "bytes" (gethash "provider_usage"
+                                                 (gethash "usage" (protocol-message->data message)))) 0))))
+    (protocol-test--value-error
+     (lambda () (protocol-message->data first :max-depth 2)) ':depth-limit)
+    (let* ((items   (list first))
+           (message (cl-protobufs.autolith.parent.v1:make-model-complete :output-items items)))
+      (setf (rest items) items)
+      (sb-ext:with-timeout 2
+        (protocol-test--value-error
+         (lambda () (protocol-message->data message :max-entries 64)) ':entry-limit))))
+  (let ((data (protocol-message->data
+               (cl-protobufs.autolith.parent.v1:make-turn-start :continuation nil))))
+    (assert (nth-value 1 (gethash "continuation" data)))
+    (assert (null (gethash "continuation" data))))
+  (let ((data (protocol-message->data (cl-protobufs.autolith.parent.v1:make-model-complete))))
+    (assert (equalp #() (gethash "output_items" data))))
+  (protocol-test--value-error
+   (lambda () (protocol-message->data
+               (cl-protobufs.autolith.parent.v1:make-model-event :index 1 :attempt 1)
+               :max-entries 1)) ':entry-limit)
+  (protocol-test--value-error
+   (lambda () (protocol-message->data
+               (cl-protobufs.autolith.parent.v1:make-usage :input-tokens (expt 2 63))))
+   ':unsupported-value)
+  (protocol-test--value-error (lambda () (protocol-message->data ':not-a-message)) ':invalid-message)
+  nil)
+
 (declaim (ftype (function () null) run-protocol-value-tests))
 
 (defun run-protocol-value-tests ()
@@ -83,4 +156,5 @@
   (let ((cycle (vector nil)))
     (setf (aref cycle 0) cycle)
     (protocol-test--value-error (lambda () (protocol-data->value cycle)) ':depth-limit))
+  (protocol-test--message-data)
   nil)

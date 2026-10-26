@@ -153,3 +153,107 @@ Reject unsupported types, duplicate string keys, nonfinite floats, and bounds."
   "Encode the string-keyed data MAP with deterministic key ordering."
   (common-proto:value.map-value
    (protocol-data->value map :max-depth max-depth :max-entries max-entries)))
+
+(declaim (ftype (function (t &key (:max-depth (integer 1)) (:max-entries (integer 1))) t)
+                protocol-message->data))
+
+(defun protocol-message->data (message &key (max-depth 32) (max-entries 65536))
+  "Copy MESSAGE to bounded portable data with schema field names.
+
+Use lowercase names with underscores for fields and enums. Preserve optional
+presence, repeated-field order, shared Value types, and byte vectors. Reject
+values outside the shared portable domain rather than coercing them."
+  (unless (and (<= 1 max-depth 32) (<= 1 max-entries 65536))
+    (error 'protocol-value-error :reason ':invalid-limit))
+  (let ((entries 0))
+    (labels ((count-entry ()
+               (when (> (incf entries) max-entries)
+                 (error 'protocol-value-error :reason ':entry-limit)))
+
+             (check-depth (depth)
+               (when (> depth max-depth)
+                 (error 'protocol-value-error :reason ':depth-limit)))
+
+             (account-data (data depth)
+               (check-depth depth)
+               (typecase data
+                 (hash-table
+                  (maphash (lambda (key value)
+                             (declare (ignore key))
+                             (count-entry)
+                             (account-data value (1+ depth)))
+                           data))
+                 (simple-vector
+                  (loop for value across data
+                        do (count-entry) (account-data value (1+ depth)))))
+               data)
+
+             (repeated-values (values field depth)
+               (check-depth depth)
+               (coerce
+                (etypecase values
+                  (list
+                   (loop for tail = values then (rest tail)
+                         while tail
+                         do (count-entry)
+                         collect (field-value (first tail) field (1+ depth))))
+                  (vector
+                   (loop for value across values
+                         do (count-entry)
+                         collect (field-value value field (1+ depth)))))
+                'simple-vector))
+
+             (field-value (value field depth)
+               (check-depth depth)
+               (case (cl-protobufs:proto-kind field)
+                 (:message
+                  (project value depth))
+                 (:enum
+                  (substitute #\_ #\- (string-downcase value)))
+                 (otherwise
+                  value)))
+
+             (project (value depth)
+               (check-depth depth)
+               (typecase value
+                 (common-proto:value
+                  (account-data (protocol-value->data value) depth))
+                 (common-proto:value-map
+                  (account-data (protocol-map->data value) depth))
+                 (otherwise
+                  (let* ((schema          (cl-protobufs:find-message-descriptor (type-of value)))
+                         (ordinary-fields (when schema (cl-protobufs:proto-fields schema)))
+                         (result          (make-hash-table :test 'equal)))
+                    (unless schema
+                      (error 'protocol-value-error :reason ':invalid-message))
+                    (dolist (field (append
+                                    ordinary-fields
+                                    (mapcan (lambda (oneof)
+                                              (coerce (cl-protobufs:oneof-descriptor-fields oneof)
+                                                      'list))
+                                            (cl-protobufs:proto-oneofs schema))))
+                      (let ((name (cl-protobufs:proto-external-field-name field)))
+                        (when (or (cl-protobufs:has-field value name)
+                                  (and (member field ordinary-fields)
+                                       (or (eq (cl-protobufs:proto-label field) ':repeated)
+                                           ;; The pinned library omits this presence accessor
+                                           ;; from its public package. Oneof fields lack it.
+                                           (and (member (cl-protobufs:proto-kind field) '(:scalar :enum))
+                                                (eq (cl-protobufs.implementation::proto-field-presence field)
+                                                    ':implicit)))))
+                          (count-entry)
+                          (let ((child (cl-protobufs:proto-slot-value value name)))
+                            (setf (gethash (substitute #\_ #\- (string-downcase name)) result)
+                                  (if (eq (cl-protobufs:proto-label field) ':repeated)
+                                      (repeated-values child field (1+ depth))
+                                      (field-value child field (1+ depth))))))))
+                    result)))))
+      (handler-case
+          (protocol-value->data
+           (protocol-data->value (project message 1)
+                                 :max-depth max-depth :max-entries max-entries)
+           :max-depth max-depth :max-entries max-entries)
+        (protocol-value-error (condition)
+          (error condition))
+        (error ()
+          (error 'protocol-value-error :reason ':invalid-message))))))

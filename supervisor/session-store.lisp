@@ -178,63 +178,25 @@ which serializes threads and processes. Do not change the log outside this API."
 (declaim (ftype (function (t) hash-table) session-store-model-complete-data))
 
 (defun session-store-model-complete-data (complete)
-  "Copy COMPLETE into its bounded portable field-name projection.
-
-Accept a trusted ModelComplete or an already projected string-keyed map.
-Enum names use lowercase schema names with underscores. Preserve optional
-presence, repeated-field order, raw argument strings, and shared Value data."
-  (labels ((project (message depth)
-             (when (> depth 32) (session-store--reject ':resource-limit))
-             (typecase message
-               (cl-protobufs.autolith.common.v1:value
-                (protocol-value->data message))
-               (cl-protobufs.autolith.common.v1:value-map
-                (protocol-value->data
-                 (cl-protobufs.autolith.common.v1:make-value :map-value message)))
-               (otherwise
-                (let* ((schema (cl-protobufs:find-message-descriptor (type-of message)))
-                       (result (make-hash-table :test 'equal))
-                       (fields (append
-                                (cl-protobufs:proto-fields schema)
-                                (mapcan (lambda (oneof)
-                                          (coerce (cl-protobufs:oneof-descriptor-fields oneof)
-                                                  'list))
-                                        (cl-protobufs:proto-oneofs schema)))))
-                  (dolist (field fields)
-                    (let ((name (cl-protobufs:proto-external-field-name field)))
-                      (when (cl-protobufs:has-field message name)
-                        (let ((value (cl-protobufs:proto-slot-value message name)))
-                          (setf (gethash (substitute #\_ #\- (string-downcase name)) result)
-                                (if (eq (cl-protobufs:proto-label field) ':repeated)
-                                    (map 'vector (lambda (item) (field-value item field depth)) value)
-                                    (field-value value field depth)))))))
-                  result))))
-
-           (field-value (value field depth)
-             (case (cl-protobufs:proto-kind field)
-               (:message
-                (project value (1+ depth)))
-               (:enum
-                (substitute #\_ #\- (string-downcase value)))
-               (otherwise
-                value))))
-    (unless (or (hash-table-p complete)
-                (typep complete 'cl-protobufs.autolith.parent.v1:model-complete))
-      (session-store--reject ':invalid-completion))
-    (let ((data (if (hash-table-p complete) complete (project complete 0))))
-      (unless (loop for key being the hash-keys of data
-                    always (member key '("message" "usage" "reason" "continuation_handle"
-                                         "output_items" "response_id" "metadata" "turn_completion"
-                                         "turn_state_handle" "compaction_outcome") :test #'equal))
-        (session-store--reject ':invalid-completion))
-      (handler-case
-          (protocol-value->data
-           (session-store--data-value (session-store--value-data (protocol-data->value data))))
-        (protocol-value-error (condition)
-          (session-store--reject
-           (if (member (protocol-value-error-reason condition) '(:depth-limit :entry-limit))
-               ':resource-limit
-               ':invalid-completion)))))))
+  "Copy a trusted ModelComplete or its bounded portable field-name map.
+Preserve optional presence, ordered items, raw strings, and shared Value types."
+  (unless (or (hash-table-p complete)
+              (typep complete 'cl-protobufs.autolith.parent.v1:model-complete))
+    (session-store--reject ':invalid-completion))
+  (handler-case
+      (let ((data (if (hash-table-p complete) complete (protocol-message->data complete))))
+        (unless (loop for key being the hash-keys of data
+                      always (member key '("message" "usage" "reason" "continuation_handle"
+                                           "output_items" "response_id" "metadata" "turn_completion"
+                                           "turn_state_handle" "compaction_outcome") :test #'equal))
+          (session-store--reject ':invalid-completion))
+        (protocol-value->data
+         (session-store--data-value (session-store--value-data (protocol-data->value data)))))
+    (protocol-value-error (condition)
+      (session-store--reject
+       (if (member (protocol-value-error-reason condition) '(:depth-limit :entry-limit))
+           ':resource-limit
+           ':invalid-completion)))))
 
 (declaim (ftype (function (list) null) session-store--model-payload-check))
 
