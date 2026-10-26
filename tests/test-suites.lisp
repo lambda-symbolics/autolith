@@ -900,7 +900,8 @@
 
 (define-test-suite supervisor
   test-supervisor-subprocess-boundary
-  test-supervisor-protocol-boundary)
+  test-supervisor-protocol-boundary
+  test-agent-protocol-client)
 
 (define-test-suite active-image
   test-active-image-build-record

@@ -60,7 +60,19 @@ point for the agent. Generated Protobuf bindings may use their own packages.
 
 The target boundary and Protobuf wire schemas are specified in
 [[file:parent-agent-protocol.org][Parent-Agent Protocol]]. The current diagram above describes implemented
-ownership; the protocol is not yet connected to the runtime.
+ownership; the default launch path does not use the protocol. The optional
+=autolith-supervisor/protocol= system supplies generated bindings, bounded wire
+validation, portable values, and startup negotiation. The optional
+=autolith-supervisor/session= system adds durable session storage and the
+=session.v1= dispatcher, with bounded requests, output, and shutdown handling.
+Their standalone tests run without loading the agent system.
+
+The optional =autolith-protocol-client= system supplies the agent-side client
+over explicit private streams. It supports negotiation, session reads and
+appends, turn lifecycle, and transient output. These libraries do not yet supply
+process launch, parent terminal ownership, provider service, private-record
+access, or sandbox policy restart. The legacy launch path is the default until
+the integrated path passes end-to-end tests.
 
 In the target, the supervisor is the persistent trusted parent. It owns terminal
 I/O and approvals, provider credentials and response streaming, private

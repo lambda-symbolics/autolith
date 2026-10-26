@@ -32,3 +32,14 @@
       (test-assert (zerop status)
                    (format nil "parent protocol checks exit ~D: ~A~A" status output errors))))
   nil)
+
+(-> test-agent-protocol-client () null)
+(defun test-agent-protocol-client ()
+  "Exercise the optional client against serialized parent envelopes in this isolated worker."
+  (let ((root (asdf:system-source-directory :autolith-agent)))
+    (dolist (definition '("autolith-protocol.asd" "autolith-supervisor.asd"
+                          "autolith-protocol-client.asd"))
+      (asdf:load-asd (merge-pathnames definition root)))
+    (test-assert (asdf:test-system '#:autolith-protocol-client :verbose nil)
+                 "optional agent protocol client checks pass"))
+  nil)

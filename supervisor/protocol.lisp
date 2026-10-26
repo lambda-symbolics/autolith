@@ -58,10 +58,14 @@
     (close (parent-connection-output connection) :abort t))
   nil)
 
-(declaim (ftype (function (parent-connection) parent-proto:envelope) parent-connection-receive))
+(declaim (ftype (function (parent-connection)
+                         (values parent-proto:envelope (simple-array (unsigned-byte 8) (*))))
+                parent-connection-receive))
 
 (defun parent-connection-receive (connection)
-  "Read a bounded envelope and verify its instance and consecutive message identifier."
+  "Return a verified envelope and its original frame bytes as a second value.
+Validate the active bounds, instance, version, and consecutive message identifier.
+Retain the bytes when applying newly negotiated limits; re-encoding drops unknown fields."
   (when (eq (parent-connection-phase connection) ':closed)
     (error 'parent-protocol-error :reason ':closed))
   (handler-case
@@ -86,7 +90,7 @@
           (unless (= 1 (parent-proto:envelope.protocol-major envelope))
             (error 'parent-protocol-error :reason ':unsupported-version))
           (incf (parent-connection-received connection))
-          envelope))
+          (values envelope bytes)))
     (error (condition)
       (parent-connection-close connection)
       (error condition))))
