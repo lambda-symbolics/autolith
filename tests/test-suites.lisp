@@ -899,7 +899,8 @@
   test-autolith-el-layout)
 
 (define-test-suite supervisor
-  test-supervisor-subprocess-boundary)
+  test-supervisor-subprocess-boundary
+  test-supervisor-protocol-boundary)
 
 (define-test-suite active-image
   test-active-image-build-record

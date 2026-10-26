@@ -3,12 +3,18 @@
 
 * Status and scope
 
-This document specifies the planned private supervisor-agent boundary. The wire
-schemas are =proto/autolith/common/v1/value.proto= and
-=proto/autolith/parent/v1/protocol.proto=. They are not yet connected to the
-runtime. The current supervisor starts, waits for, and cleans up its direct
-child; the agent still handles terminal I/O, provider transport, and private
-storage. See [[file:architecture.org][Architecture]] for the current implementation.
+This document specifies the private supervisor-agent boundary under development.
+The wire schemas are =proto/autolith/common/v1/value.proto= and
+=proto/autolith/parent/v1/protocol.proto=. Generated bindings, bounded framing,
+defensive decoding, portable value conversion, and startup negotiation are
+implemented as standalone libraries. The optional
+=autolith-supervisor/protocol= system loads without the agent system.
+
+The default launch path does not use this protocol yet. The supervisor starts,
+waits for, and cleans up its direct child; the agent handles terminal I/O,
+provider transport, and private storage. Keep this launch path as the default
+until the new path passes end-to-end tests. See [[file:architecture.org][Architecture]] for the
+current implementation.
 
 Use Protobuf for typed messages. Use the common data types in later public
 schemas, but define remote control as a separate interface with its own
@@ -64,6 +70,11 @@ frames. The bootstrap frame limit is 8 MiB. =Welcome.limits= may lower that
 limit, never raise it. Limit value depth to 32 and total decoded collection
 entries per frame to 65536, or lower negotiated limits. Limit in-flight requests
 to 64 per direction by default. Bounds are inclusive and must be positive.
+
+The decoder counts every wire field and packed element against the 65536-entry
+work budget, including unknown and overwritten fields. It limits wire nesting
+to 128 messages. The separate logical =Value= depth limit excludes envelope,
+list, and map wrappers. Unknown length-delimited payloads are opaque bytes.
 
 Check lengths before allocation. Limit all nested Protobuf messages, repeated
 fields, decoded bytes, and parser work, not only =Value= trees. Reject malformed
