@@ -1,0 +1,356 @@
+syntax = "proto3";
+
+package autolith.parent.v1;
+
+import "autolith/common/v1/value.proto";
+
+// Private supervisor-agent protocol, not a remote-control service.
+// Directions, validation, durability, and restart rules: docs/parent-agent-protocol.org.
+message Envelope {
+  uint32 protocol_major = 1;
+  string instance_id = 2;
+  uint64 message_id = 3;
+  optional uint64 reply_to = 4;
+  oneof body {
+    Hello hello = 10;
+    Welcome welcome = 11;
+    Ready ready = 12;
+    TurnStart turn_start = 13;
+    TurnCancel turn_cancel = 14;
+    TurnFinish turn_finish = 15;
+    SessionRead session_read = 16;
+    SessionPage session_page = 17;
+    SessionAppend session_append = 18;
+    SessionAck session_ack = 19;
+    ModelStart model_start = 20;
+    ModelEvent model_event = 21;
+    CancelRequest cancel_request = 22;
+    CancelAck cancel_ack = 23;
+    RecordRequest record_request = 24;
+    RecordResponse record_response = 25;
+    AccessRequest access_request = 26;
+    AccessDecision access_decision = 27;
+    PrepareStop prepare_stop = 28;
+    ReadyToStop ready_to_stop = 29;
+    Failure failure = 30;
+    Output output = 31;
+  }
+}
+
+message Hello {
+  repeated string features = 1;
+}
+
+message Welcome {
+  string session_id = 1;
+  uint64 policy_revision = 2;
+  repeated Grant active_grants = 3;
+  repeated string features = 4;
+  Limits limits = 5;
+  autolith.common.v1.ValueMap configuration = 6;
+  // Parent-owned resume data, never a Lisp heap or an agent-provided authority record.
+  SessionPage resume = 7;
+}
+
+message Limits {
+  uint32 max_frame_bytes = 1;
+  uint32 max_value_depth = 2;
+  uint32 max_collection_entries = 3;
+  uint32 max_in_flight_requests = 4;
+}
+
+message Ready {}
+
+message TurnStart {
+  string turn_id = 1;
+  uint64 input_sequence = 2;
+  bool continuation = 3;
+}
+
+message TurnCancel {
+  string turn_id = 1;
+  string reason = 2;
+}
+
+message TurnFinish {
+  string turn_id = 1;
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    COMPLETED = 1;
+    CANCELLED = 2;
+    FAILED = 3;
+  }
+  Outcome outcome = 2;
+  uint64 last_session_sequence = 3;
+}
+
+message SessionRead {
+  uint64 after_sequence = 1;
+  uint32 limit = 2;
+}
+
+message SessionPage {
+  repeated SessionRecord records = 1;
+  uint64 high_water_sequence = 2;
+  bool has_more = 3;
+}
+
+message SessionRecord {
+  uint64 sequence = 1;
+  string event_id = 2;
+  string turn_id = 3;
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    USER_INPUT = 1;
+    ASSISTANT_MESSAGE = 2;
+    TOOL_STARTED = 3;
+    TOOL_FINISHED = 4;
+    NOTE = 5;
+    TURN_OUTCOME = 6;
+  }
+  Kind kind = 4;
+  autolith.common.v1.Value payload = 5;
+  enum Origin {
+    ORIGIN_UNSPECIFIED = 0;
+    PARENT = 1;
+    AGENT = 2;
+  }
+  // Parent-controlled metadata. Agent appends must leave this unspecified.
+  Origin origin = 6;
+}
+
+message SessionAppend {
+  // Sequence must be zero; the parent assigns it after accepting the record.
+  SessionRecord record = 1;
+}
+
+message SessionAck {
+  string event_id = 1;
+  uint64 sequence = 2;
+}
+
+message ModelStart {
+  // Parent-configured profile; never a provider URL or credential selector path.
+  string profile_id = 1;
+  string turn_id = 2;
+  repeated ConversationMessage messages = 3;
+  repeated ToolDefinition tools = 4;
+  optional uint32 max_output_tokens = 5;
+  optional double temperature = 6;
+  // Parent-issued handle for provider-specific continuation state.
+  optional string continuation_handle = 7;
+}
+
+message ConversationMessage {
+  enum Role {
+    ROLE_UNSPECIFIED = 0;
+    SYSTEM = 1;
+    USER = 2;
+    ASSISTANT = 3;
+    TOOL = 4;
+  }
+  Role role = 1;
+  repeated ContentBlock content = 2;
+}
+
+message ContentBlock {
+  oneof content {
+    string text = 1;
+    Media media = 2;
+    ToolCall tool_call = 3;
+    ToolResult tool_result = 4;
+    string reasoning_text = 5;
+  }
+}
+
+message Media {
+  // Inline content only, subject to frame limits. No parent-side path or URL fetch.
+  string media_type = 1;
+  bytes data = 2;
+}
+
+message ToolDefinition {
+  string name = 1;
+  string description = 2;
+  autolith.common.v1.ValueMap input_schema = 3;
+}
+
+message ToolCall {
+  string call_id = 1;
+  string name = 2;
+  autolith.common.v1.ValueMap arguments = 3;
+}
+
+message ToolResult {
+  string call_id = 1;
+  autolith.common.v1.Value content = 2;
+  bool is_error = 3;
+}
+
+message ModelEvent {
+  uint64 index = 1;
+  oneof event {
+    TextDelta text_delta = 2;
+    ToolCallDelta tool_call_delta = 3;
+    ModelComplete complete = 4;
+    Failure failed = 5;
+  }
+}
+
+message TextDelta {
+  uint32 block_index = 1;
+  string text = 2;
+  bool reasoning = 3;
+}
+
+message ToolCallDelta {
+  uint32 block_index = 1;
+  string call_id = 2;
+  string name = 3;
+  string arguments_json_delta = 4;
+}
+
+message ModelComplete {
+  ConversationMessage message = 1;
+  Usage usage = 2;
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    STOP = 1;
+    TOOL_CALLS = 2;
+    OUTPUT_LIMIT = 3;
+    FILTERED = 4;
+  }
+  Reason reason = 3;
+  optional string continuation_handle = 4;
+}
+
+message Usage {
+  optional uint64 input_tokens = 1;
+  optional uint64 output_tokens = 2;
+  optional uint64 cached_input_tokens = 3;
+}
+
+message CancelRequest {
+  uint64 request_id = 1;
+}
+
+message CancelAck {
+  // This acknowledges delivery, not a terminal result for the target request.
+  bool already_terminal = 1;
+}
+
+message RecordRequest {
+  enum Collection {
+    COLLECTION_UNSPECIFIED = 0;
+    MEMORY = 1;
+    PAPERCUT = 2;
+    AGENDA = 3;
+  }
+  Collection collection = 1;
+  enum Operation {
+    OPERATION_UNSPECIFIED = 0;
+    QUERY = 1;
+    CREATE = 2;
+    REPLACE = 3;
+    DELETE = 4;
+    ASSESS = 5;
+    CLOSE = 6;
+  }
+  Operation operation = 2;
+  string operation_id = 3;
+  optional string record_id = 4;
+  optional string expected_revision = 5;
+  optional string query = 6;
+  optional string cursor = 7;
+  uint32 limit = 8;
+  autolith.common.v1.ValueMap fields = 9;
+}
+
+message StoredRecord {
+  string record_id = 1;
+  string revision = 2;
+  autolith.common.v1.ValueMap fields = 3;
+}
+
+message RecordResponse {
+  repeated StoredRecord records = 1;
+  optional string next_cursor = 2;
+}
+
+message Grant {
+  enum Resource {
+    RESOURCE_UNSPECIFIED = 0;
+    FILESYSTEM = 1;
+    NETWORK = 2;
+    SERVICE = 3;
+  }
+  Resource resource = 1;
+  string target = 2;
+  repeated string operations = 3;
+  enum Duration {
+    DURATION_UNSPECIFIED = 0;
+    INSTANCE = 1;
+    SESSION = 2;
+  }
+  Duration duration = 4;
+}
+
+message AccessRequest {
+  string operation_id = 1;
+  repeated Grant requested_grants = 2;
+  string reason = 3;
+}
+
+message AccessDecision {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    PENDING_APPROVAL = 1;
+    DENIED = 2;
+    APPROVED_PENDING_RESTART = 3;
+    ACTIVE = 4;
+    FAILED = 5;
+    EXPIRED = 6;
+  }
+  State state = 1;
+  uint64 policy_revision = 2;
+  repeated Grant effective_grants = 3;
+  string explanation = 4;
+}
+
+message PrepareStop {
+  string reason = 1;
+  uint32 grace_milliseconds = 2;
+  uint64 next_policy_revision = 3;
+}
+
+message ReadyToStop {
+  uint64 last_session_sequence = 1;
+  optional string wrap_up_event_id = 2;
+}
+
+message Output {
+  enum Channel {
+    CHANNEL_UNSPECIFIED = 0;
+    PROGRESS = 1;
+    DIAGNOSTIC = 2;
+  }
+  Channel channel = 1;
+  string text = 2;
+}
+
+message Failure {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    INVALID_REQUEST = 1;
+    PERMISSION_DENIED = 2;
+    REVISION_CONFLICT = 3;
+    UNSUPPORTED = 4;
+    RESOURCE_LIMIT = 5;
+    CANCELLED = 6;
+    UNAVAILABLE = 7;
+    INTERNAL = 8;
+  }
+  Code code = 1;
+  string message = 2;
+  bool retryable = 3;
+}

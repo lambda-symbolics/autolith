@@ -6,8 +6,9 @@ system can be inspected and changed by both the agent, and the user.
 
 Agent definitions live in the =autolith= package and the =autolith-agent= ASDF
 system. The separate =autolith-supervisor= system uses its own package and
-loads only ASDF/UIOP. The =autolith= system is a compatibility entry point for
-the agent.
+currently loads only ASDF/UIOP. This is the process-only implementation, not a
+permanent dependency restriction. The =autolith= system is a compatibility entry
+point for the agent. Generated Protobuf bindings may use their own packages.
 
 * System
 
@@ -54,6 +55,30 @@ the agent.
   will reboot into in case the current image is FUBAR. Autolith can work
   using the recovery image to either fix figure out the issue with your
   current image, or try to finish your task if that's a priority.
+
+** Planned trusted parent
+
+The target boundary and Protobuf wire schemas are specified in
+[[file:parent-agent-protocol.org][Parent-Agent Protocol]]. The current diagram above describes implemented
+ownership; the protocol is not yet connected to the runtime.
+
+In the target, the supervisor is the persistent trusted parent. It owns terminal
+I/O and approvals, provider credentials and response streaming, private
+configuration and records, policy, and sandbox lifecycle. It may load focused
+libraries for these services without loading the agent ASDF system. Parent
+configuration is separate from agent initialization Lisp. Private agent
+mutations and agent-supplied Lisp never execute in the parent image.
+
+The restricted agent owns reasoning, tools, workers, and self-modification. It
+accesses approved resources directly and requests selected private records or
+new access through the parent protocol. Private storage roots are not mounted
+into the agent. Approval changes committed policy; restart applies it to a new
+instance. The parent resumes the same durable session without requiring the
+old heap or a cooperative shutdown. Stop descendants before relaunch.
+
+The OS sandbox backend enforces grants. Process separation and Protobuf do not
+enforce access by themselves. Public remote-control schemas may share data
+types, but must use a separate authenticated and authorized interface.
 
 * Configuration layers
 

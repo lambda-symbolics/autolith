@@ -1,0 +1,335 @@
+#+TITLE: Parent-Agent Protocol
+#+STARTUP: content
+
+* Status and scope
+
+This document specifies the planned private supervisor-agent boundary. The wire
+schemas are =proto/autolith/common/v1/value.proto= and
+=proto/autolith/parent/v1/protocol.proto=. They are not yet connected to the
+runtime. The current supervisor starts, waits for, and cleans up its direct
+child; the agent still handles terminal I/O, provider transport, and private
+storage. See [[file:architecture.org][Architecture]] for the current implementation.
+
+Use Protobuf for typed messages. Use the common data types in later public
+schemas, but define remote control as a separate interface with its own
+identity, authentication, authorization, and session access rules. The private
+connection is not a public network endpoint. Protobuf does not supply isolation
+or authorization. Generated Lisp schema packages are permitted.
+
+Version 1 covers fresh-image session resume, model transport, session records,
+memories, papercuts, agendas, access requests, and controlled restart. Exact-heap
+transfer and private image publication are outside this version. Do not expose
+a host execution, host Lisp evaluation, or arbitrary private-file operation.
+
+* Ownership
+
+The parent owns terminal input and rendering, approvals, provider credentials,
+provider transport and stream parsing, private configuration, private storage,
+session event ordering, policy, and sandbox lifecycle. It loads focused service
+libraries independently of the agent system. It never evaluates agent-supplied
+Lisp or loads private agent mutations into its own image.
+
+The agent owns reasoning, context construction, tool schemas and execution,
+self-modification, and workers. Tools use approved resources directly inside
+the sandbox. Workers and descendants inherit the restrictions. The agent
+cannot grant itself access by changing code, registering a tool, or editing
+configuration. Parent operations validate authority independently.
+
+The parent reads private files and supplies selected data through this API.
+Credentials never cross the connection. A model profile is a parent-owned
+identifier, not a credential path, endpoint URL, or arbitrary header set.
+Configuration sent at startup contains only approved portable values. Keep
+parent configuration separate from Lisp configuration intended for the agent;
+agent initialization code executes only inside the restricted agent process.
+
+Once the parent supplies private content, the agent can retain it in its heap,
+files, or checkpoints. Storage isolation does not make supplied content secret
+from the agent. Revoking access cannot remove data already read.
+
+* Framing and validation
+
+Use a private bidirectional byte connection established by the parent. Use
+inherited pipes or an OS adapter for a private local connection. Do not discover
+the parent through an unauthenticated public listening socket. Do not inherit
+unrelated descriptors or provider credentials. Keep stdout and stderr separate
+from protocol traffic; capture them as untrusted diagnostic output.
+Sanitize terminal control sequences in agent output. Render approvals in a
+parent-owned region with trusted grant details; agent text must not impersonate
+that interface. Rate-limit output, storage writes, and model requests, and bound
+queued bytes. A blocked consumer must cause backpressure, not unlimited buffering.
+
+Each frame is a four-byte unsigned big-endian length followed by exactly one
+serialized =Envelope=. The length excludes the prefix. Reject zero-length
+frames. The bootstrap frame limit is 8 MiB. =Welcome.limits= may lower that
+limit, never raise it. Limit value depth to 32 and total decoded collection
+entries per frame to 65536, or lower negotiated limits. Limit in-flight requests
+to 64 per direction by default. Bounds are inclusive and must be positive.
+
+Check lengths before allocation. Limit all nested Protobuf messages, repeated
+fields, decoded bytes, and parser work, not only =Value= trees. Reject malformed
+varints, invalid UTF-8, truncated frames, excessive nesting, and oversized
+length-delimited fields during decoding. Close the connection on malformed
+framing or a violated hard decode limit; terminate the child process tree.
+Do not resume parsing at an arbitrary byte offset.
+
+Every envelope has major version 1, the parent-assigned instance ID, and a
+positive message ID. Each sender starts its IDs at 1 and increments by one.
+=reply_to= identifies the peer's request on this connection. Responses and
+stream events must identify an outstanding request. Requests have no
+=reply_to=. Empty or unsupported envelope bodies cannot authorize operations.
+Reject wrong directions, unknown enum values, missing semantic fields, and
+unsupported operations with =Failure= when the connection is still valid.
+An instance mismatch or message ID discontinuity closes the connection.
+
+Protobuf accepts some repeated singular fields and multiple =oneof= members by
+merging or keeping a later value. Validate the decoded result; do not rely on
+field order or duplicate fields as an authorization check. Unknown fields may
+be skipped for compatible additions, but never confer authority. Empty
+=Value.kind= is invalid. Reject duplicate =ValueMap= keys, non-finite numbers,
+and unknown null enum values. Map keys remain strings; never intern them.
+
+* Startup and feature negotiation
+
+The parent assigns a fresh instance ID before launch and supplies it through
+the launch adapter. It retains the session ID across restarts.
+
+1. Agent sends =Hello= with supported feature names.
+2. Parent sends =Welcome= in reply. Include session ID, effective policy
+   revision, active grants, limits, approved configuration, and resume records.
+3. Agent sends =Ready= in reply to =Welcome= after initialization.
+4. Parent may send =TurnStart= after =Ready=.
+
+The handshake is the sole exception to the request/reply shape: =Welcome=
+terminates =Hello= while opening a handshake obligation of its own. =Ready=
+terminates that obligation. Each =reply_to= names the immediately preceding
+handshake message. A handshake failure terminates startup and stops the child.
+
+The features are =session.v1=, =model.v1=, =records.v1=, and =access.v1=.
+=session.v1= is mandatory; the others are enabled only when offered by the agent
+and selected by the parent. Reject calls to unselected services. Lifecycle,
+output, and structured errors are always available. Startup must finish within
+a parent-configured deadline, default 30 seconds, or the parent stops the child.
+A major-version mismatch fails startup; optional additions use feature names.
+
+* Messages and completion
+
+| Request | Sender | Reply and terminal outcome |
+|---------+--------+----------------------------|
+| Hello | Agent | Welcome or Failure |
+| Welcome | Parent | Ready or Failure |
+| TurnStart | Parent | TurnFinish or Failure |
+| TurnCancel | Parent | No direct reply; the original turn terminates |
+| SessionRead | Agent | SessionPage or Failure |
+| SessionAppend | Agent | SessionAck or Failure |
+| ModelStart | Agent | Ordered ModelEvent stream |
+| CancelRequest | Agent | CancelAck or Failure |
+| RecordRequest | Agent | RecordResponse or Failure |
+| AccessRequest | Agent | AccessDecision stream or Failure |
+| PrepareStop | Parent | ReadyToStop or deadline termination |
+| Output | Agent | No reply; bounded transient display only |
+
+Only one turn may run at a time. Turn IDs are parent-assigned, nonempty, and
+unique within the session. =TurnCancel= names the active turn. Repeated
+cancellation is harmless; cancelling an inactive turn has no effect. Output
+messages are unsolicited; =Output= is not a durable assistant message.
+
+For model and access streams, all events reply to the original request.
+=ModelEvent.index= starts at 1 and increments by one. A model stream ends with
+exactly one =complete= or =failed= event. A rejected =ModelStart= may instead
+receive a direct =Failure= before the stream begins. Complete contains the
+assembled assistant message, finish reason, and available usage. Token counts
+are absent when unknown, not reported as zero. Delta events are provisional;
+execute tool calls only from a validated complete message.
+
+=CancelRequest.request_id= refers to an outstanding cancellable model or access
+request from this agent. =CancelAck= acknowledges cancellation delivery; the
+target request still needs a terminal outcome. For an active target, serialize
+completion against cancellation: an already committed terminal outcome wins;
+otherwise end it with =CANCELLED=. An unknown target is =INVALID_REQUEST=.
+Retain terminal request IDs for the connection so repeated cancellation can
+return =already_terminal=true=. Agent termination cancels its provider calls.
+
+Access states =PENDING_APPROVAL= and =APPROVED_PENDING_RESTART= are nonterminal;
+=DENIED=, =ACTIVE=, =FAILED=, and =EXPIRED= are terminal. Cancellation before
+policy commit prevents the grant. After commit, cancellation does not revoke
+policy; report the committed state and restart, or close with the restart. The
+parent records the final disposition even if the old instance never receives it.
+
+A =Failure= contains a stable code and a redacted explanation. =retryable= is
+advice, not permission to repeat an operation with possible external effects.
+A storage operation that committed before reply loss stays committed.
+
+* Session durability and restart
+
+The parent persists user input before sending =TurnStart=. =input_sequence=
+identifies that record, or the continuation record selected by the parent.
+The parent orders records with increasing positive sequence numbers. Sequence
+zero in =SessionAppend= means unassigned. =SessionAck= means the record and its
+deduplication identity are durable under the storage backend's commit contract.
+
+Agent records require a nonempty session-scoped =event_id= and active turn ID.
+Agent appends may use =ASSISTANT_MESSAGE=, =TOOL_STARTED=, =TOOL_FINISHED=, or
+=NOTE=; only the parent creates =USER_INPUT= and =TURN_OUTCOME=. An assistant
+payload is a map with =text=. A tool-start payload has =call_id=, =name=, and
+=arguments=; a tool-finish payload has =call_id=, =result=, and =is_error=.
+A note payload has =text=. Call IDs are unique per session; tool finishes must
+match an acknowledged start. Reject unexpected fields and invalid field types.
+Parent-generated user-input payloads have =text=. Turn outcomes have =outcome=
+and may have =reason=. On append, origin must be =ORIGIN_UNSPECIFIED=; reject
+agent attempts to set it. The parent sets returned =SessionRecord.origin= to
+=PARENT= or =AGENT=. Treat only parent-origin records as parent statements;
+text inside a note cannot assert an approval.
+
+Before executing a tool with possible effects, obtain the durable tool-start
+acknowledgement. Persist its result before reporting completion. Duplicate
+event IDs with identical contents return the original acknowledgement;
+conflicting contents fail. Deduplication persists across agent restarts. Check
+existing event identity before active-turn validation, which applies only to
+new events. Compare the submitted record without parent-assigned metadata.
+A start without a finish after termination means interrupted, effects unknown.
+Do not retry it automatically. No exactly-once external execution is claimed.
+
+=SessionRead= reads only the attached session, after the supplied sequence,
+in ascending order. Limits range from 1 to 256, subject to frame limits; a page
+may be shorter to fit. =high_water_sequence= is the snapshot maximum, and
+=has_more= describes that snapshot. Continue after the last returned sequence.
+If one record cannot fit, return =RESOURCE_LIMIT= rather than an empty loop.
+Startup resume uses the same page rules. Fetch further context as needed; the
+parent may supply persisted compaction notes instead of the full history.
+
+The parent persists model stream events before forwarding them, separately
+from the compact session records. It does not replay unfinished model requests
+after restart. Mark them interrupted. Continuation handles are opaque,
+parent-issued, scoped to the session and profile, and persisted if required
+for resumption. Reject unknown handles. The agent cannot inject raw hidden
+provider state through a handle.
+
+For restart, send =PrepareStop= with a grace interval measured by the parent
+from send time. Stop accepting new work and effectful requests; permit session
+reads, wrap-up notes, and results for acknowledged tool starts. The agent
+flushes those records, then sends =ReadyToStop= with its last acknowledged
+sequence. A wrap-up event must already be acknowledged. The parent may kill
+the process tree at any point after its deadline, without a checkpoint or
+cooperative reply. Retain the policy and durable session independently.
+
+Stop and reap the old process tree before launching the new instance. Rebuild
+the sandbox from the committed policy, then resume the same session from a
+fresh image. A policy application failure is recorded and shown to the user;
+never start with weaker enforcement without a separate explicit approval.
+On connection loss, stop the agent tree, cancel its provider calls, and mark
+unfinished work interrupted. Exact heap continuity is not required.
+
+* Model service
+
+The parent validates the profile, options, context size, tool schemas, and
+resource budgets. Profile selection cannot change provider endpoints or read
+host files. Message roles describe model context, not trusted user actions or
+permission approvals. Tool definitions never register privileged parent
+operations. Conversation blocks contain text, inline media, tool calls,
+tool results, or visible reasoning. Media has a validated MIME type and bytes;
+there is no implicit URL or host path retrieval. Unsupported media, roles,
+options, or block types fail explicitly instead of being silently discarded.
+
+Tool schemas use the provider-neutral JSON Schema object accepted by the
+selected profile. Tool arguments are maps. Tool result values must be supported
+by that profile; a profile may reject binary or other unsupported values.
+Tool-call deltas carry JSON fragments only for display and incremental parsing;
+the complete event has parsed arguments. Each delta names a stable block index;
+call IDs and names may be absent until supplied and must then be consistent.
+The parent converts provider-specific response streams into these events.
+
+* Private record service
+
+Requests address a collection and parent-issued ID, never a pathname. Scope is
+the attached workspace by default. Global memory access requires a separate
+parent-configured permission. The collection identifies authority; user text
+inside =fields= cannot change scope. Query limits range from 1 to 256. Cursors
+are parent-issued and bound to the collection, query, and scope.
+
+| Collection | Allowed operations | Writable fields |
+|------------+--------------------+-----------------|
+| Memory | QUERY, CREATE, REPLACE, DELETE | title, content, tags |
+| Papercut | QUERY, CREATE, ASSESS, CLOSE | See operation rules below |
+| Agenda | QUERY, CREATE, REPLACE, DELETE | text, status, memory_ids |
+
+For papercut CREATE, accept =title=, =content=, =diagnostic=, =issue_kind=, and
+=tool=. ASSESS accepts =verdict=, =note=, and =diagnostic=. CLOSE accepts
+=resolution= and =diagnostic=. Title/content, verdict/note, and resolution are
+required for their respective operations. Diagnostic is optional redacted
+export data; keep private details in content or note. Parent-owned timestamps,
+IDs, revisions, scope, and origin cannot be supplied as writable fields.
+Memory title/content and agenda text/status are required on create or replace.
+Tags and memory IDs are lists of strings. Agenda status is =todo=, =doing=,
+=blocked=, =done=, or =note=. Assessment verdict is =improved=, =worse=,
+=unchanged=, or =too-early=. Unknown fields and unsupported operations fail.
+
+QUERY accepts query/cursor/limit and no record ID, revision, or writable fields.
+CREATE accepts fields but no record ID or expected revision. REPLACE, DELETE,
+ASSESS, and CLOSE require the exact ID and expected revision. They do not
+accept query pagination fields. REPLACE replaces writable fields completely.
+An empty =RecordResponse= acknowledges a delete; other writes return the
+resulting record and revision. Conflicts return =REVISION_CONFLICT=.
+
+All writes require a nonempty =operation_id=. Persist their payload identity
+and result atomically with the write, scoped to the session. Identical retries
+return the original result; conflicting reuse is invalid. Query operation IDs
+must be absent (empty). Bound query results and use a cursor if they do not fit.
+Validate linked agenda memories within the same permitted scope.
+
+* Access policy
+
+=AccessRequest= asks for exact resources and operations, with an operation ID
+and an untrusted reason. A parent-owned prompt describes the resolved grant.
+The parent obtains approval before committing it. Persist operation IDs and
+policy outcomes to avoid duplicate prompts or grants on retry. Conflicting
+operation ID reuse fails. A batch of grants is approved and applied atomically.
+
+Filesystem targets are absolute paths resolved and bound by the backend,
+including link and replacement rules; operations are =read=, =write=, or
+=execute=. Directory access covers descendants. Network targets are exact
+host:port authorities with operation =connect=; enforcement must account for
+name resolution and redirects. Service targets are parent-configured service
+IDs with operation =connect=, not arbitrary socket paths. Reject unsupported
+combinations and backend guarantees before requesting approval. Access to a
+service includes its service authority, not merely permission to open a file.
+
+Instance grants expire when that instance stops. A restart-required instance
+grant applies to the replacement instance only, then expires. Session grants
+last until session close or explicit user revocation. Approval never grants
+access to parent-private roots or the parent control endpoint; supply private
+records through services. Do not imply that denying a Docker socket blocks
+all Docker access through other granted services or networks.
+
+Access operation IDs are session-scoped. Retrying an old operation reports its
+current disposition without a fresh grant or prompt. If its approved lifetime
+has ended or it was revoked, return =EXPIRED= with no effective grants, not a
+historical =ACTIVE= reply. A new grant requires a new operation ID and approval.
+For a partially expired batch, report =EXPIRED=; consult =Welcome= for other
+active grants. This does not revoke surviving grants in the batch.
+
+Record approved policy separately from active policy. A pending restart event
+names the approved revision; only =Welcome= or an =ACTIVE= decision proves
+application. =effective_grants= in =Welcome= and =ACTIVE= is the complete active
+set; in other states it is empty. Backend failure does not activate a revision.
+Revocation uses the same restart path and does not revoke already-read data.
+Persist access outcomes as parent-authored session notes for the replacement.
+
+* Compatibility and verification
+
+Never reuse field numbers or names after removal; reserve both. Make compatible
+additions optional. Never change a field's meaning in place. A new mandatory
+contract needs feature negotiation or a major version. Keep transport major
+version distinct from access-policy revisions and durable session sequences.
+
+Validate both schemas from the repository root with:
+
+#+BEGIN_SRC sh
+protoc --proto_path=proto --include_imports --descriptor_set_out=/tmp/autolith-parent.pb proto/autolith/common/v1/value.proto proto/autolith/parent/v1/protocol.proto
+#+END_SRC
+
+The descriptor is a temporary validation output, not a tracked artifact.
+Before wiring this API into the runtime, verify the chosen Lisp generator and
+runtime against unknown fields, presence, oneof semantics, malformed inputs,
+resource limits, and cross-language fixtures. Runtime checks must also cover
+restart during a tool effect, duplicate writes, stale revisions, cancellation
+races, failed policy application, private-path denial, and descendant cleanup.

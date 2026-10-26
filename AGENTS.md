@@ -76,6 +76,13 @@ copy their architecture wholesale.
   modify the stable launcher or pristine recovery artifacts.
 - Treat process separation as an accidental-damage and reliability boundary,
   never as a security sandbox.
+- The planned trusted-parent boundary is specified in
+  `docs/parent-agent-protocol.org`, with wire schemas under `proto/`. Keep the
+  documented current implementation distinct from that target. The parent owns
+  provider credentials, transport, private records, approvals, and access policy;
+  the agent owns reasoning, tools, workers, and self-modification. Enforce access
+  outside the agent and use restart to apply sandbox policy changes. Process
+  separation alone does not enforce a security policy.
 - Tool paths outside the workspace and source roots are a permission question,
   never a hard refusal. Resolve every tool path through `workspace-tool-path`,
   which asks command authorization for `TOOL -- PATH`, so full access never
@@ -130,10 +137,19 @@ must remain possible without loading a damaged active core.
 ## Package Policy
 
 Use `#:autolith` for the agent and `#:autolith-supervisor` for the separate,
-minimal supervisor. The supervisor must not load the agent system, user
-configuration, or private mutations. Keep its dependencies limited to ASDF/UIOP.
-Do not create other scoped, subsystem, feature, file-local, or test packages
-unless the user explicitly changes this policy.
+trusted parent process. Keep the supervisor independent of the agent ASDF system
+and private agent mutations. It may load focused libraries for model transport,
+private storage, approvals, policy enforcement, and the parent-agent protocol.
+It owns private configuration and supplies approved data to the agent; execute
+agent initialization Lisp only in the restricted agent process. Do not evaluate
+agent-supplied code in the supervisor. The current process-only implementation
+uses ASDF/UIOP; that dependency set is not a permanent architectural limit.
+
+Generated Protobuf schema packages are an explicit exception to the two-package
+policy. Define their schemas in `.proto` files and generate the bindings rather
+than hand-editing generated packages. Do not create other scoped, subsystem,
+feature, file-local, or test packages unless the user explicitly changes this
+policy.
 
 - Define each package once. Use `(in-package #:autolith)` in agent source and
   `(in-package #:autolith-supervisor)` in supervisor source.

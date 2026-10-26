@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package autolith.common.v1;
+
+// Portable data only. No Lisp symbols, classes, reader forms, or executable tags.
+message Value {
+  oneof kind {
+    Null null_value = 1;
+    bool boolean_value = 2;
+    sint64 integer_value = 3;
+    double number_value = 4;
+    string string_value = 5;
+    bytes bytes_value = 6;
+    ValueList list_value = 7;
+    ValueMap map_value = 8;
+  }
+}
+
+enum Null {
+  NULL_VALUE = 0;
+}
+
+message ValueList {
+  repeated Value values = 1;
+}
+
+message ValueMap {
+  // Repeated entries permit duplicate-key detection before constructing a map.
+  repeated ValueEntry entries = 1;
+}
+
+message ValueEntry {
+  string key = 1;
+  Value value = 2;
+}

@@ -60,6 +60,12 @@ For a direct command, use =bin/autolith-supervisor -- COMMAND ARG...=, or
 its compatibility entry point. Load =autolith-agent= for agent development.
 Load =autolith-supervisor= separately for supervisor development.
 
+This is the current process-only supervisor. The planned trusted-parent API is
+specified in [[file:parent-agent-protocol.org][Parent-Agent Protocol]], with Protobuf schemas under =proto/=.
+That design moves provider transport, private storage, approvals, and sandbox
+policy into the parent. Those services and restart-based access grants are not
+yet available through the current supervisor.
+
 * Terminal diagrams
 
 Ask for a fenced =mermaid= block to view a diagram directly in the terminal.
