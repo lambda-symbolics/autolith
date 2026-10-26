@@ -27,10 +27,12 @@
                 :documentation "Serialize parent frame writes and message identifiers.")
    (sent        :initform      0
                 :accessor      parent-connection-sent
-                :documentation "The last successfully sent parent message identifier.")
+                :documentation "The last parent message ID reserved for ordered delivery.")
    (received    :initform      0
                 :accessor      parent-connection-received
                 :documentation "The last accepted agent message identifier.")
+   (receive-failure :initform nil :accessor parent-connection-receive-failure
+                    :documentation "Optional nonblocking runtime fence, called before error-path stream close.")
    (limits      :initform      (parent-proto:make-limits :max-frame-bytes      8388608
                                                        :max-value-depth        32
                                                        :max-collection-entries 65536
@@ -92,6 +94,8 @@ Retain the bytes when applying newly negotiated limits; re-encoding drops unknow
           (incf (parent-connection-received connection))
           (values envelope bytes)))
     (error (condition)
+      (when (parent-connection-receive-failure connection)
+        (funcall (parent-connection-receive-failure connection)))
       (parent-connection-close connection)
       (error condition))))
 

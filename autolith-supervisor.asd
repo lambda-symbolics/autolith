@@ -87,12 +87,14 @@
                             (:file "supervisor/model-replay-store")
                             (:file "supervisor/model-reconciliation")
                             (:file "supervisor/model-events")
-                            (:file "supervisor/model-replay-adapter"))
+                            (:file "supervisor/model-replay-adapter")
+                            (:file "supervisor/model-runtime")
+                            (:file "supervisor/model-service"))
   :in-order-to             ((asdf:test-op (asdf:test-op #:autolith-supervisor/model/tests))))
 
 (asdf:defsystem #:autolith-supervisor/model/tests
   :description             "Model authority and family projection checks without agent code."
-  :depends-on              (#:autolith-supervisor/model)
+  :depends-on              (#:autolith-supervisor/model #:autolith-supervisor/session/tests)
   :default-component-class autolith-supervisor-source-file
   :serial                  t
   :components              ((:file "supervisor/model-profile-tests")
@@ -100,11 +102,13 @@
                             (:file "supervisor/model-replay-store-tests")
                             (:file "supervisor/model-reconciliation-tests")
                             (:file "supervisor/model-events-tests")
-                            (:file "supervisor/model-replay-adapter-tests"))
+                            (:file "supervisor/model-replay-adapter-tests")
+                            (:file "supervisor/model-service-tests"))
   :perform                 (asdf:test-op (operation component)
                              (uiop:symbol-call '#:autolith-supervisor '#:run-model-profile-tests)
                              (uiop:symbol-call '#:autolith-supervisor '#:run-model-projection-tests)
                              (uiop:symbol-call '#:autolith-supervisor '#:run-model-replay-store-tests)
                              (uiop:symbol-call '#:autolith-supervisor '#:run-model-reconciliation-tests)
                              (uiop:symbol-call '#:autolith-supervisor '#:run-model-event-tests)
-                             (uiop:symbol-call '#:autolith-supervisor '#:run-model-replay-adapter-tests)))
+                             (uiop:symbol-call '#:autolith-supervisor '#:run-model-replay-adapter-tests)
+                             (uiop:symbol-call '#:autolith-supervisor '#:run-model-service-tests)))

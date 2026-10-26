@@ -99,12 +99,39 @@ a later model request. The collector checks public event budgets before retainin
 items or state, and reserves space for a terminal failure. Reconcile unknown
 journal write outcomes before further publication.
 
+Use =make-model-service= to attach an optional ordinary-generation service to
+=session-runtime-open=. Select =session.v1=, =model.v1=, and =model-items-v1=
+together. Supply a trusted executor, transport-abort callback, clock, and timeout.
+The service admits one provider call per connection. One storage-owner thread
+serializes journal operations. A separate writer sends ordered frames from bounded
+byte queues, including the current write and a separate control reserve. History
+updates follow successful write receipts. The reader latches cancellation without
+waiting for storage or output. Separate control and deadline threads stop provider
+work. Join all tracked workers before reusing the session store.
+
+The owner orders acceptance against cancellation before entering the collector's
+finish operation. Cancellation received during an acceptance operation is pending
+until its durable outcome is known. This phase is not a terminal outcome. A
+committed acceptance wins; a known pre-commit failure permits cancellation.
+Reconcile an uncertain write or close the connection. The executor must stop all
+callbacks before return. The abort callback must also confirm actual transport
+closure, including after normal executor return, before acceptance can begin.
+Native compaction is not enabled by this service.
+
 The optional =autolith-protocol-client= system supplies the agent-side client
-over explicit private streams. It supports negotiation, session reads and
-appends, turn lifecycle, and transient output. These libraries do not yet supply
-process launch, parent terminal ownership, provider service, private-record
-access, or sandbox policy restart. The legacy launch path is the default until
-the integrated path passes end-to-end tests.
+over explicit private streams. It supports negotiation, session reads and appends,
+turn lifecycle, transient output, ordered model events, and correlated cancellation.
+Use =agent-context-project= to map logical conversation items, tool schemas, and
+request-local context to a typed =ModelStart=. After receiving its validated
+terminal completion, use =agent-context-accept= to consume context receipts and
+retain detached public output views with replay handles. Later requests send the
+handles, not reconstructed provider data from those views. Ordinary summary
+requests omit tools and request-local context.
+
+These libraries do not yet supply the agent provider adapter, provider accounts
+and HTTP transport in the parent, process launch, parent terminal ownership,
+private-record access, or sandbox policy restart. The legacy launch path is the
+default until the integrated path passes end-to-end tests.
 
 In the target, the supervisor is the persistent trusted parent. It owns terminal
 I/O and approvals, provider credentials and response streaming, private

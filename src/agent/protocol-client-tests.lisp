@@ -74,7 +74,7 @@
            (bordeaux-threads:join-thread thread)
            (when server-error (error server-error)))
       (agent-protocol-close client)
-      (unless (bordeaux-threads:thread-alive-p thread)
+      (sb-ext:with-timeout 12
         (bordeaux-threads:join-thread thread))))
   nil)
 
@@ -718,6 +718,24 @@
       (agent-protocol-close client)))
   nil)
 
+(-> agent-protocol-test--peer-cleanup () null)
+(defun agent-protocol-test--peer-cleanup ()
+  "Join the blocked peer before returning a client-side fixture failure."
+  (let ((finished nil))
+    (agent-protocol-test--expect
+     ':test-client-failure
+     (lambda ()
+       (agent-protocol-test--peers
+        (lambda (parent)
+          (unwind-protect
+               (autolith-supervisor::parent-connection-receive parent)
+            (setf finished t)))
+        (lambda (client)
+          (declare (ignore client))
+          (error 'agent-protocol-error :reason ':test-client-failure)))))
+    (assert finished))
+  nil)
+
 (-> run-agent-protocol-tests () null)
 (defun run-agent-protocol-tests ()
   "Run optional protocol client checks over actual serialized parent channels."
@@ -738,4 +756,5 @@
   (agent-protocol-test--resume-retry)
   (agent-protocol-test--concurrent-requests)
   (agent-protocol-test--handshake-close)
+  (agent-protocol-test--peer-cleanup)
   nil)
