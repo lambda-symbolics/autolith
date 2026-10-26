@@ -8,6 +8,8 @@
                       "--no-sysinit" "--no-userinit" "--script"))
        (boot    (append prefix (list (namestring (merge-pathnames "bin/autolith-supervisor" root)))))
        (child   (append prefix (list (namestring (merge-pathnames "supervisor/test-child.lisp" root))))))
+  (asdf:load-asd (merge-pathnames "autolith-supervisor.asd" root))
+  (asdf:test-system '#:autolith-supervisor :verbose nil)
   (labels ((capture (arguments &optional (input ""))
              (uiop:run-program arguments
                                :input               (make-string-input-stream input)
