@@ -400,6 +400,19 @@ of deleting them, as the Windows update path also hands off to the user."
                  (merge-pathnames script (launcher-context-source-root context))))
           arguments))
 
+(defun launcher-agent-command (context command)
+  "Return the supervisor command for COMMAND, with an optional executable wrapper."
+  (let ((wrapper (uiop:getenvp "AUTOLITH_AGENT_LAUNCHER")))
+    (append (list (launcher-context-sbcl context)
+                  "--noinform" "--end-runtime-options"
+                  "--no-sysinit" "--no-userinit" "--script"
+                  (uiop:native-namestring
+                   (merge-pathnames "bin/autolith-supervisor"
+                                    (launcher-context-source-root context))))
+            (when wrapper (list "--launcher" wrapper))
+            (list "--")
+            command)))
+
 (defun launcher-recovery-image-valid-p (context)
   "Return true when the pristine recovery image exists and answers its probe."
   (let ((core (launcher-context-recovery-core context)))
@@ -430,8 +443,10 @@ of deleting them, as the Windows update path also hands off to the user."
          (probe-file (launcher-context-active-manifest context))
          (launcher-manifest-header-p (launcher-context-active-manifest context)
                                      "(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1")
-         (zerop (launcher-run (launcher-core-command
-                               context core "--autolith-internal-active-image-probe")
+         (zerop (launcher-run (launcher-agent-command
+                               context
+                               (launcher-core-command
+                                context core "--autolith-internal-active-image-probe"))
                               :output nil :error-output nil)))))
 
 (defun launcher-refresh-runtime (context)
@@ -495,12 +510,18 @@ of deleting them, as the Windows update path also hands off to the user."
   (let ((arguments (launcher-request-arguments request)))
     (flet ((run-core ()
              (launcher-refresh-sandbox)
-             (launcher-run (apply #'launcher-core-command context
-                                  (launcher-context-active-core context) arguments)))
+             (launcher-run (launcher-agent-command
+                            context
+                            (apply #'launcher-core-command context
+                                   (launcher-context-active-core context) arguments))))
            (run-source ()
              (launcher-refresh-sandbox)
-             (launcher-run (apply #'launcher-script-command context "bin/autolith-active"
-                                  arguments))))
+             (launcher-run (launcher-agent-command
+                            context
+                            (append (list (launcher-context-sbcl context)
+                                          "--noinform" "--no-sysinit" "--no-userinit")
+                                    (rest (apply #'launcher-script-command context
+                                                 "bin/autolith-agent" arguments)))))))
       (cond
         ((launcher-request-from-source-p request)
          (run-source))
@@ -566,9 +587,11 @@ boot therefore leaves the generation identity available to recovery."
         for status =
           (if saved-core
               (launcher-run
-               (apply #'launcher-core-command
-                      context saved-core
-                      (launcher-request-arguments request)))
+               (launcher-agent-command
+                context
+                (apply #'launcher-core-command
+                       context saved-core
+                       (launcher-request-arguments request))))
               (launcher-run-active context request))
         do (cond
              ((and saved-core (not (zerop status)))

@@ -10,11 +10,11 @@
 (defparameter *source-typed-directories* '("src/" "tests/" "checks/" "server/")
   "Directories whose functions declare their types with ->.
 
-Scripts run in CL-USER before Serapeum loads, and the recovery image stays
-free of it.")
+Scripts run in CL-USER before Serapeum loads. Recovery and the supervisor
+load without it.")
 
-(defparameter *source-package-directories* '("src/" "tests/" "checks/" "server/")
-  "Directories whose files belong to the one project package.")
+(defparameter *source-package-directories* '("src/" "tests/" "checks/" "server/" "supervisor/")
+  "Directories whose system files belong to the agent or supervisor package.")
 
 (defparameter *source-package-definition-path* "src/core/package.lisp"
   "The one file that defines the project package.")
@@ -120,8 +120,8 @@ parameters as its methods dispatch on."))
   ()
   (:default-initargs
    :name "package"
-   :description "One project package, defined once, and every project file starts in it (AGENTS.md, Package Policy).")
-  (:documentation "The single-package policy."))
+   :description "One package per process component, defined once (AGENTS.md, Package Policy).")
+  (:documentation "The agent and supervisor package policy."))
 
 
 ;;;; -- Documentation --
@@ -352,31 +352,38 @@ parameters as its methods dispatch on."))
        t))
 
 (defmethod source-rule-findings ((rule source-package-rule) (file source-file))
-  "Report another package definition or a file that does not start in the project package."
-  (let ((findings   nil)
-        (first-form (first (source-file-nodes file))))
+  "Require the package assigned to the agent or the separate supervisor."
+  (let* ((findings     nil)
+         (first-form   (first (source-file-nodes file)))
+         (supervisor-p (uiop:string-prefix-p "supervisor/" (source-file-path file)))
+         (package-name (if supervisor-p "autolith-supervisor" "autolith"))
+         (definition   (if supervisor-p "supervisor/package.lisp"
+                           *source-package-definition-path*))
+         (definition-p (equal (source-file-path file) definition)))
     (dolist (top (source-file-nodes file))
       (source-node-walk top
                         (lambda (node)
                           (when (and (member (source-node-operator node)
                                              '("defpackage" "define-package" "make-package")
                                              :test #'equal)
-                                     (not (equal (source-file-path file)
-                                                 *source-package-definition-path*)))
+                                     (not definition-p))
                             (push (source-finding-create
                                    rule file
                                    :line    (source-node-line node)
-                                   :message "Use the one project package instead of defining another."
+                                   :message "Define the component package only in its package file."
                                    :column  (source-node-column node))
                                   findings)))))
-    (unless (or (equal (source-file-path file) *source-package-definition-path*)
+    (unless (or definition-p
                 (and first-form
                      (equal (source-node-operator first-form) "in-package")
                      (member (string-downcase
                               (source-node-text (second (source-node-children first-form))))
-                             '("#:autolith" ":autolith")
+                             (list (concatenate 'string "#:" package-name)
+                                   (concatenate 'string ":" package-name))
                              :test #'equal)))
-      (push (source-finding-create rule file :line 1 :message "Start the file with (in-package #:autolith).")
+      (push (source-finding-create rule file :line 1
+                                  :message         (format nil "Start the file with (in-package #:~A)."
+                                                           package-name))
             findings))
     (nreverse findings)))
 

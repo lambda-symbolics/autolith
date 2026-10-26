@@ -898,6 +898,9 @@
   test-autolith-el-compiles
   test-autolith-el-layout)
 
+(define-test-suite supervisor
+  test-supervisor-subprocess-boundary)
+
 (define-test-suite active-image
   test-active-image-build-record
   test-active-image-process-command
@@ -1478,6 +1481,7 @@
   test-acp-launcher-detects-command-not-option-values
   test-acp-launcher-source-stdio-roundtrip
   test-acp-launcher-failure-keeps-stdout-clean
+  test-launcher-agent-supervisor-routing
   test-acp-launcher-failure-diagnostics)
 
 (define-test-suite lisp-values
@@ -1510,4 +1514,5 @@
   test-source-mallet-findings
   test-source-warning-run
   test-source-warning-ownership
+  test-source-system-discovery
   test-source-system-platform-support)

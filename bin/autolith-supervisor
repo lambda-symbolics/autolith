@@ -1,0 +1,8 @@
+#!/usr/bin/env -S sbcl --noinform --end-runtime-options --no-sysinit --no-userinit --script
+
+;;;; -- Standalone Supervisor Entry Point --
+
+(require :asdf)
+
+(load (merge-pathnames "supervisor/boot.lisp"
+                       (uiop:pathname-parent-directory-pathname *load-truename*)))

@@ -32,6 +32,34 @@ between the braces. Type the closing brace to move past it, or press Backspace
 between an empty pair to delete both braces.
 The work indicator displays =REPL= with one letter highlighted in sequence.
 
+* Agent process and supervisor
+
+Start =autolith= as usual. The stable launcher selects an image and starts a
+small =autolith-supervisor= process. The supervisor starts the agent, waits
+for it, and returns its exit status. The agent inherits terminal input and
+output directly.
+
+Set =AUTOLITH_AGENT_LAUNCHER= to an executable wrapper to select another OS
+user or an OS sandbox:
+
+#+BEGIN_SRC sh
+AUTOLITH_AGENT_LAUNCHER=/absolute/path/to/agent-launcher autolith
+#+END_SRC
+
+The supervisor passes the complete agent command as separate arguments to
+that executable. Configure the user, mounts, environment, and access rules in
+the wrapper. Use =exec= for the final agent command. No shell parses the
+wrapper value. Make the runtime, source, selected image, and required data
+available to the target user inside the sandbox. Active-image probes use the
+same wrapper. Pristine recovery runs through the stable launcher outside
+this wrapper.
+
+For a direct command, use =bin/autolith-supervisor -- COMMAND ARG...=, or
+=bin/autolith-supervisor --launcher EXECUTABLE -- COMMAND ARG...=.
+=bin/autolith-agent= starts the agent from source; =bin/autolith-active= is
+its compatibility entry point. Load =autolith-agent= for agent development.
+Load =autolith-supervisor= separately for supervisor development.
+
 * Terminal diagrams
 
 Ask for a fenced =mermaid= block to view a diagram directly in the terminal.

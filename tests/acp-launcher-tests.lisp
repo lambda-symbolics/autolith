@@ -72,6 +72,7 @@
          (list "XDG_CACHE_HOME" (namestring (merge-pathnames "cache/" root)))
          (list "AUTOLITH_SITE_CONFIG_ROOT" nil)
          (list "AUTOLITH_RECOVERED" nil)
+         (list "AUTOLITH_AGENT_LAUNCHER" nil)
          (list "AUTOLITH_SBCL" (lisp-worker-sbcl-command)))
    function))
 
@@ -187,4 +188,78 @@
                    "the child is reaped before diagnostics are reported")
       (test-assert (search "ACP startup diagnostic" (acp-launcher-test-failure-stderr condition))
                    "stderr is drained before diagnostics are reported")))
+  nil)
+
+(-> test-launcher-agent-supervisor-routing () null)
+(defun test-launcher-agent-supervisor-routing ()
+  "Route source, core, and probe executions through the supervisor and executable wrapper."
+  (with-test-fixture (':posix-shell "agent launcher executable wrapper")
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let* ((runtime (merge-pathnames "fake-runtime" root))
+             (wrapper (merge-pathnames "wrapper with spaces" root))
+             (log     (merge-pathnames "launch.log" root))
+             (core    (merge-pathnames "active/agent.core" root))
+             (sbcl    (lisp-worker-sbcl-command))
+             (payload "spaces ; $(touch unexpected-shell-file) *"))
+        (recovery-tests--write-executable
+         runtime
+         (format nil "#!/bin/sh~%case \"$*\" in~%  *autolith-supervisor*) exec \"$AUTOLITH_TEST_REAL_SBCL\" \"$@\" ;;~%  *--autolith-internal-active-image-probe*) exit 0 ;;~%esac~%printf 'agent-output\\n'~%exit 64~%"))
+        (recovery-tests--write-executable
+         wrapper
+         (format nil "#!/bin/sh~%printf 'WRAPPER\\n' >> \"$AUTOLITH_TEST_LAUNCH_LOG\"~%printf '%s\\n' \"$@\" >> \"$AUTOLITH_TEST_LAUNCH_LOG\"~%exec \"$@\"~%"))
+        (ensure-directories-exist core)
+        (with-open-file (stream core :direction ':output :if-exists ':supersede)
+          (write-line "fake core" stream))
+        (with-open-file (stream (merge-pathnames "manifest.sexp" core)
+                                :direction ':output :if-exists ':supersede)
+          (write-line "(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1 )" stream))
+        (acp-launcher-tests--call-with-roots
+         root
+         (lambda ()
+           (with-test-environment
+               (("AUTOLITH_SBCL" (namestring runtime))
+                ("AUTOLITH_TEST_REAL_SBCL" sbcl)
+                ("AUTOLITH_AGENT_LAUNCHER" (namestring wrapper))
+                ("AUTOLITH_TEST_LAUNCH_LOG" (namestring log))
+                ("AUTOLITH_ACTIVE_CORE" (namestring core)))
+             (dolist (shell-p '(t nil))
+               (dolist (source-p '(t nil))
+                 (when (probe-file log)
+                   (delete-file log))
+                 (let ((command
+                         (append
+                          (if shell-p
+                              (list "bash" (namestring (asdf:system-relative-pathname
+                                                        :autolith "bin/autolith")))
+                              (list sbcl "--noinform"
+                                    "--no-sysinit" "--no-userinit" "--script"
+                                    (namestring (asdf:system-relative-pathname
+                                                 :autolith "script/launcher.lisp"))))
+                          (when source-p (list "--from-source"))
+                          (list "acp" payload))))
+                   (multiple-value-bind (output diagnostics status)
+                       (uiop:run-program command :directory root :input nil
+                                                :output ':string :error-output ':string
+                                                :ignore-error-status t)
+                    (declare (ignore diagnostics))
+                    (test-assert (= status 64) "the supervisor returns the agent exit status")
+                    (test-assert (string= output (format nil "agent-output~%"))
+                                 "the supervisor preserves the agent standard output"))
+                   (let ((lines (uiop:read-file-lines log)))
+                     (test-assert (= (count "WRAPPER" lines :test #'string=)
+                                     (if source-p 1 2))
+                                 (format nil "wrapper routing shell=~S source=~S: ~S"
+                                         shell-p source-p lines))
+                     (test-assert (member payload lines :test #'string=)
+                                  "the wrapper receives each argument without shell parsing")
+                     (test-assert (if source-p
+                                      (find-if (lambda (line)
+                                                 (uiop:string-suffix-p line "bin/autolith-agent"))
+                                               lines)
+                                      (member (namestring core) lines :test #'string=))
+                                 (format nil "selected entrypoint shell=~S source=~S: ~S"
+                                         shell-p source-p lines)))
+                   (test-assert (not (probe-file (merge-pathnames "unexpected-shell-file" root)))
+                                "shell syntax in an argument is inert"))))))))))
   nil)

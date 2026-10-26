@@ -59,28 +59,31 @@
 
 (-> source-check-system-paths (pathname) hash-table)
 (defun source-check-system-paths (root)
-  "Return the set of repository-relative paths of the source files ROOT's systems compile.
-
-The paths use forward slashes, as Git reports them. The set is empty when ROOT
-has no autolith.asd."
-  (let ((paths      (make-hash-table :test #'equal))
-        (definition (merge-pathnames "autolith.asd" root)))
-    (when (probe-file definition)
-      (asdf:load-asd definition)
-      (labels ((visit (component)
-                 (typecase component
-                   (asdf:parent-component
-                    (mapc #'visit (asdf:component-children component)))
-                   (asdf:cl-source-file
-                    (setf (gethash (uiop:unix-namestring
-                                    (uiop:enough-pathname (asdf:component-pathname component) root))
-                                   paths)
-                          t)))))
-        (dolist (name (asdf:registered-systems))
-          (let ((system (asdf:find-system name nil)))
-            (when (and system
-                       (uiop:pathname-equal (asdf:system-source-file system) definition))
-              (visit system))))))
+  "Return the repository-relative source paths compiled by ROOT's systems."
+  (let ((paths       (make-hash-table :test #'equal))
+        (definitions (loop for name in '("autolith.asd" "autolith-agent.asd"
+                                         "autolith-supervisor.asd")
+                           for path = (merge-pathnames name root)
+                           when (probe-file path) collect path)))
+    (dolist (definition definitions)
+      (let ((system (asdf:find-system (pathname-name definition) nil)))
+        (unless (and system (uiop:pathname-equal (asdf:system-source-file system) definition))
+          (asdf:load-asd definition))))
+    (labels ((visit (component)
+               (typecase component
+                 (asdf:parent-component
+                  (mapc #'visit (asdf:component-children component)))
+                 (asdf:cl-source-file
+                  (setf (gethash (uiop:unix-namestring
+                                  (uiop:enough-pathname (asdf:component-pathname component) root))
+                                 paths)
+                        t)))))
+      (dolist (name (asdf:registered-systems))
+        (let ((system (asdf:find-system name nil)))
+          (when (and system
+                     (member (asdf:system-source-file system) definitions
+                             :test #'uiop:pathname-equal))
+            (visit system)))))
     paths))
 
 (-> source-check-file (source-file list) list)

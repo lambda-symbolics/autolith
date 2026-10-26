@@ -122,7 +122,7 @@ exist yet, and is only put in directory form."
   :visible-p                 nil
   :default                   (lambda (configuration)
                                (declare (ignore configuration))
-                               (asdf:system-source-directory :autolith)))
+                               (asdf:system-source-directory :autolith-agent)))
 
 (define-setting :working-directory (working-directory-setting)
   :label                           "Working directory"

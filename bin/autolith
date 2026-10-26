@@ -200,24 +200,38 @@ run_recovery()
   fi
 }
 
+# Only agent executions cross the configured user or sandbox boundary.
+# Recovery and the supervisor itself use the selected host runtime.
+run_agent()
+{
+  local supervisor_arguments=()
+  if [[ -n ${AUTOLITH_AGENT_LAUNCHER:-} ]]; then
+    supervisor_arguments+=(--launcher "$AUTOLITH_AGENT_LAUNCHER")
+  fi
+  "$sbcl_command" --noinform --end-runtime-options --no-sysinit --no-userinit \
+    --script "$source_root/bin/autolith-supervisor" \
+    ${supervisor_arguments[@]+"${supervisor_arguments[@]}"} -- "$@"
+}
+
 active_image_valid()
 {
   [[ -f "$active_core" && -f "$active_manifest" ]] &&
      grep -Eq '^\(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1([[:space:]]|$)' "$active_manifest" &&
-     "$sbcl_command" --noinform --core "$active_core" \
+     run_agent "$sbcl_command" --noinform --core "$active_core" \
        --end-runtime-options "$source_root" \
        --autolith-internal-active-image-probe >/dev/null 2>&1
 }
 
 run_active_core()
 {
-  "$sbcl_command" --noinform --core "$active_core" \
+  run_agent "$sbcl_command" --noinform --core "$active_core" \
     --end-runtime-options "$source_root" "$@"
 }
 
 run_active_source()
 {
-  "$sbcl_command" --script "$source_root/bin/autolith-active" "$@"
+  run_agent "$sbcl_command" --noinform --no-sysinit --no-userinit \
+    --script "$source_root/bin/autolith-agent" "$@"
 }
 
 refresh_runtime_command()

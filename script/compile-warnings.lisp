@@ -11,11 +11,11 @@
 (require :asdf)
 
 (defparameter *compile-warnings-systems*
-  '("autolith" "autolith/checks" "autolith/tests"
+  '("autolith-agent" "autolith-supervisor" "autolith" "autolith/checks" "autolith/tests"
     #-win32 "autolith/release-server"
     "autolith/structural" "autolith/structural/tests" "autolith/debug"
     "autolith/debug/tests")
-  "Every system autolith.asd defines for this host.")
+  "Every supported agent, supervisor, and extension system for this host.")
 
 (defun compile-warnings--owned-paths (source-root)
   "Map supported systems' exact source and translated output paths to source names."

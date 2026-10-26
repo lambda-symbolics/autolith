@@ -11,7 +11,7 @@ source directory serves, which inside a saved image names the tree the image
 was built from and may no longer exist."
   (if configuration
       (config :source-root configuration)
-      (asdf:system-source-directory :autolith)))
+      (asdf:system-source-directory :autolith-agent)))
 
 (-> search-worker-create (&key (:configuration (option configuration))) worker)
 (defun search-worker-create (&key configuration)

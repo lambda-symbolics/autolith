@@ -612,7 +612,7 @@ let
     pname = "autolith";
     version = lib.removeSuffix "\n" (builtins.readFile "${src}/VERSION");
     inherit src;
-    systems = [ "autolith" "autolith/tests" "autolith/structural" "autolith/debug" ];
+    systems = [ "autolith-agent" "autolith-supervisor" "autolith" "autolith/tests" "autolith/structural" "autolith/debug" ];
     lispLibs = with lispPackages; [
       agentcomms
       argo

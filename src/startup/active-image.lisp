@@ -12,7 +12,7 @@
 
 (-> active-image-source-paths (pathname) list)
 (defun active-image-source-paths (source-root)
-  "Return sorted repository-relative inputs compiled into an active image."
+  "Return sorted repository-relative agent source and launch inputs for an active image."
   (let* ((source-directory (merge-pathnames "src/" source-root))
          (lisp-paths
            (mapcar (lambda (pathname)
@@ -20,6 +20,8 @@
                    (source-lisp-pathnames source-directory))))
     (sort (append '("bin/autolith"
                     "bin/autolith-active"
+                    "bin/autolith-agent"
+                    "bin/autolith-supervisor"
                     "bin/autolith-search-worker"
                     "bin/autolith-runtime"
                     "script/build-active"
@@ -28,6 +30,7 @@
                     "script/windows-stat.lisp"
                     "script/restart-publisher.lisp"
                     "autolith.asd"
+                    "autolith-agent.asd"
                     "VERSION"
                     "qlfile"
                     "qlfile.lock"
@@ -93,7 +96,7 @@ takes a fraction of a second, and otherwise loads the system from source."
         (list* sbcl-command
                "--noinform"
                "--script"
-               (namestring (merge-pathnames "bin/autolith-active" source-root))
+               (namestring (merge-pathnames "bin/autolith-agent" source-root))
                arguments))))
 
 (-> active-image--sbcl-command () string)

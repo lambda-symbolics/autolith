@@ -222,12 +222,12 @@
      (json-object "attributes"
                   (coerce (mapcar #'telemetry--attribute
                                   (list (cons "service.name" "autolith")
-                                        (cons "service.version" (asdf:component-version (asdf:find-system :autolith)))
-                                        (cons "autolith.consent.telemetry" (json-boolean t))
-                                        (cons "autolith.consent.diagnostics"
-                                              (json-boolean (telemetry-controller-diagnostics controller)))
-                                        (cons "autolith.schema.version" 1)
-                                        (cons "autolith.instrumentation.version" 7))) 'vector))
+                                       (cons "service.version" (asdf:component-version (asdf:find-system :autolith-agent)))
+                                       (cons "autolith.consent.telemetry" (json-boolean t))
+                                       (cons "autolith.consent.diagnostics"
+                                             (json-boolean (telemetry-controller-diagnostics controller)))
+                                       (cons "autolith.schema.version" 1)
+                                       (cons "autolith.instrumentation.version" 7))) 'vector))
      "scopeSpans"
      (json-array (json-object "scope" (json-object "name" "seismograph.autolith" "version" "0.1.0")
                               "spans" (coerce spans 'vector)))))))

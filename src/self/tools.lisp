@@ -1076,7 +1076,7 @@ dependency), which counts only when its feature expression holds."
                  requested-name
                  (string-downcase (package-name package))))
            (dependencies
-             (self-source--dependency-names (asdf:find-system '#:autolith))))
+             (self-source--dependency-names (asdf:find-system '#:autolith-agent))))
       (unless (member name dependencies :test #'string-equal)
         (when (non-empty-string-p requested-name)
           (error 'source-mutation-error
@@ -1109,15 +1109,18 @@ dependency), which counts only when its feature expression holds."
 
 (-> self-source--withheld-files (&key (:root pathname)) list)
 (defun self-source--withheld-files
-    (&key (root (asdf:system-source-directory (asdf:find-system "autolith"))))
+    (&key (root (asdf:system-source-directory (asdf:find-system "autolith-agent"))))
   "Return source paths unavailable in this image through ASDF component boundaries.
 
 Feature-withheld components and unloaded optional Autolith systems may refer to
 packages absent from this image. Do not read those files during source lookup.
 Files shared with a loaded system are available through that system."
+  ;; Discover optional systems' components without loading their dependencies.
+  (asdf:find-system "autolith" nil)
   (let* ((loaded    (asdf:already-loaded-systems))
          (systems   (loop for name in (asdf:registered-systems)
                           when (or (string= name "autolith")
+                                   (string= name "autolith-agent")
                                    (uiop:string-prefix-p "autolith/" name))
                             collect (asdf:find-system name)))
          (available (mapcan #'self-source--component-pathnames

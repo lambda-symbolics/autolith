@@ -4,9 +4,10 @@
 Autolith is a terminal agent in a live Common Lisp image. The running
 system can be inspected and changed by both the agent, and the user.
 
-All application definitions live in the single =autolith= package,
-which may be considered non-standard or unwise by some Common Lisp
-developers, but I consider correct for self-modifiability.
+Agent definitions live in the =autolith= package and the =autolith-agent= ASDF
+system. The separate =autolith-supervisor= system uses its own package and
+loads only ASDF/UIOP. The =autolith= system is a compatibility entry point for
+the agent.
 
 * System
 
@@ -16,7 +17,12 @@ developers, but I consider correct for self-modifiability.
                          | provenance checks  |
                          +---------+----------+
                                    |
-                    +--------------v---------------+
+                         +----------v-----------+
+                         | minimal supervisor   |
+                         | spawn, wait, cleanup |
+                         +----------+-----------+
+                                    |
+                     +--------------v---------------+
                     | active Autolith Lisp image    |
                     | terminal, agent, tools, state |
                     +--+-----------+-----------+----+
@@ -35,6 +41,9 @@ developers, but I consider correct for self-modifiability.
 
 - The *stable launcher* checks runtime and source provenance, then starts
   the active image or recovery
+- The *supervisor* starts the agent as a child process with inherited terminal
+  descriptors. An optional external launcher selects the OS user and sandbox.
+  Agent configuration and private mutations load only in the agent process.
 - The *active image* operates the session: input, provider turns, tools, and
   the live terminal region
 - *Workers* handle search (the special fff worker) and =lisp.*= REPLs.

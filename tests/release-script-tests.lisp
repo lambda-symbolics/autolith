@@ -774,7 +774,7 @@ printf 'subprocess %s\\n' \"$*\" >> \"${AUTOLITH_TEST_EVENT_LOG:?}\"
          (active-core        (merge-pathnames "autolith-active.core" active-directory))
          (active-manifest    (merge-pathnames "manifest.sexp" active-directory))
          (launcher           (merge-pathnames "autolith" bin-directory))
-         (active-source      (merge-pathnames "autolith-active" bin-directory))
+         (active-source      (merge-pathnames "autolith-agent" bin-directory))
          (bootstrap          (merge-pathnames "bootstrap" script-directory))
          (recovery-source    (merge-pathnames "launcher.lisp" recovery-directory))
          (fake-sbcl          (merge-pathnames "fake-sbcl" fixture-root))
@@ -804,7 +804,7 @@ probe=false
 for argument in \"$@\"; do
   case $argument in
     --autolith-internal-active-image-probe) probe=true ;;
-    */bin/autolith-active) mode=SOURCE ;;
+    */bin/autolith-agent) mode=SOURCE ;;
     */autolith-active.core) mode=ACTIVE ;;
     */recovery/launcher.lisp) mode=RECOVERY ;;
   esac

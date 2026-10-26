@@ -19,8 +19,8 @@
                (unless (probe-file setup)
                  (fail "locked dependencies are absent."))
                (load setup)
-               (asdf:load-asd (merge-pathnames "autolith.asd" source-root))
-               (asdf:load-system :autolith))))
+               (asdf:load-asd (merge-pathnames "autolith-agent.asd" source-root))
+               (asdf:load-system :autolith-agent))))
     (handler-case
         (progn
           (unless (and (= (length arguments) 1) source-root)

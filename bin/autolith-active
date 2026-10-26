@@ -1,48 +1,6 @@
 #!/usr/bin/env -S sbcl --script
 
-(let ((*standard-output* *error-output*) (*trace-output* *error-output*))
-  (require :asdf))
-
-;; ACP uses raw UTF-8 descriptors for its protocol. Keep bootstrap and command
-;; diagnostics on stderr before entering the service.
-(let* ((arguments (rest sb-ext:*posix-argv*))
-       (acp-p (member "acp" arguments :test #'string=))
-       (main nil))
-  (labels ((load-autolith ()
-             (require :asdf)
-             (let* ((launcher-path (truename *load-truename*))
-                    (bin-directory (uiop:pathname-directory-pathname launcher-path))
-                    (source-root (uiop:pathname-parent-directory-pathname bin-directory))
-                    (project-setup
-                     (or (let ((override (uiop:getenv "AUTOLITH_PROJECT_SETUP")))
-                           (and override (plusp (length override)) (pathname override)))
-                         (merge-pathnames ".qlot/setup.lisp" source-root)))
-                    (user-setup (merge-pathnames "quicklisp/setup.lisp"
-                                                 (user-homedir-pathname)))
-                    (quicklisp-setup (if (probe-file project-setup)
-                                         project-setup
-                                         user-setup)))
-               (unless (probe-file quicklisp-setup)
-                 (error "Autolith needs Quicklisp at ~A" quicklisp-setup))
-               (load quicklisp-setup)
-               (uiop:symbol-call '#:ql '#:quickload :cffi :silent t)
-               (let ((profile-library-directory
-                      (merge-pathnames ".guix-profile/lib/" (user-homedir-pathname)))
-                     (library-directories
-                      (find-symbol "*FOREIGN-LIBRARY-DIRECTORIES*" "CFFI")))
-                 (when (probe-file profile-library-directory)
-                   (pushnew profile-library-directory
-                            (symbol-value library-directories)
-                            :test #'equal)))
-               (asdf:load-asd (merge-pathnames "autolith.asd" source-root))
-               (asdf:load-system :autolith)
-               (setf main (list (symbol-function (find-symbol "MAIN" "AUTOLITH"))
-                                (uiop:command-line-arguments))))))
-    (if acp-p
-        (let ((*standard-output* *error-output*)
-              (*trace-output* *error-output*))
-          (load-autolith)
-          (apply (first main) (rest main)))
-        (progn
-          (load-autolith)
-          (apply (first main) (rest main))))))
+;; Keep the previous source entrypoint available to installed callers.
+(with-open-file (stream (merge-pathnames "autolith-agent" *load-truename*))
+  (read-line stream)
+  (load stream))

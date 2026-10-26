@@ -129,18 +129,19 @@ must remain possible without loading a damaged active core.
 
 ## Package Policy
 
-Use one project package, `#:autolith`. Do not create scoped, subsystem, feature,
-file-local, or test packages unless the user explicitly changes this policy.
-Split the implementation into focused files while keeping those files in the
-single project package. Runtime component boundaries are not package
-boundaries.
+Use `#:autolith` for the agent and `#:autolith-supervisor` for the separate,
+minimal supervisor. The supervisor must not load the agent system, user
+configuration, or private mutations. Keep its dependencies limited to ASDF/UIOP.
+Do not create other scoped, subsystem, feature, file-local, or test packages
+unless the user explicitly changes this policy.
 
-- Define the package once and use `(in-package #:autolith)` in project source.
+- Define each package once. Use `(in-package #:autolith)` in agent source and
+  `(in-package #:autolith-supervisor)` in supervisor source.
 - `:use` only `#:cl`.
 - Import individual third-party symbols with `:import-from`; do not wholesale
   `:use` third-party packages.
-- Do not introduce packages merely to express internal architecture. Express
-  those boundaries with files, functions, CLOS protocols, and clear naming.
+- Express internal boundaries with files, functions, CLOS protocols, and clear
+  naming. Reserve the supervisor package for the separate host process.
 
 ## Code Organization
 

@@ -238,7 +238,7 @@ line separating lessons. Reject duplicate IDs and malformed metadata."
   "Return the current tour snapshot or read the shipped ASDF-relative Org asset."
   (or *onboarding-source-snapshot*
       (uiop:read-file-string
-       (asdf:system-relative-pathname :autolith #p"docs/onboarding-sources.org"))))
+       (asdf:system-relative-pathname :autolith-agent #p"docs/onboarding-sources.org"))))
 
 (-> onboarding-source-text (string &optional hash-table) string)
 (defun onboarding-source-text (name &optional (variables (make-hash-table :test #'eq)))

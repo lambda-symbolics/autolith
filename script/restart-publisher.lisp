@@ -27,8 +27,8 @@
   (unless (probe-file setup)
     (error "Autolith needs Quicklisp at ~A" setup))
   (load setup)
-  (asdf:load-asd (merge-pathnames "autolith.asd" source-root))
-  (asdf:load-system :autolith)
+  (asdf:load-asd (merge-pathnames "autolith-agent.asd" source-root))
+  (asdf:load-system :autolith-agent)
   (let* ((record (funcall read-form envelope))
          (configuration
            (uiop:symbol-call

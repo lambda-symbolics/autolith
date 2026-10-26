@@ -56,8 +56,8 @@
       (pushnew profile-library-directory
                (symbol-value library-directories)
                :test #'equal)))
-  (asdf:load-asd (merge-pathnames "autolith.asd" source-root))
-  (asdf:load-system :autolith)
+  (asdf:load-asd (merge-pathnames "autolith-agent.asd" source-root))
+  (asdf:load-system :autolith-agent)
   (cond
     (child-core
      (format t "~&Saving the preloaded active image.~%")
