@@ -406,6 +406,170 @@
         (assert (parent-proto:model-event.has-failed (first (gethash ':sent state)))))))
   nil)
 
+(declaim (ftype (function () null) model-event-test--budget-admission))
+
+(defun model-event-test--budget-admission ()
+  "Check admission, terminal reserves and uncertain durable callback outcomes."
+  ;; Completion must pass admission before either private retention callback.
+  (dolist (capabilities '((:continuation) (:turn-state) (:continuation :turn-state)))
+    (multiple-value-bind (collector state) (model-event-test--collector :capabilities capabilities)
+      (model-event-collector-begin collector)
+      (setf (model-event-collector-public-size collector)
+            (- (* 32 1024 1024) (model-events--failure-reserve) 4000))
+      (let ((index (model-event-collector-index collector))
+            (bytes (model-event-collector-public-size collector)))
+        (model-event-test--rejects
+          (lambda ()
+            (model-event-collector-finish collector
+              (make-instance 'model-wire:provider-result :response-id "response"
+                :turn-state                                           (when (member ':turn-state capabilities) "state"))))
+          ':resource-limit)
+        (assert (null (gethash ':retained state)))
+        (assert (zerop (gethash ':accepted-count state)))
+        (assert (= index (model-event-collector-index collector)))
+        (assert (= bytes (model-event-collector-public-size collector)))
+        (model-event-collector-fail collector :code ':resource-limit)
+        (assert (= (1+ index) (parent-proto:model-event.index (first (gethash ':events state)))))
+        (assert (parent-proto:model-event.has-failed (first (gethash ':events state)))))))
+  ;; Validate the second state and configuration before retaining the first.
+  (dolist (problem '(:invalid-state :unsupported-state :missing-hook :missing-compaction :invalid-response))
+    (multiple-value-bind (collector state)
+        (model-event-test--collector
+          :capabilities (if (eq problem ':unsupported-state) '(:continuation) '(:continuation :turn-state))
+          :kind         (if (eq problem ':missing-compaction) ':native-compaction ':generate))
+      (when (eq problem ':missing-hook)
+        (setf (slot-value collector 'retain-state) nil))
+      (model-event-collector-begin collector)
+      (model-event-test--rejects
+        (lambda ()
+          (model-event-collector-finish collector
+            (make-instance 'model-wire:provider-result
+              :response-id (if (eq problem ':invalid-response) 7 "response")
+              :turn-state  (if (eq problem ':invalid-state) #'identity "state"))))
+        (ecase problem
+          (:invalid-state
+           ':invalid-value)
+          (:unsupported-state
+           ':unsupported-turn-state)
+          (:missing-hook
+           ':state-retention-required)
+          (:missing-compaction
+           ':missing-compaction)
+          (:invalid-response
+           ':invalid-response-id)))
+      (assert (null (gethash ':retained state)))
+      (assert (zerop (gethash ':accepted-count state)))
+      (model-event-collector-fail collector)))
+  ;; An item hook may persist its indexed event before raising or returning bad data.
+  (dolist (outcome '(:before-write :after-write :invalid-handle))
+    (multiple-value-bind (collector state) (model-event-test--collector)
+      (model-event-collector-begin collector)
+      (setf (slot-value collector 'record-item)
+            (lambda (&key attempt item-index original view)
+              (declare (ignore attempt item-index original view))
+              (unless (eq outcome ':before-write)
+                (setf (gethash ':item-write state) t))
+              (if (eq outcome ':invalid-handle)
+                  ""
+                  (model-events--reject ':test-item-failure))))
+      (model-event-test--rejects
+        (lambda () (model-event-test--item collector (model-event-test--text)))
+        (if (eq outcome ':invalid-handle) ':invalid-handle ':test-item-failure))
+      (assert (eq (model-event-collector-phase collector) ':uncertain))
+      (assert (eq (not (null (gethash ':item-write state))) (not (eq outcome ':before-write))))
+      (assert (= 1 (model-event-collector-index collector)))
+      (assert (zerop (gethash ':accepted-count state)))
+      (model-event-test--rejects (lambda () (model-event-collector-fail collector)) ':event-order)))
+  (dolist (limit '(:events :bytes :originals))
+    (multiple-value-bind (collector state) (model-event-test--collector)
+      (model-event-collector-begin collector)
+      (ecase limit
+        (:events
+         (setf (model-event-collector-index collector) 65535))
+        (:bytes
+         (setf (model-event-collector-public-size collector)
+               (- (* 32 1024 1024) (model-events--failure-reserve) 4096)))
+        (:originals
+         (setf (model-event-collector-original-size collector) (* 16 1024 1024))))
+      (let ((index     (model-event-collector-index collector))
+            (bytes     (model-event-collector-public-size collector))
+            (originals (model-event-collector-original-size collector)))
+        (model-event-test--rejects
+          (lambda () (model-event-test--item collector (model-event-test--text))) ':resource-limit)
+        (assert (null (gethash ':originals state)))
+        (assert (= index (model-event-collector-index collector)))
+        (assert (= bytes (model-event-collector-public-size collector)))
+        (assert (= originals (model-event-collector-original-size collector)))
+        (model-event-collector-fail collector :code ':resource-limit)
+        (assert (= (1+ index) (parent-proto:model-event.index (first (gethash ':events state)))))
+        (assert (parent-proto:model-event.has-failed (first (gethash ':events state)))))))
+  ;; Admit the last nonterminal event with exactly the fixed failure reserve left.
+  (multiple-value-bind (collector state) (model-event-test--collector)
+    (model-event-collector-begin collector)
+    (setf (model-event-collector-index collector) 65534)
+    (let* ((event (parent-proto:make-model-event :progress
+                    (parent-proto:make-model-progress :phase "provider" :text "")))
+           (size  (model-events--event-size collector event)))
+      (setf (model-event-collector-public-size collector)
+            (- (* 32 1024 1024) size (model-events--failure-reserve)))
+      (model-events--publish collector event)
+      (assert (= 65535 (model-event-collector-index collector)))
+      (model-event-test--rejects
+        (lambda () (model-events--publish collector event)) ':resource-limit)
+      (assert (= 65535 (model-event-collector-index collector)))
+      (model-event-collector-fail collector)
+      (assert (= 65536 (parent-proto:model-event.index (first (gethash ':events state)))))
+      (assert (<= (model-event-collector-public-size collector) (* 32 1024 1024)))))
+  ;; A successful record consumes its index even when the sender fails.
+  (let ((recorded  nil)
+        (collector nil))
+    (setf collector
+          (make-model-event-collector
+            :profile       (make-model-profile :id "profile" :model "model" :family ':responses)
+            :record-item   (lambda (&rest arguments) (declare (ignore arguments)) "handle")
+            :record-event  (lambda (event) (push event recorded))
+            :emit-event    (lambda (event) (declare (ignore event)) (model-events--reject ':test-send-failure))
+            :accept-result (lambda (complete) (declare (ignore complete)) t)))
+    (model-event-test--rejects (lambda () (model-event-collector-begin collector)) ':test-send-failure)
+    (assert (= 1 (model-event-collector-index collector)))
+    (assert (plusp (model-event-collector-public-size collector)))
+    (assert (= 1 (parent-proto:model-event.index (first recorded)))))
+  ;; Both a pre-write error and a post-write error have unknown durable outcome.
+  (dolist (write-first '(nil t))
+    (let* ((recorded nil)
+           (collector
+             (make-model-event-collector
+               :profile       (make-model-profile :id "profile" :model "model" :family ':responses)
+               :record-item   (lambda (&rest arguments) (declare (ignore arguments)) "handle")
+               :record-event  (lambda (event)
+                                (when write-first (push event recorded))
+                                (model-events--reject ':test-log-failure))
+               :emit-event    (lambda (event) (declare (ignore event)) (assert nil))
+               :accept-result (lambda (complete) (declare (ignore complete)) t))))
+      (model-event-test--rejects (lambda () (model-event-collector-begin collector)) ':test-log-failure)
+      (assert (eq (model-event-collector-phase collector) ':uncertain))
+      (assert (eq (not (null recorded)) write-first))
+      (model-event-test--rejects (lambda () (model-event-collector-fail collector)) ':event-order)))
+  (dolist (stage '(:receive :finish))
+    (multiple-value-bind (collector state) (model-event-test--collector)
+      (declare (ignore state))
+      (model-event-collector-begin collector)
+      (setf (slot-value collector 'record-event)
+            (lambda (event) (declare (ignore event)) (model-events--reject ':test-log-failure)))
+      (model-event-test--rejects
+        (lambda ()
+          (ecase stage
+            (:receive
+             (model-event-test--item collector (model-event-test--text)))
+            (:finish
+             (model-event-collector-finish collector
+               (make-instance 'model-wire:provider-result
+                 :output-items (list (model-event-test--text)))))))
+        ':test-log-failure)
+      (assert (eq (model-event-collector-phase collector) ':uncertain))
+      (model-event-test--rejects (lambda () (model-event-collector-fail collector)) ':event-order)))
+  nil)
+
 (declaim (ftype (function () null) run-model-event-tests))
 
 (defun run-model-event-tests ()
@@ -417,5 +581,6 @@
   (model-event-test--failure-boundaries)
   (model-event-test--unsupported)
   (model-event-test--executor)
+  (model-event-test--budget-admission)
   (assert (not (find-package '#:autolith)))
   nil)

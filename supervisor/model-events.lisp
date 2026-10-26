@@ -211,15 +211,16 @@ cannot emit complete. The hook must reconcile its own write-ahead journal after
 partial failure. FINISH is called only after executor terminal validation and
 cleanup return; PROVIDER-COMPLETED-EVENT alone never calls acceptance.
 The library cleanup is best effort, so this adapter cannot assert close success.
-Projection and pre-acceptance hook errors break the collector. Call FAIL or discard
-it; do not retry a partially performed hook. If ACCEPT-RESULT fails or does not
-acknowledge, the state is UNCERTAIN: reconcile the private journal and session
-projection instead of sending a failure that could revoke a committed result.
+Projection errors before durable hooks break the collector and permit FAIL.
+An item-hook error or invalid returned handle has an unknown write outcome, as
+does a RECORD-EVENT failure. These leave UNCERTAIN. If ACCEPT-RESULT fails or
+does not acknowledge, the state is UNCERTAIN: reconcile before publication.
 After acceptance, repeated FINISH returns a copy without sending again, even if
 event logging or public emission failed. Portable copies permit at most 65,536
 nodes, depth 32, and 2 MiB of characters/bytes per value. Each event is at most
-7 MiB; the request event budget is 32 MiB and 65,536 events. Retained original
-size estimates total at most 16 MiB. Lower transport limits are the sender's
+7 MiB; the request event budget is 32 MiB and 65,536 events. Reserve the last
+event slot and the fixed failure's encoded bytes for a terminal event. Retained
+original size estimates total at most 16 MiB. Lower transport limits are the sender's
 responsibility."
   (when require-item-delta-identity (model-events--reject ':delta-identity-unavailable))
   (unless (and (typep profile 'model-profile) (functionp record-item)
@@ -236,27 +237,47 @@ responsibility."
                  :record-event record-event :emit-event emit-event :retain-state retain-state
                  :accept-result accept-result :hosted-types (model-events--copy hosted-types) :kind kind))
 
+(declaim (ftype (function () (integer 0)) model-events--failure-reserve))
+
+(defun model-events--failure-reserve ()
+  "Return the encoded bound for the fixed terminal failure at maximum identity."
+  (length (cl-protobufs:serialize-to-bytes
+            (parent-proto:make-model-event
+              :index 65536 :attempt 1024 :failed
+              (parent-proto:make-failure :code ':resource-limit :message "Model request failed.")))))
+
 (declaim (ftype (function (model-event-collector parent-proto:model-event) (integer 0)) model-events--event-size))
 
 (defun model-events--event-size (collector event)
-  "Check per-event and request-wide bounds before external side effects."
+  "Check admission without consuming an index or calling a durable hook."
   (setf (parent-proto:model-event.index event) (1+ (model-event-collector-index collector))
         (parent-proto:model-event.attempt event) (model-event-collector-attempt collector))
-  (let ((size (length (cl-protobufs:serialize-to-bytes event))))
-    (when (or (>= (model-event-collector-index collector) 65536)
+  (let* ((terminal (or (parent-proto:model-event.has-complete event)
+                       (parent-proto:model-event.has-failed event)))
+         (size     (length (cl-protobufs:serialize-to-bytes event))))
+    (when (or (>= (model-event-collector-index collector) (if terminal 65536 65535))
               (> size (* 7 1024 1024))
-              (> (+ size (model-event-collector-public-size collector)) (* 32 1024 1024)))
+              (> (+ size (model-event-collector-public-size collector)
+                    (if terminal 0 (model-events--failure-reserve)))
+                 (* 32 1024 1024)))
       (model-events--reject ':resource-limit))
     size))
 
 (declaim (ftype (function (model-event-collector parent-proto:model-event) t) model-events--publish))
 
 (defun model-events--publish (collector event)
-  "Record before emission, with independent message copies for both callbacks."
+  "Record before emission; consume the index after a successful durable callback.
+A failed callback has an unknown write outcome. Require reconciliation before
+further publication, except that an accepted completion keeps its accepted state."
   (let ((size (model-events--event-size collector event)))
+    (handler-case
+        (funcall (model-event-collector-record-event collector) (model-events--message-copy event))
+      (error (condition)
+        (unless (eq (model-event-collector-phase collector) ':accepted)
+          (setf (model-event-collector-phase collector) ':uncertain))
+        (error condition)))
     (incf (model-event-collector-public-size collector) size)
     (incf (model-event-collector-index collector)))
-  (funcall (model-event-collector-record-event collector) (model-events--message-copy event))
   (funcall (model-event-collector-emit-event collector) (model-events--message-copy event)))
 
 (declaim (ftype (function (model-event-collector &key (:maximum-attempts (integer 1))
@@ -288,7 +309,8 @@ responsibility."
           (parent-proto:make-attempt-started :maximum-attempts maximum-attempts
                                            :delay-milliseconds delay-milliseconds)))
     (error (condition)
-      (setf (model-event-collector-phase collector) ':broken)
+      (unless (eq (model-event-collector-phase collector) ':uncertain)
+        (setf (model-event-collector-phase collector) ':broken))
       (model-events--resignal condition))))
 
 (declaim (ftype (function (hash-table string &key (:empty boolean)) string) model-events--string))
@@ -402,28 +424,39 @@ responsibility."
 (declaim (ftype (function (model-event-collector t) t) model-events--record-item))
 
 (defun model-events--record-item (collector value)
-  "Persist an original and its scope before the corresponding public event."
+  "Admit the largest permitted handle before persisting an item and its event."
   (multiple-value-bind (original size) (model-events--copy value)
-    (incf (model-event-collector-original-size collector) size)
-    (when (> (model-event-collector-original-size collector) (* 16 1024 1024))
+    (when (> (+ (model-event-collector-original-size collector) size) (* 16 1024 1024))
       (model-events--reject ':resource-limit))
     (let ((index (length (model-event-collector-items collector))))
-     (unless (hash-table-p original) (model-events--reject ':unsupported-item))
-     (when (>= index 4096) (model-events--reject ':resource-limit))
-     (let* ((output (model-events--item-view collector original index))
-            (handle (funcall (model-event-collector-record-item collector)
-                            :attempt (model-event-collector-attempt collector)
-                            :item-index index :original (model-events--copy original)
-                            :view    (model-events--message-copy output))))
-       (unless (and (stringp handle) (< 0 (length handle) 1025))
-         (model-events--reject ':invalid-handle))
-       (when (find handle (model-event-collector-items collector)
-                   :key #'parent-proto:output-item.replay-handle :test #'equal)
-         (model-events--reject ':duplicate-handle))
-       (setf (parent-proto:output-item.replay-handle output) (copy-seq handle))
-       (push original (model-event-collector-originals collector))
-       (push output (model-event-collector-items collector))
-       (model-events--publish collector (parent-proto:make-model-event :item-completed output))))))
+      (unless (hash-table-p original) (model-events--reject ':unsupported-item))
+      (when (>= index 4096) (model-events--reject ':resource-limit))
+      (let* ((output (model-events--item-view collector original index))
+             (probe  (model-events--message-copy output)))
+        ;; A handle permits 1,024 characters, each at most four UTF-8 bytes.
+        (setf (parent-proto:output-item.replay-handle probe)
+              (make-string 1024 :initial-element (code-char #x10ffff)))
+        (model-events--event-size collector (parent-proto:make-model-event :item-completed probe))
+        (let ((previous-index (model-event-collector-index collector)))
+          (handler-case
+              (let ((handle (funcall (model-event-collector-record-item collector)
+                                    :attempt (model-event-collector-attempt collector)
+                                    :item-index index :original (model-events--copy original)
+                                    :view    (model-events--message-copy output))))
+                (unless (and (stringp handle) (< 0 (length handle) 1025))
+                  (model-events--reject ':invalid-handle))
+                (when (find handle (model-event-collector-items collector)
+                            :key #'parent-proto:output-item.replay-handle :test #'equal)
+                  (model-events--reject ':duplicate-handle))
+                (incf (model-event-collector-original-size collector) size)
+                (setf (parent-proto:output-item.replay-handle output) (copy-seq handle))
+                (push original (model-event-collector-originals collector))
+                (push output (model-event-collector-items collector))
+                (model-events--publish collector (parent-proto:make-model-event :item-completed output)))
+            (error (condition)
+              (when (= previous-index (model-event-collector-index collector))
+                (setf (model-event-collector-phase collector) ':uncertain))
+              (error condition))))))))
 
 (declaim (ftype (function (t) parent-proto:response-metadata) model-events--metadata))
 
@@ -622,7 +655,25 @@ calls after acceptance return a detached completion and do not emit again."
              (evidence    (model-event-collector-completed collector))
              (response-id (model-wire:provider-result-response-id result))
              (usage       (model-wire:provider-result-usage result))
-             (turn        (model-wire:provider-result-turn-completion result)))
+             (turn        (model-wire:provider-result-turn-completion result))
+             (state       (model-events--copy (model-wire:provider-result-turn-state result)))
+             (continuation-p
+               (and response-id
+                    (member ':continuation
+                            (model-profile-capabilities (model-event-collector-profile collector))))))
+        (when response-id
+          (unless (stringp response-id) (model-events--reject ':invalid-response-id))
+          (setf response-id (model-events--copy response-id)))
+        (when (and state
+                   (not (member ':turn-state
+                                (model-profile-capabilities (model-event-collector-profile collector)))))
+          (model-events--reject ':unsupported-turn-state))
+        (when (and (or continuation-p state)
+                   (not (functionp (model-event-collector-retain-state collector))))
+          (model-events--reject ':state-retention-required))
+        (when (eq (model-event-collector-kind collector) ':native-compaction)
+          (unless (and final (some (lambda (item) (equal (gethash "type" item) "compaction")) final))
+            (model-events--reject ':missing-compaction)))
         (unless (and (listp final) (<= (length originals) (length final))
                      (loop for original in originals for item in final
                            always (model-events--equal-p original item)))
@@ -663,20 +714,23 @@ calls after acceptance return a detached completion and do not emit again."
                                               (model-events--reject ':invalid-turn-completion))))))
           (when metadata (setf (parent-proto:model-complete.metadata complete) metadata))
           (when response-id
-            (unless (stringp response-id) (model-events--reject ':invalid-response-id))
-            (setf (parent-proto:model-complete.response-id complete) (copy-seq response-id))
-            (when (member ':continuation (model-profile-capabilities (model-event-collector-profile collector)))
-              (setf (parent-proto:model-complete.continuation-handle complete)
-                    (model-events--retain collector ':continuation response-id))))
-          (when (model-wire:provider-result-turn-state result)
-            (unless (member ':turn-state (model-profile-capabilities (model-event-collector-profile collector)))
-              (model-events--reject ':unsupported-turn-state))
-            (setf (parent-proto:model-complete.turn-state-handle complete)
-                  (model-events--retain collector ':turn-state (model-wire:provider-result-turn-state result))))
+            (setf (parent-proto:model-complete.response-id complete) response-id))
           (when (eq (model-event-collector-kind collector) ':native-compaction)
-            (unless (and final (some (lambda (item) (equal (gethash "type" item) "compaction")) final))
-              (model-events--reject ':missing-compaction))
             (setf (parent-proto:model-complete.compaction-outcome complete) ':compacted))
+          ;; Admit both largest handles before either private retention write.
+          (let ((probe          (model-events--message-copy complete))
+                (maximum-handle (make-string 1024 :initial-element (code-char #x10ffff))))
+            (when continuation-p
+              (setf (parent-proto:model-complete.continuation-handle probe) maximum-handle))
+            (when state
+              (setf (parent-proto:model-complete.turn-state-handle probe) maximum-handle))
+            (model-events--event-size collector (parent-proto:make-model-event :complete probe)))
+          (when continuation-p
+            (setf (parent-proto:model-complete.continuation-handle complete)
+                  (model-events--retain collector ':continuation response-id)))
+          (when state
+            (setf (parent-proto:model-complete.turn-state-handle complete)
+                  (model-events--retain collector ':turn-state state)))
           (let ((saved (model-events--message-copy complete)))
             (model-events--event-size collector (parent-proto:make-model-event :complete saved))
             (setf (model-event-collector-phase collector) ':accepting)
@@ -688,7 +742,7 @@ calls after acceptance return a detached completion and do not emit again."
             (model-events--publish collector (parent-proto:make-model-event :complete saved))
             (model-events--message-copy saved))))
     (error (condition)
-      (unless (eq (model-event-collector-phase collector) ':accepted)
+      (unless (member (model-event-collector-phase collector) '(:accepted :uncertain))
         (setf (model-event-collector-phase collector)
               (if (eq (model-event-collector-phase collector) ':accepting) ':uncertain ':broken)))
       (model-events--resignal condition))))
