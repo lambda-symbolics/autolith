@@ -124,6 +124,71 @@
                                     :request-id "43" :complete projected))
                         ':inactive-turn)
                (check (= 3 (length (records (read-page store))))))
+             ;; Verified outbox recovery can publish after turn closure.
+             (dolist (closure '(:interrupted :completed))
+               (let* ((path     (path))
+                      (store    (session-store-open path "late-model-session"))
+                      (complete (cl-protobufs.autolith.parent.v1:make-model-complete
+                                 :reason ':stop)))
+                 (session-store-start-turn store "old-turn" "input")
+                 (if (eq closure ':interrupted)
+                     (setf store (session-store-open path "late-model-session"))
+                     (session-store-finish-turn store "old-turn" ':completed))
+                 (rejects (lambda ()
+                            (session-store-model-result
+                             store :event-id "late-result" :turn-id "old-turn"
+                             :request-id "late-request" :complete complete))
+                          ':inactive-turn)
+                 (rejects (lambda ()
+                            (session-store--recover-model-result
+                             store :event-id "missing-result" :turn-id "missing-turn"
+                             :request-id "missing-request" :complete complete))
+                          ':inactive-turn)
+                 (check (= 3 (sequence-of
+                              (session-store--recover-model-result
+                               store :event-id "late-result" :turn-id "old-turn"
+                               :request-id "late-request" :complete complete))))
+                 ;; A late note must not reopen the old turn.
+                 (session-store-start-turn store "new-turn" "next input")
+                 (rejects (lambda ()
+                            (session-store-model-result
+                             store :event-id "other-result" :turn-id "old-turn"
+                             :request-id "other-request" :complete complete))
+                          ':inactive-turn)
+                 (check (= 5 (sequence-of
+                              (session-store--recover-model-result
+                               store :event-id "other-result" :turn-id "old-turn"
+                               :request-id "other-request" :complete complete))))
+                 (setf store (session-store-open path "late-model-session"
+                                                 :recover-interrupted nil))
+                 (check (= 5 (length (records (read-page store)))))
+                 (check (= 3 (sequence-of
+                              (session-store--recover-model-result
+                               store :event-id "late-result" :turn-id "old-turn"
+                               :request-id "late-request" :complete complete))))
+                 (check (= 3 (sequence-of
+                              (session-store-model-result
+                               store :event-id "late-result" :turn-id "old-turn"
+                               :request-id "late-request" :complete complete))))
+                 (dolist (change '(:event :attempt :content))
+                   (rejects (lambda ()
+                              (session-store--recover-model-result
+                               store :event-id (if (eq change ':event)
+                                                   "changed" "late-result")
+                               :turn-id "old-turn" :request-id "late-request"
+                               :attempt        (if (eq change ':attempt) 2 1)
+                               :complete       (if (eq change ':content)
+                                                   (cl-protobufs.autolith.parent.v1:make-model-complete
+                                                    :reason ':filtered)
+                                                   complete)))
+                            ':model-result-conflict))
+                 ;; Cold replay and recovery must preserve the different active turn.
+                 (check (= 6 (sequence-of
+                              (session-store-append
+                               store (note-request "new-note" "new-turn" "active")))))
+                 (check (= 7 (session-store-finish-turn store "new-turn" ':completed)))
+                 (setf store (session-store-open path "late-model-session"))
+                 (check (= 7 (length (records (read-page store)))))))
              ;; Input, metadata, strict payload contracts, and event retry after restart.
              (let* ((path (path)) (store (session-store-open path "session-a"))
                     (start   (session-store-start-turn store "turn-a" "user input"))

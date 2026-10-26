@@ -380,7 +380,7 @@ integers, numbers, byte arrays, lists, maps, booleans, strings, and null."
               (session-store--field payload "model_result"))
          (let ((key (list ':model-result turn
                           (second (session-store--field payload "request_id")))))
-           (unless (and (equal active turn) (null continuation)
+           (unless (and (gethash turn turns) (null continuation)
                         (equal turn (second (session-store--field payload "turn_id")))
                         (not (gethash key events)))
              (session-store--reject ':corrupt-log))
@@ -649,13 +649,47 @@ metadata even for duplicate events. Tool starts must commit before execution."
                 session-store-model-result))
 
 (defun session-store-model-result (store &key event-id turn-id request-id (attempt 1) complete)
-  "Commit a trusted parent ModelComplete note and return its durable SessionAck.
+  "Commit a parent ModelComplete note for the active turn.
 
-Use the model journal's deterministic EVENT-ID when reconciling its outbox.
-REQUEST-ID is a bounded string or a wire uint64, converted to decimal text.
-Exact turn/request retries return the first acknowledgement even after turn
-closure. Conflicting content, attempt, or event identity is rejected. Publish
-before acknowledging the model journal projection. This call has no agent RPC."
+Exact retries return the first acknowledgement even after turn closure. New
+notes require an active turn. This call has no agent RPC."
+  (session-store--write-model-result
+   store :event-id event-id :turn-id turn-id :request-id request-id
+   :attempt attempt :complete complete
+   :turn-check (lambda (active turns)
+                 (declare (ignore turns))
+                 (equal active turn-id))))
+
+(declaim (ftype (function (session-store &key (:event-id string) (:turn-id string)
+                            (:request-id t) (:attempt integer) (:complete t))
+                          cl-protobufs.autolith.parent.v1:session-ack)
+                session-store--recover-model-result))
+
+(defun session-store--recover-model-result
+    (store &key event-id turn-id request-id (attempt 1) complete)
+  "Publish a verified model outbox result for an existing turn.
+
+The trusted parent caller must obtain this result from
+MODEL-REPLAY-STORE-PENDING-PROJECTIONS and check the owning session identity
+before calling. Accept closed turns without changing turn lifecycle. Publish
+before acknowledging the model journal projection. Do not expose this operation
+to the agent. Exact retry, conflict, payload, and size rules match normal writes."
+  (session-store--write-model-result
+   store :event-id event-id :turn-id turn-id :request-id request-id
+   :attempt attempt :complete complete
+   :turn-check (lambda (active turns)
+                 (declare (ignore active))
+                 (not (null (gethash turn-id turns))))))
+
+(declaim (ftype (function (session-store &key (:event-id string) (:turn-id string)
+                            (:request-id t) (:attempt integer) (:complete t)
+                            (:turn-check function))
+                          cl-protobufs.autolith.parent.v1:session-ack)
+                session-store--write-model-result))
+
+(defun session-store--write-model-result
+    (store &key event-id turn-id request-id (attempt 1) complete turn-check)
+  "Apply shared model note validation, deduplication, and publication rules."
   (when (typep request-id '(unsigned-byte 64))
     (setf request-id (format nil "~D" request-id)))
   (unless (and (session-store--identifier-p event-id)
@@ -675,16 +709,17 @@ before acknowledging the model journal projection. This call has no agent RPC."
       (session-store--locked
        store
        (lambda (records active events turns calls)
-         (declare (ignore turns calls))
+          (declare (ignore calls))
          (let ((prior (or (gethash key events) (gethash event-id events))))
            (when prior
              (unless (and (eq (sixth prior) ':parent)
                           (session-store--exact-p (rest prior) (rest data)))
                (session-store--reject ':model-result-conflict))
-             (return-from session-store-model-result
-               (cl-protobufs.autolith.parent.v1:make-session-ack
-                :event-id (copy-seq event-id) :sequence (first prior)))))
-         (unless (equal active turn-id) (session-store--reject ':inactive-turn))
+             (return-from session-store--write-model-result
+              (cl-protobufs.autolith.parent.v1:make-session-ack
+               :event-id (copy-seq event-id) :sequence (first prior)))))
+         (unless (funcall turn-check active turns)
+           (session-store--reject ':inactive-turn))
          (setf (first data) (1+ (length records)))
          (let* ((record (session-store--data-record data))
                 (page   (cl-protobufs.autolith.parent.v1:make-session-page

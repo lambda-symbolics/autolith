@@ -66,10 +66,19 @@ validation, portable values, and startup negotiation. The optional
 =autolith-supervisor/session= system adds durable session storage and the
 =session.v1= dispatcher, with bounded requests, output, and shutdown handling.
 The optional =autolith-supervisor/model= system adds trusted model profiles and
-semantic request projection through the provider library's wire API. It validates
-family capabilities, parameter limits, and replay-handle authority before request
-construction. These parent libraries have standalone tests that run without
-loading the agent system.
+semantic request projection through the provider library's wire API, plus a
+private replay journal. Request projection checks family capabilities, parameter
+limits, and replay-handle authority before request construction.
+
+The replay journal stores provisional provider items and public events before
+publication. After final provider validation and cleanup, commit the accepted
+completion and its pending session-note projection. Publish that parent-owned
+=model_result= note with its stable event identity, then acknowledge publication
+in the replay journal. Only then authorize replay handles or send terminal
+completion. The two journals are separate. Recovery repeats pending notes with
+exact deduplication, including notes for known turns already marked interrupted.
+A recovery note does not change the turn outcome. These parent libraries have
+standalone tests that run without loading the agent system.
 
 The optional =autolith-protocol-client= system supplies the agent-side client
 over explicit private streams. It supports negotiation, session reads and
