@@ -223,6 +223,28 @@
 
 ;;;; -- Runner --
 
+(-> test-source-generated-bindings () null)
+(defun test-source-generated-bindings ()
+  "Exclude checked bindings from lint and repairs without exempting other source."
+  (let ((rules (source-check-rules))
+        (text  "(defconstant +value+ 1)  "))
+    (dolist (entry '(("proto/generated/value.lisp" t)
+                     ("proto/generated/protocol.lisp" t)
+                     ("proto/generated/hand-written.lisp" nil)
+                     ("src/generated/value.lisp" nil)
+                     ("proto/value.lisp" nil)))
+      (destructuring-bind (path generated) entry
+        (let ((file (source-file-create path text)))
+          (test-assert (eq (null (source-check-file file rules)) generated)
+                       (format nil "only checked bindings skip source findings: ~A" path))
+          (multiple-value-bind (repaired changed)
+              (source-check-repair file rules)
+            (test-assert (eq (equal repaired text) generated)
+                         (format nil "only checked bindings skip repairs: ~A" path))
+            (test-assert (eq (null changed) generated)
+                         (format nil "repair reporting follows the same scope: ~A" path)))))))
+  nil)
+
 (-> test-source-check-repair-guard () null)
 (defun test-source-check-repair-guard ()
   "Refuse a layout repair that changes content, but accept the same change from a rewriting rule."
@@ -403,7 +425,21 @@
       '("(asdf:defsystem \"autolith\" :depends-on (\"vendor\")"
         "  :components ((:module \"src\" :serial t"
         "                :components ((:file \"project\") (:file \"end\")))))")))
+    (source-check-tests--write
+     root "autolith-protocol.asd"
+     "(asdf:defsystem \"autolith-protocol\" :components ((:file \"proto/generated/value\")))")
+    (source-check-tests--write
+     root "autolith-supervisor.asd"
+     (source-check-tests--text
+      '("(asdf:defsystem \"autolith-supervisor\")"
+        "(asdf:defsystem \"autolith-supervisor/protocol\""
+        "  :components ((:file \"supervisor/protocol\")))"
+        "(asdf:defsystem \"autolith-supervisor/protocol/tests\""
+        "  :components ((:file \"supervisor/protocol-tests\")))")))
     (dolist (entry '(("src/project.lisp" "project")
+                     ("proto/generated/value.lisp" "generated")
+                     ("supervisor/protocol.lisp" "protocol")
+                     ("supervisor/protocol-tests.lisp" "protocol tests")
                      (".qlot/vendor/dependency.lisp" "dependency")))
       (destructuring-bind (path label) entry
         (source-check-tests--write
@@ -439,6 +475,17 @@
                                               (list (source-finding-path finding)
                                                     (source-finding-message finding)))
                                             findings))))
+      (dolist (entry '(("proto/generated/value.lisp" "generated")
+                       ("supervisor/protocol.lisp" "protocol")
+                       ("supervisor/protocol-tests.lisp" "protocol tests")))
+        (destructuring-bind (path label) entry
+          (dolist (phase '("compile" "load"))
+            (test-assert (some (lambda (finding)
+                                 (and (equal (source-finding-path finding) path)
+                                      (search (format nil "~A ~A marker" label phase)
+                                              (source-finding-message finding))))
+                               findings)
+                         (format nil "~A warnings are retained for ~A" phase path)))))
       (test-assert (notany (lambda (finding)
                              (search "dependency" (source-finding-message finding)))
                            findings)
@@ -488,8 +535,10 @@
   (let* ((loaded (asdf:already-loaded-systems))
          (paths  (source-check-system-paths (asdf:system-source-directory :autolith-agent))))
     (test-assert (and (gethash "src/core/package.lisp" paths)
-                      (gethash "supervisor/process.lisp" paths))
-                 "source discovery covers both process components")
+                      (gethash "supervisor/process.lisp" paths)
+                      (gethash "proto/generated/value.lisp" paths)
+                      (gethash "proto/generated/protocol.lisp" paths))
+                 "source discovery includes generated components for compile coverage")
     (dolist (name '("autolith-agent" "autolith-supervisor"))
       (test-assert (eq (not (null (member name loaded :test #'equal)))
                        (not (null (member name (asdf:already-loaded-systems) :test #'equal))))

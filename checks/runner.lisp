@@ -63,7 +63,7 @@
   "Return the repository-relative source paths compiled by ROOT's systems."
   (let ((paths       (make-hash-table :test #'equal))
         (definitions (loop for name in '("autolith.asd" "autolith-agent.asd"
-                                         "autolith-supervisor.asd")
+                                         "autolith-supervisor.asd" "autolith-protocol.asd")
                            for path = (merge-pathnames name root)
                            when (probe-file path) collect path)))
     (dolist (definition definitions)

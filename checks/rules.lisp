@@ -92,6 +92,11 @@
 (defgeneric source-rule-layout-only-p (rule)
   (:documentation "Return true when RULE's repairs change only whitespace outside string literals."))
 
+(defmethod source-rule-applies-p :around ((rule source-rule) (file source-file))
+  "Exclude the checked schema compiler output from hand-written source rules."
+  (and (not (source-file-generated-p file))
+       (call-next-method)))
+
 (defmethod source-rule-applies-p ((rule source-rule) (file source-file))
   "Inspect Lisp source and system definitions."
   (declare (ignore rule))
@@ -125,6 +130,14 @@
   "Return true when FILE is Lisp source or a system definition."
   (let ((type (pathname-type (source-file-path file))))
     (and (member type '("lisp" "asd") :test #'equal) t)))
+
+(-> source-file-generated-p (source-file) boolean)
+(defun source-file-generated-p (file)
+  "Return true for the two checked Protobuf binding files, which ASDF still compiles."
+  (and (member (source-file-path file)
+               '("proto/generated/value.lisp" "proto/generated/protocol.lisp")
+               :test #'equal)
+       t))
 
 (-> source-file-lines (source-file) simple-vector)
 (defun source-file-lines (file)

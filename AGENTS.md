@@ -352,6 +352,12 @@ left out in `checks/mallet.lisp`. Code that breaks a Mallet rule on purpose
 says why in place, as in `; mallet:suppress no-ignore-errors -- best-effort
 cleanup`. Every finding is reported at the end of the run.
 
+The checked Protobuf compiler output at `proto/generated/value.lisp` and
+`proto/generated/protocol.lisp` is excluded from hand-written source rules and
+repairs. Regenerate these files from the schemas. The full check compiles their
+`autolith-protocol` system and the supervisor protocol and test systems, and
+reports their compiler and loader warnings.
+
 ```sh
 ./script/check --source
 ./script/check --fix
