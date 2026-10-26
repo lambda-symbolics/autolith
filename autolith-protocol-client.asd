@@ -5,12 +5,14 @@
     (asdf:load-asd definition)))
 
 (asdf:defsystem #:autolith-protocol-client
-  :description             "Explicit-stream agent client for the parent session protocol."
+  :description             "Explicit-stream agent client for parent session and model protocols."
   :version                 (:read-file-line "VERSION")
   :license                 "ISC"
   :depends-on              (#:autolith-agent #:autolith-supervisor/protocol)
   :default-component-class autolith-source-file
-  :components              ((:file "src/agent/protocol-client"))
+  :serial                  t
+  :components              ((:file "src/agent/protocol-client")
+                            (:file "src/agent/protocol-model-client"))
   :in-order-to             ((asdf:test-op (asdf:test-op #:autolith-protocol-client/tests))))
 
 (asdf:defsystem #:autolith-protocol-client/tests
@@ -18,6 +20,9 @@
   :depends-on              (#:autolith-protocol-client #:autolith-supervisor/protocol/tests
                             #:autolith-supervisor/session)
   :default-component-class autolith-source-file
-  :components              ((:file "src/agent/protocol-client-tests"))
+  :serial                  t
+  :components              ((:file "src/agent/protocol-client-tests")
+                            (:file "src/agent/protocol-model-client-tests"))
   :perform                 (asdf:test-op (operation component)
-                             (uiop:symbol-call '#:autolith '#:run-agent-protocol-tests)))
+                             (uiop:symbol-call '#:autolith '#:run-agent-protocol-tests)
+                             (uiop:symbol-call '#:autolith '#:run-agent-protocol-model-tests)))

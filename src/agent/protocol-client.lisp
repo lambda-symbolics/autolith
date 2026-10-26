@@ -32,8 +32,10 @@
    (pending :initform      (make-hash-table)
             :reader        agent-protocol-client-pending
             :documentation "Outstanding local request IDs and their expected response data.")
+   (model-terminals :initform (make-hash-table) :reader agent-protocol-client-model-terminals
+                    :documentation "Terminal model request IDs retained for repeated cancellation.")
    (welcome :initform nil :accessor agent-protocol-client-welcome
-            :documentation "The accepted parent Welcome, available before initialization.")
+             :documentation "A private copy of the accepted Welcome, available before initialization.")
    (turn :initform nil :accessor agent-protocol-client-turn
          :documentation "The active parent TurnStart envelope, if any.")
    (stop :initform nil :accessor agent-protocol-client-stop
@@ -42,8 +44,8 @@
                   :documentation "The largest durable session sequence observed."))
   (:documentation "An optional explicit-stream client. No startup or service adapter is installed.
 Use AGENT-PROTOCOL-HANDSHAKE with an initialization callback, then call
-AGENT-PROTOCOL-RECEIVE from exactly one reader. Session calls return request IDs;
-receive returns correlated replies and lifecycle messages. Finish each accepted
+AGENT-PROTOCOL-RECEIVE from exactly one reader. Session and model calls return
+request IDs; receive returns correlated replies, model events and lifecycle messages. Finish each accepted
 turn and stop obligation explicitly. A disconnect never authorizes an effect retry."))
 
 (define-condition agent-protocol-error (error)
@@ -52,6 +54,11 @@ turn and stop obligation explicitly. A disconnect never authorizes an effect ret
   (:documentation "A local agent client state or peer semantic failure.")
   (:report (lambda (condition stream)
              (format stream "Agent protocol failed: ~a." (agent-protocol-error-reason condition)))))
+
+(-> agent-protocol--message-copy (t) t)
+(defun agent-protocol--message-copy (message)
+  "Detach bounded protocol data before exposing another copy to the caller."
+  (cl-protobufs:deserialize-from-bytes (type-of message) (cl-protobufs:serialize-to-bytes message)))
 
 (-> agent-protocol-open (stream stream string) agent-protocol-client)
 (defun agent-protocol-open (input output instance-id)
@@ -206,11 +213,18 @@ Keep old entries so retries and later pages cannot erase evidence of a conflict.
   nil)
 
 (-> agent-protocol-handshake
-    (agent-protocol-client &key (:initialize function) (:timeout (real (0)))) agent-wire:welcome)
-(defun agent-protocol-handshake (client &key (initialize #'identity) (timeout 30))
-  "Offer only implemented session.v1, validate Welcome, initialize, then send Ready.
+    (agent-protocol-client &key (:initialize function) (:timeout (real (0))) (:features list)) agent-wire:welcome)
+(defun agent-protocol-handshake (client &key (initialize #'identity) (timeout 30)
+                                           (features '("session.v1")))
+  "Offer implemented FEATURES, validate Welcome, initialize, then send Ready.
 Call INITIALIZE with Welcome before Ready. Do not read the channel in that callback.
 The deadline covers I/O and initialization. Return the accepted Welcome."
+  (unless (and (member "session.v1" features :test #'equal)
+               (= (length features) (length (remove-duplicates features :test #'equal)))
+               (subsetp features '("session.v1" "model.v1" "model-items-v1") :test #'equal)
+               (eq (not (null (member "model.v1" features :test #'equal)))
+                   (not (null (member "model-items-v1" features :test #'equal)))))
+    (error 'agent-protocol-error :reason ':unsupported-features))
   (agent-protocol--claim-reader client)
   (unwind-protect
       (handler-case
@@ -220,9 +234,8 @@ The deadline covers I/O and initialization. Return the accepted Welcome."
               (error 'agent-protocol-error :reason ':handshake-already-started))
             (setf (autolith-supervisor::parent-connection-phase client) ':awaiting-welcome))
          (agent-protocol--write client
-                                (agent-wire:make-envelope :hello
-                                                          (agent-wire:make-hello :features
-                                                                                 '("session.v1"))))
+                                  (agent-wire:make-envelope :hello
+                                                           (agent-wire:make-hello :features features)))
          (multiple-value-bind (envelope bytes)
              (autolith-supervisor::parent-connection-receive client)
            (let ((welcome (agent-wire:envelope.welcome envelope)))
@@ -230,9 +243,13 @@ The deadline covers I/O and initialization. Return the accepted Welcome."
                  (and welcome (agent-wire:envelope.has-reply-to envelope)
                       (= 1 (agent-wire:envelope.reply-to envelope)))
                (agent-protocol--fatal client ':invalid-welcome))
-             (autolith-supervisor::parent-connection--validate-welcome welcome '("session.v1"))
+             (autolith-supervisor::parent-connection--validate-welcome welcome features)
+             (let ((selected (agent-wire:welcome.features welcome)))
+               (unless (eq (not (null (member "model.v1" selected :test #'equal)))
+                           (not (null (member "model-items-v1" selected :test #'equal))))
+                 (agent-protocol--fatal client ':invalid-welcome)))
              (setf (autolith-supervisor::parent-connection-limits client)
-                   (agent-wire:welcome.limits welcome))
+                   (agent-protocol--message-copy (agent-wire:welcome.limits welcome)))
              (let ((limits (agent-wire:welcome.limits welcome)))
                (autolith-supervisor::protocol-validate-protobuf bytes 'agent-wire:envelope
                                                                 :max-bytes
@@ -257,7 +274,7 @@ The deadline covers I/O and initialization. Return the accepted Welcome."
                                (agent-wire:grant.operations grant)))
                  (agent-protocol--fatal client ':invalid-grant)))
              (agent-protocol--page client (agent-wire:welcome.resume welcome) 0)
-             (setf (agent-protocol-client-welcome client) welcome)
+             (setf (agent-protocol-client-welcome client) (agent-protocol--message-copy welcome))
              (funcall initialize welcome)
              (agent-protocol--write client
                                     (agent-wire:make-envelope :reply-to
@@ -328,8 +345,8 @@ Wait for its matching SessionAck before executing effects or reporting durabilit
 
 (-> agent-protocol-receive (agent-protocol-client) (or null agent-wire:envelope))
 (defun agent-protocol-receive (client)
-  "Read one envelope from the sole reader. Return session replies or lifecycle messages.
-A returned Failure terminates its correlated session request. Return NIL after
+  "Read one envelope from the sole reader. Return replies, model events or lifecycle messages.
+A returned Failure terminates its correlated request. Return NIL after
 rejecting an invalid request, or ignoring an inactive cancellation. Check the
 active turn ID before acting on cancellation. Concurrent reads fail before I/O.
 Do not retry effects after disconnect."
@@ -352,7 +369,7 @@ Do not retry effects after disconnect."
                                 (null (agent-protocol-client-stop client))
                                 (plusp (length (agent-wire:turn-start.turn-id turn)))
                                 (plusp (agent-wire:turn-start.input-sequence turn)))
-                           (setf (agent-protocol-client-turn client) envelope)
+                           (setf (agent-protocol-client-turn client) (agent-protocol--message-copy envelope))
                            (progn (setf accepted nil) (setf rejection ':invalid-request)))))
                     (agent-wire:turn-cancel
                      (let ((id
@@ -369,7 +386,7 @@ Do not retry effects after disconnect."
                     (agent-wire:prepare-stop
                      (if (agent-protocol-client-stop client)
                          (progn (setf accepted nil) (setf rejection ':invalid-request))
-                         (setf (agent-protocol-client-stop client) envelope)))
+                         (setf (agent-protocol-client-stop client) (agent-protocol--message-copy envelope))))
                     (otherwise
                      (setf accepted nil) (setf rejection ':unsupported))))))
           (progn
@@ -378,12 +395,23 @@ Do not retry effects after disconnect."
        (error (condition) (agent-protocol-close client) (error condition)))
     (agent-protocol--release-reader client)))
 
-(-> agent-protocol--response (agent-protocol-client agent-wire:envelope symbol) null)
-(defun agent-protocol--response (client envelope body)
-  "Validate and retire one session response. Caller holds the state lock."
-  (let* ((id       (agent-wire:envelope.reply-to envelope))
-         (expected (gethash id (agent-protocol-client-pending client))))
-    (unless (and expected (or (eq body (first expected)) (eq body 'agent-wire:failure)))
+(defgeneric agent-protocol--response-data (client envelope expected)
+  (:documentation "Validate a correlated response under the state lock; return true only at its terminal reply."))
+
+(-> agent-protocol--failure (agent-protocol-client agent-wire:failure) null)
+(defun agent-protocol--failure (client failure)
+  "Require a defined failure category without using peer report text."
+  (unless (and failure
+               (member (agent-wire:failure.code failure)
+                       '(:invalid-request :permission-denied :revision-conflict :unsupported
+                         :resource-limit :cancelled :unavailable :internal)))
+    (agent-protocol--fatal client ':invalid-failure))
+  nil)
+
+(defmethod agent-protocol--response-data (client envelope (expected cons))
+  "Validate one terminal session response. Caller holds the client state lock."
+  (let ((body (agent-wire:envelope.body-case envelope)))
+    (unless (or (eq body (first expected)) (eq body 'agent-wire:failure))
       (agent-protocol--fatal client ':unexpected-response))
     (case body
       (agent-wire:session-page
@@ -404,12 +432,18 @@ Do not retry effects after disconnect."
                 (max (agent-protocol-client-last-sequence client)
                      (agent-wire:session-ack.sequence ack))))))
       (agent-wire:failure
-       (unless
-           (member (agent-wire:failure.code (agent-wire:envelope.failure envelope))
-                   '(:invalid-request :permission-denied :revision-conflict :unsupported
-                     :resource-limit :cancelled :unavailable :internal))
-         (agent-protocol--fatal client ':invalid-failure))))
-    (remhash id (agent-protocol-client-pending client)))
+       (agent-protocol--failure client (agent-wire:envelope.failure envelope)))))
+  t)
+
+(-> agent-protocol--response (agent-protocol-client agent-wire:envelope symbol) null)
+(defun agent-protocol--response (client envelope body)
+  "Route one correlated response. Caller holds the state lock."
+  (declare (ignore body))
+  (let* ((id       (agent-wire:envelope.reply-to envelope))
+         (expected (gethash id (agent-protocol-client-pending client))))
+    (unless expected (agent-protocol--fatal client ':unexpected-response))
+    (when (agent-protocol--response-data client envelope expected)
+      (remhash id (agent-protocol-client-pending client))))
   nil)
 
 (-> agent-protocol-finish-turn (agent-protocol-client keyword) null)
