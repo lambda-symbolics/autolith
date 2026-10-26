@@ -5,6 +5,7 @@ ql clingon 2026-01-01
 ql closer-mop 2026-01-01
 ql dexador 2026-01-01
 ql fiveam 2026-01-01
+ql float-features 2026-01-01
 ql ironclad 2026-01-01
 ql nyaml 2026-01-01
 ql opticl 2022-02-20
@@ -58,3 +59,4 @@ git yolokuva https://github.com/lambda-symbolics/yolokuva.git :ref 1a6e6e68b8d18
 git defingerprinter https://github.com/chakanysystems/defingerprinter.git :ref ade272f23397fc1791b5c0a9b1046407cbe39e04
 git trivial-glob https://github.com/fukamachi/trivial-glob.git :ref 0c2675d9452ed164970f2fc4a0e41784ebee819a
 git mallet https://github.com/fukamachi/mallet.git :ref 553c9092239e8a215dfb88650cc8facd2569be2b
+git cl-protobufs https://github.com/qitab/cl-protobufs.git :ref 22ad35bfb4850b3d0a1d6bcae91c5dc8640d09c4

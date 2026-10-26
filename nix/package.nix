@@ -48,7 +48,7 @@ let
   # instead of quietly shipping a release that never loaded it.
   qlotLibrariesWithBuildMetadata = [
     "agentcomms" "argo" "cl+ssl" "cl-colorist" "cl-exec-sandbox" "cl-hashline" "cl-jobpond"
-    "cl-llm-provider-api" "cl-lsp" "cl-resources" "cl-rfc8252" "cl-rfc8628"
+    "cl-llm-provider-api" "cl-lsp" "cl-protobufs" "cl-resources" "cl-rfc8252" "cl-rfc8628"
     "cl-skills" "cl-termdown" "cl-worktree" "clasted" "clermaid" "clifff" "clinedi"
     "clinker-transcript" "colordiff" "colorlisp" "daphne" "defingerprinter" "fetch-gist"
     "idsmall" "image-daemon" "lambda-debugger" "ls-compat" "ls-flock" "mallet" "mcparen"
@@ -607,12 +607,52 @@ let
       plump
     ];
   };
-
+  clProtobufsSource = (qlotSource "cl-protobufs") // {
+    name = "cl-protobufs-source";
+  };
+  protobufLispPlugin = pkgs.stdenv.mkDerivation {
+    pname = "protoc-gen-cl-pb";
+    version = qlotVersion "cl-protobufs";
+    src = clProtobufsSource;
+    nativeBuildInputs = [ pkgs.cmake ];
+    buildInputs = [ pkgs.protobuf pkgs.abseil-cpp ];
+    configurePhase = ''
+      runHook preConfigure
+      cmake -S protoc -B build -DCMAKE_CXX_STANDARD=17 \
+        -DCMAKE_INCLUDE_CURRENT_DIR=ON -DCMAKE_INSTALL_PREFIX="$out"
+      runHook postConfigure
+    '';
+    buildPhase = ''
+      runHook preBuild
+      cmake --build build --parallel "$NIX_BUILD_CORES"
+      runHook postBuild
+    '';
+    installPhase = ''
+      runHook preInstall
+      cmake --install build
+      runHook postInstall
+    '';
+  };
+  clProtobufs = pkgs.sbcl.buildASDFSystem {
+    pname = "cl-protobufs";
+    version = qlotVersion "cl-protobufs";
+    src = clProtobufsSource;
+    systems = [ "cl-protobufs.asdf" "cl-protobufs" ];
+    lispLibs = with lispPackages; [
+      closer-mop alexandria trivial-garbage cl-base64 local-time float-features
+    ];
+    nativeBuildInputs = [ protobufLispPlugin pkgs.protobuf pkgs.sbcl ];
+    postPatch = ''
+      HOME="$TMPDIR" ${pkgs.sbcl}/bin/sbcl --no-sysinit --no-userinit \
+        --script ${src}/script/build-protobufs.lisp \
+        --patch-only --dependency-root "$PWD/"
+    '';
+  };
   autolithSystem = pkgs.sbcl.buildASDFSystem {
     pname = "autolith";
     version = lib.removeSuffix "\n" (builtins.readFile "${src}/VERSION");
     inherit src;
-    systems = [ "autolith-agent" "autolith-supervisor" "autolith" "autolith/tests" "autolith/structural" "autolith/debug" ];
+    systems = [ "autolith-protocol" "autolith-agent" "autolith-supervisor" "autolith" "autolith/tests" "autolith/structural" "autolith/debug" ];
     lispLibs = with lispPackages; [
       agentcomms
       argo
@@ -643,6 +683,7 @@ let
       clJobpond
       clLlmProviderApi
       clLsp
+      clProtobufs
       clResources
       clRfc8252
       clRfc8628
@@ -1026,7 +1067,7 @@ pkgs.writeShellApplication {
   };
 
   passthru = {
-    inherit qlotGitSources;
+    inherit qlotGitSources clProtobufs protobufLispPlugin;
     inherit defingerprinter defingerprinterNative defingerprinterSupported defingerprinterChecks;
     tests.defingerprinter = defingerprinterChecks;
     inherit autolithSystem clColorist clExecSandbox clifff clinedi clJobpond

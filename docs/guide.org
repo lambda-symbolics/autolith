@@ -580,11 +580,18 @@ release metadata after the host checksum is available. See
 For a fresh macOS machine:
 
 #+BEGIN_SRC sh
-brew install sbcl rust cmake pkg-config openssl@3
+brew install sbcl rust cmake pkg-config openssl@3 protobuf abseil
 curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
 sbcl --no-sysinit --no-userinit --load /tmp/quicklisp.lisp \
   --eval '(quicklisp-quickstart:install)' --quit
 #+END_SRC
+
+Install a C++17 compiler, CMake, the full Protobuf development package (including
+=protoc= and =libprotoc=), and Abseil development files on each source build
+host. Set =CMAKE_PREFIX_PATH= when their CMake package files are outside the
+standard search paths. Bootstrap builds the pinned Common Lisp Protobuf plugin
+beside its installed Lisp dependency; binary and Nix users do not build it at
+startup. See [[file:../proto/README.org][Protocol bindings]] for regeneration and the packaging patch.
 
 On Linux, also install Bubblewrap with your distribution's package manager.
 Autolith uses its =bwrap= executable to isolate the host filesystem and network
@@ -636,7 +643,9 @@ paths; system-wide locale changes and 8.3 filenames are unnecessary. The first
 launch builds per-user cores under =.autolith-images= beside the release.
 
 To build the source checkout, install Git for Windows, Rust with the MSVC toolchain
-and Cargo, and Quicklisp under =%USERPROFILE%\quicklisp=. Put =clang= on
+and Cargo, CMake, the full Protobuf C++ package with =protoc= and =libprotoc=,
+Abseil, and Quicklisp under =%USERPROFILE%\quicklisp=. Supply the Protobuf and
+Abseil CMake installation prefixes through =CMAKE_PREFIX_PATH=. Put =clang= on
 =PATH= for the ColorLisp syntax library. An SBCL 2.6.6 or newer on =PATH= is
 used when present; otherwise the bootstrap downloads the official SBCL Windows
 binary pinned in =sbcl-windows-releases.sha256=, verifies its SHA-256, and

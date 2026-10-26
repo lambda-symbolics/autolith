@@ -30,6 +30,10 @@
  (:class qlot/source/ql:source-ql
   :initargs (:%version "2026-01-01")
   :version "ql-2024-10-12"))
+("float-features" .
+ (:class qlot/source/ql:source-ql
+  :initargs (:%version "2026-01-01")
+  :version "ql-2026-01-01"))
 ("ironclad" .
  (:class qlot/source/ql:source-ql
   :initargs (:%version "2026-01-01")
@@ -238,3 +242,7 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/fukamachi/mallet.git" :ref "553c9092239e8a215dfb88650cc8facd2569be2b")
   :version "git-553c9092239e8a215dfb88650cc8facd2569be2b"))
+("cl-protobufs" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/qitab/cl-protobufs.git" :ref "22ad35bfb4850b3d0a1d6bcae91c5dc8640d09c4")
+  :version "git-22ad35bfb4850b3d0a1d6bcae91c5dc8640d09c4"))

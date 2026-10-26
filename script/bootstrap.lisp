@@ -173,6 +173,10 @@ grandchild processes all land under the rail."
            (pushnew profile-library-directory
                     (symbol-value library-directories)
                     :test #'equal)))))
+    (bootstrap-section "Building the Protobuf Lisp generator")
+    (bootstrap-call-railed
+     (lambda ()
+       (load (merge-pathnames "script/build-protobufs.lisp" source-root))))
     (bootstrap-section "Building the private command sandbox helper")
     (bootstrap-call-railed
      (lambda ()

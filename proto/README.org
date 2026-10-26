@@ -1,0 +1,93 @@
+#+TITLE: Protocol bindings
+
+* Build
+
+The =autolith-protocol= ASDF system contains generated schema packages only.
+Load it from either the supervisor or the agent without loading the other
+system. The schemas are authoritative; regenerate =generated/value.lisp= and
+=generated/protocol.lisp= after changing a schema.
+
+Install CMake, a C++17 compiler, the full Protobuf C++ development package
+(including =protoc= and =libprotoc=), and Abseil. Use matching Protobuf headers,
+libraries, and compiler. Set =CMAKE_PREFIX_PATH= when necessary. The plugin
+build was checked with Protobuf 35.1 and Abseil 20260107.1 on macOS arm64.
+
+Run =./script/bootstrap= to materialize the locked dependency and build its
+plugin. On Windows, run =script\bootstrap.ps1=. Bootstrap installs the plugin
+under =.autolith-protoc/install/bin/= inside the installed =cl-protobufs=
+dependency. It also applies =script/cl-protobufs-asdf-patch.lisp= to that
+dependency with a complete-form replacement. The patch changes only the ASDF
+generator operation: pass argv elements instead of a shell string, supply each
+import directory separately, and select the private plugin. This permits paths
+with spaces and avoids platform-specific path-list separators. Remove the
+patch after adopting upstream support for these operations.
+
+Nix builds the same locked plugin as a native build input and applies the same
+ASDF patch. It compiles the upstream well-known schemas during the package
+build. The installed Lisp runtime does not execute the C++ plugin to handle
+messages. The =cl-protobufs= system includes well-known schemas and JSON support;
+it has no separate runtime-only subsystem.
+
+* Regenerate
+
+After bootstrap, run:
+
+#+BEGIN_SRC sh
+sbcl --script script/generate-protocol.lisp
+#+END_SRC
+
+Set =AUTOLITH_PROTOC_PLUGIN= to use an explicit plugin executable instead of the
+private build. Without a private build or that override, install
+=protoc-gen-cl-pb= on =PATH=. Regenerate one input per compiler invocation with
+=--cl-pb_out=output-file=NAME:DIRECTORY=. The script passes absolute paths as
+separate argv elements. Inspect the generated diff, then compile through ASDF:
+
+#+BEGIN_SRC lisp
+(load ".qlot/setup.lisp")
+(asdf:load-system :autolith-protocol :force t)
+#+END_SRC
+
+ASDF compiles the schema files before loading them. Loading the uncompiled
+source directly can produce temporary forward-type style warnings for recursive
+messages. A fresh forced ASDF compilation completed without warnings.
+
+* Lisp API
+
+The packages are =cl-protobufs.autolith.common.v1= and
+=cl-protobufs.autolith.parent.v1=. For example:
+
+#+BEGIN_SRC lisp
+(let* ((message
+         (cl-protobufs.autolith.parent.v1:make-envelope
+          :protocol-major 1 :instance-id "instance" :message-id 1
+          :hello (cl-protobufs.autolith.parent.v1:make-hello
+                  :features '("session.v1"))))
+       (bytes (cl-protobufs:serialize-to-bytes message))
+       (copy (cl-protobufs:deserialize-from-bytes
+              'cl-protobufs.autolith.parent.v1:envelope bytes)))
+  (values (cl-protobufs.autolith.parent.v1:envelope.body-case copy)
+          (cl-protobufs.autolith.parent.v1:envelope.has-reply-to copy)))
+#+END_SRC
+
+This returns the schema symbol =HELLO= and =nil=. Explicitly setting
+=:reply-to 0= preserves presence and serializes field 4 with value zero.
+Construct a Welcome body with =make-welcome= and read it through
+=envelope.welcome=, =welcome.limits=, and =limits.max-frame-bytes=.
+
+* Decoder boundary
+
+Apply the protocol's schema-aware byte validation before calling the library
+decoder. The library has no nesting, collection-entry, or parser-work budget.
+Execution probes accepted 64 nested values, 65537 repeated entries, a zero tag,
+and malformed integer varints. Invalid UTF-8 signalled an error on SBCL.
+Unknown fields survived decode/encode. A later oneof member replaced an earlier
+member. These observations do not replace the stricter requirements in
+[[file:../docs/parent-agent-protocol.org][Parent-Agent Protocol]].
+
+For descriptor-based validation, use =find-message-descriptor= with a message
+type symbol. =proto-fields= returns a list of ordinary fields. Add the fields
+from every =proto-oneofs= entry, including synthetic optional-field oneofs;
+=oneof-descriptor-fields= returns a vector. Inspect fields with =proto-index=,
+=proto-type=, =proto-kind=, and =proto-label=. For message fields, resolve
+=proto-type= with =find-message-descriptor=. The public
+=deserialize-from-bytes= entry is a function, not a generic function.
