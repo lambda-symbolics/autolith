@@ -14,6 +14,7 @@
   '("autolith-agent" "autolith-supervisor" "autolith-protocol"
     "autolith-supervisor/protocol" "autolith-supervisor/protocol/tests"
     "autolith-supervisor/session" "autolith-supervisor/session/tests"
+    "autolith-supervisor/model" "autolith-supervisor/model/tests"
     "autolith-protocol-client" "autolith-protocol-client/tests"
     "autolith" "autolith/checks" "autolith/tests"
     #-win32 "autolith/release-server"

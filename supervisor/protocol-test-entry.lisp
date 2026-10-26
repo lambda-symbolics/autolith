@@ -9,5 +9,6 @@
   (assert (not (find-package '#:autolith)))
   (asdf:test-system '#:autolith-supervisor/protocol :verbose nil)
   (asdf:test-system '#:autolith-supervisor/session :verbose nil)
+  (asdf:test-system '#:autolith-supervisor/model :verbose nil)
   (assert (not (find-package '#:autolith)))
   (write-line "Parent protocol checks passed without loading the agent."))

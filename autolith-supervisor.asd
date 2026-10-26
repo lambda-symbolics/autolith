@@ -75,3 +75,23 @@
   :perform                 (asdf:test-op (operation component)
                              (uiop:symbol-call '#:autolith-supervisor '#:run-session-store-tests)
                              (uiop:symbol-call '#:autolith-supervisor '#:run-session-dispatch-tests)))
+
+(asdf:defsystem #:autolith-supervisor/model
+  :description             "Parent-owned model profiles and semantic request projection."
+  :depends-on              (#:autolith-supervisor/protocol #:cl-llm-provider-api/wire #:cl-base64)
+  :default-component-class autolith-supervisor-source-file
+  :serial                  t
+  :components              ((:file "supervisor/model-profile")
+                            (:file "supervisor/model-projection"))
+  :in-order-to             ((asdf:test-op (asdf:test-op #:autolith-supervisor/model/tests))))
+
+(asdf:defsystem #:autolith-supervisor/model/tests
+  :description             "Model authority and family projection checks without agent code."
+  :depends-on              (#:autolith-supervisor/model)
+  :default-component-class autolith-supervisor-source-file
+  :serial                  t
+  :components              ((:file "supervisor/model-profile-tests")
+                            (:file "supervisor/model-projection-tests"))
+  :perform                 (asdf:test-op (operation component)
+                             (uiop:symbol-call '#:autolith-supervisor '#:run-model-profile-tests)
+                             (uiop:symbol-call '#:autolith-supervisor '#:run-model-projection-tests)))
