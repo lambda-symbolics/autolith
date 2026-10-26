@@ -2444,13 +2444,16 @@
     (let* ((source-configuration (test-configuration-for-source-root root))
            (identifier           (make-identifier))
            (loaded-name          (format nil "autolith/source-reader-~A-loaded" identifier))
-           (unloaded-name        (format nil "autolith/source-reader-~A-unloaded" identifier))
+           (unloaded-name        (format nil "autolith-source-reader-~A" identifier))
            (shared-pathname      (merge-pathnames "src/shared.lisp" root))
            (foreign-pathname     (merge-pathnames "src/foreign.lisp" root))
            (gated-pathname       (merge-pathnames "src/gated.lisp" root))
            (unowned-pathname     (merge-pathnames "src/unowned.lisp" root))
            (source               "(defun test-source-reader-shared () :shared)")
-           (unreadable           "(defun test-source-reader-unavailable () autolith-absent-optional-reader:value)"))
+           (unreadable           "(eval-when (:compile-toplevel :load-toplevel :execute)
+  (sb-ext:add-package-local-nickname \"ABSENT-SOURCE-WIRE\"
+                                     \"AUTOLITH-ABSENT-OPTIONAL-READER\"))
+(defun test-source-reader-unavailable () absent-source-wire:value)"))
       (unwind-protect
            (progn
              (test-assert (null (find-package "AUTOLITH-ABSENT-OPTIONAL-READER"))
@@ -2467,9 +2470,15 @@
                       :components ((:file "src/shared")
                                    (:file       "src/gated"
                                     :if-feature :autolith-absent-source-reader-feature))))
-             (eval `(asdf:defsystem ,unloaded-name
-                      :pathname ,root
-                      :components ((:file "src/shared") (:file "src/foreign"))))
+             (with-open-file
+                 (stream (merge-pathnames (format nil "~A.asd" unloaded-name) root)
+                         :direction ':output)
+               (write `(asdf:defsystem ,unloaded-name
+                         :components ((:file "src/shared") (:file "src/foreign")))
+                      :stream stream))
+             (test-assert
+              (not (member unloaded-name (asdf:registered-systems) :test #'string-equal))
+              "the optional source owner has not yet been discovered")
              (test-assert
               (null (self-tracked-definitions source-configuration
                                              'test-source-reader-shared))
@@ -2487,6 +2496,15 @@
               (null (self-tracked-definitions source-configuration
                                              'test-source-reader-unavailable))
               "unloaded dependency and feature-gated source are not read")
+             (test-assert
+              (and (not (member unloaded-name (asdf:already-loaded-systems)
+                                :test #'string-equal))
+                   (null (find-package "AUTOLITH-ABSENT-OPTIONAL-READER"))
+                   (null (assoc "ABSENT-SOURCE-WIRE"
+                                (sb-ext:package-local-nicknames
+                                 (find-package '#:autolith))
+                                :test #'string=)))
+              "source lookup does not load optional code or create reader packages")
              (with-open-file (stream unowned-pathname :direction ':output)
                (write-string unreadable stream))
              (test-assert

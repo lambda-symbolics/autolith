@@ -1112,17 +1112,19 @@ dependency), which counts only when its feature expression holds."
     (&key (root (asdf:system-source-directory (asdf:find-system "autolith-agent"))))
   "Return source paths unavailable in this image through ASDF component boundaries.
 
-Feature-withheld components and unloaded optional Autolith systems may refer to
-packages absent from this image. Do not read those files during source lookup.
+Feature-withheld components and unloaded optional systems in ROOT may refer to
+packages or package-local nicknames absent from this image. Use their registered
+ASDF component metadata without loading modules or reading their source.
 Files shared with a loaded system are available through that system."
-  ;; Discover optional systems' components without loading their dependencies.
-  (asdf:find-system "autolith" nil)
+  ;; Read only local system definitions, never their optional module source.
+  (dolist (pathname (uiop:directory-files root "*.asd"))
+    (asdf:load-asd pathname))
   (let* ((loaded    (asdf:already-loaded-systems))
          (systems   (loop for name in (asdf:registered-systems)
-                          when (or (string= name "autolith")
-                                   (string= name "autolith-agent")
-                                   (uiop:string-prefix-p "autolith/" name))
-                            collect (asdf:find-system name)))
+                          for system = (asdf:find-system name)
+                          when (uiop:pathname-equal
+                                (asdf:component-pathname system) root)
+                            collect system))
          (available (mapcan #'self-source--component-pathnames
                             (remove-if-not
                              (lambda (component)
