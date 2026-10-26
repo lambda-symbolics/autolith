@@ -1514,5 +1514,6 @@
   test-source-mallet-findings
   test-source-warning-run
   test-source-warning-ownership
+  test-source-path-discovery
   test-source-system-discovery
   test-source-system-platform-support)

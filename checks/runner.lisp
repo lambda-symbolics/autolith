@@ -46,16 +46,17 @@
 
 (-> source-check-paths (pathname) list)
 (defun source-check-paths (root)
-  "Return the repository-relative paths of ROOT's tracked files that rules inspect."
-  (remove-if-not (lambda (path)
-                   (member (pathname-type path) *source-text-file-types* :test #'equal))
-                 (remove ""
-                         (uiop:split-string
-                          (uiop:run-program (list "git" "-C" (uiop:native-namestring root)
-                                                  "ls-files" "-z")
-                                            :output ':string)
-                          :separator (list (code-char 0)))
-                         :test #'equal)))
+  "Return repository-relative source paths from ROOT's Git or Jujutsu file list."
+  (let ((command (if (probe-file (merge-pathnames ".jj/" root))
+                     '("jj" "--ignore-working-copy" "file" "list" "-T" "path ++ \"\\0\"")
+                     '("git" "ls-files" "-z"))))
+    (remove-if-not (lambda (path)
+                     (member (pathname-type path) *source-text-file-types* :test #'equal))
+                   (remove ""
+                           (uiop:split-string
+                            (uiop:run-program command :directory root :output ':string)
+                            :separator (list (code-char 0)))
+                           :test #'equal))))
 
 (-> source-check-system-paths (pathname) hash-table)
 (defun source-check-system-paths (root)

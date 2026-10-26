@@ -451,6 +451,37 @@
                    "diagnostics without a current file are retained")))
   nil)
 
+(-> test-source-path-discovery () null)
+(defun test-source-path-discovery ()
+  "Select the workspace file list and decode source paths without splitting whitespace."
+  (dolist (backend '(:git :jj :colocated))
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (when (member backend '(:git :colocated))
+        (source-check-tests--write root ".git" "gitdir: elsewhere"))
+      (when (member backend '(:jj :colocated))
+        (ensure-directories-exist (merge-pathnames ".jj/" root)))
+      (let* ((paths    (list "src/a.lisp" "docs/with space.org"
+                            (format nil "docs/with~%newline.org") "native/object.o"))
+             (expected (butlast paths))
+             (calls    0))
+        (test-call-with-function-replacements
+         (list (list 'uiop:run-program
+                     (lambda (command &key directory output)
+                       (incf calls)
+                       (test-assert (equal (first command) (if (eq backend ':git) "git" "jj"))
+                                    "the workspace metadata selects the file-list backend")
+                       (test-assert (uiop:pathname-equal directory root)
+                                    "file names are relative to the inspected workspace")
+                       (test-assert (eq output ':string) "the file list is captured")
+                       (format nil "~{~A~C~}"
+                               (loop for path in paths append (list path (code-char 0)))))))
+         (lambda ()
+           (test-assert (equal (source-check-paths root) expected)
+                        "source extensions are selected from NUL-delimited paths")))
+        (test-assert (= calls 1) "discovery runs one file-list command"))))
+  nil)
+
 (-> test-source-system-discovery () null)
 (defun test-source-system-discovery ()
   "Discover component sources without resetting the loaded agent or loading the supervisor."
