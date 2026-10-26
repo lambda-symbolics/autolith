@@ -13,9 +13,9 @@
            (merge-pathnames
             (concatenate 'string ".autolith-protoc/install/bin/" plugin-name)
             (asdf:system-source-directory :cl-protobufs)))
-         (plugin (or (uiop:getenvp "AUTOLITH_PROTOC_PLUGIN")
-                     (and (probe-file private-plugin)
-                          (uiop:native-namestring private-plugin))))
+         (plugin      (or (uiop:getenvp "AUTOLITH_PROTOC_PLUGIN")
+                          (and (probe-file private-plugin)
+                               (uiop:native-namestring private-plugin))))
          (command
            (append
             (list "protoc")
@@ -32,13 +32,13 @@
                   (uiop:native-namestring source-file)
                   "--experimental_allow_proto3_optional"))))
     (multiple-value-bind (output error-output status)
-        (uiop:run-program command :output '(:string :stripped t)
-                                 :error-output :output
+        (uiop:run-program command :output             '(:string :stripped t)
+                                 :error-output        :output
                                  :ignore-error-status t)
       (declare (ignore error-output))
       (unless (zerop status)
         (error 'protobuf-compile-failed
-               :description (format nil "Failed to compile proto file. Command: ~S Error: ~S"
-                                    command output)
-               :context-format "~/asdf-action::format-action/"
+               :description       (format nil "Failed to compile proto file. Command: ~S Error: ~S"
+                                          command output)
+               :context-format    "~/asdf-action::format-action/"
                :context-arguments `((,operation . ,component)))))))

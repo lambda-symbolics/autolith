@@ -1,20 +1,20 @@
 (require :asdf)
 
 (let* ((script-root (uiop:pathname-directory-pathname *load-truename*))
-       (root (uiop:pathname-parent-directory-pathname script-root))
-       (setup (merge-pathnames ".qlot/setup.lisp" root)))
+       (root        (uiop:pathname-parent-directory-pathname script-root))
+       (setup       (merge-pathnames ".qlot/setup.lisp" root)))
   (load setup)
   (let* ((dependency-root (asdf:system-source-directory :cl-protobufs))
-         (plugin-name (if (uiop:os-windows-p)
-                          "protoc-gen-cl-pb.exe"
-                          "protoc-gen-cl-pb"))
+         (plugin-name     (if (uiop:os-windows-p)
+                              "protoc-gen-cl-pb.exe"
+                              "protoc-gen-cl-pb"))
          (private-plugin
            (merge-pathnames
             (concatenate 'string ".autolith-protoc/install/bin/" plugin-name)
             dependency-root))
-         (plugin (or (uiop:getenvp "AUTOLITH_PROTOC_PLUGIN")
-                     (and (probe-file private-plugin)
-                          (uiop:native-namestring private-plugin)))))
+         (plugin          (or (uiop:getenvp "AUTOLITH_PROTOC_PLUGIN")
+                              (and (probe-file private-plugin)
+                                   (uiop:native-namestring private-plugin)))))
     (dolist (spec '(("autolith/common/v1/value.proto" "value.lisp")
                     ("autolith/parent/v1/protocol.proto" "protocol.lisp")))
       (uiop:run-program
