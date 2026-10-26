@@ -4,52 +4,8 @@ package autolith.parent.v1;
 
 import "autolith/common/v1/value.proto";
 
-// Private supervisor-agent protocol, not a remote-control service.
-// Directions, validation, durability, and restart rules: docs/parent-agent-protocol.org.
-message Envelope {
-  uint32 protocol_major = 1;
-  string instance_id = 2;
-  uint64 message_id = 3;
-  optional uint64 reply_to = 4;
-  oneof body {
-    Hello hello = 10;
-    Welcome welcome = 11;
-    Ready ready = 12;
-    TurnStart turn_start = 13;
-    TurnCancel turn_cancel = 14;
-    TurnFinish turn_finish = 15;
-    SessionRead session_read = 16;
-    SessionPage session_page = 17;
-    SessionAppend session_append = 18;
-    SessionAck session_ack = 19;
-    ModelStart model_start = 20;
-    ModelEvent model_event = 21;
-    CancelRequest cancel_request = 22;
-    CancelAck cancel_ack = 23;
-    RecordRequest record_request = 24;
-    RecordResponse record_response = 25;
-    AccessRequest access_request = 26;
-    AccessDecision access_decision = 27;
-    PrepareStop prepare_stop = 28;
-    ReadyToStop ready_to_stop = 29;
-    Failure failure = 30;
-    Output output = 31;
-  }
-}
-
 message Hello {
   repeated string features = 1;
-}
-
-message Welcome {
-  string session_id = 1;
-  uint64 policy_revision = 2;
-  repeated Grant active_grants = 3;
-  repeated string features = 4;
-  Limits limits = 5;
-  autolith.common.v1.ValueMap configuration = 6;
-  // Parent-owned resume data, never a Lisp heap or an agent-provided authority record.
-  SessionPage resume = 7;
 }
 
 message Limits {
@@ -139,6 +95,22 @@ message ModelStart {
   optional double temperature = 6;
   // Parent-issued handle for provider-specific continuation state.
   optional string continuation_handle = 7;
+  // Requires model-items-v1. Do not combine items with messages.
+  repeated TranscriptItem items = 8;
+  repeated string stable_prefix = 9;
+  repeated string request_suffix = 10;
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    GENERATE = 1;
+    NATIVE_COMPACTION = 2;
+  }
+  Kind kind = 11;
+  optional string reasoning_effort = 12;
+  optional string reasoning_summary = 13;
+  repeated HostedTool hosted_tools = 14;
+  // Parent-issued per-user-turn routing state, not a raw provider token.
+  optional string turn_state_handle = 15;
+  optional bool tool_discovery = 16;
 }
 
 message ConversationMessage {
@@ -173,18 +145,94 @@ message ToolDefinition {
   string name = 1;
   string description = 2;
   autolith.common.v1.ValueMap input_schema = 3;
+  string namespace = 4;
+  string namespace_description = 5;
+  bool deferred = 6;
+  optional bool strict = 7;
 }
 
 message ToolCall {
   string call_id = 1;
   string name = 2;
   autolith.common.v1.ValueMap arguments = 3;
+  string namespace = 4;
+  // Exactly one argument representation; preserve malformed provider JSON.
+  optional string arguments_json = 5;
 }
 
 message ToolResult {
   string call_id = 1;
   autolith.common.v1.Value content = 2;
   bool is_error = 3;
+}
+
+// Parent profile IDs select hosted tools; no transport configuration is accepted.
+message HostedTool {
+  string capability_id = 1;
+}
+
+// New input items are logical data. Replay refers to an unchanged parent item.
+message TranscriptItem {
+  oneof item {
+    ConversationMessage message = 1;
+    ToolCall tool_call = 2;
+    ToolResult tool_result = 3;
+    ToolDiscoveryResult tool_discovery_result = 4;
+    string replay_handle = 5;
+  }
+}
+
+message ToolDiscoveryResult {
+  string call_id = 1;
+  repeated ToolDefinition tools = 2;
+}
+
+// The handle is authoritative for replay; the view is for agent reasoning/UI.
+// Parent retains the original item, including signatures and encrypted content.
+message OutputItem {
+  uint32 item_index = 1;
+  string replay_handle = 2;
+  string family = 3;
+  oneof view {
+    ConversationMessage message = 4;
+    ToolCall tool_call = 5;
+    ToolCall tool_discovery_call = 6;
+    ReasoningView reasoning = 7;
+    HostedToolView hosted_tool = 8;
+    CompactionView compaction = 9;
+  }
+}
+
+message ReasoningView {
+  string text = 1;
+}
+
+message HostedToolView {
+  string capability_id = 1;
+  string status = 2;
+  repeated ContentBlock content = 3;
+}
+
+message CompactionView {
+  optional string summary = 1;
+}
+
+message ResponseMetadata {
+  optional string model = 1;
+  optional string finish_reason = 2;
+  optional uint64 cache_write_tokens = 3;
+  bool usage_observed = 4;
+}
+
+message AttemptStarted {
+  uint32 maximum_attempts = 1;
+  // Zero for the first attempt; delay before a retry begins.
+  uint64 delay_milliseconds = 2;
+}
+
+message ModelProgress {
+  string phase = 1;
+  string text = 2;
 }
 
 message ModelEvent {
@@ -194,7 +242,14 @@ message ModelEvent {
     ToolCallDelta tool_call_delta = 3;
     ModelComplete complete = 4;
     Failure failed = 5;
+    OutputItem item_completed = 6;
+    ResponseMetadata metadata = 7;
+    AttemptStarted attempt_started = 8;
+    AttemptFailed attempt_failed = 9;
+    ModelProgress progress = 10;
   }
+  // One-based attempt identity; index remains monotonic across all attempts.
+  uint32 attempt = 11;
 }
 
 message TextDelta {
@@ -208,6 +263,17 @@ message ToolCallDelta {
   string call_id = 2;
   string name = 3;
   string arguments_json_delta = 4;
+  string namespace = 5;
+  bool tool_discovery = 6;
+}
+
+message Usage {
+  optional uint64 input_tokens = 1;
+  optional uint64 output_tokens = 2;
+  optional uint64 cached_input_tokens = 3;
+  optional uint64 cache_write_tokens = 4;
+  // Exact bounded portable usage object from the provider, not request options.
+  autolith.common.v1.ValueMap provider_usage = 5;
 }
 
 message ModelComplete {
@@ -222,12 +288,23 @@ message ModelComplete {
   }
   Reason reason = 3;
   optional string continuation_handle = 4;
-}
-
-message Usage {
-  optional uint64 input_tokens = 1;
-  optional uint64 output_tokens = 2;
-  optional uint64 cached_input_tokens = 3;
+  // With model-items-v1, message is absent and output_items is authoritative.
+  repeated OutputItem output_items = 5;
+  optional string response_id = 6;
+  ResponseMetadata metadata = 7;
+  enum TurnCompletion {
+    TURN_COMPLETION_UNSPECIFIED = 0;
+    ENDED = 1;
+    CONTINUED = 2;
+  }
+  TurnCompletion turn_completion = 8;
+  optional string turn_state_handle = 9;
+  enum CompactionOutcome {
+    COMPACTION_OUTCOME_UNSPECIFIED = 0;
+    COMPACTED = 1;
+    UNSUPPORTED = 2;
+  }
+  CompactionOutcome compaction_outcome = 10;
 }
 
 message CancelRequest {
@@ -353,4 +430,56 @@ message Failure {
   Code code = 1;
   string message = 2;
   bool retryable = 3;
+}
+
+
+message AttemptFailed {
+  uint64 elapsed_seconds = 1;
+  bool output_received = 2;
+  bool retryable = 3;
+  Failure failure = 4;
+}
+
+message Welcome {
+  string session_id = 1;
+  uint64 policy_revision = 2;
+  repeated Grant active_grants = 3;
+  repeated string features = 4;
+  Limits limits = 5;
+  autolith.common.v1.ValueMap configuration = 6;
+  // Parent-owned resume data, never a Lisp heap or an agent-provided authority record.
+  SessionPage resume = 7;
+}
+
+// Private supervisor-agent protocol, not a remote-control service.
+// Directions, validation, durability, and restart rules: docs/parent-agent-protocol.org.
+message Envelope {
+  uint32 protocol_major = 1;
+  string instance_id = 2;
+  uint64 message_id = 3;
+  optional uint64 reply_to = 4;
+  oneof body {
+    Hello hello = 10;
+    Welcome welcome = 11;
+    Ready ready = 12;
+    TurnStart turn_start = 13;
+    TurnCancel turn_cancel = 14;
+    TurnFinish turn_finish = 15;
+    SessionRead session_read = 16;
+    SessionPage session_page = 17;
+    SessionAppend session_append = 18;
+    SessionAck session_ack = 19;
+    ModelStart model_start = 20;
+    ModelEvent model_event = 21;
+    CancelRequest cancel_request = 22;
+    CancelAck cancel_ack = 23;
+    RecordRequest record_request = 24;
+    RecordResponse record_response = 25;
+    AccessRequest access_request = 26;
+    AccessDecision access_decision = 27;
+    PrepareStop prepare_stop = 28;
+    ReadyToStop ready_to_stop = 29;
+    Failure failure = 30;
+    Output output = 31;
+  }
 }

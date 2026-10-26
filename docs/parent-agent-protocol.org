@@ -137,9 +137,10 @@ For model and access streams, all events reply to the original request.
 =ModelEvent.index= starts at 1 and increments by one. A model stream ends with
 exactly one =complete= or =failed= event. A rejected =ModelStart= may instead
 receive a direct =Failure= before the stream begins. Complete contains the
-assembled assistant message, finish reason, and available usage. Token counts
-are absent when unknown, not reported as zero. Delta events are provisional;
-execute tool calls only from a validated complete message.
+assembled message, or ordered output items with =model-items-v1=, plus stop
+reason and available usage. Token counts are absent when unknown, not reported
+as zero. Delta events are provisional; execute tools only from a validated
+complete result.
 
 =CancelRequest.request_id= refers to an outstanding cancellable model or access
 request from this agent. =CancelAck= acknowledges cancellation delivery; the
@@ -221,22 +222,176 @@ unfinished work interrupted. Exact heap continuity is not required.
 
 * Model service
 
-The parent validates the profile, options, context size, tool schemas, and
-resource budgets. Profile selection cannot change provider endpoints or read
-host files. Message roles describe model context, not trusted user actions or
-permission approvals. Tool definitions never register privileged parent
-operations. Conversation blocks contain text, inline media, tool calls,
-tool results, or visible reasoning. Media has a validated MIME type and bytes;
-there is no implicit URL or host path retrieval. Unsupported media, roles,
-options, or block types fail explicitly instead of being silently discarded.
+** Projection and authority
 
-Tool schemas use the provider-neutral JSON Schema object accepted by the
-selected profile. Tool arguments are maps. Tool result values must be supported
-by that profile; a profile may reject binary or other unsupported values.
-Tool-call deltas carry JSON fragments only for display and incremental parsing;
-the complete event has parsed arguments. Each delta names a stable block index;
-call IDs and names may be absent until supplied and must then be consistent.
-The parent converts provider-specific response streams into these events.
+Negotiate =model-items-v1= before using the ordered-item model service. With
+this feature, =ModelStart.kind= must be =GENERATE= or =NATIVE_COMPACTION=,
+=messages= must be empty, and =items= is the sole ordered history. Without it,
+use the original message service and reject the added model fields. Do not
+route a provider that needs opaque replay through the original message service.
+For the item service, =ModelComplete.message= must be absent, even for an empty
+result. The final =output_items= list is authoritative, not the display deltas.
+
+The agent selects history items and their order, the stable instruction prefix,
+and the request-local suffix. Map these to =wire-request.items=, =prefix=, and
+=suffix= in =cl-llm-provider-api=. The parent selects the actual model from
+=profile_id=. It applies the provider's instruction placement and cache
+breakpoint rules without flattening the prefix and suffix into history.
+Anchored context belongs in =items=; volatile context belongs in
+=request_suffix=. A native compaction suffix contains the compaction instructions.
+
+The parent validates the profile, context size, tool schemas, and resource
+budgets. Its profile allowlists output limits, temperature, reasoning effort,
+reasoning summary, strict schema mode, deferred discovery, and hosted tools.
+Omitted options use profile defaults. An explicit false value disables an
+optional boolean setting. Unknown or disallowed values fail explicitly. The
+parent translates these logical options to library options and may apply its
+own fixed provider fields, instruction placement, cache controls, and reasoning
+parameter names. The agent cannot supply arbitrary request fields, URLs,
+headers, credentials, model routing tokens, or HTTP options. Profile selection
+cannot read host files or change provider endpoints.
+
+Message roles describe model context, not trusted user actions or approvals.
+New =TranscriptItem= values contain typed messages, calls, results, discovery
+results, or a replay handle. Conversation blocks contain text, inline media,
+tool calls, tool results, or visible reasoning. Visible reasoning is not a
+signed thinking block. Media has a validated MIME type and bytes; there is no
+implicit URL or host path retrieval. Reject unsupported roles, media, options,
+or item kinds instead of silently discarding them.
+
+** Opaque item replay
+
+For each completed provider item, the parent stores the exact portable provider
+item privately, including item IDs, status, signed or redacted thinking,
+encrypted reasoning, and native compaction data. It returns an =OutputItem=
+with a nonempty replay handle, family, zero-based item index, and one typed
+view. The view exposes logical content for reasoning and display, not private
+provider replay fields. Empty reasoning text is valid, including signed thinking
+with no visible text. Hosted-tool views expose only bounded logical content
+and status, not arbitrary provider fields. A compaction view may omit its
+summary. Never send signatures, encrypted blobs, Lisp forms, or opaque original
+items as agent-controlled input fields.
+
+Handles are unguessable parent-issued identities scoped to the attached
+session, profile, and provider family. Before forwarding an item event, durably
+store its original item, scope, request and attempt identity, index, and handle.
+Persist the public views and handles with the parent model-event log. On
+restart, include accepted model results and their ordered views and handles in
+resume data or session pages, using parent-origin =NOTE= records with a
+=model_result= payload that contains the portable field-name projection of
+=ModelComplete= plus the owning turn and request identity. These parent notes
+are distinct from the agent's text notes. Page and value limits still apply;
+return =RESOURCE_LIMIT= if a single result cannot fit. The agent can then select,
+omit, or reorder accepted handles without access to the original hidden data.
+
+A =TranscriptItem.replay_handle= means replay that original item unchanged.
+It has no accompanying editable view. Reject unknown handles, cross-session,
+cross-profile or cross-family handles, and handles from failed or unfinished
+attempts. Keep accepted handles valid for the retained session, including after
+restart and compaction; do not delete omitted items while retained session
+history can refer to them. Normal family projection and validated provider
+encoding still apply. Never interpret a handle as a path or serialized code.
+The parent must not silently append unselected history. Native compaction uses
+the supplied items and returns a handle for the exact checkpoint. The agent
+chooses where to use it in later history.
+
+** Tools and argument text
+
+Tool identity is the pair =(namespace, name)=; an empty namespace is the flat
+namespace. Reject duplicate identities and inconsistent descriptions for the
+same namespace. =input_schema= is the provider-neutral JSON Schema object
+accepted by the profile. Preserve namespace descriptions, deferred flags, and
+optional strict mode when constructing library tool namespaces. The parent
+applies provider-specific name encoding and schema projection. Tool definitions
+never register privileged parent operations.
+
+=tool_discovery= enables the profile's client-executed discovery declaration.
+Deferred tools require enabled discovery. A returned discovery call has a
+=tool_discovery_call= view, not an ordinary executable tool call. The agent
+answers it with =ToolDiscoveryResult= containing only tool definitions offered
+to that request. The parent validates the call identity and expansion against
+the original request, and encodes the library tool-search output. Replay keeps
+its tools intact; native compaction uses the library's trimming rules. Discovery
+does not grant access or add tools to the agent's allowed set.
+
+A hosted tool declaration contains a parent-configured =capability_id= only.
+The profile fixes its provider settings and allowed external capabilities.
+An empty =hosted_tools= list disables hosted tools for this request, including
+restricted turns. Native compaction requires empty =tools= and =hosted_tools=
+and disabled discovery. Unsupported hosted tools fail before provider execution.
+
+=ToolCall= requires exactly one of message-present =arguments= or present
+=arguments_json=. A present empty map and an absent map differ. The text form
+preserves the exact provider argument string, even when it is empty, malformed,
+a JSON scalar, or not a JSON object. Do not replace it with an empty map.
+Agent-side argument validation and tool error handling apply before execution.
+Tool results must contain values supported by the profile. Deltas carry JSON
+fragments for display and incremental parsing; they do not prove a valid call.
+A delta uses a stable block index within its attempt. Call ID, namespace, and
+name may be absent until supplied, then must be consistent.
+
+** Attempts, results, and compaction
+
+=ModelEvent.index= increases from one across the whole logical request, including
+retries. =attempt= is one-based. Emit =attempt_started= before any event for an
+attempt; it gives the maximum attempts and the scheduled retry delay in
+milliseconds, zero for the first attempt. It resets provisional deltas, items,
+metadata, and usage. After a nonterminal =attempt_failed=, emit either another
+=attempt_started= or terminal =failed=. Report elapsed seconds, output presence,
+retry eligibility, and a redacted structured failure for each failed attempt.
+Cancellation never starts another attempt. No events follow terminal =complete=
+or =failed=.
+
+Completed-item events preserve provider order. Their indexes start at zero and
+are contiguous within an attempt. The final =output_items= must exactly match
+the successful attempt's completed-item events, including handles and views.
+Emit any remaining completed-item events before =complete=. The receiver may
+show provisional output, but must replace or remove it on attempt reset. Do
+not execute tools or accept provisional items as durable conversation history
+before =complete=. Failed attempts stay in the audit log, not accepted history.
+This prevents retry output from duplicating accepted output or tool execution.
+
+Metadata events are accumulated immutable snapshots of observed model, finish
+reason, cache writes, and usage presence, including observations before failure.
+=progress= is bounded redacted display information; it cannot change authority
+or accepted history. =Usage.provider_usage= preserves the provider's complete
+portable usage object for accounting and export, subject to value limits.
+Typed counters are normalized projections of that object where present; reject
+conflicting projections. Preserve cache-write counts as well as cache reads.
+Raw usage and metadata are output data, never input request settings.
+
+Map =ModelComplete= to the library's full =provider-result=: ordered items,
+response ID, usage, metadata, turn state, and turn completion. Tool calls and
+discovery calls are ordered subsets of the item views, not separate authoritative
+lists. =reason= describes the request stop cause; =turn_completion= independently
+records =ENDED=, =CONTINUED=, or unspecified. Do not infer explicit turn completion
+from a stop reason or the absence of tool calls.
+
+The parent replaces a provider per-turn routing token, including Codex
+=x-codex-turn-state=, with =turn_state_handle=. It persists the token privately
+and validates session, profile, family, and =turn_id= on each use. It expires
+when the user turn ends; reject use in a later turn. =continuation_handle= is a
+separate parent-issued session/profile/family-scoped provider continuation, not
+an item list or a per-turn token. Neither handle accepts agent-supplied hidden
+state, and neither implicitly selects history.
+
+For =NATIVE_COMPACTION=, use the library's native compaction endpoint and return
+=compaction_outcome= set to =COMPACTED= with the checkpoint item, usage, and metadata.
+If the endpoint does not exist or returns 404, 405, or 501, return terminal
+=complete= with =UNSUPPORTED=, no output items, and unspecified stop reason and
+turn completion. Other errors follow attempt/failure rules. Native compaction
+must not emit text-generation deltas, tool calls, or per-turn routing state.
+Ordinary generation leaves =compaction_outcome= unspecified. The agent chooses
+whether to request a separate ordinary-generation compaction fallback; the
+parent never silently substitutes one.
+
+The mapping targets =cl-llm-provider-api= commit
+=7453b6c7bd4f93da000bb4d0ef4a4b0cc4ddf26f=: =src/request.lisp= defines the
+projected request, =src/provider.lisp= defines item, metadata, retry, failure,
+and completion events and the full result, and =src/wire-client.lisp= captures
+per-turn routing state. Provider transport and private originals stay in the
+parent. Conversation projection, context-delivery callbacks, tool execution,
+and history selection stay in the agent.
 
 * Private record service
 
