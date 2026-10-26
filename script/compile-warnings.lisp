@@ -49,7 +49,17 @@
   ;; A dependency compilation nested in a project load belongs to the compiled
   ;; file, not to the enclosing load. Output paths come from ASDF, not suffixes.
   (let ((path (or *compile-file-truename* *load-truename*)))
-    (and path (gethash (uiop:native-namestring path) owned-paths))))
+    (when path
+      (or (gethash (uiop:native-namestring path) owned-paths)
+          ;; Output files did not exist when the map was built. Resolve them now
+          ;; so a case-insensitive volume's stored directory spelling agrees.
+          (let ((current (probe-file path)))
+            (when current
+              (loop for recorded being the hash-keys of owned-paths
+                      using (hash-value source)
+                    for existing = (probe-file recorded)
+                    when (and existing (uiop:pathname-equal current existing))
+                      return source)))))))
 
 (defun compile-warnings--line (source-root path)
   "Return the source line of the form the compiler is processing in PATH, or NIL."
