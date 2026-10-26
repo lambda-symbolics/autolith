@@ -226,6 +226,10 @@ are never parsed or repaired. Also preserve protocol null and byte vectors."
                          '(:turn :profile :family :maximum :delay))
                         (:item
                          '(:handle :original :output :event))
+                        (:state
+                         '(:handle :kind :value))
+                        (:terminal-failed
+                         '(:event))
                         (:event
                          '(:event))
                         (:accept
@@ -240,6 +244,42 @@ are never parsed or repaired. Also preserve protocol null and byte vectors."
                  (loop for tail on (rest entry) by (lambda (tail) (rest (rest tail)))
                        always (member (first tail) keys)))
       (model-replay-store--reject ':corrupt-log)))
+  nil)
+
+(declaim (ftype (function (list list hash-table) null) model-replay-store--validate-state-handles))
+
+(defun model-replay-store--validate-state-handles (state record complete)
+  "Require each private state to match its exact, present completion field."
+  (loop for (kind field) in '((:continuation "continuation_handle")
+                              (:turn-state "turn_state_handle"))
+        for retained = (find kind (getf record :states)
+                             :key (lambda (item) (getf item :kind)))
+        do (multiple-value-bind (handle present) (gethash field complete)
+             (unless (if present
+                         (and (stringp handle) retained
+                              (eq retained (gethash handle (getf state :handles)))
+                              (eq (getf retained :owner) record)
+                              (eq (getf retained :kind) kind))
+                         (null retained))
+               (model-replay-store--reject ':completion-mismatch))))
+  nil)
+
+(declaim (ftype (function (hash-table) null) model-replay-store--validate-failure))
+
+(defun model-replay-store--validate-failure (failed)
+  "Validate the portable Failure field map without changing field presence."
+  (loop for key being the hash-keys of failed using (hash-value value)
+        unless (cond ((equal key "code")
+                      (member value '("code_unspecified" "invalid_request" "permission_denied"
+                                      "revision_conflict" "unsupported" "resource_limit"
+                                      "cancelled" "unavailable" "internal") :test #'equal))
+                     ((equal key "message")
+                      (stringp value))
+                     ((equal key "retryable")
+                      (or (eq value t) (null value)))
+                     (t
+                      nil))
+          do (model-replay-store--reject ':invalid-event))
   nil)
 
 (declaim (ftype (function (list list) null) model-replay-store--apply))
@@ -285,10 +325,43 @@ are never parsed or repaired. Also preserve protocol null and byte vectors."
            (setf (gethash request requests)
                  (list :request request :attempt attempt :turn turn :profile profile :family family
                        :status ':running :items (make-array 0 :adjustable t :fill-pointer 0)
+                       :states (make-array 0 :adjustable t :fill-pointer 0)
                        :complete nil :note-id nil :projected nil :accept-sequence nil :events events)))))
       (otherwise
        (setf record (model-replay-store--attempt state request attempt))
        (case (first entry)
+         (:state
+          (unless (eq (getf record :status) ':running)
+            (model-replay-store--reject ':inactive-attempt))
+          (let ((handle (model-replay-store--id (getf fields :handle)))
+                (kind   (getf fields :kind))
+                (states (getf record :states)))
+            (unless (member kind '(:continuation :turn-state))
+              (model-replay-store--reject ':invalid-state-kind))
+            (when (or (>= (length states) 2)
+                      (find kind states :key (lambda (state) (getf state :kind)))
+                      (gethash handle (getf state :handles)))
+              (model-replay-store--reject ':state-conflict))
+            (model-replay-store--portable (getf fields :value) :decode t)
+            (let ((retained (list :handle handle :kind kind :original (getf fields :value)
+                                  :owner record)))
+              (setf (gethash handle (getf state :handles)) retained)
+              (vector-push-extend retained states))))
+         (:terminal-failed
+          (unless (member (getf record :status) '(:running :failed :interrupted))
+            (model-replay-store--reject ':inactive-attempt))
+          (when (>= (length (getf record :events)) 65536)
+            (model-replay-store--reject ':resource-limit))
+          (let ((event (model-replay-store--portable (getf fields :event) :decode t)))
+            (unless (and (hash-table-p event) (= (hash-table-count event) 3)
+                         (eql (gethash "index" event) (1+ (length (getf record :events))))
+                         (eql (gethash "attempt" event) attempt)
+                         (hash-table-p (gethash "failed" event)))
+              (model-replay-store--reject ':invalid-event))
+            (model-replay-store--validate-failure (gethash "failed" event))
+            (model-replay-store--public-data event)
+            (setf (getf record :status) ':terminal-failed)
+            (vector-push-extend (getf fields :event) (getf record :events))))
          ((:item :event)
           (unless (eq (getf record :status) ':running)
             (model-replay-store--reject ':inactive-attempt))
@@ -346,6 +419,7 @@ are never parsed or repaired. Also preserve protocol null and byte vectors."
                                always (model-replay-store--exact-p
                                        (model-replay-store--portable output) (getf item :output))))
               (model-replay-store--reject ':completion-mismatch))
+            (model-replay-store--validate-state-handles state record complete)
             (setf (getf record :status) ':accepted
                   (getf record :accept-sequence) (length (getf state :entries))
                   (getf record :complete) (getf fields :complete)
@@ -551,6 +625,68 @@ makes the handle replayable. Request and attempt identity are journaled."
                (values (copy-seq handle) (model-replay-store--copy event)))))))
 
 (declaim (ftype (function (model-replay-store &key (:request-id string) (:attempt integer)
+                           (:kind keyword) (:value t)) string) model-replay-store-retain-state))
+
+(defun model-replay-store-retain-state (store &key request-id attempt kind value)
+  "Durably retain exact private state and return a provisional scoped handle.
+
+KIND is :CONTINUATION or :TURN-STATE. Retention emits no public item or event.
+Acceptance must name every retained state in its matching optional field.
+An exact repeat for the same kind returns the saved handle; changes conflict."
+  (unless (member kind '(:continuation :turn-state))
+    (model-replay-store--reject ':invalid-state-kind))
+  (let ((data (model-replay-store--portable value)))
+    (model-replay-store--locked
+     store (lambda (state)
+             (let* ((record (model-replay-store--attempt state request-id attempt))
+                    (prior  (find kind (getf record :states)
+                                  :key (lambda (item) (getf item :kind)))))
+               (unless (eq (getf record :status) ':running)
+                 (model-replay-store--reject ':inactive-attempt))
+               (if prior
+                   (progn
+                     (unless (model-replay-store--exact-p data (getf prior :original))
+                       (model-replay-store--reject ':state-conflict))
+                     (copy-seq (getf prior :handle)))
+                   (let ((handle (model-replay-store--handle)))
+                     (model-replay-store--commit
+                      store state (list ':state :version 1 :request request-id :attempt attempt
+                                        :handle handle :kind kind :value data))
+                     (copy-seq handle))))))))
+
+(declaim (ftype (function (model-replay-store &key (:request-id string) (:attempt integer)
+                           (:failed hash-table)) hash-table) model-replay-store-fail-request))
+
+(defun model-replay-store-fail-request (store &key request-id attempt failed)
+  "Atomically commit an indexed terminal failed event and stop the request.
+
+FAILED is the public Failure field map, already redacted by the trusted caller.
+An exact repeated failure returns the saved event. A different failure conflicts.
+Accepted results cannot be revoked, including before session acknowledgment."
+  (unless (hash-table-p failed) (model-replay-store--reject ':invalid-event))
+  (let ((payload (model-replay-store--public-data failed)))
+    (model-replay-store--locked
+     store (lambda (state)
+             (let* ((record (model-replay-store--attempt state request-id attempt))
+                    (events (getf record :events)))
+               (if (eq (getf record :status) ':terminal-failed)
+                   (let ((event (model-replay-store--portable
+                                 (aref events (1- (length events))) :decode t)))
+                     (unless (model-replay-store--exact-p
+                              payload (model-replay-store--portable (gethash "failed" event)))
+                       (model-replay-store--reject ':failure-conflict))
+                     event)
+                   (let ((event (make-hash-table :test 'equal)))
+                     (setf (gethash "index" event) (1+ (length events))
+                           (gethash "attempt" event) attempt
+                           (gethash "failed" event)
+                           (model-replay-store--portable payload :decode t))
+                     (model-replay-store--commit
+                      store state (list ':terminal-failed :version 1 :request request-id
+                                        :attempt attempt :event (model-replay-store--public-data event)))
+                     (model-replay-store--copy event))))))))
+
+(declaim (ftype (function (model-replay-store &key (:request-id string) (:attempt integer)
                            (:kind string) (:payload t)) hash-table) model-replay-store-append-event))
 
 (defun model-replay-store-append-event (store &key request-id attempt kind payload)
@@ -701,11 +837,34 @@ Repeating the acknowledgment does not create another journal entry."
    store (lambda (state)
            (let* ((item  (gethash handle (getf state :handles)))
                   (owner (getf item :owner)))
-             (unless (and item (eq (getf owner :status) ':accepted)
+             (unless (and item (null (getf item :kind))
+                          (eq (getf owner :status) ':accepted)
                           (getf owner :projected)
                           (equal session-id (model-replay-store-session store))
                           (equal profile-id (getf owner :profile))
                           (equal family (getf owner :family)))
+               (model-replay-store--reject ':invalid-handle))
+             (model-replay-store--portable (getf item :original) :decode t)))))
+
+(declaim (ftype (function (model-replay-store string &key (:kind keyword) (:session-id string)
+                           (:profile-id string) (:family string) (:turn-id string)) t)
+                model-replay-store-resolve-state))
+
+(defun model-replay-store-resolve-state (store handle &key kind session-id profile-id family turn-id)
+  "Return accepted, projected private state; require its owning turn for turn-state."
+  (unless (member kind '(:continuation :turn-state))
+    (model-replay-store--reject ':invalid-state-kind))
+  (model-replay-store--locked
+   store (lambda (state)
+           (let* ((item  (gethash handle (getf state :handles)))
+                  (owner (getf item :owner)))
+             (unless (and item (eq (getf item :kind) kind)
+                          (eq (getf owner :status) ':accepted) (getf owner :projected)
+                          (equal session-id (model-replay-store-session store))
+                          (equal profile-id (getf owner :profile))
+                          (equal family (getf owner :family))
+                          (or (eq kind ':continuation)
+                              (and (stringp turn-id) (equal turn-id (getf owner :turn)))))
                (model-replay-store--reject ':invalid-handle))
              (model-replay-store--portable (getf item :original) :decode t)))))
 

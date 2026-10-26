@@ -43,6 +43,17 @@
                (model-replay-store-resolve store handle :session-id "session"
                                            :profile-id "profile" :family "responses"))
 
+             (retain (store kind value &key (request "request") (attempt 1))
+               (model-replay-store-retain-state store :request-id request :attempt attempt
+                                               :kind kind :value value))
+
+             (resolve-state (store handle kind)
+               (model-replay-store-resolve-state store handle :kind kind :session-id "session"
+                                                 :profile-id "profile" :family "responses" :turn-id "turn"))
+
+             (fail (store failed &key (request "request") (attempt 1))
+               (model-replay-store-fail-request store :request-id request :attempt attempt :failed failed))
+
              (complete (store &key (request "request") (attempt 1))
                (object "output_items"
                        (coerce (loop for event across (model-replay-store-events store request)
@@ -289,6 +300,208 @@
                (with-open-file (stream path :direction ':output :if-exists ':append)
                  (write-string "#.(error \"private-reader-eval\")" stream))
                (rejects (lambda () (model-replay-store-events store "request")) ':storage-failure))
+             ;; Private states consume no public index and require exact completion ownership.
+             (let* ((path (path)) (store (model-replay-store-open path "session"))
+                    (value (object "raw" "{broken" "number" -0.0d0 "null" nil
+                                   "true" t "false" ':json-false "protocol-null" ':protocol-null
+                                   "integer" -9223372036854775808 "list" '(1 2) "vector" #(1 2)
+                                   "bytes" (make-array 3 :element-type   '(unsigned-byte 8)
+                                                       :initial-contents '(0 128 255)))))
+               (start store)
+               (let* ((continuation (retain store ':continuation "private-response-id"))
+                      (turn-state   (retain store ':turn-state value))
+                      (item         (put store))
+                      (projection   (complete store)))
+                 (check (equal continuation (retain store ':continuation "private-response-id")))
+                 (check (equal turn-state (retain store ':turn-state value)))
+                 (check (not (equal continuation turn-state)))
+                 (check (= 2 (length (model-replay-store-events store "request"))))
+                 (check (= 0 (gethash "item_index" (aref (gethash "output_items" projection) 0))))
+                 (rejects (lambda () (retain store ':continuation "changed")) ':state-conflict)
+                 (rejects (lambda () (retain store ':item value)) ':invalid-state-kind)
+                 (rejects (lambda () (resolve-state store continuation ':continuation)) ':invalid-handle)
+                 (rejects (lambda () (model-replay-store-accept
+                                      store :request-id "request" :attempt 1 :complete projection))
+                          ':completion-mismatch)
+                 (setf (gethash "continuation_handle" projection) continuation
+                       (gethash "turn_state_handle" projection) continuation)
+                 (rejects (lambda () (model-replay-store-accept
+                                      store :request-id "request" :attempt 1 :complete projection))
+                          ':completion-mismatch)
+                 (setf (gethash "turn_state_handle" projection) turn-state)
+                 (dolist (bad (list "raw-private-id" "" item nil))
+                   (setf (gethash "continuation_handle" projection) bad)
+                   (rejects (lambda () (model-replay-store-accept
+                                        store :request-id "request" :attempt 1 :complete projection))
+                            ':completion-mismatch))
+                 (start store :request "other")
+                 (let ((foreign (retain store ':continuation "other" :request "other")))
+                   (setf (gethash "continuation_handle" projection) foreign)
+                   (rejects (lambda () (model-replay-store-accept
+                                        store :request-id "request" :attempt 1 :complete projection))
+                            ':completion-mismatch))
+                 (setf (gethash "continuation_handle" projection) continuation)
+                 (let ((note (model-replay-store-accept
+                              store :request-id "request" :attempt 1 :complete projection)))
+                   (check (equal note (model-replay-store-accept
+                                       store :request-id "request" :attempt 1 :complete projection)))
+                   (rejects (lambda () (fail store (object "code" "internal"))) ':inactive-attempt)
+                   (rejects (lambda () (resolve-state store turn-state ':turn-state)) ':invalid-handle)
+                   (setf store (model-replay-store-open path "session"))
+                   (model-replay-store-compact store)
+                   (rejects (lambda () (resolve-state store turn-state ':turn-state)) ':invalid-handle)
+                   (model-replay-store-mark-projected store :request-id "request" :attempt 1 :note-id note)
+                   (check (same value (resolve-state store turn-state ':turn-state)))
+                   (check (equal "private-response-id" (resolve-state store continuation ':continuation)))
+                   (rejects (lambda () (resolve store continuation)) ':invalid-handle)
+                   (rejects (lambda () (resolve-state store item ':continuation)) ':invalid-handle)
+                   (rejects (lambda () (resolve-state store continuation ':turn-state)) ':invalid-handle)
+                   (rejects (lambda () (resolve-state store turn-state ':continuation)) ':invalid-handle)
+                   (loop for (session profile family) in '(("other" "profile" "responses")
+                                                           ("session" "other" "responses")
+                                                           ("session" "profile" "other"))
+                         do (rejects (lambda () (model-replay-store-resolve-state
+                                                 store turn-state :kind ':turn-state :session-id session
+                                                 :profile-id profile :family family)) ':invalid-handle))
+                   (setf (gethash "raw" value) "changed")
+                   (check (equal "{broken" (gethash "raw" (resolve-state store turn-state ':turn-state))))
+                   (let ((copy (resolve-state store turn-state ':turn-state)))
+                     (setf (gethash "raw" copy) "changed"))
+                   (model-replay-store-compact store)
+                   (setf store (model-replay-store-open path "session"))
+                   (check (equal "{broken" (gethash "raw" (resolve-state store turn-state ':turn-state))))
+                   (check (equal "private-response-id" (resolve-state store continuation ':continuation)))
+                   (check (same projection (model-replay-store-completion
+                                            store :request-id "request" :attempt 1)))
+                   (rejects (lambda () (fail store (object "code" "internal"))) ':inactive-attempt))))
+             ;; Failed and interrupted state handles remain denied after retry acceptance.
+             (dolist (status '(:failed :interrupted :reopened))
+               (let* ((path (path)) (store (model-replay-store-open path "session")))
+                 (start store)
+                 (let ((handle (retain store ':continuation "private")))
+                   (case status
+                     (:failed
+                      (model-replay-store-fail-attempt store :request-id "request" :attempt 1))
+                     (:interrupted
+                      (model-replay-store-interrupt-attempt store :request-id "request" :attempt 1))
+                     (:reopened
+                      (setf store (model-replay-store-open path "session"))))
+                   (rejects (lambda () (resolve-state store handle ':continuation)) ':invalid-handle)
+                   (start store :attempt 2)
+                   (let ((projection (complete store :attempt 2)))
+                     (setf (gethash "continuation_handle" projection) handle)
+                     (rejects (lambda () (model-replay-store-accept
+                                          store :request-id "request" :attempt 2 :complete projection))
+                              ':completion-mismatch)
+                     (remhash "continuation_handle" projection)
+                     (let ((note (model-replay-store-accept
+                                  store :request-id "request" :attempt 2 :complete projection)))
+                       (model-replay-store-mark-projected store :request-id "request" :attempt 2 :note-id note)
+                       (check (not (nth-value 1 (gethash "continuation_handle"
+                                                        (model-replay-store-completion
+                                                         store :request-id "request" :attempt 2)))))))
+                   (model-replay-store-compact store)
+                   (setf store (model-replay-store-open path "session"))
+                   (rejects (lambda () (resolve-state store handle ':continuation)) ':invalid-handle))))
+             ;; Invalid private values fail before any handle or event can be retained.
+             (let ((store (model-replay-store-open (path) "session")))
+               (start store)
+               (dolist (bad (list 1/2 1.0f0 (expt 2 63) :not-portable
+                                 (make-string 2097153 :initial-element #\x)))
+                 (rejects (lambda () (retain store ':continuation bad))))
+               (check (= 1 (length (model-replay-store-events store "request")))))
+             ;; Terminal failure is one durable event from running or retry-waiting states.
+             (dolist (status '(:running :failed :interrupted :reopened))
+               (let* ((path (path)) (store (model-replay-store-open path "session"))
+                      (failed (protocol-message->data
+                               (parent-proto:make-failure :code    ':cancelled
+                                                          :message "Request cancelled."))))
+                 (start store)
+                 (let ((item (put store)) (handle (retain store ':turn-state (object "private" t))))
+                   (unless (eq status ':running)
+                     (model-replay-store-append-event store :request-id "request" :attempt 1
+                                                     :kind    "attempt_failed"
+                                                     :payload (object "retry_allowed" t))
+                     (case status
+                       (:failed
+                        (model-replay-store-fail-attempt store :request-id "request" :attempt 1))
+                       (:interrupted
+                        (model-replay-store-interrupt-attempt store :request-id "request" :attempt 1))
+                       (:reopened
+                        (setf store (model-replay-store-open path "session")))))
+                   (let* ((count (length (model-replay-store-events store "request")))
+                          (event (fail store failed)))
+                     (check (= (1+ count) (gethash "index" event)))
+                     (check (= 1 (gethash "attempt" event)))
+                     (check (same failed (gethash "failed" event)))
+                     (check (same event (protocol-message->data
+                                         (parent-proto:make-model-event
+                                          :index (1+ count) :attempt 1
+                                          :failed (parent-proto:make-failure
+                                                   :code ':cancelled :message "Request cancelled.")))))
+                     (check (equal '(:terminal-failed 1)
+                                   (multiple-value-list (model-replay-store-status store "request"))))
+                     (check (same event (fail store failed)))
+                     (check (= (1+ count) (length (model-replay-store-events store "request"))))
+                     (setf (gethash "message" (gethash "failed" event)) "changed")
+                     (check (same failed (gethash "failed" (fail store failed)))))
+                   (rejects (lambda () (fail store (object "code" "internal"))) ':failure-conflict)
+                   (rejects (lambda () (start store :attempt 2)) ':attempt-conflict)
+                   (rejects (lambda () (put store)) ':inactive-attempt)
+                   (rejects (lambda () (retain store ':continuation "private")) ':inactive-attempt)
+                   (rejects (lambda () (model-replay-store-append-event
+                                        store :request-id "request" :attempt 1 :kind "progress"
+                                        :payload (object "phase" "late"))) ':inactive-attempt)
+                   (rejects (lambda () (model-replay-store-accept
+                                        store :request-id "request" :attempt 1 :complete (complete store)))
+                            ':inactive-attempt)
+                   (rejects (lambda () (resolve store item)) ':invalid-handle)
+                   (rejects (lambda () (resolve-state store handle ':turn-state)) ':invalid-handle)
+                   (model-replay-store-compact store)
+                   (setf store (model-replay-store-open path "session"))
+                   (check (same failed (gethash "failed" (fail store failed))))
+                   (check (zerop (length (model-replay-store-pending-projections store))))
+                   (rejects (lambda () (start store :attempt 2)) ':attempt-conflict)
+                   (rejects (lambda () (resolve-state store handle ':turn-state)) ':invalid-handle))))
+             ;; Independent caches share state handles, projection, and terminal failure.
+             (let* ((path (path)) (store (model-replay-store-open path "session"))
+                    (other (model-replay-store-open path "session")))
+               (start store)
+               (let* ((handle     (retain other ':turn-state "private-state"))
+                      (projection (complete store)))
+                 (check (equal handle (retain store ':turn-state "private-state")))
+                 (setf (gethash "turn_state_handle" projection) handle)
+                 (let ((note (model-replay-store-accept
+                              other :request-id "request" :attempt 1 :complete projection)))
+                   (model-replay-store-mark-projected store :request-id "request" :attempt 1 :note-id note)
+                   (check (equal "private-state" (resolve-state other handle ':turn-state)))
+                   (model-replay-store-compact other)
+                   (check (equal "private-state" (resolve-state store handle ':turn-state)))))
+               (start store :request "retry")
+               (model-replay-store-append-event other :request-id "retry" :attempt 1
+                                               :kind "attempt_failed" :payload (object "retryable" t))
+               (model-replay-store-fail-attempt store :request-id "retry" :attempt 1)
+               (start other :request "retry" :attempt 2)
+               (let* ((failure (protocol-message->data
+                                (parent-proto:make-failure :code      ':unavailable
+                                                           :message   "Provider unavailable."
+                                                           :retryable nil)))
+                      (event   (fail store failure :request "retry" :attempt 2)))
+                 (check (= 4 (gethash "index" event)))
+                 (check (= 2 (gethash "attempt" event)))
+                 (check (same event (fail other failure :request "retry" :attempt 2)))
+                 (check (eq ':terminal-failed (model-replay-store-status other "retry")))
+                 (model-replay-store-compact store)
+                 (check (same event (fail other failure :request "retry" :attempt 2)))))
+             ;; Invalid Failure fields cannot terminate a running request.
+             (let ((store (model-replay-store-open (path) "session")))
+               (start store)
+               (dolist (invalid (list (object "code" "not-a-code") (object "code" 8)
+                                      (object "message" nil) (object "retryable" "false")
+                                      (object "retryable" 0) (object "private" "secret")))
+                 (rejects (lambda () (fail store invalid)) ':invalid-event)
+                 (check (eq ':running (model-replay-store-status store "request"))))
+               (check (= 1 (length (model-replay-store-events store "request")))))
              checks)
         (dolist (path paths)
           (dolist (file (list path (pathname (concatenate 'string (namestring path) ".lock"))))
