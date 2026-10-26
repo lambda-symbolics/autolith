@@ -80,6 +80,15 @@ exact deduplication, including notes for known turns already marked interrupted.
 A recovery note does not change the turn outcome. These parent libraries have
 standalone tests that run without loading the agent system.
 
+The model event collector maps provider-library events to protocol views through
+trusted storage and emission hooks. It retains exact library-normalized originals;
+these are not raw provider wire data. A provider completed event is provisional.
+Call finish only after the executor returns a validated result. The pinned library
+attempts cleanup but suppresses cleanup errors, so its return does not prove that
+stream closure succeeded. The acceptance hook must complete replay acceptance and
+session-note publication before returning true. The collector retains accepted
+completion data if terminal emission fails.
+
 The optional =autolith-protocol-client= system supplies the agent-side client
 over explicit private streams. It supports negotiation, session reads and
 appends, turn lifecycle, and transient output. These libraries do not yet supply

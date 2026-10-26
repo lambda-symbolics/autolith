@@ -77,7 +77,7 @@
                              (uiop:symbol-call '#:autolith-supervisor '#:run-session-dispatch-tests)))
 
 (asdf:defsystem #:autolith-supervisor/model
-  :description             "Parent model profiles, semantic projection, and private replay storage."
+  :description             "Parent model projection, replay storage, and provider event collection."
   :depends-on              (#:autolith-supervisor/session #:cl-llm-provider-api/wire #:cl-base64
                             #:sexp-store #:ls-flock #:ls-compat/posix #:ironclad)
   :default-component-class autolith-supervisor-source-file
@@ -85,7 +85,8 @@
   :components              ((:file "supervisor/model-profile")
                             (:file "supervisor/model-projection")
                             (:file "supervisor/model-replay-store")
-                            (:file "supervisor/model-reconciliation"))
+                            (:file "supervisor/model-reconciliation")
+                            (:file "supervisor/model-events"))
   :in-order-to             ((asdf:test-op (asdf:test-op #:autolith-supervisor/model/tests))))
 
 (asdf:defsystem #:autolith-supervisor/model/tests
@@ -96,9 +97,11 @@
   :components              ((:file "supervisor/model-profile-tests")
                             (:file "supervisor/model-projection-tests")
                             (:file "supervisor/model-replay-store-tests")
-                            (:file "supervisor/model-reconciliation-tests"))
+                            (:file "supervisor/model-reconciliation-tests")
+                            (:file "supervisor/model-events-tests"))
   :perform                 (asdf:test-op (operation component)
                              (uiop:symbol-call '#:autolith-supervisor '#:run-model-profile-tests)
                              (uiop:symbol-call '#:autolith-supervisor '#:run-model-projection-tests)
                              (uiop:symbol-call '#:autolith-supervisor '#:run-model-replay-store-tests)
-                             (uiop:symbol-call '#:autolith-supervisor '#:run-model-reconciliation-tests)))
+                             (uiop:symbol-call '#:autolith-supervisor '#:run-model-reconciliation-tests)
+                             (uiop:symbol-call '#:autolith-supervisor '#:run-model-event-tests)))
