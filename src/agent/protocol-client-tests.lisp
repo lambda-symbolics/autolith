@@ -389,6 +389,9 @@
                              store parent :output-callback (lambda (channel text)
                                                              (push (list channel text) display)))))
               (autolith-supervisor::session-runtime-start-turn runtime "real-turn" "parent input")
+              (autolith-supervisor::session-store-model-result
+               store :event-id "model-result/client" :turn-id "real-turn" :request-id 42
+               :complete (agent-wire:make-model-complete :reason ':stop :response-id "response"))
               ;; Read the user input, append a note, then repeat the identical event.
               (dotimes (index 3) (autolith-supervisor::session-runtime-receive runtime))
               (autolith-supervisor::session-runtime-receive runtime)
@@ -403,11 +406,11 @@
                      (page     (autolith-supervisor::session-store-read
                                 reopened (agent-wire:make-session-read :limit 256)))
                      (records  (agent-wire:session-page.records page)))
-                (assert (= 3 (length records)))
-                (assert (equal '(:user-input :note :turn-outcome)
-                               (mapcar #'agent-wire:session-record.kind records)))
-                (assert (equal '(:parent :agent :parent)
-                               (mapcar #'agent-wire:session-record.origin records))))))
+                 (assert (= 4 (length records)))
+                 (assert (equal '(:user-input :note :note :turn-outcome)
+                                (mapcar #'agent-wire:session-record.kind records)))
+                 (assert (equal '(:parent :parent :agent :parent)
+                                (mapcar #'agent-wire:session-record.origin records))))))
           (lambda (client)
             (agent-protocol-handshake client)
             (assert (eq 'agent-wire:turn-start (agent-wire:envelope.body-case (agent-protocol-receive client))))
@@ -417,7 +420,12 @@
               (assert (eq ':parent (agent-wire:session-record.origin record)))
               (assert (string= "parent input"
                                (gethash "text" (autolith-supervisor::protocol-value->data
-                                                (agent-wire:session-record.payload record))))))
+                                                 (agent-wire:session-record.payload record)))))
+              (let* ((note    (second (agent-wire:session-page.records page)))
+                     (payload (autolith-supervisor::protocol-value->data
+                               (agent-wire:session-record.payload note))))
+                (assert (eq ':parent (agent-wire:session-record.origin note)))
+                (assert (string= "response" (gethash "response_id" (gethash "model_result" payload))))))
             (let* ((payload (make-hash-table :test 'equal))
                    (record  (progn
                               (setf (gethash "text" payload) "durable note")
@@ -428,7 +436,7 @@
                 (agent-protocol-session-append client record)
                 (let ((ack (agent-wire:envelope.session-ack (agent-protocol-receive client))))
                   (assert (string= "real-note" (agent-wire:session-ack.event-id ack)))
-                  (assert (= 2 (agent-wire:session-ack.sequence ack))))))
+                  (assert (= 3 (agent-wire:session-ack.sequence ack))))))
             (agent-protocol-output client ':progress "client progress")
             (assert (eq 'agent-wire:turn-cancel (agent-wire:envelope.body-case (agent-protocol-receive client))))
             (agent-protocol-finish-turn client ':cancelled)

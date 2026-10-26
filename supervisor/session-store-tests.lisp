@@ -53,6 +53,77 @@
                (cl-protobufs.autolith.parent.v1:session-ack.sequence ack)))
       (unwind-protect
            (progn
+             ;; Parent model results have a separate trusted shape and retry identity.
+             (let* ((path      (path))
+                    (store     (session-store-open path "model-session"))
+                    (complete  (cl-protobufs.autolith.parent.v1:make-model-complete
+                                :reason ':stop :response-id "response-A"
+                                :usage (cl-protobufs.autolith.parent.v1:make-usage
+                                        :input-tokens 0 :output-tokens 12)
+                                :output-items
+                                (list (cl-protobufs.autolith.parent.v1:make-output-item
+                                       :replay-handle "opaque-A" :family "responses" :item-index 0)
+                                      (cl-protobufs.autolith.parent.v1:make-output-item
+                                       :replay-handle "opaque-B" :family "responses" :item-index 1))))
+                    (projected (session-store-model-complete-data complete)))
+               (session-store-start-turn store "model-turn" "input")
+               (check (equal "stop" (gethash "reason" projected)))
+               (check (= 0 (gethash "input_tokens" (gethash "usage" projected))))
+               (check (equal "opaque-B"
+                             (gethash "replay_handle" (aref (gethash "output_items" projected) 1))))
+               (check (not (nth-value 1 (gethash "continuation_handle" projected))))
+               (check (= 2 (sequence-of (session-store-model-result
+                                         store :event-id "model-result/stable"
+                                         :turn-id "model-turn" :request-id 42 :attempt 1
+                                         :complete       complete))))
+               (let* ((record  (second (records (read-page store))))
+                      (payload (protocol-value->data
+                                (cl-protobufs.autolith.parent.v1:session-record.payload record))))
+                 (check (eq ':parent (cl-protobufs.autolith.parent.v1:session-record.origin record)))
+                 (check (eq ':note (cl-protobufs.autolith.parent.v1:session-record.kind record)))
+                 (check (equal "42" (gethash "request_id" payload)))
+                 (check (equal "model-turn" (gethash "turn_id" payload)))
+                 (check (session-store--exact-p
+                         (session-store--value-data (protocol-data->value projected))
+                         (session-store--value-data (protocol-data->value (gethash "model_result" payload)))))
+                 (rejects (lambda ()
+                            (session-store-append
+                             store (append-request "spoof-model" "model-turn" ':note
+                                                   (protocol-data->value payload))))
+                          ':invalid-fields)
+                 (rejects (lambda ()
+                            (session-store-append
+                             store (append-request "spoof-parent" "model-turn" ':note
+                                                   (protocol-data->value payload) :origin ':parent)))
+                          ':forged-metadata)
+                 (setf (gethash "response_id" (gethash "model_result" payload)) "changed")
+                 (check (equal "response-A"
+                               (gethash "response_id"
+                                        (gethash "model_result"
+                                                 (protocol-value->data
+                                                  (cl-protobufs.autolith.parent.v1:session-record.payload
+                                                   (second (records (read-page store))))))))))
+               (session-store-finish-turn store "model-turn" ':completed)
+               (setf store (session-store-open path "model-session"))
+               (check (= 2 (sequence-of (session-store-model-result
+                                         store :event-id "model-result/stable"
+                                         :turn-id "model-turn" :request-id "42"
+                                         :complete       projected))))
+               (dolist (change '(:event :attempt :content))
+                 (rejects (lambda ()
+                            (session-store-model-result
+                             store :event-id (if (eq change ':event) "different" "model-result/stable")
+                             :turn-id "model-turn" :request-id "42"
+                             :attempt        (if (eq change ':attempt) 2 1)
+                             :complete       (if (eq change ':content)
+                                                 (cl-protobufs.autolith.parent.v1:make-model-complete :reason ':filtered)
+                                                 projected)))
+                          ':model-result-conflict))
+               (rejects (lambda () (session-store-model-result
+                                    store :event-id "new-model" :turn-id "model-turn"
+                                    :request-id "43" :complete projected))
+                        ':inactive-turn)
+               (check (= 3 (length (records (read-page store))))))
              ;; Input, metadata, strict payload contracts, and event retry after restart.
              (let* ((path (path)) (store (session-store-open path "session-a"))
                     (start   (session-store-start-turn store "turn-a" "user input"))

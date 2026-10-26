@@ -185,9 +185,13 @@ Keep old entries so retries and later pages cannot erase evidence of a conflict.
                (member (agent-wire:session-record.kind record)
                        '(:user-input :assistant-message :tool-started :tool-finished :note
                          :turn-outcome))
-               (if (member (agent-wire:session-record.kind record) '(:user-input :turn-outcome))
-                   (eq ':parent (agent-wire:session-record.origin record))
-                   (eq ':agent (agent-wire:session-record.origin record))))
+               (case (agent-wire:session-record.kind record)
+                 ((:user-input :turn-outcome)
+                  (eq ':parent (agent-wire:session-record.origin record)))
+                 (:note
+                  t)
+                 (otherwise
+                  (eq ':agent (agent-wire:session-record.origin record)))))
         (agent-protocol--fatal client ':invalid-session-page))
       (autolith-supervisor::protocol-value->data (agent-wire:session-record.payload record))
       (progn

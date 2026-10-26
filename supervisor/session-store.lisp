@@ -175,6 +175,88 @@ which serializes threads and processes. Do not change the log outside this API."
   "Find one validated map field."
   (second (assoc name (second payload) :test #'equal)))
 
+(declaim (ftype (function (t) hash-table) session-store-model-complete-data))
+
+(defun session-store-model-complete-data (complete)
+  "Copy COMPLETE into its bounded portable field-name projection.
+
+Accept a trusted ModelComplete or an already projected string-keyed map.
+Enum names use lowercase schema names with underscores. Preserve optional
+presence, repeated-field order, raw argument strings, and shared Value data."
+  (labels ((project (message depth)
+             (when (> depth 32) (session-store--reject ':resource-limit))
+             (typecase message
+               (cl-protobufs.autolith.common.v1:value
+                (protocol-value->data message))
+               (cl-protobufs.autolith.common.v1:value-map
+                (protocol-value->data
+                 (cl-protobufs.autolith.common.v1:make-value :map-value message)))
+               (otherwise
+                (let* ((schema (cl-protobufs:find-message-descriptor (type-of message)))
+                       (result (make-hash-table :test 'equal))
+                       (fields (append
+                                (cl-protobufs:proto-fields schema)
+                                (mapcan (lambda (oneof)
+                                          (coerce (cl-protobufs:oneof-descriptor-fields oneof)
+                                                  'list))
+                                        (cl-protobufs:proto-oneofs schema)))))
+                  (dolist (field fields)
+                    (let ((name (cl-protobufs:proto-external-field-name field)))
+                      (when (cl-protobufs:has-field message name)
+                        (let ((value (cl-protobufs:proto-slot-value message name)))
+                          (setf (gethash (substitute #\_ #\- (string-downcase name)) result)
+                                (if (eq (cl-protobufs:proto-label field) ':repeated)
+                                    (map 'vector (lambda (item) (field-value item field depth)) value)
+                                    (field-value value field depth)))))))
+                  result))))
+
+           (field-value (value field depth)
+             (case (cl-protobufs:proto-kind field)
+               (:message
+                (project value (1+ depth)))
+               (:enum
+                (substitute #\_ #\- (string-downcase value)))
+               (otherwise
+                value))))
+    (unless (or (hash-table-p complete)
+                (typep complete 'cl-protobufs.autolith.parent.v1:model-complete))
+      (session-store--reject ':invalid-completion))
+    (let ((data (if (hash-table-p complete) complete (project complete 0))))
+      (unless (loop for key being the hash-keys of data
+                    always (member key '("message" "usage" "reason" "continuation_handle"
+                                         "output_items" "response_id" "metadata" "turn_completion"
+                                         "turn_state_handle" "compaction_outcome") :test #'equal))
+        (session-store--reject ':invalid-completion))
+      (handler-case
+          (protocol-value->data
+           (session-store--data-value (session-store--value-data (protocol-data->value data))))
+        (protocol-value-error (condition)
+          (session-store--reject
+           (if (member (protocol-value-error-reason condition) '(:depth-limit :entry-limit))
+               ':resource-limit
+               ':invalid-completion)))))))
+
+(declaim (ftype (function (list) null) session-store--model-payload-check))
+
+(defun session-store--model-payload-check (payload)
+  "Validate the distinct trusted parent model-result note shape."
+  (unless (and (eq (first payload) ':map)
+               (equal (mapcar #'first (second payload))
+                      '("attempt" "model_result" "request_id" "turn_id"))
+               (eq (first (session-store--field payload "model_result")) ':map)
+               (eq (first (session-store--field payload "attempt")) ':integer)
+               (<= 1 (second (session-store--field payload "attempt")) #xffffffff)
+               (every (lambda (name)
+                        (let ((field (session-store--field payload name)))
+                          (and (eq (first field) ':string)
+                               (session-store--identifier-p (second field)))))
+                      '("request_id" "turn_id")))
+    (session-store--reject ':invalid-payload))
+  (session-store-model-complete-data
+   (protocol-value->data (session-store--data-value
+                          (session-store--field payload "model_result"))))
+  nil)
+
 (declaim (ftype (function (keyword list) null) session-store--payload-check))
 
 (defun session-store--payload-check (kind payload)
@@ -227,7 +309,7 @@ which serializes threads and processes. Do not change the log outside this API."
    (active :initform nil :accessor session-store-state-active
            :documentation "The current unfinished turn, if any.")
    (events :initform (make-hash-table :test 'equal) :reader session-store-state-events
-           :documentation "Committed records indexed by event identity.")
+           :documentation "Records indexed by event strings and tagged model turn/request keys.")
    (turns :initform (make-hash-table :test 'equal) :reader session-store-state-turns
           :documentation "Turn identities that have already been used.")
    (calls :initform (make-hash-table :test 'equal) :reader session-store-state-calls
@@ -288,8 +370,21 @@ integers, numbers, byte arrays, lists, maps, booleans, strings, and null."
                    (session-store--identifier-p turn)
                    (not (gethash event events)))
         (session-store--reject ':corrupt-log))
-      (session-store--payload-check kind payload)
+      (let ((model-result (and (eq kind ':note)
+                               (session-store--field payload "model_result"))))
+        (if (and (eq origin ':parent) model-result)
+            (session-store--model-payload-check payload)
+            (session-store--payload-check kind payload)))
       (cond
+        ((and (eq origin ':parent) (eq kind ':note)
+              (session-store--field payload "model_result"))
+         (let ((key (list ':model-result turn
+                          (second (session-store--field payload "request_id")))))
+           (unless (and (equal active turn) (null continuation)
+                        (equal turn (second (session-store--field payload "turn_id")))
+                        (not (gethash key events)))
+             (session-store--reject ':corrupt-log))
+           (setf (gethash key events) data)))
         ((and (eq origin ':parent) (member kind '(:user-input :note)))
          (when (or active (gethash turn turns)
                    (and continuation
@@ -547,6 +642,58 @@ metadata even for duplicate events. Tool starts must commit before execution."
        (session-store--commit store data)
        (cl-protobufs.autolith.parent.v1:make-session-ack
         :event-id event :sequence (first data))))))
+
+(declaim (ftype (function (session-store &key (:event-id string) (:turn-id string)
+                            (:request-id t) (:attempt integer) (:complete t))
+                          cl-protobufs.autolith.parent.v1:session-ack)
+                session-store-model-result))
+
+(defun session-store-model-result (store &key event-id turn-id request-id (attempt 1) complete)
+  "Commit a trusted parent ModelComplete note and return its durable SessionAck.
+
+Use the model journal's deterministic EVENT-ID when reconciling its outbox.
+REQUEST-ID is a bounded string or a wire uint64, converted to decimal text.
+Exact turn/request retries return the first acknowledgement even after turn
+closure. Conflicting content, attempt, or event identity is rejected. Publish
+before acknowledging the model journal projection. This call has no agent RPC."
+  (when (typep request-id '(unsigned-byte 64))
+    (setf request-id (format nil "~D" request-id)))
+  (unless (and (session-store--identifier-p event-id)
+               (session-store--identifier-p turn-id)
+               (session-store--identifier-p request-id)
+               (typep attempt '(integer 1 #xffffffff)))
+    (session-store--reject ':invalid-request))
+  (let ((payload (make-hash-table :test 'equal)))
+    (setf (gethash "turn_id" payload) turn-id
+          (gethash "request_id" payload) request-id
+          (gethash "attempt" payload) attempt
+          (gethash "model_result" payload) (session-store-model-complete-data complete))
+    (let* ((data (list 0 event-id turn-id ':note
+                       (session-store--value-data (protocol-data->value payload)) ':parent))
+           (key  (list ':model-result turn-id request-id)))
+      (session-store--model-payload-check (fifth data))
+      (session-store--locked
+       store
+       (lambda (records active events turns calls)
+         (declare (ignore turns calls))
+         (let ((prior (or (gethash key events) (gethash event-id events))))
+           (when prior
+             (unless (and (eq (sixth prior) ':parent)
+                          (session-store--exact-p (rest prior) (rest data)))
+               (session-store--reject ':model-result-conflict))
+             (return-from session-store-model-result
+               (cl-protobufs.autolith.parent.v1:make-session-ack
+                :event-id (copy-seq event-id) :sequence (first prior)))))
+         (unless (equal active turn-id) (session-store--reject ':inactive-turn))
+         (setf (first data) (1+ (length records)))
+         (let* ((record (session-store--data-record data))
+                (page   (cl-protobufs.autolith.parent.v1:make-session-page
+                         :records (list record) :high-water-sequence (first data))))
+           (when (> (length (cl-protobufs:serialize-to-bytes page)) (* 8 1024 1024))
+             (session-store--reject ':resource-limit)))
+         (session-store--commit store data)
+         (cl-protobufs.autolith.parent.v1:make-session-ack
+          :event-id (copy-seq event-id) :sequence (first data)))))))
 
 (declaim (ftype (function (session-store t &key (:high-water-sequence t) (:max-bytes integer))
                          cl-protobufs.autolith.parent.v1:session-page)
