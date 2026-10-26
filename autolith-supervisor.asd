@@ -55,3 +55,23 @@
                              (uiop:symbol-call '#:autolith-supervisor '#:run-protobuf-validation-tests)
                              (uiop:symbol-call '#:autolith-supervisor '#:run-protocol-value-tests)
                              (uiop:symbol-call '#:autolith-supervisor '#:run-protocol-handshake-tests)))
+
+(asdf:defsystem #:autolith-supervisor/session
+  :description             "Parent-owned durable sessions and session.v1 wire service."
+  :depends-on              (#:autolith-supervisor/protocol #:sexp-store #:ls-flock #:ls-compat/posix)
+  :default-component-class autolith-supervisor-source-file
+  :serial                  t
+  :components              ((:file "supervisor/session-store")
+                            (:file "supervisor/session-dispatch"))
+  :in-order-to             ((asdf:test-op (asdf:test-op #:autolith-supervisor/session/tests))))
+
+(asdf:defsystem #:autolith-supervisor/session/tests
+  :description             "Durable session and wire lifecycle checks without agent code."
+  :depends-on              (#:autolith-supervisor/session #:autolith-supervisor/protocol/tests)
+  :default-component-class autolith-supervisor-source-file
+  :serial                  t
+  :components              ((:file "supervisor/session-store-tests")
+                            (:file "supervisor/session-dispatch-tests"))
+  :perform                 (asdf:test-op (operation component)
+                             (uiop:symbol-call '#:autolith-supervisor '#:run-session-store-tests)
+                             (uiop:symbol-call '#:autolith-supervisor '#:run-session-dispatch-tests)))

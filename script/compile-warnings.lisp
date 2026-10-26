@@ -13,6 +13,7 @@
 (defparameter *compile-warnings-systems*
   '("autolith-agent" "autolith-supervisor" "autolith-protocol"
     "autolith-supervisor/protocol" "autolith-supervisor/protocol/tests"
+    "autolith-supervisor/session" "autolith-supervisor/session/tests"
     "autolith" "autolith/checks" "autolith/tests"
     #-win32 "autolith/release-server"
     "autolith/structural" "autolith/structural/tests" "autolith/debug"
