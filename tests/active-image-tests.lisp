@@ -172,6 +172,11 @@
            (test-image-commit--write-probe-commit
             script identifier
             (list
+             (list :kind ':legacy :id "tracked-lookup" :target "tracked source"
+                   :source "(let ((configuration (configuration-create :defer-provider-validation-p t)))
+  (dotimes (index 2)
+    (assert (self-tracked-definition-source configuration '(defun image-commit-replay-probe-output (identifier) identifier)))
+    (assert (member \"autolith-agent\" (asdf:already-loaded-systems) :test #'string=))))")
              (list :kind ':definition :id "stale" :tracked nil
                    :target "(defun image-commit-replay-probe-output)"
                    :source "(defun image-commit-replay-probe-output (identifier) identifier \"stale\")")))

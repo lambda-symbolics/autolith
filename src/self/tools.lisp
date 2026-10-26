@@ -1116,44 +1116,49 @@ Feature-withheld components and unloaded optional systems in ROOT may refer to
 packages or package-local nicknames absent from this image. Use their registered
 ASDF component metadata without loading modules or reading their source.
 Files shared with a loaded system are available through that system."
-  ;; Read only local system definitions, never their optional module source.
-  (dolist (pathname (uiop:directory-files root "*.asd"))
-    (asdf:load-asd pathname))
-  (let* ((loaded    (asdf:already-loaded-systems))
-         (systems   (loop for name in (asdf:registered-systems)
+  (let* ((loaded (asdf:already-loaded-systems))
+         (known-definitions
+           (loop for name in (asdf:registered-systems)
+                 collect (asdf:system-source-file (asdf:find-system name)))))
+    ;; Reloading an ASD can clear the loaded state of its systems. Discover only
+    ;; definitions not registered yet, without reading optional module source.
+    (dolist (pathname (uiop:directory-files root "*.asd"))
+      (unless (member pathname known-definitions :test #'uiop:pathname-equal)
+        (asdf:load-asd pathname)))
+    (let* ((systems   (loop for name in (asdf:registered-systems)
                           for system = (asdf:find-system name)
                           when (uiop:pathname-equal
                                 (asdf:component-pathname system) root)
                             collect system))
-         (available (mapcan #'self-source--component-pathnames
-                            (remove-if-not
-                             (lambda (component)
-                               (member (asdf:component-name component) loaded
-                                       :test #'string-equal))
-                             systems))))
-    (labels ((collect (component withheld-p)
-               "Return withheld files below COMPONENT, respecting loaded owners."
-               (let* ((feature    (asdf/component:component-if-feature component))
-                      (withheld-p (or withheld-p
-                                      (and feature (not (uiop:featurep feature))))))
-                 (cond
-                   ((typep component 'asdf:module)
-                    (mapcan (lambda (child) (collect child withheld-p))
-                            (asdf:component-children component)))
-                   ((and (typep component 'asdf:cl-source-file) withheld-p
-                         (not (member (asdf:component-pathname component) available
-                                      :test #'uiop:pathname-equal)))
-                    (list (enough-namestring (asdf:component-pathname component)
-                                             root)))
-                   (t
-                    nil)))))
-      (remove-duplicates
-       (mapcan (lambda (component)
-                 (collect component
-                          (not (member (asdf:component-name component) loaded
-                                       :test #'string-equal))))
-               systems)
-       :test #'string=))))
+           (available (mapcan #'self-source--component-pathnames
+                              (remove-if-not
+                               (lambda (component)
+                                 (member (asdf:component-name component) loaded
+                                         :test #'string-equal))
+                               systems))))
+     (labels ((collect (component withheld-p)
+                "Return withheld files below COMPONENT, respecting loaded owners."
+                (let* ((feature    (asdf/component:component-if-feature component))
+                       (withheld-p (or withheld-p
+                                       (and feature (not (uiop:featurep feature))))))
+                  (cond
+                    ((typep component 'asdf:module)
+                     (mapcan (lambda (child) (collect child withheld-p))
+                             (asdf:component-children component)))
+                    ((and (typep component 'asdf:cl-source-file) withheld-p
+                          (not (member (asdf:component-pathname component) available
+                                       :test #'uiop:pathname-equal)))
+                     (list (enough-namestring (asdf:component-pathname component)
+                                              root)))
+                    (t
+                     nil)))))
+       (remove-duplicates
+        (mapcan (lambda (component)
+                  (collect component
+                           (not (member (asdf:component-name component) loaded
+                                        :test #'string-equal))))
+                systems)
+        :test #'string=)))))
 
 (-> self-tracked-definitions (configuration symbol) list)
 (defun self-tracked-definitions (configuration symbol)
