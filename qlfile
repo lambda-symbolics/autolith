@@ -40,7 +40,7 @@ git colordiff https://github.com/lambda-symbolics/colordiff.git :ref a8d229ae99d
 git parenchek https://github.com/lambda-symbolics/parenchek.git :ref ff5281cdb0be79fd6368b26c837cf7c9a4ea26f6
 git org-templater https://github.com/lambda-symbolics/org-templater.git :ref f9bbf7c4da14b2689450ab51e5b47bda260a6f3e
 git image-daemon https://github.com/lambda-symbolics/image-daemon.git :ref fa5a80c0084cf727258d1f937db41cf2ebed2072
-git ls-compat https://github.com/lambda-symbolics/ls-compat.git :ref cd7ea1588586d3ee77ccd064c98531483da6f52e
+git ls-compat https://github.com/lambda-symbolics/ls-compat.git :ref f3eaf96a8f80120423b5a31055984f9aa688566b
 git ls-flock https://github.com/lambda-symbolics/ls-flock.git :ref ee9fc57a46a396e6386d61f81a6df926ca9f9906
 git idsmall https://github.com/lambda-symbolics/idsmall.git :ref 51032ca6799956bf267857332495c0b6696cc0bb
 git mcparen https://github.com/lambda-symbolics/mcparen.git :ref 2c2289c8ee3079ea907f0a003ca7526d944ecd64

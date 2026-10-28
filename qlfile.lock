@@ -168,8 +168,8 @@
   :version "git-fa5a80c0084cf727258d1f937db41cf2ebed2072"))
 ("ls-compat" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/ls-compat.git" :ref "cd7ea1588586d3ee77ccd064c98531483da6f52e")
-  :version "git-cd7ea1588586d3ee77ccd064c98531483da6f52e"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/ls-compat.git" :ref "f3eaf96a8f80120423b5a31055984f9aa688566b")
+  :version "git-f3eaf96a8f80120423b5a31055984f9aa688566b"))
 ("ls-flock" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/ls-flock.git" :ref "ee9fc57a46a396e6386d61f81a6df926ca9f9906")
