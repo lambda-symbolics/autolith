@@ -43,7 +43,7 @@ git image-daemon https://github.com/lambda-symbolics/image-daemon.git :ref fa5a8
 git ls-compat https://github.com/lambda-symbolics/ls-compat.git :ref f3eaf96a8f80120423b5a31055984f9aa688566b
 git ls-flock https://github.com/lambda-symbolics/ls-flock.git :ref ee9fc57a46a396e6386d61f81a6df926ca9f9906
 git idsmall https://github.com/lambda-symbolics/idsmall.git :ref 51032ca6799956bf267857332495c0b6696cc0bb
-git mcparen https://github.com/lambda-symbolics/mcparen.git :ref 2c2289c8ee3079ea907f0a003ca7526d944ecd64
+git mcparen https://github.com/lambda-symbolics/mcparen.git :ref bef9d739fa6c187dcf1c2cfd8995d51b2c942b0b
 git sbcl-generations https://github.com/lambda-symbolics/sbcl-generations.git :ref 7c19962ffd402355bcc32586c880c5975e126ae0
 git sexp-config https://github.com/lambda-symbolics/sexp-config.git :ref 9280b5bf0dc056dee49dcf8c9940f30c049015f9
 git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref c65561543ce15934e9969fb3fe0ec31e8ddbbf3f
