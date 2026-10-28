@@ -474,11 +474,11 @@ index, and only once delivered or gone; jobs noted since then stay."
     (if identifiers-p
         (loop for identifier in identifiers
               repeat *task-completion-batch-limit*
-              for record = (cl-jobpond:mailbox-receive mailbox :receiver "completion" :id identifier)
-              when record collect record)
+              when (cl-jobpond:mailbox-receive mailbox :receiver "completion" :id identifier)
+                collect it)
         (loop repeat *task-completion-batch-limit*
-              for record = (cl-jobpond:mailbox-receive mailbox :receiver "completion")
-              while record collect record))))
+              collect (or (cl-jobpond:mailbox-receive mailbox :receiver "completion")
+                          (loop-finish))))))
 
 (-> task-completion-deliver (agent &key (:identifiers list)) list)
 (defun task-completion-deliver (agent &key (identifiers nil identifiers-p))
