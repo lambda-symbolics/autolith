@@ -293,6 +293,35 @@ redacted from server output. Cancel a prompt to stop its provider, tools, and
 owned jobs; close the session or disconnect to release its resources and lease.
 One primary prompt, setting mutation, tool invocation, or session setup runs at a
 time in each ACP process. Catalog reads and owned-job controls can run alongside it.
+Ctrl-C ends an ACP process with status 130 after it releases its sessions.
+
+** Remote clients
+
+=autolith acp --http= serves remote clients on one endpoint, =/acp=, over the
+transports of the ACP proposal "Streamable HTTP & WebSocket Transport":
+Streamable HTTP over HTTP/1.1 or cleartext HTTP/2, and WebSocket.
+=autolith acp --websocket= serves WebSocket alone. Both listen on
+=127.0.0.1:8737= by default. Name another port, or a host and a port, to change
+that:
+
+#+BEGIN_SRC sh
+autolith acp --websocket 9000
+autolith acp --http 0.0.0.0:8737 --token "$ACP_TOKEN"
+autolith acp --http [::1]:8737
+#+END_SRC
+
+Autolith prints the endpoint URL on stderr and serves until Ctrl-C. Each client
+gets its own sessions. All clients share the process's one primary operation, so
+while one client's prompt runs, another client's prompt is refused as busy.
+
+With =--token=, a client must send =Authorization: Bearer TOKEN= or add
+=?token=TOKEN= to the URL. Other users of the machine can read the command line,
+the token included. Requests from web pages, which carry an =Origin= header, are
+refused.
+
+Any host but loopback makes the agent reachable from other machines, and
+Autolith warns that the endpoint is not secure. The traffic, the token included,
+is unencrypted: put a reverse proxy with TLS in front of it, and use a token.
 
 ** Typed client extensions
 
