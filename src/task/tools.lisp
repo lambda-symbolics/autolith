@@ -13,8 +13,8 @@
   (if (not (stringp value))
       value
       (loop with current = value
-            repeat 2
             for trimmed = (task--trim current)
+            repeat 2
             if (and (> (length trimmed) 1)
                     (char= (char trimmed 0) #\QUOTATION_MARK)
                     (char= (char trimmed (1- (length trimmed)))
