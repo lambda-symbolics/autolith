@@ -173,6 +173,41 @@
          (test-assert (plusp (length diagnostics)) "startup diagnostics are on stderr")))))
   nil)
 
+(-> test-acp-launcher-failure-skips-recovery () null)
+(defun test-acp-launcher-failure-skips-recovery ()
+  "The stable shell launcher keeps a failed ACP status and starts no recovery."
+  (with-test-fixture (':posix-shell "the stable launcher's ACP status")
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let ((fake-sbcl (merge-pathnames "bin/fake-sbcl" root))
+            (log       (merge-pathnames "calls.log" root)))
+        (recovery-tests--write-executable
+         fake-sbcl
+         "#!/bin/sh
+printf 'call\\n' >> \"$AUTOLITH_TEST_LOG\"
+exit 1
+")
+        (multiple-value-bind (output diagnostics status)
+            (uiop:run-program
+             (list "env"
+                   (format nil "AUTOLITH_SBCL=~A" (namestring fake-sbcl))
+                   (format nil "AUTOLITH_TEST_LOG=~A" (namestring log))
+                   (format nil "XDG_DATA_HOME=~A" (namestring (merge-pathnames "data/" root)))
+                   (format nil "XDG_STATE_HOME=~A" (namestring (merge-pathnames "state/" root)))
+                   (namestring (asdf:system-relative-pathname :autolith "bin/autolith"))
+                   "--from-source" "acp")
+             :directory           root
+             :input               nil
+             :output              ':string
+             :error-output        ':string
+             :ignore-error-status t)
+          (test-assert (= status 1) "the launcher keeps the ACP status")
+          (test-assert (zerop (length output)) "the launcher writes nothing to ACP's stdout")
+          (test-assert (not (search "RECOVERY" diagnostics)) "no recovery banner follows"))
+        (test-assert (equal (uiop:read-file-lines log) '("call"))
+                     "the launcher runs SBCL once, for ACP only"))))
+  nil)
+
 (-> test-acp-launcher-failure-diagnostics () null)
 (defun test-acp-launcher-failure-diagnostics ()
   "Retain the original transport failure, child status, and drained stderr."
