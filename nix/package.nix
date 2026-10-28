@@ -51,7 +51,7 @@ let
     "cl-llm-provider-api" "cl-lsp" "cl-resources" "cl-rfc8252" "cl-rfc8628"
     "cl-skills" "cl-termdown" "cl-worktree" "clasted" "clermaid" "clifff" "clinedi"
     "clinker-transcript" "colordiff" "colorlisp" "daphne" "defingerprinter" "fetch-gist"
-    "idsmall" "image-daemon" "lambda-debugger" "ls-compat" "ls-flock" "mcparen"
+    "idsmall" "image-daemon" "lambda-debugger" "llh2" "ls-compat" "ls-flock" "mcparen"
     "org-templater" "parenchek" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config"
     "sexp-store" "sophisticated-clipboard" "structlisp" "surgeon" "yolokuva"
   ];
@@ -114,10 +114,26 @@ let
     pname = "agentcomms";
     version = qlotVersion "agentcomms";
     src = qlotSource "agentcomms";
-    lispLibs = [ argo ] ++ (with lispPackages; [
+    lispLibs = [ argo llh2 lsCompat ] ++ (with lispPackages; [
+      babel
       bordeaux-threads
+      cl-base64
+      ironclad
       serapeum
+      usocket
     ]);
+  };
+
+  llh2 = pkgs.sbcl.buildASDFSystem {
+    pname = "llh2";
+    version = qlotVersion "llh2";
+    src = qlotSource "llh2";
+    systems = [ "llh2" ];
+    lispLibs = with lispPackages; [
+      bordeaux-threads
+      cl-base64
+      serapeum
+    ];
   };
 
   clColorist = pkgs.sbcl.buildASDFSystem {
@@ -248,10 +264,11 @@ let
     pname = "ls-compat";
     version = qlotVersion "ls-compat";
     src = qlotSource "ls-compat";
-    systems = [ "ls-compat" "ls-compat/posix" "ls-compat/files" ];
+    systems = [ "ls-compat" "ls-compat/posix" "ls-compat/files" "ls-compat/tcp" ];
     lispLibs = with lispPackages; [
       babel
       serapeum
+      usocket
     ];
   };
 

@@ -64,8 +64,8 @@
   :version "ql-2025-06-22"))
 ("agentcomms" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/agentcomms.git" :ref "18676b8de2b773e521f3af4473e2877878ae3f22")
-  :version "git-18676b8de2b773e521f3af4473e2877878ae3f22"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/agentcomms.git" :ref "0bf29a654d166173420f2af82b92daaa31e2d1a3")
+  :version "git-0bf29a654d166173420f2af82b92daaa31e2d1a3"))
 ("fetch-gist" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/fetch-gist.git" :ref "082f4d45d4cf0076c0c891f00e05d71957de6009")
@@ -210,6 +210,10 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/structlisp.git" :ref "987829546bd07030e25ed1b2e4d3246d11b532db")
   :version "git-987829546bd07030e25ed1b2e4d3246d11b532db"))
+("llh2" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/lambda-symbolics/llh2.git" :ref "f516c92cff438d65fb42d31f4c552b39001e2edc")
+  :version "git-f516c92cff438d65fb42d31f4c552b39001e2edc"))
 ("argo" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/argo.git" :ref "c8034c208f43436b19af2858bfb6112ac7e66e1f")

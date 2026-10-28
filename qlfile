@@ -14,7 +14,7 @@ ql trivial-gray-streams 2026-01-01
 ql winhttp 2026-01-01
 ql yason 2026-01-01
 
-git agentcomms https://github.com/lambda-symbolics/agentcomms.git :ref 18676b8de2b773e521f3af4473e2877878ae3f22
+git agentcomms https://github.com/lambda-symbolics/agentcomms.git :ref 0bf29a654d166173420f2af82b92daaa31e2d1a3
 git fetch-gist https://github.com/lambda-symbolics/fetch-gist.git :ref 082f4d45d4cf0076c0c891f00e05d71957de6009
 git cl-colorist https://github.com/lambda-symbolics/cl-colorist.git :ref 90f17af4fa3d2c0433030e15fffc0328f3863e29
 git cl+ssl https://github.com/cl-plus-ssl/cl-plus-ssl.git :ref d7a92f9ed0cbae10f07b1b9a9c3c5cc179798748
@@ -51,6 +51,7 @@ git sophisticated-clipboard https://github.com/lambda-symbolics/sophisticated-cl
 git sbcl-workers https://github.com/lambda-symbolics/sbcl-workers.git :ref cded09d0c0d2a3c889f6fbb3414342b957978d74
 git surgeon https://github.com/lambda-symbolics/surgeon.git :ref b159c64231f35d2b20aedd41544f8621d16a0c29
 git structlisp https://github.com/lambda-symbolics/structlisp.git :ref 987829546bd07030e25ed1b2e4d3246d11b532db
+git llh2 https://github.com/lambda-symbolics/llh2.git :ref f516c92cff438d65fb42d31f4c552b39001e2edc
 git argo https://github.com/lambda-symbolics/argo.git :ref c8034c208f43436b19af2858bfb6112ac7e66e1f
 git setinka https://github.com/lambda-symbolics/setinka.git :ref ce63dce34287b20ad81f08f6d208e6e18bc3163f
 git lambda-debugger https://github.com/lambda-symbolics/lambda-debugger.git :ref 8299ae17be78a489321de5e035f1f6cc8ede88bc
