@@ -19,7 +19,7 @@
   (unless (probe-file quicklisp-setup)
     (error "Recovery bootstrap needs Quicklisp at ~A." quicklisp-setup))
   (load quicklisp-setup)
-  (uiop:symbol-call '#:ql '#:quickload :serapeum :silent t)
+  (uiop:symbol-call '#:ql '#:quickload '(:serapeum :sbcl-generations) :silent t)
   (let ((package (or (find-package "AUTOLITH")
                      (make-package "AUTOLITH" :use '("CL")))))
     (export (mapcar (lambda (name) (intern name package))
