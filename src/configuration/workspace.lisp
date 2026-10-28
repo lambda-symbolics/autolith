@@ -51,10 +51,10 @@ Git marker is its own project identity."
                        (merge-pathnames ".git/" directory))
                       (uiop:file-exists-p (merge-pathnames ".git" directory)))
                   t)))
-    (loop repeat *workspace-project-depth-limit*
-          for directory = working-directory
+    (loop for directory = working-directory
             then (uiop:pathname-parent-directory-pathname directory)
           for parent = (uiop:pathname-parent-directory-pathname directory)
+          repeat *workspace-project-depth-limit*
           when (marker-p directory)
             return directory
           when (equal directory parent)
