@@ -43,8 +43,8 @@ Offsets refer to execution-ID order in the current inventory, not a snapshot."
                 (list :continuity-list t :offset start :next-offset next
                         :total total :more-p (< next total) :entries entries))))
       (loop for row in (nthcdr start rows)
-            repeat limit
             for trial = (append selected (list row))
+            repeat limit
             if (<= (length (task--write-readable-sexp (page trial)))
                    *task-tool-content-limit*)
               do (setf selected trial)
