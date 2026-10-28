@@ -220,8 +220,8 @@
   :version "git-ce63dce34287b20ad81f08f6d208e6e18bc3163f"))
 ("lambda-debugger" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/lambda-debugger.git" :ref "7399adcec0af3e0fd4f1e8be260bea2689d8e7af")
-  :version "git-7399adcec0af3e0fd4f1e8be260bea2689d8e7af"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/lambda-debugger.git" :ref "8299ae17be78a489321de5e035f1f6cc8ede88bc")
+  :version "git-8299ae17be78a489321de5e035f1f6cc8ede88bc"))
 ("yolokuva" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/yolokuva.git" :ref "e35d37d21bf07bb99473c0144144fa73c313d898")
