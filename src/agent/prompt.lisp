@@ -60,9 +60,9 @@ prompt instead of the full Autolith persona.")
   "Return AGENTS.md paths from the project root down to WORKING-DIRECTORY."
   (let* ((root (workspace-project-root working-directory))
          (directories
-           (loop repeat *workspace-project-depth-limit*
-                 for directory = working-directory
+           (loop for directory = working-directory
                    then (uiop:pathname-parent-directory-pathname directory)
+                 repeat *workspace-project-depth-limit*
                  collect directory
                  until (or (equal directory root)
                            (equal directory
