@@ -8,6 +8,17 @@
 (defparameter *acp-session-close-seconds* 10
   "Maximum cooperative shutdown wait before reporting an active session.")
 
+(defclass acp-operation-gate ()
+  ((owner
+    :initform      nil
+    :accessor      acp-operation-gate-owner
+    :documentation "The session or setup operation owning the primary runtime, or NIL.")
+   (lock
+    :initform      (make-lock "Autolith ACP operation gate")
+    :reader        acp-operation-gate-lock
+    :documentation "The lock protecting the owner; taken after a service lock, never before."))
+  (:documentation "The one primary operation of an ACP process, shared by every client it serves."))
+
 (defclass acp-service (agentcomms:acp-agent)
   ((configuration
     :initarg :configuration :accessor acp-service-configuration :type configuration
@@ -22,9 +33,9 @@
    (lock
     :initform (make-lock "Autolith ACP service") :reader acp-service-lock
     :documentation "The lock protecting session admission and process ownership.")
-   (busy-owner
-    :initform nil :accessor acp-service-busy-owner
-    :documentation "The session or setup operation owning the primary runtime.")
+   (gate
+    :initarg :gate :initform (make-instance 'acp-operation-gate) :reader acp-service-gate
+    :documentation "The primary operation gate this service shares with the process's other clients.")
    (closed-p
     :initform nil :accessor acp-service-closed-p :type boolean
     :documentation "Whether disconnect has stopped further session admission."))
@@ -107,6 +118,13 @@
     (or (gethash identifier (acp-service-sessions service))
         (agentcomms:acp-invalid-params "Unknown session ~A." identifier))))
 
+(-> acp-service-busy-owner (acp-service) t)
+(defun acp-service-busy-owner (service)
+  "Return the operation owning the primary runtime of SERVICE's process, or NIL."
+  (let ((gate (acp-service-gate service)))
+    (with-lock-held ((acp-operation-gate-lock gate))
+      (acp-operation-gate-owner gate))))
+
 (define-condition acp-operation-busy (agentcomms:acp-method-error)
   ()
   (:default-initargs :code -32603 :message "Another primary operation is active.")
@@ -114,21 +132,23 @@
 
 (-> acp-service--call-with-operation (acp-service t function) t)
 (defun acp-service--call-with-operation (service owner function)
-  "Run FUNCTION as the sole primary operation, rejecting overlapping work."
-  (let ((claimed-p nil))
+  "Run FUNCTION as the sole primary operation of the process, rejecting overlapping work."
+  (let ((gate      (acp-service-gate service))
+        (claimed-p nil))
     (unwind-protect
          (progn
            (with-lock-held ((acp-service-lock service))
              (when (acp-service-closed-p service)
                (error 'agentcomms:acp-connection-closed))
-             (when (acp-service-busy-owner service)
-              (error 'acp-operation-busy))
-             (setf (acp-service-busy-owner service) owner
-                   claimed-p t))
+             (with-lock-held ((acp-operation-gate-lock gate))
+               (when (acp-operation-gate-owner gate)
+                 (error 'acp-operation-busy))
+               (setf (acp-operation-gate-owner gate) owner
+                     claimed-p                       t)))
            (funcall function))
       (when claimed-p
-        (with-lock-held ((acp-service-lock service))
-          (setf (acp-service-busy-owner service) nil))))))
+        (with-lock-held ((acp-operation-gate-lock gate))
+          (setf (acp-operation-gate-owner gate) nil))))))
 
 (defvar *acp-extension-invocation-p* nil
   "Whether an explicit extension invocation owns this thread's cancellation boundary.")
