@@ -409,7 +409,6 @@
               (remhash (acp-session-identifier session) (acp-service-sessions service))))
         (serious-condition ()
           (setf failed-p t))))
-    (telemetry--call-safely #'telemetry-shutdown)
     (when failed-p
       (error 'agentcomms:acp-state-error :message "ACP session cleanup failed.")))
   nil)
@@ -424,10 +423,17 @@
       (agentcomms:channel-close channel)))
   nil)
 
-(-> acp-run (configuration &key (:permission-mode keyword) (:pristine-p boolean)) null)
-(defun acp-run (configuration &key (permission-mode ':ask) pristine-p)
-  "Bootstrap a headless ACP endpoint and serve UTF-8 standard I/O until disconnect."
-  (let* ((channel           (agentcomms:acp-standard-io-channel))
+(-> acp-run (configuration &key (:permission-mode keyword) (:pristine-p boolean)
+                                (:endpoint (or null acp-endpoint)))
+    null)
+(defun acp-run (configuration &key (permission-mode ':ask) pristine-p endpoint)
+  "Bootstrap a headless ACP process and serve its clients until they leave or Ctrl-C.
+
+Without ENDPOINT, the one client is the editor on UTF-8 standard I/O. With
+ENDPOINT, remote clients connect over the network. Every client gets its own
+service, and all of them share the process's one primary operation."
+  (let* ((channel           (and (null endpoint) (agentcomms:acp-standard-io-channel)))
+         (gate              (make-instance 'acp-operation-gate))
          (*standard-output* *error-output*)
          (*trace-output*    *error-output*)
          (*standard-input*  (make-string-input-stream ""))
@@ -435,7 +441,6 @@
          (*query-io*        *terminal-io*)
          (*debug-io*        *terminal-io*))
     (unwind-protect
-         ;; Client declarations can contain credentials for the service lifetime.
          (call-with-secret-use
           (lambda ()
             (configuration-ensure-directories configuration)
@@ -445,9 +450,19 @@
             (image-state-load configuration :pristine-p pristine-p)
             (application--load-extension-configuration configuration :pristine-p pristine-p)
             (setf configuration (provider-bootstrap-configuration configuration))
-            (with-slynk-endpoint (configuration)
-              (acp-service-serve (make-instance 'acp-service :configuration configuration
-                                                :permission-mode            permission-mode)
-                                 channel))))
-      (agentcomms:channel-close channel)))
+            (flet ((serve (client-channel)
+                     ;; Client declarations can contain credentials for the client's lifetime.
+                     (call-with-secret-use
+                      (lambda ()
+                        (acp-service-serve (make-instance 'acp-service :configuration   configuration
+                                                                       :permission-mode permission-mode
+                                                                       :gate            gate)
+                                           client-channel)))))
+              (with-slynk-endpoint (configuration)
+                (if endpoint
+                    (acp-serve-remote endpoint #'serve)
+                    (serve channel))))))
+      (when channel
+        (agentcomms:channel-close channel))
+      (telemetry--call-safely #'telemetry-shutdown)))
   nil)

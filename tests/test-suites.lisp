@@ -1542,6 +1542,12 @@
   test-acp-launcher-interrupt-exits-quietly
   test-acp-launcher-failure-diagnostics)
 
+(define-test-suite acp-remote
+  test-acp-endpoint-parse
+  test-acp-command-rejects-endpoint-combinations
+  test-acp-remote-websocket-process
+  test-acp-remote-http-process)
+
 (define-test-suite lisp-values
   test-application-lisp-value-roundtrips
   test-application-lisp-value-layout

@@ -1343,18 +1343,60 @@ Lisp starts; on Windows it prints the folders to delete."
         (cons "update" (when tail '("--help"))))
       arguments))
 
+(-> main--acp-endpoint (clingon:command) (or null acp-endpoint))
+(defun main--acp-endpoint (command)
+  "Return the remote endpoint the acp COMMAND selects, or NIL for standard I/O."
+  (let ((http-p      (getopt* command ':http))
+        (websocket-p (getopt* command ':websocket))
+        (token       (getopt* command ':token))
+        (arguments   (command-arguments command)))
+    (cond
+      ((and http-p websocket-p)
+       (error 'configuration-error :message "Choose --http or --websocket, not both."))
+      ((or http-p websocket-p)
+       (when (rest arguments)
+         (error 'configuration-error :message "ACP takes at most one [HOST:]PORT."))
+       (acp-endpoint-parse (if http-p ':http ':websocket) (first arguments) :token token))
+      (arguments
+       (error 'configuration-error :message "A [HOST:]PORT needs --http or --websocket."))
+      (token
+       (error 'configuration-error :message "--token needs --http or --websocket."))
+      (t
+       nil))))
+
 (-> main--acp-command () clingon:command)
 (defun main--acp-command ()
   "Return the Agent Client Protocol server sub-command definition."
   (make-command
    :name        "acp"
-   :description "serve the Agent Client Protocol on standard input and output"
+   :description "serve the Agent Client Protocol on standard I/O, HTTP, or WebSocket"
+   :usage       "[--http | --websocket [HOST:]PORT [--token TOKEN]]"
+   :long-description
+   "Without options, ACP runs on standard input and output for the editor that
+started it. --http serves remote clients over Streamable HTTP and WebSocket on
+one endpoint, /acp; --websocket serves WebSocket alone. Both listen on
+127.0.0.1:8737 unless HOST:PORT or PORT says otherwise. With --token, clients
+must send the token as an Authorization: Bearer header or a token query
+parameter. Anything but loopback is reachable from other machines and is not
+secure: traffic is unencrypted, so put a TLS proxy in front."
+   :options
+   (list (make-option ':flag
+                      :long-name   "http"
+                      :key         ':http
+                      :description "serve Streamable HTTP and WebSocket clients")
+         (make-option ':flag
+                      :long-name   "websocket"
+                      :key         ':websocket
+                      :description "serve WebSocket clients")
+         (make-option ':string
+                      :long-name   "token"
+                      :key         ':token
+                      :parameter   "TOKEN"
+                      :description "the bearer token remote clients must present"))
    :handler
    (lambda (command)
-     (when (command-arguments command)
-       (error 'configuration-error
-              :message "ACP accepts no positional arguments."))
-     (let* ((pristine-p      (not (null (getopt* command ':pristine))))
+     (let* ((endpoint        (main--acp-endpoint command))
+            (pristine-p      (not (null (getopt* command ':pristine))))
             (configuration
               (configuration-create
                :immutable-p                 pristine-p
@@ -1362,7 +1404,8 @@ Lisp starts; on Windows it prints the folders to delete."
             (permission-mode (or (getopt* command ':permissions) ':ask)))
        (acp-run configuration
                 :permission-mode permission-mode
-                :pristine-p      pristine-p)))))
+                :pristine-p      pristine-p
+                :endpoint        endpoint)))))
 
 (-> main--top-level-command () clingon:command)
 (defun main--top-level-command ()

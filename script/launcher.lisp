@@ -55,7 +55,7 @@
 (defparameter *launcher-value-options*
   '("--permissions" "--image" "-i" "--localgroup-handoff" "--id" "--input"
     "--output" "--events" "--generation" "--status" "--capsule" "--original-argument"
-    "--workspace")
+    "--workspace" "--token")
   "Options whose next argument is forwarded verbatim, as script/launcher-cli.sh does.")
 
 (defparameter *launcher-terminal-statuses* '(64 76 130 143)
