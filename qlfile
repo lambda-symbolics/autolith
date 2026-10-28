@@ -18,7 +18,7 @@ git agentcomms https://github.com/lambda-symbolics/agentcomms.git :ref 18676b8de
 git fetch-gist https://github.com/lambda-symbolics/fetch-gist.git :ref 082f4d45d4cf0076c0c891f00e05d71957de6009
 git cl-colorist https://github.com/lambda-symbolics/cl-colorist.git :ref 90f17af4fa3d2c0433030e15fffc0328f3863e29
 git cl+ssl https://github.com/cl-plus-ssl/cl-plus-ssl.git :ref d7a92f9ed0cbae10f07b1b9a9c3c5cc179798748
-git clinedi https://github.com/lambda-symbolics/clinedi.git :ref 12d82e9fc5032f92e156fafb47b68c88a29822df
+git clinedi https://github.com/lambda-symbolics/clinedi.git :ref 49ed50e342c7ff8cfdb23bec18d98d34e97cc4c1
 git clermaid https://github.com/lambda-symbolics/clermaid.git :ref 7a4497aff7514134dd69ab28b7d07c06335b7852
 git cl-jobpond https://github.com/lambda-symbolics/cl-jobpond.git :ref 148649aa6f1e998db5bbe807dc934d6b6e2762a1
 git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 1a2af5d4c7441fe756ead213c96a7f332ea8ce25
