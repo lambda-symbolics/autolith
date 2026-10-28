@@ -1433,5 +1433,9 @@ autolith uninstall removes the installation and keeps user data."
       (main-dispatch arguments)
     ((or autolith-error cl-llm-provider-api:provider-api-error) (condition)
       (format *error-output* "Autolith could not start: ~A~%" condition)
-      (uiop:quit 64)))
+      (uiop:quit 64))
+    ;; Ctrl-C outside the raw-mode terminal interface ends the command, after
+    ;; unwinding its cleanup, with the shell's interrupt status.
+    (sb-sys:interactive-interrupt ()
+      (uiop:quit 130)))
   nil)

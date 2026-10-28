@@ -38,11 +38,15 @@
                (asdf:load-system :autolith)
                (setf main (list (symbol-function (find-symbol "MAIN" "AUTOLITH"))
                                 (uiop:command-line-arguments))))))
-    (if acp-p
-        (let ((*standard-output* *error-output*)
-              (*trace-output* *error-output*))
-          (load-autolith)
-          (apply (first main) (rest main)))
-        (progn
-          (load-autolith)
-          (apply (first main) (rest main))))))
+    ;; Ctrl-C while the system loads ends the launch like an interrupted command.
+    (handler-case
+        (if acp-p
+            (let ((*standard-output* *error-output*)
+                  (*trace-output* *error-output*))
+              (load-autolith)
+              (apply (first main) (rest main)))
+            (progn
+              (load-autolith)
+              (apply (first main) (rest main))))
+      (sb-sys:interactive-interrupt ()
+        (uiop:quit 130)))))

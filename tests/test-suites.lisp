@@ -1539,6 +1539,7 @@
   test-acp-launcher-source-stdio-roundtrip
   test-acp-launcher-failure-keeps-stdout-clean
   test-acp-launcher-failure-skips-recovery
+  test-acp-launcher-interrupt-exits-quietly
   test-acp-launcher-failure-diagnostics)
 
 (define-test-suite lisp-values
