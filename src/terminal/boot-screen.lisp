@@ -275,8 +275,8 @@ window instead of judging interactivity before it could possibly happen."
 (defun terminal-ui--boot-rotate-tip (ui)
   "Replace the cached startup tip with a different one, when another exists."
   (let ((current (fullscreen-terminal-ui-welcome-tip ui)))
-    (loop repeat 8
-          for candidate = (application--startup-tip-spans)
+    (loop for candidate = (application--startup-tip-spans)
+          repeat 8
           unless (equal candidate current)
             do (setf (fullscreen-terminal-ui-welcome-tip ui) candidate)
                (return)))
