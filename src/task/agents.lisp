@@ -557,10 +557,10 @@ walking, cycle detection, node limits, and string limits stay in sexp-config."
   "Return the nearest project .autolith/agents directory, or NIL."
   (let* ((start (config :working-directory configuration))
          (root  (workspace-project-root start)))
-    (loop repeat 64
-          for directory = start
+    (loop for directory = start
             then (uiop/pathname:pathname-parent-directory-pathname directory)
           for candidate = (merge-pathnames ".autolith/agents/" directory)
+          repeat 64
           when (uiop/filesystem:directory-exists-p candidate)
             return candidate
           when (equal directory root)
