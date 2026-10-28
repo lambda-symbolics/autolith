@@ -1495,6 +1495,9 @@ Colocation lets older committed source use its original Git provenance code."
   (restart-case
       (handler-case
           (uiop:quit (recovery-run (uiop:command-line-arguments)))
+        ;; Ctrl-C stops recovery after its cleanup unwinds, without a backtrace.
+        (sb-sys:interactive-interrupt ()
+          (uiop:quit 130))
         (error (condition)
           (format *error-output* "Recovery could not continue: ~A~%"
                   (recovery-sanitize-text condition))
