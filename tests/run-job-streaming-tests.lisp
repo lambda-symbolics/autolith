@@ -396,14 +396,14 @@
             (unless (probe-file output)
               (format *error-output* "~&Blocked-exit fixture stdout: ~S~%"
                       (coerce (loop repeat 2000
-                                    for character = (read-char (uiop:process-info-output process) nil nil)
-                                    while character collect character)
+                                    collect (or (read-char (uiop:process-info-output process) nil nil)
+                                                (loop-finish)))
                               'string))
               (when (probe-file error-path)
                 (with-open-file (errors error-path :external-format ':utf-8)
                   (format *error-output* "Blocked-exit fixture stderr: ~S~%"
-                          (coerce (loop repeat 2000 for character = (read-char errors nil nil)
-                                        while character collect character)
+                          (coerce (loop repeat 2000
+                                        collect (or (read-char errors nil nil) (loop-finish)))
                                   'string)))))
             (ignore-errors (close (uiop:process-info-input process)))
             (ignore-errors (close (uiop:process-info-output process))))))))

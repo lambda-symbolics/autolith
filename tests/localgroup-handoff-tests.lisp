@@ -807,9 +807,9 @@
                 (terminal--write relay "conversation switched")
                 (test-assert
                  (loop repeat 30
-                       for packet = (test-localgroup--read-packet stream)
-                       thereis (and (eq (first packet) ':output)
-                                    (search "conversation switched" (second packet))))
+                       thereis (let ((packet (test-localgroup--read-packet stream)))
+                                 (and (eq (first packet) ':output)
+                                      (search "conversation switched" (second packet)))))
                  "an attached terminal receives output after conversation changes"))
               (let* ((before     (application-conversation application))
                      (blocked    (conversation-create configuration))

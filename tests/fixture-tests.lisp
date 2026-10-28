@@ -253,11 +253,10 @@
   (with-test-fixture (':symbolic-links "long symbolic-link paths")
     (with-test-configuration (configuration root)
       (declare (ignore configuration))
-      (let* ((directory (loop repeat 6
-                             for path = root then (merge-pathnames
-                                                   (format nil "~A/" (make-string 50 :initial-element #\x))
-                                                   path)
-                             finally (return path)))
+      (let* ((directory (merge-pathnames
+                         (format nil "~{~A/~}"
+                                 (make-list 5 :initial-element (make-string 50 :initial-element #\x)))
+                         root))
              (target    (merge-pathnames "target.txt" directory))
              (link      (merge-pathnames "link.txt" directory)))
         (ensure-directories-exist target)
