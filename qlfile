@@ -25,7 +25,7 @@ git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.gi
 git cl-rfc8252 https://github.com/lambda-symbolics/cl-rfc8252.git :ref e2bbd2374ec159f86123c046c020fce27fce2d99
 git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref 38d5b6ae81a24031ad6c95b4f42ba99f2cf0a6c3
 git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref 5bd8b2a0711fe63823ee36e9aac375f309c6126c
-git cl-lsp https://github.com/lambda-symbolics/cl-lsp.git :ref 48242f336d6bcb6e778763322fba68602ccea921
+git cl-lsp https://github.com/lambda-symbolics/cl-lsp.git :ref 71327540754e7d77f90f76205c206985859b04c6
 git cl-resources https://github.com/lambda-symbolics/cl-resources.git :ref 6fa84c8ab0a87706b2dc266aafb54696c26d919f
 git clasted https://github.com/lambda-symbolics/clasted.git :ref 669dbf5ef7c9d8b6d31678f7d4b9677f3a2166b7
 git daphne https://github.com/lambda-symbolics/daphne.git :ref 0727975d4c74a11be13b39ffe4a33aae74387848
