@@ -20,7 +20,7 @@ git cl-colorist https://github.com/lambda-symbolics/cl-colorist.git :ref 90f17af
 git cl+ssl https://github.com/cl-plus-ssl/cl-plus-ssl.git :ref d7a92f9ed0cbae10f07b1b9a9c3c5cc179798748
 git clinedi https://github.com/lambda-symbolics/clinedi.git :ref 12d82e9fc5032f92e156fafb47b68c88a29822df
 git clermaid https://github.com/lambda-symbolics/clermaid.git :ref 7a4497aff7514134dd69ab28b7d07c06335b7852
-git cl-jobpond https://github.com/lambda-symbolics/cl-jobpond.git :ref 6823ad515719663d8a574394b8ae21490b6ebf03
+git cl-jobpond https://github.com/lambda-symbolics/cl-jobpond.git :ref 148649aa6f1e998db5bbe807dc934d6b6e2762a1
 git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 1a2af5d4c7441fe756ead213c96a7f332ea8ce25
 git cl-rfc8252 https://github.com/lambda-symbolics/cl-rfc8252.git :ref e2bbd2374ec159f86123c046c020fce27fce2d99
 git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref 38d5b6ae81a24031ad6c95b4f42ba99f2cf0a6c3
