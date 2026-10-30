@@ -325,8 +325,14 @@ Persist the public views and handles with the parent model-event log. On
 restart, include accepted model results and their ordered views and handles in
 resume data or session pages, using parent-origin =NOTE= records with a
 =model_result= payload that contains the portable field-name projection of
-=ModelComplete= plus the owning turn and request identity. These parent notes
-are distinct from the agent's text notes. Page and value limits still apply;
+=ModelComplete= plus the owning turn and request identity. The parent also stores
+=request_kind= (=generate= or =native_compaction=) and =request_purpose= (=ordinary=
+or =summary=) atomically with acceptance, before publishing the session note.
+Resume restores ordinary generation output directly. Summary and native-compaction
+output require an explicit agent checkpoint. Old unclassified notes require saved
+agent records for all output handles; otherwise resume fails with
+=ambiguous-model-result=. These parent notes are distinct from the agent's text
+notes. Page and value limits still apply;
 return =RESOURCE_LIMIT= if a single result cannot fit. The agent can then select,
 omit, or reorder accepted handles without access to the original hidden data.
 

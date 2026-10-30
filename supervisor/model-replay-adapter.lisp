@@ -13,13 +13,13 @@
 
 (declaim (ftype (function (&key (:replay-store model-replay-store) (:session-store session-store)
                                 (:request-id string) (:turn-id string) (:profile model-profile)
-                                (:emit-event function) (:hosted-types hash-table) (:kind keyword)
+                                (:emit-event function) (:hosted-types hash-table) (:kind keyword) (:purpose keyword)
                                 (:require-item-delta-identity boolean)) model-event-collector)
                 make-model-replay-collector))
 
 (defun make-model-replay-collector (&key replay-store session-store request-id turn-id profile emit-event
                                         (hosted-types (make-hash-table :test 'equal))
-                                        (kind ':generate) require-item-delta-identity)
+                                        (kind ':generate) (purpose ':ordinary) require-item-delta-identity)
   "Connect one collector to the real replay and session journals.
 
 The caller owns admission, provider execution, cancellation, and transport limits.
@@ -60,7 +60,8 @@ never turn a possibly committed result into a terminal failure."
      :accept-result
      (lambda (complete)
        (model-replay-store-accept replay-store :request-id request :attempt attempt
-                                              :complete (protocol-message->data complete))
+                                              :complete (protocol-message->data complete)
+                                              :request-kind kind :request-purpose purpose)
        (model-replay-store-project-session replay-store session-store)
        (let ((events (model-replay-store-events replay-store request)))
          (setf pending-event (aref events (1- (length events)))))

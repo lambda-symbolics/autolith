@@ -2443,13 +2443,14 @@
     (declare (ignore configuration))
     (let* ((source-configuration (test-configuration-for-source-root root))
            (identifier           (make-identifier))
-           (loaded-name          (format nil "autolith/source-reader-~A-loaded" identifier))
+           (loaded-name          (format nil "autolith-source-reader-~A-loaded" identifier))
            (unloaded-name        (format nil "autolith-source-reader-~A" identifier))
            (shared-pathname      (merge-pathnames "src/shared.lisp" root))
            (foreign-pathname     (merge-pathnames "src/foreign.lisp" root))
            (gated-pathname       (merge-pathnames "src/gated.lisp" root))
            (unowned-pathname     (merge-pathnames "src/unowned.lisp" root))
-           (source               "(defun test-source-reader-shared () :shared)")
+           (loaded-definition    (merge-pathnames (format nil "~A.asd" loaded-name) root))
+           (source               "(defun test-source-reader-shared () (source-reader-wire:list :shared))")
            (unreadable           "(eval-when (:compile-toplevel :load-toplevel :execute)
   (sb-ext:add-package-local-nickname \"ABSENT-SOURCE-WIRE\"
                                      \"AUTOLITH-ABSENT-OPTIONAL-READER\"))
@@ -2458,18 +2459,23 @@
            (progn
              (test-assert (null (find-package "AUTOLITH-ABSENT-OPTIONAL-READER"))
                           "optional reader fixture has no dependency package")
-             (dolist (entry (list (cons shared-pathname source)
-                                 (cons foreign-pathname unreadable)
-                                 (cons gated-pathname unreadable)))
-               (ensure-directories-exist (first entry))
-               (with-open-file (stream (first entry) :direction ':output
-                                                    :if-exists  ':supersede)
-                 (format stream "(in-package #:autolith)~%~A~%" (rest entry))))
-             (eval `(asdf:defsystem ,loaded-name
-                      :pathname ,root
-                      :components ((:file "src/shared")
-                                   (:file       "src/gated"
-                                    :if-feature :autolith-absent-source-reader-feature))))
+             (ensure-directories-exist shared-pathname)
+             (with-open-file (stream shared-pathname :direction ':output)
+               (format stream "(in-package #:autolith)~%~
+(eval-when (:compile-toplevel :load-toplevel :execute)~%
+  (sb-ext:add-package-local-nickname ~S ~S))~%~A~%"
+                       "SOURCE-READER-WIRE" "COMMON-LISP" source))
+             (dolist (pathname (list foreign-pathname gated-pathname))
+               (with-open-file (stream pathname :direction ':output)
+                 (format stream "(in-package #:autolith)~%~A~%" unreadable)))
+             (with-open-file (stream loaded-definition :direction ':output)
+               (write `(asdf:defsystem ,loaded-name
+                         :pathname "src/"
+                         :components ((:file "shared")
+                                      (:file       "gated"
+                                       :if-feature :autolith-absent-source-reader-feature)))
+                      :stream stream))
+             (asdf:load-asd loaded-definition)
              (with-open-file
                  (stream (merge-pathnames (format nil "~A.asd" unloaded-name) root)
                          :direction ':output)
@@ -2490,8 +2496,25 @@
                 (and (= 1 (length definitions))
                      (string= source (tracked-definition-source (first definitions)))
                      (string= "src/shared.lisp"
-                              (tracked-definition-relative-pathname (first definitions))))
-                "loaded optional source is exact even when an unloaded system shares it"))
+                              (tracked-definition-relative-pathname (first definitions)))
+                     (let ((form (source-form-form
+                                  (tracked-definition-source-form (first definitions)))))
+                       (and (eq 'test-source-reader-shared (second form))
+                            (eq 'cl:list (first (fourth form))))))
+                "loaded aliases preserve definition and body symbol identity and exact spans"))
+             (with-tracked-definition-snapshot (source-configuration)
+               (test-assert
+                (= 1 (length (self-tracked-definitions source-configuration
+                                                      'test-source-reader-shared)))
+                "snapshot lookup includes the loaded optional owner")
+               (test-assert
+                (null (self-tracked-definitions source-configuration
+                                               'test-source-reader-undefined))
+                "snapshot lookup returns no definition for an undefined name"))
+             (test-assert
+              (null (self-tracked-definitions source-configuration
+                                             'test-source-reader-undefined))
+              "direct lookup returns no definition for an undefined name")
              (test-assert
               (null (self-tracked-definitions source-configuration
                                              'test-source-reader-unavailable))
@@ -2514,7 +2537,31 @@
                                               'test-source-reader-shared)
                     nil)
                 (reader-error () t))
-              "a malformed non-optional tracked file still fails source lookup"))
+              "a malformed non-optional tracked file still fails source lookup")
+             (with-open-file (stream unowned-pathname :direction ':output
+                                                      :if-exists ':supersede)
+               (write-string
+                "#.(progn (setf autolith::*test-self-definition-reader-side-effect-p* t) '(defun test-source-reader-injected () nil))"
+                stream))
+             (let ((*test-self-definition-reader-side-effect-p* nil))
+               (dolist (snapshot-p '(nil t))
+                 (test-assert
+                  (handler-case
+                      (progn
+                        (if snapshot-p
+                            (with-tracked-definition-snapshot (source-configuration)
+                              (self-tracked-definitions source-configuration
+                                                        'test-source-reader-shared))
+                            (self-tracked-definitions source-configuration
+                                                      'test-source-reader-shared))
+                        nil)
+                    (reader-error ()
+                      t))
+                  "direct and snapshot lookup reject read-time evaluation"))
+               (test-assert (null *test-self-definition-reader-side-effect-p*)
+                            "source inspection executes no reader payload")))
+        (sb-ext:remove-package-local-nickname "SOURCE-READER-WIRE"
+                                              (find-package '#:autolith))
         (asdf:clear-system loaded-name)
         (asdf:clear-system unloaded-name)
         (when (fboundp 'test-source-reader-shared)

@@ -45,6 +45,8 @@
                       :documentation "Terminal model/access request IDs retained for repeated cancellation.")
    (output-callback :initarg :output-callback :reader session-runtime-output-callback
                     :documentation "Trusted callback of channel and sanitized, labeled untrusted text.")
+   (lifecycle-callback :initarg :lifecycle-callback :reader session-runtime-lifecycle-callback
+                       :documentation "Trusted short callback of kind, turn ID and outcome after durable transitions.")
    (clock :initarg :clock :reader session-runtime-clock
           :documentation "Parent monotonic seconds function.")
    (append-window :initform 0 :accessor session-runtime-append-window
@@ -144,6 +146,16 @@ this session store. Deadline enforcement never waits for peer I/O or callbacks."
   (declare (ignore runtime))
   nil)
 
+(declaim (ftype (function (session-runtime keyword (or null string) (or null keyword)) null)
+                session-runtime--notify))
+
+(defun session-runtime--notify (runtime kind turn-id outcome)
+  "Notify trusted control code after a durable transition, outside the lifecycle lock.
+The callback must only update short control state. A callback error closes the runtime."
+  (when (session-runtime-lifecycle-callback runtime)
+    (funcall (session-runtime-lifecycle-callback runtime) kind turn-id outcome))
+  nil)
+
 (declaim (ftype (function () real) session-runtime--clock))
 
 (defun session-runtime--clock ()
@@ -153,13 +165,13 @@ this session store. Deadline enforcement never waits for peer I/O or callbacks."
 (declaim (ftype (function (session-store parent-connection &key (:features list)
                            (:output-callback (or null function)) (:clock function)
                            (:initial-sequence integer) (:resume-page (or null parent-proto:session-page))
-                           (:model-service t))
+                            (:model-service t) (:lifecycle-callback (or null function)))
                          session-runtime)
                 session-runtime-open))
 
 (defun session-runtime-open (store connection &key (features '("session.v1"))
                                                    output-callback (clock #'session-runtime--clock)
-                                                   (initial-sequence 0) resume-page model-service)
+                                                   (initial-sequence 0) resume-page model-service lifecycle-callback)
   "Attach STORE to a ready CONNECTION. Supply the delivered Welcome RESUME-PAGE.
 INITIAL-SEQUENCE can describe earlier delivered resume data. Select only session.v1
 in Welcome. A read after the last page record continues that snapshot; another
@@ -172,11 +184,13 @@ after_sequence starts a new snapshot. Only one sequential read cursor is retaine
                  (equal features (if model-service '("session.v1" "model.v1" "model-items-v1") '("session.v1")))
                  (<= 0 initial-sequence high)
                  (or (null resume-page)
-                     (<= 0 last-sequence (parent-proto:session-page.high-water-sequence resume-page) high)))
+                     (<= 0 last-sequence (parent-proto:session-page.high-water-sequence resume-page) high))
+                 (or (null lifecycle-callback) (functionp lifecycle-callback)))
       (error 'parent-protocol-error :reason ':invalid-session-runtime))
     (let ((runtime (make-instance 'session-runtime :store store :connection connection
-                                 :initial-sequence (max initial-sequence last-sequence)
-                                 :output-callback output-callback :clock clock :service model-service)))
+                                 :initial-sequence   (max initial-sequence last-sequence)
+                                 :output-callback output-callback :clock clock :service model-service
+                                 :lifecycle-callback lifecycle-callback)))
       (when (and resume-page (parent-proto:session-page.has-more resume-page) records)
         (setf (session-runtime-page-after runtime) last-sequence
               (session-runtime-page-high runtime) (parent-proto:session-page.high-water-sequence resume-page)))
@@ -619,11 +633,11 @@ Truncate rendered output to 32768 UTF-8 bytes, including line labels."
                      (member outcome '(:completed :cancelled :failed))
                      (= (parent-proto:turn-finish.last-session-sequence finish)
                         (session-runtime-acknowledged runtime)))
-                (progn
-                 (session-store-finish-turn (session-runtime-store runtime) (session-runtime-turn-id runtime)
-                                            outcome)
-                 (setf (session-runtime-turn-id runtime) nil
-                       (session-runtime-turn-request runtime) nil))
+                (let ((turn-id (session-runtime-turn-id runtime)))
+                  (session-store-finish-turn (session-runtime-store runtime) turn-id outcome)
+                  (setf (session-runtime-turn-id runtime) nil
+                        (session-runtime-turn-request runtime) nil)
+                  (session-runtime--notify runtime ':turn-finished turn-id outcome))
                 (reject))))
          (parent-proto:ready-to-stop
           (let ((ready (parent-proto:envelope.ready-to-stop request)))
@@ -635,14 +649,16 @@ Truncate rendered output to 32768 UTF-8 bytes, including line labels."
                          (session-runtime--acknowledged-event-p runtime
                                                                 (parent-proto:ready-to-stop.wrap-up-event-id
                                                                  ready))))
-                (progn
-                 (session-store-interrupt (session-runtime-store runtime))
-                 (bordeaux-threads:with-lock-held ((session-runtime-lifecycle-lock runtime))
-                   (when (eq ':stopping (session-runtime-phase runtime))
-                     (setf (session-runtime-phase runtime) ':stopped
-                           (session-runtime-stop-request runtime) nil
-                           (session-runtime-turn-request runtime) nil
-                           (session-runtime-turn-id runtime) nil))))
+                (let ((stopped nil))
+                  (session-store-interrupt (session-runtime-store runtime))
+                  (bordeaux-threads:with-lock-held ((session-runtime-lifecycle-lock runtime))
+                    (when (eq ':stopping (session-runtime-phase runtime))
+                      (setf (session-runtime-phase runtime) ':stopped
+                            (session-runtime-stop-request runtime) nil
+                            (session-runtime-turn-request runtime) nil
+                            (session-runtime-turn-id runtime) nil
+                            stopped t)))
+                  (when stopped (session-runtime--notify runtime ':stopped nil nil)))
                 (reject))))
          (parent-proto:failure
           (let ((failure (parent-proto:envelope.failure request)))
@@ -652,11 +668,12 @@ Truncate rendered output to 32768 UTF-8 bytes, including line labels."
                      (member (parent-proto:failure.code failure)
                              '(:invalid-request :permission-denied :revision-conflict :unsupported
                                :resource-limit :cancelled :unavailable :internal)))
-                (progn
-                 (session-store-finish-turn (session-runtime-store runtime) (session-runtime-turn-id runtime)
-                                            ':failed :reason "Agent rejected the turn.")
-                 (setf (session-runtime-turn-request runtime) nil
-                       (session-runtime-turn-id runtime) nil))
+                (let ((turn-id (session-runtime-turn-id runtime)))
+                  (session-store-finish-turn (session-runtime-store runtime) turn-id
+                                             ':failed :reason "Agent rejected the turn.")
+                  (setf (session-runtime-turn-request runtime) nil
+                        (session-runtime-turn-id runtime) nil)
+                  (session-runtime--notify runtime ':turn-finished turn-id ':failed))
                 (reject))))
          (parent-proto:output
           (let* ((output  (parent-proto:envelope.output request))

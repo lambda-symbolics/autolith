@@ -2,8 +2,10 @@
 
 ;;;; -- Complete Editable Input History --
 
-(-> conversation-input-history (conversation) list)
-(defun conversation-input-history (conversation)
+(defgeneric conversation-input-history (conversation)
+  (:documentation "Return all editable inputs in chronological order from authoritative storage."))
+
+(defmethod conversation-input-history ((conversation conversation))
   "Return all editable inputs in chronological order from the maintained sidecar.
 A missing sidecar is built once from durable records. Later reads need only the
 sidecar and, after an interrupted append, the active segment."

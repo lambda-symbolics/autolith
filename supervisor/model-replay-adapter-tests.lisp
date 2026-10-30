@@ -22,9 +22,9 @@
                  (when start (session-store-start-turn session "turn" "input"))
                  (funcall function replay session profile)))
 
-             (make-collector (replay session profile &key emit)
+             (make-collector (replay session profile &key emit (purpose ':ordinary))
                (make-model-replay-collector :replay-store replay :session-store session
-                                           :request-id "request" :turn-id "turn" :profile profile
+                                           :request-id "request" :turn-id "turn" :profile profile :purpose purpose
                                            :emit-event (or emit #'identity)))
 
              (resolve (replay handle profile &key (kind ':item) (turn "turn"))
@@ -74,6 +74,34 @@
                       (assert (= 3 (length sent)))
                       (denied (lambda () (resolve replay handle profile :kind ':continuation)))
                       (denied (lambda () (resolve replay handle profile :turn "another-turn"))))))))
+             ;; Classification belongs to the accepted outbox, including reply-loss recovery.
+             (fixture
+              (lambda (replay session profile)
+                (let* ((collector (make-collector replay session profile :purpose ':summary))
+                       (item      (model-event-test--text))
+                       (result    (make-instance 'model-wire:provider-result :output-items (list item))))
+                  (model-event-collector-begin collector)
+                  (model-event-test--item collector item)
+                  (assert (handler-case (progn (model-event-collector-finish collector result) nil)
+                             (model-event-error () t)))
+                  (let* ((fresh      (model-replay-store-open (model-replay-store-pathname replay) "session"))
+                         (pending    (model-replay-store-pending-projections fresh))
+                         (projection (aref pending 0)))
+                    (assert (= 1 (length pending)))
+                    (assert (equal "generate" (gethash "request_kind" projection)))
+                    (assert (equal "summary" (gethash "request_purpose" projection)))
+                    (denied (lambda () (model-replay-store-accept
+                                        fresh :request-id "request" :attempt 1
+                                        :complete        (gethash "model_result" projection)
+                                        :request-purpose ':ordinary)))
+                    (session-store-start-turn session "turn" "input")
+                    (assert (= 1 (model-replay-store-project-session fresh session)))
+                    (let* ((fresh-session (session-store-open (session-store-pathname session) "session"))
+                           (note          (second (records fresh-session)))
+                           (payload       (protocol-value->data (parent-proto:session-record.payload note))))
+                      (assert (equal "generate" (gethash "request_kind" payload)))
+                      (assert (equal "summary" (gethash "request_purpose" payload)))))))
+              :start nil)
              ;; Attempt failures remain retryable; final failure is terminal.
              (fixture
               (lambda (replay session profile)

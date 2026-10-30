@@ -1007,6 +1007,29 @@ a user-local init.lisp change, or a private image commit.
   bounded FIFO delivery, durable one-response promotion, stale-listener safety,
   and history-neutral primary presentation with less project-specific code.
 
+** Source-check worker and pinned test environment
+
+- Problem: the installed SBCL wrapper prepends older dependency paths. Tests
+  then fail at a Setinka generic method before running. The workspace setup
+  also lacks the development check dependencies.
+- Behavior: use the saved worker =protocol-source-checks-pinned= for focused
+  source checks. It contains Mallet, parinfer integration, and a host-local
+  =*parent-pinned-registry*= built from available qlfile-pinned Nix packages.
+  For test subprocesses, build the current wrapper with
+  =nix build --no-link --print-out-paths .#autolith.runtime= and select its
+  =bin/sbcl= as =AUTOLITH_SBCL=. Set =AUTOLITH_SOURCE_ROOT= to the workspace
+  and unset =CL_SOURCE_REGISTRY= to avoid inherited source and dependency paths.
+- Scope and location: user-local disposable worker image. This is not an
+  active-image mutation or a repository dependency change. Read the saved-image
+  note for exact host paths. Keep =.qlot/setup.lisp= unchanged.
+- Verification: the worker passed focused source checks. The raw runtime and
+  pinned registry passed both legacy authentication cases, 67 checks. The new
+  wrapper passed child project setup, worker image, source lookup, and private
+  replay checks. The optional protocol and standalone parent boundary also pass.
+- Removal condition: discard the worker when the development environment
+  supplies the pinned dependencies directly, or rebuild it when qlfile or
+  source-check definitions change.
+
 * Candidates
 
 Record only concrete improvements with evidence of recurring value. Remove

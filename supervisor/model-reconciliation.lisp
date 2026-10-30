@@ -23,11 +23,16 @@ Obtain recovery evidence only from the validated replay journal below."
           for event-id = (gethash "event_id" projection)
           do (session-store--recover-model-result
               session-store
-              :event-id   event-id
-              :turn-id    (gethash "turn_id" projection)
-              :request-id request-id
-              :attempt    attempt
-              :complete   (gethash "model_result" projection))
+              :event-id         event-id
+              :turn-id          (gethash "turn_id" projection)
+              :request-id       request-id
+              :attempt          attempt
+               :request-kind    (second (assoc (gethash "request_kind" projection)
+                                               '(("generate" :generate) ("native_compaction" :native-compaction))
+                                               :test #'equal))
+               :request-purpose (second (assoc (gethash "request_purpose" projection)
+                                               '(("ordinary" :ordinary) ("summary" :summary)) :test #'equal))
+              :complete         (gethash "model_result" projection))
              (model-replay-store-mark-projected replay-store
                                                 :request-id request-id
                                                 :attempt    attempt

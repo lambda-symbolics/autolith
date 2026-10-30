@@ -297,5 +297,4 @@
 
 ;;;; -- cl-rfc8628 Host Wiring --
 
-(setf cl-rfc8628:*user-agent-function* #'provider-user-agent
-      cl-rfc8628:*device-authentication-error-class* 'device-authentication-error)
+(setf cl-rfc8628:*device-authentication-error-class* 'device-authentication-error)

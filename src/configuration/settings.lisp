@@ -21,13 +21,6 @@
 (defparameter *openai-oauth-issuer* "https://auth.openai.com"
   "The OpenAI issuer serving ChatGPT browser OAuth.")
 
-(defparameter *openai-oauth-token-endpoint*
-  "https://auth.openai.com/oauth/token"
-  "The OpenAI OAuth token endpoint.")
-
-(defparameter *openai-oauth-client-id* "app_EMoamEEZ73f0CkXaXp7hrann"
-  "The public OAuth client identifier used by Codex-compatible clients.")
-
 (defparameter *openai-oauth-scopes*
   '("openid"
     "profile"

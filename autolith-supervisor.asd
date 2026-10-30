@@ -32,6 +32,77 @@
   :perform     (asdf:test-op (operation component)
                  (uiop:symbol-call '#:autolith-supervisor '#:run-framing-tests)))
 
+(asdf:defsystem #:autolith-supervisor/private-process
+  :description             "Private inherited byte transport and native subprocess cleanup."
+  :depends-on              (#:autolith-supervisor)
+  :default-component-class autolith-supervisor-source-file
+  :serial                  t
+  :components              ((:file "supervisor/private-process-posix" :if-feature (:not :win32))
+                            (:file "supervisor/private-process-windows" :if-feature :win32)
+                            (:file "supervisor/private-process"))
+  :in-order-to             ((asdf:test-op (asdf:test-op #:autolith-supervisor/private-process/tests))))
+
+(asdf:defsystem #:autolith-supervisor/private-process/tests
+  :description             "Real subprocess transport and cleanup checks."
+  :depends-on              (#:autolith-supervisor/private-process)
+  :default-component-class autolith-supervisor-source-file
+  :components              ((:file "supervisor/private-process-tests"))
+  :perform                 (asdf:test-op (operation component)
+                             (uiop:symbol-call '#:autolith-supervisor '#:run-private-process-tests)))
+
+(asdf:defsystem #:autolith-supervisor/terminal
+  :description             "Parent-owned terminal input, output, and approval presentation."
+  :depends-on              (#:autolith-supervisor/protocol #:bordeaux-threads)
+  :default-component-class autolith-supervisor-source-file
+  :components              ((:file "supervisor/terminal"))
+  :in-order-to             ((asdf:test-op (asdf:test-op #:autolith-supervisor/terminal/tests))))
+
+(asdf:defsystem #:autolith-supervisor/terminal/tests
+  :description             "Standalone terminal isolation, control escaping, and bounded I/O checks."
+  :depends-on              (#:autolith-supervisor/terminal)
+  :default-component-class autolith-supervisor-source-file
+  :components              ((:file "supervisor/terminal-tests"))
+  :perform                 (asdf:test-op (operation component)
+                             (uiop:symbol-call '#:autolith-supervisor '#:run-parent-terminal-tests)))
+
+(asdf:defsystem #:autolith-supervisor/accounts
+  :description             "Shared private OAuth storage and ChatGPT account refresh without agent code."
+  :depends-on              (#:autolith-supervisor #:cl-rfc8628 #:cl-llm-provider-api/dexador
+                            #:sexp-store #:ls-compat/files #:bordeaux-threads)
+  :default-component-class autolith-supervisor-source-file
+  :components              ((:file "supervisor/accounts"))
+  :in-order-to             ((asdf:test-op (asdf:test-op #:autolith-supervisor/accounts/tests))))
+
+(asdf:defsystem #:autolith-supervisor/accounts/tests
+  :description             "Standalone shared OAuth account storage, refresh, and secret-scope checks."
+  :depends-on              (#:autolith-supervisor/accounts #:ls-compat/posix)
+  :default-component-class autolith-supervisor-source-file
+  :components              ((:file "supervisor/accounts-tests"))
+  :perform                 (asdf:test-op (operation component)
+                             (uiop:symbol-call '#:autolith-supervisor '#:run-accounts-tests)))
+
+(asdf:defsystem #:autolith-supervisor/provider-http
+  :description             "Shared authenticated ChatGPT HTTP transport."
+  :depends-on              (#:autolith-supervisor/accounts #:cl-llm-provider-api/dexador)
+  :default-component-class autolith-supervisor-source-file
+  :components              ((:file "supervisor/provider-http")))
+
+(asdf:defsystem #:autolith-supervisor/provider-executor
+  :description             "Trusted parent ChatGPT execution and transport cleanup."
+  :depends-on              (#:autolith-supervisor/model #:autolith-supervisor/provider-http)
+  :default-component-class autolith-supervisor-source-file
+  :components              ((:file "supervisor/provider-executor"))
+  :in-order-to             ((asdf:test-op (asdf:test-op #:autolith-supervisor/provider-executor/tests))))
+
+(asdf:defsystem #:autolith-supervisor/provider-executor/tests
+  :description             "Parent HTTP execution, retry, and cancellation checks."
+  :depends-on              (#:autolith-supervisor/provider-executor #:trivial-gray-streams
+                            #:autolith-supervisor/model/tests)
+  :default-component-class autolith-supervisor-source-file
+  :components              ((:file "supervisor/provider-executor-tests"))
+  :perform                 (asdf:test-op (operation component)
+                             (uiop:symbol-call '#:autolith-supervisor '#:run-provider-executor-tests)))
+
 (asdf:defsystem #:autolith-supervisor/protocol
   :description             "Bounded Protobuf decoding and parent startup negotiation."
   :depends-on              (#:autolith-supervisor #:autolith-protocol #:bordeaux-threads)

@@ -26,6 +26,8 @@
   :serial                  t
   :depends-on              (#:agentcomms
                             #:argo
+                            #:autolith-supervisor/accounts
+                            #:autolith-supervisor/provider-http
                             #:cl-base64
                             #:cl+ssl
                             #:cl-colorist

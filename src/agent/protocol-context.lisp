@@ -175,6 +175,14 @@
 Parent outputs contain only public OutputItem data. Their views are never rebuilt
 as new provider input: only the authoritative replay handle is sent. Legacy opaque
 provider items without a parent handle are rejected."
+  (when (nth-value 1 (gethash "parent_replay" item))
+    (let ((marker (json-get item "parent_replay")))
+      (unless (and (hash-table-p marker)
+                   (equal (json-get marker "type") "parent_output")
+                   (non-empty-string-p (json-get marker "replay_handle")))
+        (agent-context--fail ':invalid-context-replay-marker))
+      (return-from agent-context-item->transcript
+        (agent-wire:make-transcript-item :replay-handle (json-get marker "replay_handle")))))
   (unless (equal (json-get item "type") "parent_output")
     (dolist (key '("id" "status" "signature" "encrypted_content" "replay_handle"))
       (when (nth-value 1 (gethash key item))

@@ -503,20 +503,10 @@ reference does for its thread identifier at commit 6f51c65958. The provider
 session identity stays out of these headers: one process may serve several
 conversations, and a per-process value would route them all together."
   (declare (ignore provider))
-  (append
-   (list
-    (cons "Authorization"
-          (format nil "Bearer ~A" (oauth-credentials-access-token credentials)))
-    (cons "ChatGPT-Account-ID" (oauth-credentials-account-id credentials))
-    (cons "Content-Type" "application/json")
-    (cons "Accept" accept)
-    (cons "originator" "autolith")
-    (cons "User-Agent" (provider-user-agent))
-    (cons "session-id" (conversation-identifier conversation))
-    (cons "thread-id" (conversation-identifier conversation))
-    (cons "x-client-request-id" (conversation-identifier conversation)))
-   (when (conversation-turn-state conversation)
-     (list (cons "x-codex-turn-state" (conversation-turn-state conversation))))))
+  (autolith-supervisor::chatgpt-request-headers
+   credentials :session-id (conversation-identifier conversation)
+   :turn-state (conversation-turn-state conversation) :user-agent (provider-user-agent)
+   :accept                 accept))
 
 (-> provider--native-compaction-endpoint (codex-subscription-provider) string)
 (defun provider--native-compaction-endpoint (provider)
@@ -544,12 +534,11 @@ the requests of a turn for the same reason, at commit 6f51c65958."
   (declare (type oauth-credentials credentials)
            (type conversation conversation))
   (let ((configuration (provider-configuration provider)))
-    (provider-post-event-stream
-     (config :provider-endpoint configuration)
-     (json-encode-utf8 request)
-     :headers      (provider--codex-request-headers
-                    provider credentials conversation :accept "text/event-stream")
-     :keep-alive-p t)))
+    (autolith-supervisor::chatgpt-open-response-stream
+     (config :provider-endpoint configuration) request credentials
+     :session-id (conversation-identifier conversation)
+     :turn-state (conversation-turn-state conversation)
+     :user-agent (provider-user-agent) :keep-alive-p t)))
 
 (defmethod provider-open-native-compaction
     ((provider codex-subscription-provider)

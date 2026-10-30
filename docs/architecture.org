@@ -128,10 +128,53 @@ retain detached public output views with replay handles. Later requests send the
 handles, not reconstructed provider data from those views. Ordinary summary
 requests omit tools and request-local context.
 
-These libraries do not yet supply the agent provider adapter, provider accounts
-and HTTP transport in the parent, process launch, parent terminal ownership,
-private-record access, or sandbox policy restart. The legacy launch path is the
-default until the integrated path passes end-to-end tests.
+After handshake, start =agent-protocol-driver-start= to give one reader exclusive
+receive ownership. The driver routes validated replies into bounded request queues
+and dispatches lifecycle messages separately. Use =agent-protocol-driver-request=
+for correlated sends. Consume each terminal reply once, then close and join the
+driver during shutdown. Queue overflow or disconnect closes the connection; it
+never authorizes an effect retry.
+
+The optional =autolith-protocol-client/records= system adds typed record requests
+and the agenda adapter. Use =agent-protocol-record-request= through the driver,
+then consume one terminal response. The parent selects the record scope and
+checks durable operation identities. The client has no private store path.
+
+Use =make-agent-protocol-provider= to select an explicit parent profile for the
+existing agent provider protocol. The adapter projects logical context and maps
+validated public events and accepted results to the agent interface. Public output
+items retain parent replay handles through conversation persistence. Later requests
+use those handles even if the agent changed the displayed item. Provider credentials
+and transport configuration do not enter this adapter.
+
+The =autolith-supervisor/accounts= system contains shared OAuth storage, refresh,
+and credential scopes. The legacy agent imports the same implementation. Shared
+ChatGPT HTTP headers and stream opening are in =autolith-supervisor/provider-http=.
+The optional =autolith-supervisor/provider-executor= uses trusted profile-to-account
+bindings and the provider library's encoder, parser, and retry engine. It confirms
+transport closure before model acceptance.
+
+The optional =autolith-supervisor/private-process= system provides a private duplex
+connection through an inherited descriptor, with separate bounded diagnostics and
+explicit child environment. POSIX cleanup covers the child process group. Windows
+uses a native job object. POSIX workers that create another process group need
+separate launch integration before full descendant cleanup can be claimed.
+
+Use =agent-protocol-session-start= after handshake to create a parent-backed
+conversation and a separate turn worker. Session reads and acknowledged appends
+replace legacy private conversation writes. The bridge projects durable input
+before calling the existing provider loop. Cancellation stops new effects and
+drains any active model request before the stop acknowledgement.
+
+Supply =:lifecycle-callback= to =session-runtime-open= for short parent control
+updates after durable turn and stop transitions. The callback receives the event
+kind, turn ID, and outcome outside the lifecycle lock. Use the separate terminal
+system for bounded trusted input, approval prompts, and escaped agent output.
+
+The default launch path does not install these optional adapters. Parent terminal
+ownership, private-record access, sandbox policy restart, and full process launch
+still need integration. Keep the legacy launch path as the default until the
+integrated path passes end-to-end tests.
 
 In the target, the supervisor is the persistent trusted parent. It owns terminal
 I/O and approvals, provider credentials and response streaming, private

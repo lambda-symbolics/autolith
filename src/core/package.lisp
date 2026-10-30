@@ -2,6 +2,37 @@
   (:documentation "Autolith, a small, live, self-modifying Common Lisp agent.")
   (:use #:cl)
   (:shadow #:trace)
+  (:import-from #:autolith-supervisor
+                #:autolith-error
+                #:autolith-error-message
+                #:authentication-error
+                #:credentials-unavailable
+                #:credentials-unavailable-searched-paths
+                #:token-refresh-failed
+                #:token-refresh-failed-status
+                #:token-refresh-failed-response
+                #:*openai-oauth-token-endpoint*
+                #:*openai-oauth-client-id*
+                #:*credentials-in-request-scope*
+                #:*active-secret-use-lock*
+                #:*active-secret-use-count*
+                #:*secret-use-depth*
+                #:*secret-use-quiescence-owner*
+                #:*credential-json-maximum-octets*
+                #:call-with-secret-use
+                #:call-with-secret-use-quiescence
+                #:secret-use-active-p
+                #:jwt-account-id
+                #:credential-source
+                #:autolith-credential-source
+                #:codex-bootstrap-credential-source
+                #:read-portable-form
+                #:read-json-file-with-retry
+                #:credential-manager
+                #:oauth-credential-manager
+                #:chatgpt-credential-manager
+                #:call-with-credentials
+                #:with-credentials)
   (:import-from #:cl-resources
                 #:resource
                 #:resource-uri

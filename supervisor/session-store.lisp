@@ -203,8 +203,10 @@ Preserve optional presence, ordered items, raw strings, and shared Value types."
 (defun session-store--model-payload-check (payload)
   "Validate the distinct trusted parent model-result note shape."
   (unless (and (eq (first payload) ':map)
-               (equal (mapcar #'first (second payload))
-                      '("attempt" "model_result" "request_id" "turn_id"))
+               (member (mapcar #'first (second payload))
+                       '(("attempt" "model_result" "request_id" "turn_id")
+                         ("attempt" "model_result" "request_id" "request_kind" "request_purpose" "turn_id"))
+                       :test #'equal)
                (eq (first (session-store--field payload "model_result")) ':map)
                (eq (first (session-store--field payload "attempt")) ':integer)
                (<= 1 (second (session-store--field payload "attempt")) #xffffffff)
@@ -214,9 +216,61 @@ Preserve optional presence, ordered items, raw strings, and shared Value types."
                                (session-store--identifier-p (second field)))))
                       '("request_id" "turn_id")))
     (session-store--reject ':invalid-payload))
+  (when (session-store--field payload "request_kind")
+    (let ((kind    (session-store--field payload "request_kind"))
+          (purpose (session-store--field payload "request_purpose")))
+      (unless (and (eq (first kind) ':string) (eq (first purpose) ':string)
+                   (member (second kind) '("generate" "native_compaction") :test #'equal)
+                   (member (second purpose) '("ordinary" "summary") :test #'equal)
+                   (or (equal (second kind) "generate") (equal (second purpose) "ordinary")))
+        (session-store--reject ':invalid-request-classification))))
   (session-store-model-complete-data
    (protocol-value->data (session-store--data-value
                           (session-store--field payload "model_result"))))
+  nil)
+
+(declaim (ftype (function (list) null) session-store--agent-payload-check))
+
+(defun session-store--agent-payload-check (payload)
+  "Validate opaque tagged agent records without reading Lisp or resolving symbols."
+  (let* ((data      (protocol-value->data (session-store--data-value payload)))
+         (record    (gethash "agent_record" data))
+         (remaining 8192))
+    (unless (and (= (hash-table-count data) 2) (eql (gethash "version" data) 1))
+      (session-store--reject ':invalid-fields))
+    (labels ((check (item depth)
+               (unless (and (vectorp item) (not (stringp item))
+                            (<= 1 (length item) 2) (stringp (aref item 0))
+                            (<= depth 12) (not (minusp (decf remaining))))
+                 (session-store--reject ':invalid-agent-record))
+               (let ((tag   (aref item 0))
+                     (child (and (= (length item) 2) (aref item 1))))
+                 (unless
+                     (cond
+                       ((member tag '("nil" "true") :test #'equal)
+                        (= (length item) 1))
+                       ((equal tag "keyword")
+                        (and (= (length item) 2) (stringp child) (< 0 (length child) 161)))
+                       ((equal tag "string")
+                        (and (= (length item) 2) (stringp child) (<= (length child) 1048576)))
+                       ((equal tag "integer")
+                        (and (= (length item) 2) (typep child '(signed-byte 64))))
+                       ((equal tag "number")
+                        (and (= (length item) 2) (typep child 'double-float)))
+                       ((member tag '("list" "vector") :test #'equal)
+                        (and (= (length item) 2) (vectorp child) (not (stringp child))
+                             (progn (loop for entry across child do (check entry (1+ depth))) t)))
+                       (t
+                        nil))
+                   (session-store--reject ':invalid-agent-record)))))
+      (check record 0))
+    (unless (and (equal (aref record 0) "list")
+                 (let ((entries (aref record 1)))
+                   (and (oddp (length entries)) (plusp (length entries))
+                        (equal (aref (aref entries 0) 0) "keyword")
+                        (loop for index from 1 below (length entries) by 2
+                              always (equal (aref (aref entries index) 0) "keyword")))))
+      (session-store--reject ':invalid-agent-record)))
   nil)
 
 (declaim (ftype (function (keyword list) null) session-store--payload-check))
@@ -225,6 +279,9 @@ Preserve optional presence, ordered items, raw strings, and shared Value types."
   "Enforce exact field names and types for a session payload."
   (unless (eq (first payload) ':map)
     (session-store--reject ':invalid-payload))
+  (when (and (eq kind ':note) (session-store--field payload "agent_record"))
+    (session-store--agent-payload-check payload)
+    (return-from session-store--payload-check nil))
   (let* ((fields   (second payload))
          (names    (mapcar #'first fields))
          (required (case kind
@@ -606,11 +663,13 @@ metadata even for duplicate events. Tool starts must commit before execution."
         :event-id event :sequence (first data))))))
 
 (declaim (ftype (function (session-store &key (:event-id string) (:turn-id string)
-                            (:request-id t) (:attempt integer) (:complete t))
+                            (:request-id t) (:attempt integer) (:complete t)
+                            (:request-kind keyword) (:request-purpose keyword))
                           cl-protobufs.autolith.parent.v1:session-ack)
                 session-store-model-result))
 
-(defun session-store-model-result (store &key event-id turn-id request-id (attempt 1) complete)
+(defun session-store-model-result (store &key event-id turn-id request-id (attempt 1) complete
+                                            (request-kind ':generate) (request-purpose ':ordinary))
   "Commit a parent ModelComplete note for the active turn.
 
 Exact retries return the first acknowledgement even after turn closure. New
@@ -618,17 +677,19 @@ notes require an active turn. This call has no agent RPC."
   (session-store--write-model-result
    store :event-id event-id :turn-id turn-id :request-id request-id
    :attempt attempt :complete complete
+   :request-kind request-kind :request-purpose request-purpose
    :turn-check (lambda (active turns)
                  (declare (ignore turns))
                  (equal active turn-id))))
 
 (declaim (ftype (function (session-store &key (:event-id string) (:turn-id string)
-                            (:request-id t) (:attempt integer) (:complete t))
+                            (:request-id t) (:attempt integer) (:complete t)
+                            (:request-kind (or null keyword)) (:request-purpose (or null keyword)))
                           cl-protobufs.autolith.parent.v1:session-ack)
                 session-store--recover-model-result))
 
 (defun session-store--recover-model-result
-    (store &key event-id turn-id request-id (attempt 1) complete)
+    (store &key event-id turn-id request-id (attempt 1) complete request-kind request-purpose)
   "Publish a verified model outbox result for an existing turn.
 
 The trusted parent caller must obtain this result from
@@ -639,18 +700,20 @@ to the agent. Exact retry, conflict, payload, and size rules match normal writes
   (session-store--write-model-result
    store :event-id event-id :turn-id turn-id :request-id request-id
    :attempt attempt :complete complete
+   :request-kind request-kind :request-purpose request-purpose
    :turn-check (lambda (active turns)
                  (declare (ignore active))
                  (not (null (gethash turn-id turns))))))
 
 (declaim (ftype (function (session-store &key (:event-id string) (:turn-id string)
                             (:request-id t) (:attempt integer) (:complete t)
+                            (:request-kind (or null keyword)) (:request-purpose (or null keyword))
                             (:turn-check function))
                           cl-protobufs.autolith.parent.v1:session-ack)
                 session-store--write-model-result))
 
 (defun session-store--write-model-result
-    (store &key event-id turn-id request-id (attempt 1) complete turn-check)
+    (store &key event-id turn-id request-id (attempt 1) complete turn-check request-kind request-purpose)
   "Apply shared model note validation, deduplication, and publication rules."
   (when (typep request-id '(unsigned-byte 64))
     (setf request-id (format nil "~D" request-id)))
@@ -659,11 +722,25 @@ to the agent. Exact retry, conflict, payload, and size rules match normal writes
                (session-store--identifier-p request-id)
                (typep attempt '(integer 1 #xffffffff)))
     (session-store--reject ':invalid-request))
+  (unless (or (and (null request-kind) (null request-purpose))
+              (and (member request-kind '(:generate :native-compaction))
+                   (member request-purpose '(:ordinary :summary))
+                   (or (eq request-kind ':generate) (eq request-purpose ':ordinary))))
+    (session-store--reject ':invalid-request-classification))
   (let ((payload (make-hash-table :test 'equal)))
     (setf (gethash "turn_id" payload) turn-id
           (gethash "request_id" payload) request-id
           (gethash "attempt" payload) attempt
           (gethash "model_result" payload) (session-store-model-complete-data complete))
+    (when request-kind
+      (setf (gethash "request_kind" payload)
+            (ecase request-kind (:generate
+                                 "generate") (:native-compaction
+                                              "native_compaction"))
+            (gethash "request_purpose" payload)
+            (ecase request-purpose (:ordinary
+                                    "ordinary") (:summary
+                                                 "summary"))))
     (let* ((data (list 0 event-id turn-id ':note
                        (session-store--value-data (protocol-data->value payload)) ':parent))
            (key  (list ':model-result turn-id request-id)))

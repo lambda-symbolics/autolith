@@ -15,6 +15,9 @@
 (defparameter *agent-protocol-assignment-character-limit* 1048576
   "Maximum total retained event-ID characters per connection.")
 
+(defvar *agent-protocol-reader-owner* nil
+  "Dynamic receive authority for a client permanently assigned to a driver.")
+
 (defclass agent-protocol-client (autolith-supervisor::parent-connection)
   ((state-lock :initform      (bordeaux-threads:make-lock "agent protocol state")
                :reader        agent-protocol-client-state-lock
@@ -29,6 +32,8 @@
                           :documentation "Total characters copied into the durable assignment index.")
    (reading :initform nil :accessor agent-protocol-client-reading
             :documentation "Single reader claim, protected by the state lock.")
+   (reader-owner :initform nil :accessor agent-protocol-client-reader-owner
+                 :documentation "Permanent receive owner, or NIL for explicit per-call reads.")
    (pending :initform      (make-hash-table)
             :reader        agent-protocol-client-pending
             :documentation "Outstanding local request IDs and their expected response data.")
@@ -166,6 +171,9 @@ Keep old entries so retries and later pages cannot erase evidence of a conflict.
 (defun agent-protocol--claim-reader (client)
   "Claim the byte reader without blocking or allowing recursive reads."
   (bordeaux-threads:with-lock-held ((agent-protocol-client-state-lock client))
+    (when (and (agent-protocol-client-reader-owner client)
+               (not (eq *agent-protocol-reader-owner* (agent-protocol-client-reader-owner client))))
+      (error 'agent-protocol-error :reason ':reader-owned))
     (when (agent-protocol-client-reading client)
       (error 'agent-protocol-error :reason ':concurrent-reader))
     (setf (agent-protocol-client-reading client) t))
@@ -221,7 +229,7 @@ Call INITIALIZE with Welcome before Ready. Do not read the channel in that callb
 The deadline covers I/O and initialization. Return the accepted Welcome."
   (unless (and (member "session.v1" features :test #'equal)
                (= (length features) (length (remove-duplicates features :test #'equal)))
-               (subsetp features '("session.v1" "model.v1" "model-items-v1") :test #'equal)
+               (subsetp features '("session.v1" "model.v1" "model-items-v1" "records.v1") :test #'equal)
                (eq (not (null (member "model.v1" features :test #'equal)))
                    (not (null (member "model-items-v1" features :test #'equal)))))
     (error 'agent-protocol-error :reason ':unsupported-features))

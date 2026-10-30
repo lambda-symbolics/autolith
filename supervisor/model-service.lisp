@@ -376,6 +376,8 @@ acceptance remains pending until its durable outcome is known. No storage runs h
                  (make-model-replay-collector
                   :replay-store (model-service-replay-store service) :session-store (session-runtime-store runtime)
                   :request-id key :turn-id (model-invocation-turn-id invocation) :profile (third inputs)
+                   :kind      (parent-proto:model-start.kind start)
+                   :purpose   (if (eq (parent-proto:model-start.purpose start) ':ordinary-summary) ':summary ':ordinary)
                   :emit-event (lambda (event)
                                 (unless (eq ':closed (session-runtime-phase runtime))
                                   (session-runtime--send service runtime

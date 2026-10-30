@@ -61,7 +61,7 @@
                (incf checks)
                (unless value (error "Session dispatch check ~D failed." checks)))
 
-             (fixture (function &key (in-flight 64))
+             (fixture (function &key (in-flight 64) lifecycle-callback)
                (let ((path (merge-pathnames (format nil "dispatch-~36R.sexp" (random (expt 36 20)))
                                             (uiop:temporary-directory))))
                  (unwind-protect
@@ -77,6 +77,7 @@
                                    (parent-connection-limits connection)) in-flight)
                             (let ((runtime (session-runtime-open
                                             store connection :clock (lambda () now)
+                                            :lifecycle-callback     lifecycle-callback
                                             :output-callback        (lambda (channel text) (push (list channel text) display)))))
                               (labels ((receive (envelope)
                                          (incf next-id)
@@ -122,6 +123,50 @@
                    (when (probe-file path) (delete-file path))
                    (let ((lock (pathname (concatenate 'string (namestring path) ".lock"))))
                      (when (probe-file lock) (delete-file lock)))))))
+      (dolist (result '(:completed :cancelled :failure))
+        (let ((active-runtime nil) (events nil))
+          (fixture
+           (lambda (runtime receive response rejection note display time)
+             (declare (ignore rejection note display time))
+             (setf active-runtime runtime)
+             (session-runtime-start-turn runtime "callback-turn" "input")
+             (let* ((start (funcall response))
+                    (id    (parent-proto:envelope.message-id start)))
+               (funcall receive
+                        (if (eq result ':failure)
+                            (parent-proto:make-envelope
+                             :reply-to id :failure (parent-proto:make-failure
+                                                    :code ':unavailable :message "Cannot run the turn."))
+                            (parent-proto:make-envelope
+                             :reply-to id :turn-finish (parent-proto:make-turn-finish
+                                                        :turn-id "callback-turn" :outcome result
+                                                        :last-session-sequence 1)))))
+             (check (equal events
+                           (list (list ':turn-finished "callback-turn"
+                                       (if (eq result ':failure) ':failed result)))))
+             (check (null (session-runtime-turn-id runtime)))
+             (session-runtime-prepare-stop runtime :reason "stop" :grace-milliseconds 1000)
+             (let ((stop (funcall response)))
+               (funcall receive
+                        (parent-proto:make-envelope
+                         :reply-to      (parent-proto:envelope.message-id stop)
+                         :ready-to-stop (parent-proto:make-ready-to-stop :last-session-sequence 1))))
+             (check (equal (first events) '(:stopped nil nil)))
+             (check (= 2 (length events))))
+           :lifecycle-callback
+           (lambda (kind turn-id outcome)
+             (check (not (null active-runtime)))
+             ;; The control callback may take this lock without recursive admission.
+             (sb-ext:with-timeout 2
+               (bordeaux-threads:with-lock-held ((session-runtime-lifecycle-lock active-runtime))
+                 (check (if (eq kind ':stopped)
+                            (eq (session-runtime-phase active-runtime) ':stopped)
+                            (let* ((page        (session-store-read
+                                                 (session-runtime-store active-runtime)
+                                                 (parent-proto:make-session-read :limit 256)))
+                                   (last-record (first (last (parent-proto:session-page.records page)))))
+                              (eq (parent-proto:session-record.kind last-record) ':turn-outcome))))))
+             (push (list kind turn-id outcome) events)))))
       (fixture
        (lambda (runtime receive response rejection note display time)
          (declare (ignore time))

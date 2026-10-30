@@ -147,7 +147,8 @@
                  (check (= 3 (sequence-of
                               (session-store--recover-model-result
                                store :event-id "late-result" :turn-id "old-turn"
-                               :request-id "late-request" :complete complete))))
+                                :request-id "late-request" :complete complete
+                                :request-kind ':generate :request-purpose ':ordinary))))
                  ;; A late note must not reopen the old turn.
                  (session-store-start-turn store "new-turn" "next input")
                  (rejects (lambda ()
@@ -165,11 +166,12 @@
                  (check (= 3 (sequence-of
                               (session-store--recover-model-result
                                store :event-id "late-result" :turn-id "old-turn"
-                               :request-id "late-request" :complete complete))))
+                                :request-id "late-request" :complete complete
+                                :request-kind ':generate :request-purpose ':ordinary))))
                  (check (= 3 (sequence-of
-                              (session-store-model-result
-                               store :event-id "late-result" :turn-id "old-turn"
-                               :request-id "late-request" :complete complete))))
+                               (session-store-model-result
+                                store :event-id "late-result" :turn-id "old-turn"
+                                :request-id "late-request" :complete complete))))
                  (dolist (change '(:event :attempt :content))
                    (rejects (lambda ()
                               (session-store--recover-model-result

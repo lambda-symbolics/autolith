@@ -1127,8 +1127,13 @@ Files shared with a loaded system are available through that system."
         (asdf:load-asd pathname)))
     (let* ((systems   (loop for name in (asdf:registered-systems)
                           for system = (asdf:find-system name)
-                          when (uiop:pathname-equal
-                                (asdf:component-pathname system) root)
+                          for definition = (asdf:system-source-file system)
+                          when (or (uiop:pathname-equal
+                                    (asdf:component-pathname system) root)
+                                   (and definition
+                                        (uiop:pathname-equal
+                                         (uiop:pathname-directory-pathname definition)
+                                         root)))
                             collect system))
            (available (mapcan #'self-source--component-pathnames
                               (remove-if-not

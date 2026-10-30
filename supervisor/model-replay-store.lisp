@@ -233,7 +233,9 @@ are never parsed or repaired. Also preserve protocol null and byte vectors."
                         (:event
                          '(:event))
                         (:accept
-                         '(:complete :note-id))
+                         (if (eql (getf (rest entry) :version) 2)
+                             '(:complete :note-id :request-kind :request-purpose)
+                             '(:complete :note-id)))
                         (:projected
                          '(:note-id))
                         ((:failed :interrupted)
@@ -287,7 +289,8 @@ are never parsed or repaired. Also preserve protocol null and byte vectors."
 (defun model-replay-store--apply (state entry)
   "Validate and apply one complete journal operation to the indexes."
   (unless (and (listp entry) (sexp-store:record-shape-p entry)
-               (eql (getf (rest entry) :version) 1))
+               (or (eql (getf (rest entry) :version) 1)
+                   (and (eq (first entry) ':accept) (eql (getf (rest entry) :version) 2))))
     (model-replay-store--reject ':corrupt-log))
   (model-replay-store--entry-shape entry)
   (let* ((fields (rest entry)) (request (model-replay-store--id (getf fields :request)))
@@ -326,7 +329,8 @@ are never parsed or repaired. Also preserve protocol null and byte vectors."
                  (list :request request :attempt attempt :turn turn :profile profile :family family
                        :status ':running :items (make-array 0 :adjustable t :fill-pointer 0)
                        :states (make-array 0 :adjustable t :fill-pointer 0)
-                       :complete nil :note-id nil :projected nil :accept-sequence nil :events events)))))
+                        :complete nil :note-id nil :projected nil :accept-sequence nil :events events
+                        :request-kind nil :request-purpose nil)))))
       (otherwise
        (setf record (model-replay-store--attempt state request attempt))
        (case (first entry)
@@ -420,6 +424,14 @@ are never parsed or repaired. Also preserve protocol null and byte vectors."
                                        (model-replay-store--portable output) (getf item :output))))
               (model-replay-store--reject ':completion-mismatch))
             (model-replay-store--validate-state-handles state record complete)
+            (when (eql (getf fields :version) 2)
+              (unless (and (member (getf fields :request-kind) '(:generate :native-compaction))
+                           (member (getf fields :request-purpose) '(:ordinary :summary))
+                           (or (eq (getf fields :request-kind) ':generate)
+                               (eq (getf fields :request-purpose) ':ordinary)))
+                (model-replay-store--reject ':invalid-request-classification)))
+            (setf (getf record :request-kind) (getf fields :request-kind)
+                  (getf record :request-purpose) (getf fields :request-purpose))
             (setf (getf record :status) ':accepted
                   (getf record :accept-sequence) (length (getf state :entries))
                   (getf record :complete) (getf fields :complete)
@@ -745,15 +757,21 @@ Item events use PUT-ITEM. Terminal completion uses ACCEPT and COMPLETION."
                   (ironclad:digest-sequence ':sha256 (sb-ext:string-to-octets identity :external-format ':utf-8))))))
 
 (declaim (ftype (function (model-replay-store &key (:request-id string) (:attempt integer)
-                           (:complete hash-table)) string) model-replay-store-accept))
+                            (:complete hash-table) (:request-kind keyword) (:request-purpose keyword))
+                          string) model-replay-store-accept))
 
-(defun model-replay-store-accept (store &key request-id attempt complete)
+(defun model-replay-store-accept (store &key request-id attempt complete
+                                          (request-kind ':generate) (request-purpose ':ordinary))
   "Commit the exact ordered ModelComplete field-name projection and outbox note.
 
 Call only after final provider validation and cleanup succeed. The trusted
 caller supplies public fields. OUTPUT_ITEMS must exactly match the journaled
 ordered views and handles. Retrying the same acceptance returns the same note
 identity. A changed projection fails. Do not send terminal complete yet."
+  (unless (and (member request-kind '(:generate :native-compaction))
+               (member request-purpose '(:ordinary :summary))
+               (or (eq request-kind ':generate) (eq request-purpose ':ordinary)))
+    (model-replay-store--reject ':invalid-request-classification))
   (let ((data (model-replay-store--public-data complete)))
     (unless (and (hash-table-p complete)
                  (loop for key being the hash-keys of complete
@@ -765,10 +783,13 @@ identity. A changed projection fails. Do not send terminal complete yet."
      store (lambda (state)
              (let ((record (model-replay-store--attempt state request-id attempt)))
                (if (eq (getf record :status) ':accepted)
-                   (unless (model-replay-store--exact-p data (getf record :complete))
+                   (unless (and (model-replay-store--exact-p data (getf record :complete))
+                                (eq request-kind (getf record :request-kind))
+                                (eq request-purpose (getf record :request-purpose)))
                      (model-replay-store--reject ':completion-mismatch))
                    (model-replay-store--commit
-                    store state (list ':accept :version 1 :request request-id :attempt attempt
+                     store state (list ':accept :version 2 :request request-id :attempt attempt
+                                       :request-kind request-kind :request-purpose request-purpose
                                       :complete data :note-id
                                       (model-replay-store--note-id store record))))
                (copy-seq (getf record :note-id)))))))
@@ -784,6 +805,15 @@ identity. A changed projection fails. Do not send terminal complete yet."
           (gethash "attempt" result) (getf record :attempt)
           (gethash "model_result" result)
           (model-replay-store--portable (getf record :complete) :decode t))
+    (when (getf record :request-kind)
+      (setf (gethash "request_kind" result)
+            (ecase (getf record :request-kind) (:generate
+                                                "generate") (:native-compaction
+                                                             "native_compaction"))
+            (gethash "request_purpose" result)
+            (ecase (getf record :request-purpose) (:ordinary
+                                                   "ordinary") (:summary
+                                                                "summary"))))
     result))
 
 (declaim (ftype (function (model-replay-store) vector) model-replay-store-pending-projections))

@@ -41,5 +41,7 @@
                           "autolith-protocol-client.asd"))
       (asdf:load-asd (merge-pathnames definition root)))
     (test-assert (asdf:test-system '#:autolith-protocol-client :verbose nil)
-                 "optional agent protocol client checks pass"))
+                 "optional agent protocol client checks pass")
+    (test-assert (asdf:test-system '#:autolith-protocol-client/records :verbose nil)
+                 "optional record client checks pass"))
   nil)

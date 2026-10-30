@@ -12,16 +12,6 @@
   (:report (lambda (condition stream)
              (write-string (autolith-control-condition-message condition) stream))))
 
-(define-condition autolith-error (error)
-  ((message
-    :initarg       :message
-    :reader        autolith-error-message
-    :type          string
-    :documentation "A concise explanation suitable for the terminal."))
-  (:documentation "The base condition for expected Autolith failures.")
-  (:report (lambda (condition stream)
-             (write-string (autolith-error-message condition) stream))))
-
 (define-condition configuration-error (autolith-error)
   ()
   (:documentation "A failure caused by invalid or unavailable configuration."))
@@ -162,31 +152,6 @@
 
 
 ;;;; -- Authentication and Provider Conditions --
-
-(define-condition authentication-error (autolith-error)
-  ()
-  (:documentation "The base condition for authentication failures."))
-
-(define-condition credentials-unavailable (authentication-error)
-  ((searched-paths
-    :initarg       :searched-paths
-    :reader        credentials-unavailable-searched-paths
-    :type          list
-    :documentation "Credential pathnames inspected before the failure."))
-  (:documentation "No usable model-provider credentials were found."))
-
-(define-condition token-refresh-failed (authentication-error)
-  ((status
-    :initarg       :status
-    :reader        token-refresh-failed-status
-    :type          (option integer)
-    :documentation "The HTTP status returned by the OAuth server, if known.")
-   (response
-    :initarg       :response
-    :reader        token-refresh-failed-response
-    :type          (option string)
-    :documentation "A bounded, non-secret OAuth error response."))
-  (:documentation "Refreshing a ChatGPT OAuth access token failed."))
 
 (define-condition provider-registry-configuration-error
     (configuration-error provider-registry-error)

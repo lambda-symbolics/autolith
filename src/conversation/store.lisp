@@ -2760,6 +2760,14 @@ later picker searches read it without scanning the log."
     (setf (gethash "arguments" item) "{}"))
   item)
 
+(defgeneric conversation--restore-provider-item (conversation item)
+  (:documentation "Apply format-specific compatibility repairs to one restored provider item."))
+
+(defmethod conversation--restore-provider-item ((conversation conversation) item)
+  "Repair items from legacy conversation storage."
+  (declare (ignore conversation))
+  (conversation--repair-provider-item-arguments item))
+
 (-> conversation--apply-record (conversation list) null)
 (defun conversation--apply-record (conversation record)
   "Project one persisted RECORD into CONVERSATION's in-memory state."
@@ -2808,7 +2816,7 @@ later picker searches read it without scanning the log."
            conversation properties
            "A persisted provider item is not a JSON object."))
         (when (eq kind ':provider-item)
-          (conversation--repair-provider-item-arguments item))
+          (conversation--restore-provider-item conversation item))
         (conversation--append-input-item conversation item)))
     nil))
 
