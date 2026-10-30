@@ -1383,8 +1383,8 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                                             (json-object)))))
         (test-assert (search trace-identifier rendered)
                      "the trace index lists the persisted trace")
-        (test-assert (search "trace me please" rendered)
-                     "the trace index carries the task excerpt")))
+        (test-assert (search "Trace me please" rendered)
+                     "the trace index carries the task as its title")))
     (let ((missing (resource-resolver-resolve resolver "zzzz-none" context)))
       (test-assert (not (tool-result-success-p
                          (resource-tool-read missing read-tool context

@@ -282,28 +282,12 @@ requested window rather than the complete trace."
 
 (-> rlm--trace-task-excerpt (configuration string) string)
 (defun rlm--trace-task-excerpt (configuration identifier)
-  "Return the bounded task line of trace IDENTIFIER, best effort."
-  (let ((segment (first (rlm--trace-segments configuration identifier))))
-    (or (and segment
-             (handler-case
-                 (with-open-file (stream segment :external-format ':utf-8)
-                   (let* ((buffer (make-string 4000))
-                          (count  (read-sequence buffer stream))
-                          (prefix (subseq buffer 0 count))
-                          (start  (search "Task: " prefix)))
-                     (when start
-                       (let* ((begin (+ start (length "Task: ")))
-                              (end   (or (position #\Newline prefix
-                                                   :start begin)
-                                         (length prefix))))
-                         (string-right-trim
-                          '(#\Return #\\ #\")
-                          (subseq prefix begin
-                                  (min end
-                                       (+ begin
-                                          *rlm-index-excerpt-characters*))))))))
-               (error ()
-                 nil)))
+  "Return the bounded task of trace IDENTIFIER, which titles it, best effort."
+  (let* ((segment (first (rlm--trace-segments configuration identifier)))
+         (title   (and segment
+                       (getf (rest (conversation-peek-header segment)) :title))))
+    (if (non-empty-string-p title)
+        (subseq title 0 (min (length title) *rlm-index-excerpt-characters*))
         "(no task line)")))
 
 (-> rlm--trace-index-render (configuration) string)

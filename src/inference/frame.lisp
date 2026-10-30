@@ -220,13 +220,15 @@ value from the text through the library's answer reader."
           (rlm-views-render views)
           instructions))
 
-(-> rlm--frame-conversation (configuration) conversation)
-(defun rlm--frame-conversation (configuration)
-  "Create the private trace conversation for one inference frame."
+(-> rlm--frame-conversation (configuration &key (:task string)) conversation)
+(defun rlm--frame-conversation (configuration &key task)
+  "Create the private trace conversation for one inference frame titled by its TASK."
   (let ((root (configuration-inference-root configuration)))
     (ensure-directories-exist root)
     (let ((conversation (conversation-create configuration :storage-root root)))
       (mission-context-inherit configuration conversation)
+      (when (conversation-title-normalize task)
+        (conversation-set-title conversation task :source ':initial))
       conversation)))
 
 (-> rlm--record-response (conversation provider-result) null)
@@ -509,7 +511,7 @@ with bounded public outputs and a durable trace, never an unvalidated answer."
                                       (rlm--context-designators context)))
            (contract                 (rlm-contract-normalize contract))
            (budget                   (or budget (rlm-budget-create)))
-           (conversation             (rlm--frame-conversation configuration))
+           (conversation             (rlm--frame-conversation configuration :task task))
            (request                  (rlm--frame-request
                                       task views (rlm--contract-instructions contract)))
            (*system-prompt-override* (rlm--frame-prompt capabilities))

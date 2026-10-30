@@ -386,7 +386,7 @@ configuration before per-call model routing, so routing copies share its pool."
                                  :calls  *rlm-complete-call-budget*
                                  :tokens *rlm-complete-token-budget*
                                  :depth  *rlm-complete-depth-budget*)))
-           (conversation    (rlm--frame-conversation configuration))
+           (conversation    (rlm--frame-conversation configuration :task task))
            (endpoint        (rlm-endpoint-start
                              :provider          provider
                              :configuration     configuration
