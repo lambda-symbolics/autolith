@@ -47,9 +47,13 @@
 
 (defmethod provider-responses-request-fields
     ((provider openai-api-provider) (conversation conversation) &key compaction-p)
-  "Disable server-side response storage for public API requests."
-  (declare (ignore provider conversation compaction-p))
-  (list "store" yason:false))
+  "Disable server-side response storage and allow parallel calls for public API requests.
+
+Parallel calls let one response carry independent calls, which the agent runs
+in waves, instead of spending a model request on each. Compaction calls none."
+  (declare (ignore provider conversation))
+  (list "store" yason:false
+        "parallel_tool_calls" (if compaction-p yason:false t)))
 
 (defmethod provider-wire-tool-name
     ((provider openai-api-provider) (namespace string) (name string))
