@@ -15,6 +15,8 @@ do not invalidate the stable provider cache prefix.
 |-----------------------------+---------+------------------------------------------------|
 | =:simple-technical-english-p= | boolean | =preferences-simple-technical-english-p=       |
 | =:hurry-up-p=                 | boolean | =*request-context-hurry-up-p*=                  |
+| =:relax-p=                    | boolean | the session's =:relax-p= setting                |
+| =:relax-warning=              | text    | =*system-prompt-relax-warning*=                 |
 | =:lisp-image-entries=         | text    | bounded rows from =lisp-image-prompt-entries=   |
 | =:agenda=                     | text    | bounded active rows from =agenda-prompt-item-lines= |
 | =:agenda-p=                   | boolean | current workspace agenda has active items          |
@@ -53,6 +55,13 @@ Run only essential focused verification, then stop when the request is
 correctly complete.
 Ask a question only when missing user input or authority genuinely
 blocks progress.
+
+* Relax
+:PROPERTIES:
+:WHEN: :relax-p
+:END:
+
+WARNING: {{{:relax-warning}}}
 
 * Saved worker images
 

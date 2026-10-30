@@ -1463,11 +1463,13 @@ Enable the session's private context-pressure reminder with =(relax t)=, or
 =(settings :relax-p t)=. Use =(relax nil)= to disable it and =(relax)= to inspect
 its state.
 
-The private system-prompt reminder warns that the agent's session, context and
-token estimates are unreliable and often too small. Automatic compaction is
+The private reminder warns that the agent's session, context and token
+estimates are unreliable and often too small. Automatic compaction is
 available; perceived length is no reason to shrink scope, skip verification,
-rush, or end early. The reminder is rebuilt after compaction, outside
-conversation turns. The setting lasts until exit and defaults to =nil=.
+rush, or end early. It travels with the session state behind the conversation
+history, so turning it on or off keeps the cached prompt prefix. Inference
+frames carry it in their own system prompt. It is rebuilt after compaction,
+outside conversation turns. The setting lasts until exit and defaults to =nil=.
 
 A durable value is chosen at startup from the first source that supplies it:
 an explicit command-line choice, the setting's environment variable, then the

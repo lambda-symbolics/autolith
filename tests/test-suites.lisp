@@ -567,7 +567,7 @@
 
 (define-test-suite relax
   test-relax-setting-and-command
-  test-relax-warning-rebuilds-with-system-prompt)
+  test-relax-warning-rides-session-state)
 
 (define-test-suite interpreter-discipline
   test-interpreter-discipline)
