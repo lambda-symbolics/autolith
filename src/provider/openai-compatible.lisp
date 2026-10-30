@@ -385,10 +385,17 @@ ask for a final usage chunk."
                                      compaction-p)))
          (history
           (conversation-input-items-for-family conversation (provider-family provider)
-                                               :include-ephemeral-p (not compaction-p)))
+                                               :include-ephemeral-p nil))
+         (ephemeral-items
+          (unless compaction-p
+            (remove-if
+             (lambda (item) (member item history :test #'eq))
+             (conversation-input-items-for-family conversation (provider-family provider)
+                                                  :include-ephemeral-p t))))
          (projection
-          ;; Anchored context joins the history before its cache breakpoint where
-          ;; the provider accepts it there; the goal and other context follow.
+          ;; Anchored context joins the durable history before its cache
+          ;; breakpoint where the provider accepts it there; exchanges lasting
+          ;; one response, the goal, and other context follow.
           (multiple-value-bind (items context)
               (if (openai-compatible-provider-anchored-context-p provider)
                   (values (context-delivery-project-items delivery conversation history)
@@ -403,7 +410,8 @@ ask for a final usage chunk."
                          (unless compaction-p
                            (list goal-context context))
                          :options
-                         (list :stream-usage-p
+                         (list :ephemeral-items ephemeral-items
+                               :stream-usage-p
                                (openai-compatible-provider-stream-usage-p provider)
                                :reasoning-parameter
                                (openai-compatible-provider-reasoning-parameter

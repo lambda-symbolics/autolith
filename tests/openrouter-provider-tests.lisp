@@ -339,7 +339,30 @@
             (test-assert (not (marked-p (aref claude (1- (length claude)))))
                          "the temporary context after the breakpoint stays uncached"))
           (test-assert (notany #'marked-p (messages "meta-llama/llama-4-maverick"))
-                       "other models keep their provider's own caching")))))
+                       "other models keep their provider's own caching")
+          (conversation-append-provider-item
+           conversation
+           (json-object "type" "message" "role" "assistant"
+                        "content" (json-array (json-object "type" "output_text"
+                                                           "text" "Durable answer."))))
+          (conversation-append-provider-item
+           conversation
+           (json-object "type" "function_call" "namespace" "skill" "name" "load"
+                        "call_id" "volatile-call" "arguments" "{}")
+           :persistence ':next-response)
+          (conversation-append-tool-result conversation "volatile-call"
+                                           :tool-name   "skill.load"
+                                           :output      "Blocked."
+                                           :success-p   nil
+                                           :persistence ':next-response)
+          (let ((claude (messages "anthropic/claude-haiku-4.5")))
+            (test-assert (and (= (length claude) 6)
+                              (marked-p (aref claude 2))
+                              (search "Durable answer." (json-encode (aref claude 2)))
+                              (notany #'marked-p (subseq claude 3))
+                              (search "volatile-call" (json-encode (aref claude 3)))
+                              (search "Blocked." (json-encode (aref claude 4))))
+                         "an exchange lasting one response follows the durable breakpoint"))))))
   nil)
 
 (-> test-openrouter-anchored-context-prefix () null)
