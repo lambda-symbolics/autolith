@@ -33,7 +33,8 @@ Return the encoded request and its context delivery."
             :suffix  (unless compaction-p
                        (list goal-context
                              (and delivery (context-delivery-rendered delivery))))
-            :options (list :maximum-output-tokens *provider-maximum-output-tokens*
+            :options (list :tool-choice           *provider-tool-choice*
+                           :maximum-output-tokens *provider-maximum-output-tokens*
                            :include-thoughts-p
                            (not (string= (config :reasoning-effort configuration) "none"))))))
     (values (provider-request-object provider projection

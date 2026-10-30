@@ -394,6 +394,12 @@ credentials and model metadata independently of their cached wire routes."
 (defparameter *provider-hosted-tools-enabled-p* t
   "Whether the current provider request may advertise hosted provider tools.")
 
+(defparameter *provider-tool-choice* ':auto
+  "Whether the current provider request lets the model call its tools.
+
+':NONE still sends the tool definitions, so the cached prefix they start
+survives a request that must answer without calling one.")
+
 (defparameter *provider-maximum-output-tokens* nil
   "An optional output token ceiling for the current provider request.
 

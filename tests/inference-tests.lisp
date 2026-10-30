@@ -332,7 +332,12 @@
     :initform      nil
     :accessor      rlm-inference-test-provider-tool-schema-counts
     :type          list
-    :documentation "The provider tool schema counts observed, newest first."))
+    :documentation "The provider tool schema counts observed, newest first.")
+   (tool-choices
+    :initform      nil
+    :accessor      rlm-inference-test-provider-tool-choices
+    :type          list
+    :documentation "The provider tool choices observed, newest first."))
   (:documentation "A deterministic provider for exercising inference frames."))
 
 (defmethod provider-with-configuration
@@ -352,6 +357,8 @@
         (rlm-inference-test-provider-input-snapshots provider))
   (push (length tool-namespaces)
         (rlm-inference-test-provider-tool-schema-counts provider))
+  (push *provider-tool-choice*
+        (rlm-inference-test-provider-tool-choices provider))
   (push *provider-maximum-output-tokens*
         (rlm-inference-test-provider-output-limits provider))
   (let ((result (pop (rlm-inference-test-provider-results provider))))
@@ -695,10 +702,11 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
               "budgeted answer")
      "read-capability frames reserve the final provider call for an answer")
     (test-assert
-     (equal (reverse
-             (rlm-inference-test-provider-tool-schema-counts provider))
-            '(2 0))
-     "the final reserved request omits every tool schema")
+     (and (equal (reverse (rlm-inference-test-provider-tool-schema-counts provider))
+                 '(2 2))
+          (equal (reverse (rlm-inference-test-provider-tool-choices provider))
+                 '(:auto :none)))
+     "the final reserved request keeps its tool schemas but disables calls")
     (test-assert (zerop (rlm-budget-remaining-calls budget))
                  "the reserved final answer may consume the last call"))
   nil)

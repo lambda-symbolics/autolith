@@ -44,6 +44,11 @@
     :accessor      scripted-provider-tool-schema-counts
     :type          list
     :documentation "The number of tool namespaces advertised on each request.")
+   (tool-choices
+    :initform      nil
+    :accessor      scripted-provider-tool-choices
+    :type          list
+    :documentation "The tool choice bound for each request.")
    (goal-contexts
     :initform      nil
     :accessor      scripted-provider-goal-contexts
@@ -119,6 +124,8 @@
         (scripted-provider-turn-states provider))
   (push (length tool-namespaces)
         (scripted-provider-tool-schema-counts provider))
+  (push *provider-tool-choice*
+        (scripted-provider-tool-choices provider))
   (push goal-context
         (scripted-provider-goal-contexts provider))
   (push compaction-p
@@ -754,8 +761,9 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
               :tool-allowlist     '("test.echo")
               :tool-restriction-p t))
            (test-assert
-            (equal (scripted-provider-tool-schema-counts provider) '(0 1))
-            "a restricted turn removes tool schemas after its bounded round")
+            (and (equal (scripted-provider-tool-schema-counts provider) '(1 1))
+                 (equal (scripted-provider-tool-choices provider) '(:none :auto)))
+            "a restricted turn keeps its tool schemas but disables calls after its bounded round")
            (test-assert
             (equal (nreverse (scripted-provider-input-counts provider)) '(1 3))
             "an allowed read-only call executes and returns to the same turn")
@@ -947,8 +955,9 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                 (search "tool-round limit" (format nil "~A" condition))))
             "a restricted turn rejects calls beyond its tool-round limit")
            (test-assert
-            (equal (scripted-provider-tool-schema-counts provider) '(0 1))
-            "the provider sees no tool schemas after the restricted limit")
+            (and (equal (scripted-provider-tool-schema-counts provider) '(1 1))
+                 (equal (scripted-provider-tool-choices provider) '(:none :auto)))
+            "the provider may not call tools after the restricted limit")
            (test-assert
             (= (length (conversation-input-items conversation)) 3)
             "the over-limit call is rejected before persistence or execution"))

@@ -192,6 +192,67 @@
         (tool-registry-close-runtime-state registry))))
   nil)
 
+(-> test-provider-tool-choice () null)
+(defun test-provider-tool-choice ()
+  "Disable tool calls on every wire format while keeping the same tool definitions."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (registry      (make-default-tool-registry :configuration configuration))
+         (conversation  (conversation-create configuration :identifier "tool-choice")))
+    (unwind-protect
+         (progn
+           (conversation-append-user-message conversation "Answer now.")
+           (loop for (label provider choice-of) in
+                 (list (list "Responses" (provider-create configuration)
+                             (lambda (request) (json-get request "tool_choice")))
+                       (list "Chat Completions"
+                             (openai-compatible-provider-create
+                              configuration :name                "choice-openai"
+                                            :family              ':openai
+                                            :headers             nil
+                                            :reasoning-parameter nil
+                                            :stream-usage-p      t)
+                             (lambda (request) (json-get request "tool_choice")))
+                       (list "Messages" (anthropic-provider-create configuration)
+                             (lambda (request)
+                               (json-get (json-get request "tool_choice") "type")))
+                       (list "GenerateContent"
+                             (gemini-code-assist-provider-create
+                              configuration
+                              :credential-manager (credential-manager-create configuration))
+                             (lambda (request)
+                               (let ((tool-configuration
+                                       (json-get (json-get request "request") "toolConfig")))
+                                 (if tool-configuration
+                                     (string-downcase
+                                      (json-get (json-get tool-configuration
+                                                          "functionCallingConfig")
+                                                "mode"))
+                                     "auto")))))
+                 do (flet ((encode (choice)
+                             "Encode PROVIDER's request with tool CHOICE."
+                             (let ((*provider-tool-choice* choice))
+                               (provider-request-object
+                                provider conversation
+                                (tool-registry-provider-schemas registry)))))
+                      (let ((automatic (encode ':auto))
+                            (disabled  (encode ':none)))
+                        (test-assert
+                         (and (equal (funcall choice-of automatic) "auto")
+                              (equal (funcall choice-of disabled) "none"))
+                         (format nil "~A requests carry the bound tool choice" label))
+                        (test-assert
+                         (string= (json-encode (json-get (or (json-get disabled "request")
+                                                             disabled)
+                                                         "tools"))
+                                  (json-encode (json-get (or (json-get automatic "request")
+                                                             automatic)
+                                                         "tools")))
+                         (format nil "~A requests keep their tool definitions" label))))))
+      (tool-registry-close-runtime-state registry)
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-provider-request-tool-filtering () null)
 (defun test-provider-request-tool-filtering ()
   "Test local web schemas are sent only when the request can execute them."

@@ -411,6 +411,7 @@ ask for a final usage chunk."
                            (list goal-context context))
                          :options
                          (list :ephemeral-items ephemeral-items
+                               :tool-choice     *provider-tool-choice*
                                :stream-usage-p
                                (openai-compatible-provider-stream-usage-p provider)
                                :reasoning-parameter

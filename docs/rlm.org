@@ -255,9 +255,11 @@ argument). A frame without capabilities is a pure call over its
 views. A =read= frame runs as a restricted agent turn: it may use
 =resource.read= (workspace scheme only), the =search= tools, and
 nested =rlm.infer= and =rlm.map= sharing the same budget subtree,
-with tool rounds bounded per round. Inside a frame the nested tools
-ignore allowance arguments and descend the enclosing budget, so
-fan-out can never outspend the root allocation.
+with tool rounds bounded per round. Its last request keeps the same
+tool definitions but disables calls, so the answer reuses the cached
+prefix; a call returned anyway fails the frame. Inside a frame the
+nested tools ignore allowance arguments and descend the enclosing
+budget, so fan-out can never outspend the root allocation.
 
 * Design decisions
 

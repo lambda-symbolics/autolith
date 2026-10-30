@@ -1740,25 +1740,31 @@ loop, so compaction ahead of the user message shares the turn's budget."
                    (plusp output-limit)
                    output-limit)))
       (let* ((conversation (agent-conversation agent))
-             (tool-schemas-p
+             (tool-calls-p
                (and tools-p
                     (or (not tool-restriction-p)
                         (< tool-rounds
                            *agent-restricted-maximum-tool-rounds*))))
+             ;; A restricted turn past its tool rounds keeps its schemas and
+             ;; disables calls instead, so its answer reuses the cached prefix.
              (tool-namespaces
-               (if tool-schemas-p
-                   (if tool-restriction-p
-                       (tool-registry-provider-schemas
-                        (agent-tool-registry agent)
-                        :canonical-names tool-allowlist)
-                       (tool-registry-provider-schemas
-                        (agent-tool-registry agent)))
-                   #()))
+               (cond
+                 ((not tools-p)
+                  #())
+                 (tool-restriction-p
+                  (tool-registry-provider-schemas
+                   (agent-tool-registry agent)
+                   :canonical-names tool-allowlist))
+                 (t
+                  (tool-registry-provider-schemas
+                   (agent-tool-registry agent)))))
              (cache-prefix nil)
              (result
                (handler-case
                    (let ((*provider-hosted-tools-enabled-p*
                             (not tool-restriction-p))
+                         (*provider-tool-choice*
+                           (if (or tool-calls-p (not tools-p)) ':auto ':none))
                          (*provider-maximum-output-tokens* maximum-output-tokens)
                          (*provider-cache-prefix-function*
                            (lambda (prefix) (setf cache-prefix prefix)))
@@ -1805,7 +1811,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
                        :message         "A tool-free model turn returned function calls."
                        :conversation-id (conversation-identifier conversation)
                        :request-number  request-number))
-              (when (and calls tool-restriction-p (not tool-schemas-p))
+              (when (and calls tool-restriction-p (not tool-calls-p))
                 (error 'agent-loop-error
                        :message
                        (format nil "A restricted turn exceeded its ~D tool-round limit."

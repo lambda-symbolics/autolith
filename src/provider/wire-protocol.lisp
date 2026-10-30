@@ -405,7 +405,8 @@ changing one never invalidates a provider's cached prefix of earlier history."
                           (system-prompt configuration)))
                :suffix suffix
                :options
-               (list :reasoning-effort
+               (list :tool-choice *provider-tool-choice*
+                     :reasoning-effort
                      (provider-responses-wire-effort provider configuration)
                      :reasoning-summary
                      (and (not compaction-p)
