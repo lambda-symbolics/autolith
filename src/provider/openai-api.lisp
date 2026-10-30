@@ -50,10 +50,12 @@
   "Disable server-side response storage and allow parallel calls for public API requests.
 
 Parallel calls let one response carry independent calls, which the agent runs
-in waves, instead of spending a model request on each. Compaction calls none."
-  (declare (ignore provider conversation))
+in waves, instead of spending a model request on each. Compaction calls none.
+CONVERSATION's prompt cache key routes its requests to the same cache."
+  (declare (ignore provider))
   (list "store" yason:false
-        "parallel_tool_calls" (if compaction-p yason:false t)))
+        "parallel_tool_calls" (if compaction-p yason:false t)
+        "prompt_cache_key" (conversation-prompt-cache-key conversation)))
 
 (defmethod provider-wire-tool-name
     ((provider openai-api-provider) (namespace string) (name string))

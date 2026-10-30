@@ -1272,8 +1272,10 @@
                        (not (gethash "reasoning" request))
                        (not (gethash "reasoning_effort" request))
                        (eq yason:false (json-get request "store"))
-                       (eq t (json-get request "parallel_tool_calls")))
-                  "modern and legacy models use default reasoning, storage disabled, and parallel calls")
+                       (eq t (json-get request "parallel_tool_calls"))
+                       (equal (json-get request "prompt_cache_key")
+                              (conversation-prompt-cache-key conversation)))
+                  "modern and legacy models use default reasoning, storage disabled, parallel calls, and the conversation's cache key")
                  (test-assert
                   (every (lambda (tool)
                            (let ((schema (json-get tool "parameters"))
