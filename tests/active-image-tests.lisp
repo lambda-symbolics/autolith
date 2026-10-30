@@ -13,8 +13,13 @@
     (test-assert (and (equal inputs (active-image-source-paths source-root))
                       (member "autolith.asd" inputs :test #'string=)
                       (member "qlfile.lock" inputs :test #'string=)
-                      (member "src/startup/active-image.lisp" inputs :test #'string=))
-                 "active-image identities cover the system, its lock and every source file")
+                      (every (lambda (path) (member path inputs :test #'string=))
+                             '("src/startup/active-image.lisp" "autolith-protocol.asd"
+                               "autolith-protocol-client.asd" "autolith-supervisor.asd"
+                               "supervisor/protocol.lisp" "proto/generated/protocol.lisp"
+                               "proto/autolith/common/v1/value.proto" "proto/autolith/parent/v1/protocol.proto"
+                               "docs/system-prompt.org" "docs/request-context.org")))
+                 "active-image identities cover agent, boundary, schema, bindings and runtime prompt inputs")
     (let ((wrong-source (copy-tree record)))
       (setf (second (first (getf (rest wrong-source) :source-files)))
             "0000000000000000000000000000000000000000")

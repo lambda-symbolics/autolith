@@ -27,7 +27,14 @@
   :depends-on              (#:agentcomms
                             #:argo
                             #:autolith-supervisor/accounts
+                            #:autolith-supervisor/family-accounts
+                            #:autolith-supervisor/provider-family-domain
                             #:autolith-supervisor/provider-http
+                            #:autolith-supervisor/provider-login
+                            #:autolith-supervisor/agendas
+                            #:autolith-supervisor/memory
+                            #:autolith-supervisor/papercuts
+                            #:autolith-supervisor/terminal-ui
                             #:cl-base64
                             #:cl+ssl
                             #:cl-colorist
@@ -124,17 +131,13 @@
                                           (:file "configuration/preferences")
                                           (:file "configuration/permissions")
                                           (:file "provider/authentication")
-                                          (:file "provider/chatgpt/authentication")
                                           (:file "provider/gemini/authentication")
                                           (:file "provider/grok/authentication")
                                           (:file "provider/api-key")
                                           (:file "provider/api-key-providers")
                                           (:file "provider/static-api-key-providers")
                                           (:file "workers/images")
-                                          (:file "provider/device-authentication")
-                                          (:file "provider/grok/device-authentication")
                                           (:file "provider/nous/authentication")
-                                          (:file "provider/nous/device-authentication")
                                           (:file "provider/copilot/authentication")
                                           (:file "models/catalog")
                                           (:file "models/provider-catalog")
@@ -148,20 +151,12 @@
                                           (:file "conversation/input-history")
                                           (:file "conversation/compaction")
                                           (:file "conversation/async-lisp")
-                                          (:file "state/memory-sources")
                                           (:file "state/memories")
-                                          (:file "knowledge/terms")
-                                          (:file "knowledge/schemas")
-                                          (:file "knowledge/store")
-                                          (:file "knowledge/applicability")
-                                          (:file "knowledge/rules")
-                                          (:file "knowledge/evaluation")
                                           (:file "knowledge/explanation")
                                           (:file "knowledge/viewers")
                                           (:file "knowledge/methods")
                                           (:file "knowledge/contracts")
                                           (:file "knowledge/diagnosis")
-                                          (:file "state/memory-status")
                                           (:file "state/papercuts")
                                           (:file "state/agendas")
                                           (:file "state/plan")
@@ -275,18 +270,8 @@
                                           (:file "task/worktrees")
                                           (:file "agent/context-rules")
                                           (:file "agent/saved-context-rules")
-                                          (:file "terminal/protocol")
-                                          (:file "terminal/input")
-                                          (:file "terminal/style")
-                                          (:file "terminal/syntax-highlighting")
-                                          (:file "terminal/layout")
-                                          (:file "terminal/stream")
+                                          (:file "terminal/host")
                                           (:file "localgroup/terminal")
-                                          (:file "terminal/path-completion")
-                                          (:file "terminal/ui")
-                                          (:file "terminal/clipboard")
-                                          (:file "terminal/fullscreen")
-                                          (:file "terminal/boot-screen")
                                           (:file "state/onboarding")
                                           (:file "application/onboarding-source")
                                           (:file "terminal/onboarding")

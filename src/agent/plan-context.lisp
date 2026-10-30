@@ -44,6 +44,9 @@
     null)
 (defun plan-context-note-delivered (configuration conversation &key plan view)
   "Record that CONVERSATION's model just saw PLAN as checked against VIEW."
+
+  (when (knowledge-plan-delivered-remote configuration conversation plan)
+    (return-from plan-context-note-delivered nil))
   (when (and plan view)
     (knowledge-viewer-update configuration (plan-context--viewer conversation)
                              (knowledge-view-workspace view)
@@ -56,6 +59,10 @@
 (-> plan-changes-context (request-context) (option context-contribution))
 (defun plan-changes-context (request)
   "Explain once per turn which fact-dependent plan steps changed since the model saw them."
+
+  (multiple-value-bind (advice installed-p) (knowledge-plan-context-remote request)
+    (when installed-p
+      (return-from plan-changes-context advice)))
   (let ((configuration (request-context-configuration request))
         (conversation  (request-context-conversation request)))
     (when (and (not (request-context-compaction-p request))

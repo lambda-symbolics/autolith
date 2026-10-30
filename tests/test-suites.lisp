@@ -355,6 +355,7 @@
   test-memory-manager-command)
 
 (define-test-suite knowledge
+  test-parent-knowledge-context
   test-knowledge-terms
   test-knowledge-schemas
   test-knowledge-store
@@ -732,6 +733,9 @@
   gemini-code-assist-test--credential-redaction
   gemini-code-assist-test--setup-and-retry)
 
+(define-test-suite provider-family-domain
+  test-provider-family-domain-adapters)
+
 (define-test-suite anthropic-provider
   anthropic-provider-test--selection
   anthropic-provider-test--tool-schemas
@@ -901,7 +905,11 @@
 (define-test-suite supervisor
   test-supervisor-subprocess-boundary
   test-supervisor-protocol-boundary
-  test-agent-protocol-client)
+  test-agent-protocol-client
+  test-supervisor-native-host-access
+  test-supervisor-production-launch
+  test-supervisor-native-host-policy
+  test-supervisor-network-policy)
 
 (define-test-suite active-image
   test-active-image-build-record
@@ -1214,6 +1222,7 @@
 
 (define-test-suite application
   test-presentation-configuration-isolation
+  test-application-input-failure-backtrace
   test-operation-request-turn
   test-application-transcript-actions
   test-application-mermaid-transcript

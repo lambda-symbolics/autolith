@@ -153,6 +153,18 @@ autolith_launcher_parse()
   fi
 }
 
+autolith_parent_cli_p()
+{
+  # Only fixed maintenance workers and image probes use the agent bootstrap.
+  # All public commands use the trusted parent, including noninteractive ones.
+  case ${1:-} in
+    --worker|--parent-agent|--model-catalog-worker|--telemetry-worker|\
+    --autolith-internal-active-image-probe|--autolith-internal-image-commit-replay-probe)
+      return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 autolith_xdg_directory()
 {
   case ${1:-} in

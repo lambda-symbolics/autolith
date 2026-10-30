@@ -58,6 +58,8 @@
                :test #'equal)))
   (asdf:load-asd (merge-pathnames "autolith-agent.asd" source-root))
   (asdf:load-system :autolith-agent)
+  (asdf:load-asd (merge-pathnames "autolith-protocol-client.asd" source-root))
+  (asdf:load-system :autolith-protocol-client/entry)
   (cond
     (child-core
      (format t "~&Saving the preloaded active image.~%")

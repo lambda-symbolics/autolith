@@ -129,6 +129,8 @@
                         (setf (gethash "arguments" (second items)) "{}"
                               (gethash "content" (first items)) #()
                               (conversation-input-items conversation) items)
+                        (dolist (item items)
+                          (setf (gethash item (conversation-input-item-families conversation)) ':parent))
                         (let ((again (provider-stream-turn provider conversation :tool-namespaces #()
                                                            :event-callback                        (constantly nil))))
                           (assert (string= "accepted text" (provider-result-assistant-text again))))
@@ -312,13 +314,287 @@
                                (agent-context-item->transcript item)))))
   nil)
 
+(-> agent-provider-test--compaction (keyword) null)
+(defun agent-provider-test--compaction (outcome)
+  "Exercise native acceptance, private replay, durable marker reload, and summary fallback over bytes."
+  (let* ((root           (merge-pathnames (format nil "parent-compaction-~A/" (make-identifier)) (uiop:temporary-directory)))
+         (session-path   (merge-pathnames "session.sexp" root))
+         (replay-path    (merge-pathnames "replay.sexp" root))
+         (opaque         (make-string 13000 :initial-element #\Q))
+         (profile-id     nil)
+         (native-p       (eq outcome ':native))
+         (expected-calls (if native-p 4 2)))
+    (ensure-directories-exist session-path)
+    (unwind-protect
+        (agent-protocol-test--peers
+         (lambda (parent)
+           (let ((welcome (agent-model-test--welcome)))
+             (setf (agent-wire:limits.max-frame-bytes (agent-wire:welcome.limits welcome)) (* 1024 1024))
+             (autolith-supervisor::parent-connection-handshake parent welcome))
+           (multiple-value-bind (profile account ignored)
+               (autolith-supervisor::provider-family-test--binding
+                  (if (eq outcome ':unsupported)
+                    '(:openai-api "fixture" :responses)
+                     '(:codex "fixture" :responses))
+                  :kind ':native-compaction)
+             (declare (ignore ignored))
+             (setf profile-id (autolith-supervisor::model-profile-id profile))
+             (let ((accounts (make-hash-table :test #'eq)) (calls 0) (opened nil))
+               (setf (gethash profile accounts) account)
+               (multiple-value-bind (execute abort)
+                   (autolith-supervisor::make-provider-family-model-executor
+                    :accounts accounts :session-id "compaction-session" :maximum-attempts 1
+                    :opener
+                    (lambda (endpoint request credentials &key &allow-other-keys)
+                      (declare (ignore credentials))
+                      (incf calls)
+                      (when (and native-p (> calls 1))
+                        (assert (find opaque (gethash "input" request)
+                                      :key (lambda (item) (gethash "encrypted_content" item)) :test #'equal)))
+                      (let ((stream
+                              (make-string-input-stream
+                               (if (search "/compact" endpoint)
+                                   (json-encode
+                                    (json-object "output"
+                                      (if native-p
+                                          (vector (json-object "type" "compaction" "encrypted_content" opaque))
+                                          #())))
+                                   (autolith-supervisor::provider-family-test--sse ':responses)))))
+                        (push stream opened)
+                        (values stream 200 nil))))
+                 (let* ((store   (autolith-supervisor::session-store-open session-path "compaction-session"))
+                        (replay  (autolith-supervisor::model-replay-store-open replay-path "compaction-session"))
+                        (service
+                          (autolith-supervisor::make-model-service
+                           :profiles (autolith-supervisor::make-model-profile-registry (list profile))
+                           :replay-store replay :abort abort
+                           :executor (if (eq outcome ':nil)
+                                         (lambda (invocation callback)
+                                           (if (eq (fourth (autolith-supervisor::model-invocation-inputs invocation))
+                                                   ':native-compaction)
+                                               nil
+                                               (funcall execute invocation callback)))
+                                         execute)))
+                        (runtime (autolith-supervisor::session-runtime-open
+                                  store parent :features '("session.v1" "model.v1" "model-items-v1")
+                                  :model-service         service)))
+                   (unwind-protect
+                       (progn
+                         (autolith-supervisor::session-runtime-start-turn runtime "turn" "compact")
+                         (dotimes (index expected-calls)
+                           (autolith-supervisor::session-runtime-receive runtime))
+                         (autolith-supervisor::session-runtime-receive runtime)
+                         (assert (= calls (if (member outcome '(:nil :unsupported)) 1 expected-calls)))
+                         (assert (every (lambda (stream) (not (open-stream-p stream))) opened)))
+                     (autolith-supervisor::session-runtime-disconnect runtime)
+                     (autolith-supervisor::session-runtime-await-close runtime :timeout 5)))))))
+         (lambda (client)
+           (agent-protocol-handshake client :features '("session.v1" "model.v1" "model-items-v1"))
+           (agent-protocol-receive client)
+           (let* ((*context-contributors*          nil)
+                  (*context-request-contributions* nil)
+                  (configuration                   (make-configuration :provider-validation-p nil :state-root root :data-root root :config-root root))
+                  (conversation                    (conversation-create configuration :identifier "compaction-session"))
+                  (driver                          (agent-protocol-driver-start client))
+                  (provider                        (make-agent-protocol-provider configuration driver profile-id)))
+             (unwind-protect
+                 (progn
+                   (conversation-append-user-message conversation "Earlier context.")
+                   (let ((item (if (eq outcome ':nil)
+                                   (progn
+                                     (assert (handler-case
+                                                 (progn (provider-native-compact-conversation provider conversation) nil)
+                                               (provider-error () t)))
+                                     nil)
+                                   (provider-native-compact-conversation provider conversation))))
+                     (assert (eq (not (null item)) native-p))
+                     (when item
+                       (assert (conversation-parent-compaction-item-p item))
+                       (assert (not (gethash "encrypted_content" item)))
+                       (assert (not (search opaque (json-encode item)))))
+                     (let* ((view    (if item (conversation-compaction-summary-view conversation (list item) ':parent) conversation))
+                            (summary (provider-stream-turn provider view :compaction-p t)))
+                       (assert (equal (provider-result-assistant-text summary) "ok"))
+                       (if item
+                           (conversation-append-native-compaction conversation item :family ':parent :summary "Portable handoff.")
+                           (conversation-append-summary conversation "Portable handoff.")))
+                     (when item
+                       (let* ((reloaded (conversation-load (conversation-pathname conversation)))
+                              (items    (conversation-input-items-for-family reloaded ':parent)))
+                         (assert (= (length items) 1))
+                         (assert (conversation-parent-compaction-item-p (first items)))
+                         (assert (= (length (conversation-input-items-for-family reloaded ':codex)) 1))
+                         (assert (notany #'conversation-parent-compaction-item-p
+                                         (conversation-input-items-for-family reloaded ':codex)))
+                         (assert (not (search opaque (uiop:read-file-string (conversation-log-pathname reloaded)))))
+                         (assert (equal (provider-result-assistant-text (provider-stream-turn provider reloaded)) "ok"))
+                         (assert (conversation-parent-compaction-item-p
+                                  (provider-native-compact-conversation provider reloaded))))))
+                   (agent-protocol-finish-turn client ':completed))
+               (agent-protocol-driver-close driver)
+               (agent-protocol-driver-join driver :timeout 5)))))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> agent-provider-test--reasoning-request
+    (hash-table keyword &key (:index integer) (:supported-p boolean) (:limited-p boolean)) null)
+(defun agent-provider-test--reasoning-request (request protocol &key index supported-p limited-p)
+  "Check actual encoded generation options after serialized parent validation."
+  (let* ((effort    (when supported-p
+                     (nth (1- index) (if limited-p '(nil "low" nil nil nil "low" "low")
+                                         '("high" "low" "high" nil nil "low" "low")))))
+         (summary   (when (and supported-p (eq protocol ':responses))
+                      (nth (1- index) (if limited-p '(nil "concise" nil nil nil nil)
+                                          '("auto" "concise" "detailed" nil nil nil "none")))))
+         (reasoning (gethash "reasoning" request)))
+    (case protocol
+      (:responses
+       (assert (equal effort (and reasoning (gethash "effort" reasoning))))
+       (assert (equal summary (and reasoning (gethash "summary" reasoning)))))
+      (:chat-completions
+       (assert (equal effort (gethash "reasoning_effort" request))))
+      (otherwise
+       (assert (not (gethash "reasoning_effort" request)))
+       (assert (not reasoning)))))
+  nil)
+
+(-> agent-provider-test--reasoning (keyword &key (:supported-p boolean) (:limited-p boolean)) null)
+(defun agent-provider-test--reasoning (protocol &key supported-p limited-p)
+  "Exercise live defaults, overrides and summary policy through bytes and family HTTP encoding."
+  (let* ((root         (merge-pathnames (format nil "parent-reasoning-~A/" (make-identifier)) (uiop:temporary-directory)))
+         (session-path (merge-pathnames "session.sexp" root))
+         (replay-path  (merge-pathnames "replay.sexp" root))
+         (family       (ecase protocol
+                         (:responses
+                          ':codex)
+                         (:chat-completions
+                          ':mistral)
+                         (:anthropic
+                          ':anthropic)
+                         (:gemini
+                          ':gemini))))
+    (ensure-directories-exist session-path)
+    (unwind-protect
+         (multiple-value-bind (unused account invocation)
+             (autolith-supervisor::provider-family-test--binding
+              (list family "fixture" protocol)
+              :options (when (and supported-p (eq protocol ':chat-completions))
+                         '(:wire-options (:reasoning-parameter "reasoning_effort"))))
+           (declare (ignore unused invocation))
+           (when (eq protocol ':gemini)
+             (setf (autolith-supervisor::provider-account-state account)
+                   '(:setup-complete-p t :project "fixture-project")))
+           (let ((profile (autolith-supervisor::make-model-profile
+                           :id "reasoning" :model "fixture" :family protocol
+                           :options             (when (and supported-p (eq protocol ':chat-completions))
+                                                  '(:reasoning-parameter "reasoning_effort"))
+                           :reasoning-efforts   (when supported-p (if limited-p '("low") '("low" "high")))
+                           :reasoning-summaries (if limited-p '("concise") '("auto" "concise" "detailed" "none")))))
+             (agent-protocol-test--peers
+              (lambda (parent)
+                (let* ((welcome (agent-model-test--welcome))
+                       (data    (json-object "profile_id" "reasoning" "model" "fixture"
+                                             "workspace" (namestring (uiop:getcwd)) "reasoning_effort" "high"
+                                             "settings" (json-object "reasoning-effort" "high" "reasoning-summary" "auto")
+                                             "reasoning_capabilities"
+                                             (autolith-supervisor::model-profile-reasoning-capabilities profile))))
+                  (setf (agent-wire:limits.max-frame-bytes (agent-wire:welcome.limits welcome)) (* 1024 1024))
+                  (setf (agent-wire:welcome.configuration welcome) (autolith-supervisor::protocol-data->map data))
+                  (autolith-supervisor::parent-connection-handshake parent welcome))
+                (let ((accounts (make-hash-table :test #'eq)) (calls 0))
+                  (setf (gethash profile accounts) account)
+                  (multiple-value-bind (execute abort)
+                      (autolith-supervisor::make-provider-family-model-executor
+                       :accounts accounts :session-id "reasoning-session" :maximum-attempts 1
+                       :opener (lambda (endpoint request credentials &key &allow-other-keys)
+                                 (declare (ignore endpoint credentials))
+                                 (agent-provider-test--reasoning-request request protocol :index (incf calls)
+                                                                        :supported-p supported-p :limited-p limited-p)
+                                 (values (make-string-input-stream
+                                          (autolith-supervisor::provider-family-test--sse protocol)) 200 nil)))
+                    (let* ((store   (autolith-supervisor::session-store-open session-path "reasoning-session"))
+                           (service (autolith-supervisor::make-model-service
+                                     :profiles     (autolith-supervisor::make-model-profile-registry (list profile))
+                                     :replay-store (autolith-supervisor::model-replay-store-open replay-path "reasoning-session")
+                                     :executor execute :abort abort))
+                           (runtime (autolith-supervisor::session-runtime-open
+                                     store parent :features '("session.v1" "model.v1" "model-items-v1")
+                                     :model-service         service)))
+                      (unwind-protect
+                           (progn
+                             (autolith-supervisor::session-runtime-start-turn runtime "turn" "reason")
+                             (dotimes (index 9) (autolith-supervisor::session-runtime-receive runtime))
+                             (assert (= calls (if (or (not supported-p) (and limited-p (eq protocol ':responses))) 6 7))))
+                        (autolith-supervisor::session-runtime-disconnect runtime)
+                        (autolith-supervisor::session-runtime-await-close runtime :timeout 5))))))
+              (lambda (client)
+                (agent-protocol-handshake client :features '("session.v1" "model.v1" "model-items-v1"))
+                (agent-protocol-receive client)
+                (multiple-value-bind (configuration profile-id policy capabilities)
+                    (agent-protocol-entry--configuration (agent-protocol-client-welcome client))
+                  (declare (ignore policy))
+                  (let* ((*context-contributors*          nil)
+                         (*context-request-contributions* nil)
+                         (driver                          (agent-protocol-driver-start client))
+                         (conversation                    (make-instance 'conversation :identifier "reasoning-session"))
+                         (provider                        (make-agent-protocol-provider configuration driver profile-id
+                                                                                        :reasoning-capabilities capabilities)))
+                    (unwind-protect
+                         (progn
+                           (provider-stream-turn provider conversation)
+                           (agent-protocol-application-settings-apply
+                            configuration (json-object "reasoning-effort" "low" "reasoning-summary" "concise"))
+                           (provider-stream-turn provider conversation)
+                           (let ((copy (make-configuration :provider-validation-p nil :reasoning-effort "high"
+                                                           :reasoning-summary "detailed")))
+                             (provider-stream-turn (provider-with-configuration provider copy) conversation))
+                           (provider-stream-turn
+                            (make-agent-protocol-provider configuration driver profile-id
+                                                          :reasoning-capabilities capabilities
+                                                          :reasoning-effort nil :reasoning-summary nil) conversation)
+                           (provider-stream-turn
+                            (make-agent-protocol-provider configuration driver profile-id
+                                                          :reasoning-capabilities capabilities
+                                                          :reasoning-effort       nil) conversation)
+                           (provider-stream-turn provider conversation :compaction-p t)
+                           (let ((override (make-agent-protocol-provider configuration driver profile-id
+                                                                         :reasoning-capabilities capabilities
+                                                                         :reasoning-effort       "low"
+                                                                         :reasoning-summary      (when (eq protocol ':responses) "none"))))
+                             (if (and supported-p (not (and limited-p (eq protocol ':responses))))
+                                 (provider-stream-turn override conversation)
+                                 (assert (handler-case (progn (provider-stream-turn override conversation) nil)
+                                           (provider-error () t)))))
+                           (assert (handler-case
+                                       (progn
+                                         (provider-stream-turn
+                                          (make-agent-protocol-provider configuration driver profile-id
+                                                                        :reasoning-effort "unlisted") conversation)
+                                         nil)
+                                     (provider-error () t)))
+                           (agent-protocol-finish-turn client ':completed))
+                      (agent-protocol-driver-close driver)
+                      (agent-protocol-driver-join driver :timeout 5))))))))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> run-agent-protocol-provider-tests () null)
 (defun run-agent-protocol-provider-tests ()
   "Check the optional provider boundary and normalized replay contract."
   (agent-provider-test--portable)
   (agent-provider-test--runtime)
+  (agent-provider-test--reasoning ':responses :supported-p t)
+  (agent-provider-test--reasoning ':responses)
+  (agent-provider-test--reasoning ':chat-completions :supported-p t)
+  (agent-provider-test--reasoning ':responses :supported-p t :limited-p t)
+  (agent-provider-test--reasoning ':chat-completions :supported-p t :limited-p t)
+  (agent-provider-test--reasoning ':chat-completions)
+  (agent-provider-test--reasoning ':anthropic)
+  (agent-provider-test--reasoning ':gemini)
   (agent-provider-test--callback-abort)
   (agent-provider-test--callback-abort :acceptance-p t)
   (agent-provider-test--callback-abort :cooperative-p t)
   (agent-provider-test--callback-abort :cooperative-p t :acceptance-p t)
+  (dolist (outcome '(:native :unavailable :unsupported :nil))
+    (agent-provider-test--compaction outcome))
   nil)

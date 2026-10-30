@@ -43,7 +43,16 @@
                       (concatenate 'string base-url "/models") token
                       :headers (list (cons "X-GitHub-Api-Version" "2026-06-01"))))
            (models   (copilot-model-catalog
-                      document :model-prefix "copilot/" :include-auto-p t
+                       (json-object
+                        "data" (remove-if
+                                (lambda (entry)
+                                  (let* ((capabilities (json-get entry "capabilities"))
+                                         (supports     (and capabilities (json-get capabilities "supports"))))
+                                    (when supports
+                                      (multiple-value-bind (value present-p) (gethash "tool_calls" supports)
+                                        (and present-p (member value (list nil yason:false ':json-false)))))))
+                                (json-get document "data")))
+                       :model-prefix "copilot/" :include-auto-p t
                       :enable-model-function
                       (when enable-p
                         (lambda (model) (copilot--enable-model base-url token model))))))

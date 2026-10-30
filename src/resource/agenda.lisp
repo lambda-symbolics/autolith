@@ -390,42 +390,45 @@
 (defmethod resource-apply-operations
     ((resource agenda-resource) (context tool-context)
      &key base-revision operations)
-  "Apply exactly one revision-gated operation to the current workspace agenda."
+  "Guard the exact observation and write under the same process-shared store lock."
   (unless (and (listp operations) (= (length operations) 1))
     (error 'tool-error
            :message   "agenda:current requires exactly one operation per resource.edit call."
            :tool-name "resource.edit"))
-  (let ((conversation (tool-context-conversation context)))
+  (let ((conversation  (tool-context-conversation context))
+        (configuration (tool-context-configuration context)))
     (with-recursive-lock-held (*agenda-lock*)
       (with-recursive-lock-held
           ((conversation-resource-observation-lock conversation))
-        (let* ((state
-                 (resource-item-find-observation-state
-                  conversation resource base-revision))
-               (base-observation
-                 (resource-observation-state-observation state)))
-          (multiple-value-bind (current current-state)
-              (agenda-resource--read-current resource context)
-            (unless (and
-                     (string= (resource-observation-revision current)
-                              (resource-observation-revision base-observation))
-                     (equal (agenda-observation-snapshot current)
-                            (agenda-observation-snapshot base-observation)))
-              (error 'resource-revision-stale
-                     :uri               (resource-uri resource)
-                     :expected-revision base-revision
-                     :actual-revision
-                     (resource-observation-revision current)))
-            (let* ((operation
-                     (agenda-resource--normalize-operation (first operations)))
-                   (summary
-                     (agenda-resource--apply-operation
-                      (tool-context-configuration context)
-                      current-state
-                      operation)))
-              (values
-               (agenda-resource--observation-from-state resource current-state)
-               summary))))))))
+        (let* ((state            (resource-item-find-observation-state
+                                  conversation resource base-revision))
+               (base-observation (resource-observation-state-observation state))
+               (operation        (agenda-resource--normalize-operation (first operations)))
+               (result
+                 (agenda-call-with-transaction
+                  configuration (make-instance 'agenda-state)
+                  (lambda (current-state)
+                    (unless (string= (agenda-resource-directory resource)
+                                     (agenda-resource--current-directory context))
+                      (error 'resource-revision-stale
+                             :uri               (resource-uri resource)
+                             :expected-revision base-revision
+                             :actual-revision   nil))
+                    (let ((current (agenda-resource--observation-from-state
+                                    resource current-state)))
+                      (unless (and (string= (resource-observation-revision current)
+                                            (resource-observation-revision base-observation))
+                                   (equal (agenda-observation-snapshot current)
+                                          (agenda-observation-snapshot base-observation)))
+                        (error 'resource-revision-stale
+                               :uri               (resource-uri resource)
+                               :expected-revision base-revision
+                               :actual-revision   (resource-observation-revision current))))
+                    (let ((summary (agenda-resource--apply-operation
+                                    configuration current-state operation)))
+                      (list (agenda-resource--observation-from-state resource current-state)
+                            summary))))))
+          (values (first result) (second result)))))))
 
 
 ;;;; -- Resource Tool Methods --

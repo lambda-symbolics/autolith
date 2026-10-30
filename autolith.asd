@@ -46,6 +46,9 @@
   :description             "Tests for Autolith."
   :depends-on              (#:autolith
                             #:autolith/checks
+                            #:autolith-supervisor/provider-family-domain/tests
+                            #:autolith-protocol-client/knowledge/resources
+                            #:autolith-supervisor/knowledge-service
                             (:feature (:not :win32) #:autolith/release-server)
                             #:fiveam)
   :default-component-class autolith-source-file
@@ -66,6 +69,7 @@
                                           (:file "memory-manager-model-tests")
                                           (:file "contract-tests")
                                           (:file "knowledge-fixture-tests")
+                                          (:file "protocol-knowledge-context-tests")
                                           (:file "learning-tests")
                                           (:file "procedure-preflight-tests")
                                           (:file "diagnosis-tests")
@@ -121,6 +125,7 @@
                                           (:file "openrouter-provider-tests")
                                           (:file "mistral-provider-tests")
                                           (:file "copilot-provider-tests")
+                                          (:file "provider-family-domain-adapter-tests")
                                           (:file "resource-tests")
                                           (:file "workspace-resource-tests")
                                           (:file "workspace-change-tests")

@@ -549,10 +549,13 @@ operation discards all partial state if validation or publication fails."
 No network operation runs during recovery. Accepted, unprojected results remain
 in the outbox. The caller must serialize ownership with the provider service."
   (handler-case
-      (let* ((path  (uiop:ensure-absolute-pathname pathname))
-             (store (make-instance 'model-replay-store :pathname path
-                                   :session                      (model-replay-store--id session-id)
-                                   :lock-pathname                (pathname (concatenate 'string (namestring path) ".lock")))))
+      (let* ((absolute (uiop:ensure-absolute-pathname pathname))
+             ;; Prevent a rename from inheriting the staging file's .tmp type.
+             (path     (make-pathname :type     (or (pathname-type absolute) ':unspecific)
+                                      :defaults absolute))
+             (store    (make-instance 'model-replay-store :pathname path
+                                      :session                      (model-replay-store--id session-id)
+                                      :lock-pathname                (pathname (concatenate 'string (namestring path) ".lock")))))
         (ensure-directories-exist path)
         (ls-flock:with-file-lock ((model-replay-store-lock-pathname store))
           (unless (probe-file path)

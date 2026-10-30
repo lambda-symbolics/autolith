@@ -301,6 +301,14 @@ offer_bootstrap()
 run_active()
 {
   export AUTOLITH_SOURCE_ROOT="$source_root"
+  if autolith_parent_cli_p "$@"; then
+    if [[ "$from_source_requested" == true ]]; then
+      set -- --from-source "$@"
+    fi
+    "$sbcl_command" --noinform --no-sysinit --no-userinit \
+      --script "$source_root/script/parent.lisp" --cli "$@"
+    return $?
+  fi
   if [[ "$from_source_requested" == true ]]; then
     run_active_source "$@"
   elif active_image_valid; then

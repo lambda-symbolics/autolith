@@ -221,14 +221,15 @@
                      (cons (list :knowledge :version *knowledge-format-version*) added)))
                 data-root :replace-p t))))
       (let* ((path   (configuration-agenda-path configuration))
-             (old    (mapcar #'agenda--record->form
-                             (agenda-state-records (agenda--read configuration :lock-held-p t))))
+             (state  (agenda--read configuration :lock-held-p t))
+             (old    (mapcar #'agenda--record->form (agenda-state-records state)))
              (merged (data-transfer--merge-agendas old (getf archive :agendas) path)))
         (unless (equal old merged)
-          (add (data-transfer--plan-write
-                path (data-transfer--forms-bytes
-                      (list (list :agendas :version *agenda-version* :records merged)))
-                data-root :replace-p t))))
+          (let ((snapshot (agenda--state-form state)))
+            (setf (getf (rest snapshot) :records) merged)
+            (add (data-transfer--plan-write
+                  path (data-transfer--forms-bytes (list snapshot))
+                  data-root :replace-p t)))))
       (dolist (plan (getf archive :plans))
         (let ((path (configuration-plan-path
                      configuration

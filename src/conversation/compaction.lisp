@@ -179,6 +179,26 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
    :record            (list :summary :content content)
    :unfinished-work   unfinished-work))
 
+(-> conversation-parent-compaction-item-p (t) boolean)
+(defun conversation-parent-compaction-item-p (item)
+  "Recognize a public parent checkpoint marker, not an encrypted provider checkpoint.
+This validates stored shape only. The parent validates replay authority on use."
+  (let* ((marker (and (hash-table-p item) (gethash "parent_replay" item)))
+         (view   (and (hash-table-p marker) (gethash "view" marker))))
+    (not (null
+          (and (hash-table-p item) (equal (gethash "type" item) "parent_compaction")
+               (not (nth-value 1 (gethash "encrypted_content" item)))
+               (hash-table-p marker) (equal (gethash "type" marker) "parent_output")
+               (non-empty-string-p (gethash "replay_handle" marker))
+               (non-empty-string-p (gethash "family" marker))
+               (hash-table-p view) (hash-table-p (gethash "compaction" view)))))))
+
+(-> conversation-compaction--native-item-p (t keyword) boolean)
+(defun conversation-compaction--native-item-p (item family)
+  "Keep legacy checkpoint validation and accept parent markers only in the parent family."
+  (or (native-compaction-item-p item)
+      (and (eq family ':parent) (conversation-parent-compaction-item-p item))))
+
 (-> conversation-append-native-compaction
     (conversation json-object &key (:family keyword) (:summary string)
                                    (:compaction (option conversation-compaction))
@@ -188,7 +208,7 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
     (conversation item &key family summary compaction unfinished-work)
   "Persist native ITEM, portable SUMMARY, and carry-forward state atomically."
   (native-compaction-item-canonicalize item)
-  (unless (and (keywordp family) (native-compaction-item-p item)
+  (unless (and (keywordp family) (conversation-compaction--native-item-p item family)
                (non-empty-string-p summary))
     (error 'conversation-invariant-error
            :message  "A native compaction checkpoint is invalid."
@@ -297,7 +317,7 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
                     (conversation--record-error
                      conversation properties "A native checkpoint is not JSON.")))))
       (native-compaction-item-canonicalize item)
-      (unless (native-compaction-item-p item)
+      (unless (conversation-compaction--native-item-p item family)
         (conversation--record-error
          conversation properties "A persisted native compaction item is unsupported."))
       (let* ((summary-item (conversation-summary-item summary))

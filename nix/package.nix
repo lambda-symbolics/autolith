@@ -575,6 +575,23 @@ let
     '';
   };
 
+  nativeAccessHelper = pkgs.stdenv.mkDerivation {
+    pname = "autolith-access-linux";
+    version = lib.removeSuffix "\n" (builtins.readFile "${src}/VERSION");
+    src = ../supervisor/access-native-linux-helper.c;
+    dontUnpack = true;
+    buildPhase = ''
+      runHook preBuild
+      $CC -O2 -Wall -Wextra -Werror "$src" -o autolith-access-linux
+      runHook postBuild
+    '';
+    installPhase = ''
+      runHook preInstall
+      install -Dm755 autolith-access-linux "$out/libexec/autolith-access-linux"
+      runHook postInstall
+    '';
+  };
+
   fffLibrary = pkgs.rustPlatform.buildRustPackage {
     pname = "fff-c";
     version = "0.11.0";
@@ -813,6 +830,7 @@ let
   '' + lib.optionalString pkgs.stdenv.isLinux ''
     export CL_EXEC_SANDBOX_BWRAP="${pkgs.bubblewrap}/bin/bwrap"
     export CL_EXEC_SANDBOX_HELPER="${sandboxHelper}/libexec/cl-exec-sandbox-helper"
+    export AUTOLITH_NATIVE_LINUX_HELPER="${nativeAccessHelper}/libexec/autolith-access-linux"
   '';
 
   # SBCL saved cores are intentionally transient here. Their bytes are not

@@ -12,12 +12,12 @@
 
 (-> active-image-source-paths (pathname) list)
 (defun active-image-source-paths (source-root)
-  "Return sorted repository-relative agent source and launch inputs for an active image."
-  (let* ((source-directory (merge-pathnames "src/" source-root))
-         (lisp-paths
-           (mapcar (lambda (pathname)
-                     (enough-namestring pathname source-root))
-                   (source-lisp-pathnames source-directory))))
+  "Return sorted repository-relative agent, protocol and launch inputs for an active image."
+  (let ((lisp-paths
+          (mapcar (lambda (pathname)
+                    (enough-namestring pathname source-root))
+                  (loop for directory in '("src/" "supervisor/" "proto/")
+                        append (source-lisp-pathnames (merge-pathnames directory source-root))))))
     (sort (append '("bin/autolith"
                     "bin/autolith-active"
                     "bin/autolith-agent"
@@ -31,6 +31,13 @@
                     "script/restart-publisher.lisp"
                     "autolith.asd"
                     "autolith-agent.asd"
+                    "autolith-protocol.asd"
+                    "autolith-protocol-client.asd"
+                    "autolith-supervisor.asd"
+                    "proto/autolith/common/v1/value.proto"
+                    "proto/autolith/parent/v1/protocol.proto"
+                    "docs/system-prompt.org"
+                    "docs/request-context.org"
                     "VERSION"
                     "qlfile"
                     "qlfile.lock"

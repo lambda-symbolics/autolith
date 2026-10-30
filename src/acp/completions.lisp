@@ -2,9 +2,11 @@
 
 ;;;; -- Headless Completion Controller --
 
-(-> acp-completion-wake (acp-session) null)
-(defun acp-completion-wake (session)
-  "Signal SESSION's controller without doing wire or durable work in a job callback."
+(defgeneric acp-completion-wake (session)
+  (:documentation "Signal a completion owner without durable work in a job callback."))
+
+(defmethod acp-completion-wake ((session acp-session))
+  "Signal SESSION's local completion controller."
   (with-lock-held ((acp-session-lock session))
     (setf (acp-session-completion-wakeup-p session) t)
     (condition-notify (acp-session-completion-condition session)))

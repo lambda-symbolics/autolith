@@ -228,32 +228,38 @@ provider items without a parent handle are rejected."
   "Assemble an optional credential-free ModelStart using current context delivery.
 Read the existing logical conversation projection, not provider requests. The caller
 selects an opaque parent profile ID. Summary generation omits tools, ephemeral input,
-and normal context delivery. Native compaction is not implemented by this service.
+and normal context delivery. Native compaction also omits these inputs.
 Keep the returned delivery unconsumed on send failure, retries, and terminal failure."
-  (unless (and (eq kind ':generate) (non-empty-string-p profile-id)
+  (unless (and (member kind '(:generate :native-compaction)) (not (and summary-p (eq kind ':native-compaction)))
+               (non-empty-string-p profile-id)
                (non-empty-string-p turn-id) (not (and summary-p reasoning-summary)))
     (agent-context--fail ':invalid-context-request))
-  (let* ((namespaces (if summary-p #() tool-namespaces))
-         (delivery   (unless summary-p
-                       (context-resolve-request configuration conversation namespaces
-                                                :goal-context goal-context)))
-         (durable    (conversation-input-items-for-request conversation :include-ephemeral-p nil))
-         (ephemeral  (unless summary-p
-                       (mapcar (lambda (entry) (getf entry :item))
-                               (conversation-ephemeral-input-entries conversation)))))
+  (let* ((compaction-p (or summary-p (eq kind ':native-compaction)))
+         (namespaces   (if compaction-p #() tool-namespaces))
+         (delivery     (unless compaction-p
+                         (context-resolve-request configuration conversation namespaces
+                                                  :goal-context goal-context)))
+         (durable      (conversation-input-items-for-family conversation ':parent :include-ephemeral-p nil))
+         (ephemeral    (unless compaction-p
+                         (mapcar (lambda (entry) (getf entry :item))
+                                 (conversation-ephemeral-input-entries conversation)))))
     (multiple-value-bind (items stable volatile)
         (context-delivery-project-items delivery conversation durable)
       (let ((start
               (agent-wire:make-model-start
-               :profile-id profile-id :turn-id turn-id :kind ':generate
+               :profile-id profile-id :turn-id turn-id :kind kind
                :purpose         (if summary-p ':ordinary-summary ':purpose-unspecified)
                :items           (mapcar #'agent-context-item->transcript items)
                :ephemeral-items (mapcar #'agent-context-item->transcript ephemeral)
                :tools           (agent-context--tools namespaces)
                :stable-prefix   (or stable-prefix (list (system-prompt configuration)))
-               :request-suffix  (remove nil (if summary-p
-                                               (list *compaction-instructions*)
-                                               (append (list goal-context) stable (list volatile)))))))
+               :request-suffix  (remove nil (cond
+                                             (summary-p
+                                              (list *compaction-instructions*))
+                                             ((eq kind ':native-compaction)
+                                              nil)
+                                             (t
+                                              (append (list goal-context) stable (list volatile))))))))
         (when max-output-tokens
           (setf (agent-wire:model-start.max-output-tokens start) max-output-tokens))
         (when temperature
@@ -281,7 +287,10 @@ not legacy provider originals. Keep continuation and turn state as opaque handle
                (member (agent-wire:model-complete.reason complete)
                        '(:stop :tool-calls :output-limit :filtered))
                (eq (agent-wire:model-complete.compaction-outcome complete)
-                   ':compaction-outcome-unspecified))
+                   (if (eq (agent-wire:model-start.kind (agent-context-projection-start projection))
+                           ':native-compaction)
+                       ':compacted
+                       ':compaction-outcome-unspecified)))
     (agent-context--fail ':invalid-context-complete))
   (let* ((bytes (cl-protobufs:serialize-to-bytes complete))
          (old   (agent-context-projection-accepted projection))

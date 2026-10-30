@@ -6,18 +6,6 @@
   "https://cloudcode-pa.googleapis.com/v1internal"
   "Base endpoint for the private Gemini Code Assist subscription API.")
 
-(defparameter *gemini-code-assist-model-aliases*
-  '(("auto" . "gemini-3-pro-preview")
-    ("pro" . "gemini-3-pro-preview")
-    ("flash" . "gemini-3-flash-preview")
-    ("flash-lite" . "gemini-3.1-flash-lite")
-    ("auto-gemini-3" . "gemini-3-pro-preview")
-    ("auto-gemini-2.5" . "gemini-2.5-pro")
-    ("gemini-auto" . "gemini-3-pro-preview")
-    ("gemini-pro" . "gemini-3-pro-preview")
-    ("gemini-flash" . "gemini-3-flash-preview"))
-  "Stable user-facing aliases for Code Assist model identifiers.")
-
 (defparameter *gemini-code-assist-models*
   '((:name           "gemini-3.1-flash-lite"
      :description    "Gemini 3.1 Flash Lite through a Google Code Assist subscription."
@@ -154,8 +142,7 @@
 (-> gemini-code-assist-model-name (string) string)
 (defun gemini-code-assist-model-name (name)
   "Resolve a Code Assist model alias NAME to its wire identifier."
-  (or (rest (assoc name *gemini-code-assist-model-aliases* :test #'string=))
-      name))
+  (autolith-supervisor:family-domain-gemini-model-name name))
 
 (-> gemini-code-assist-discover-models (gemini-code-assist-provider) list)
 (defun gemini-code-assist-discover-models (provider)
@@ -345,44 +332,6 @@ propagates."
       (let ((value (uiop:getenv "GOOGLE_CLOUD_PROJECT_ID")))
         (and (non-empty-string-p value) value))))
 
-(-> gemini-code-assist--numeric-string-p (string) boolean)
-(defun gemini-code-assist--numeric-string-p (value)
-  "Return true when VALUE consists only of decimal digits."
-  (and (plusp (length value)) (every #'digit-char-p value) t))
-
-(-> gemini-code-assist--metadata (&optional (option string)) json-object)
-(defun gemini-code-assist--metadata (&optional project)
-  "Return Gemini CLI-compatible Code Assist client metadata."
-  (let ((metadata
-          (json-object "ideType" "IDE_UNSPECIFIED"
-                       "platform" "PLATFORM_UNSPECIFIED"
-                       "pluginType" "GEMINI")))
-    (when project
-      (setf (gethash "duetProject" metadata) project))
-    metadata))
-
-(-> gemini-code-assist--tier-id (json-object) (option string))
-(defun gemini-code-assist--tier-id (response)
-  "Return the paid or current tier ID from a load response."
-  (let ((paid    (json-get response "paidTier"))
-        (current (json-get response "currentTier")))
-    (or (and (json-object-p paid) (json-get paid "id"))
-        (and (json-object-p current) (json-get current "id"))
-        "standard-tier")))
-
-(-> gemini-code-assist--default-tier (json-object) json-object)
-(defun gemini-code-assist--default-tier (response)
-  "Return the default allowed tier or the upstream legacy fallback."
-  (let ((tiers (json-get response "allowedTiers")))
-    (or (and (vectorp tiers)
-             (loop for tier across tiers
-                   when (and (json-object-p tier)
-                             (json-get tier "isDefault"))
-                     return tier))
-        (json-object "id" "legacy-tier"
-                     "name" ""
-                     "userDefinedCloudaicompanionProject" t))))
-
 (-> gemini-code-assist--project-required
     (json-object keyword) null)
 (defun gemini-code-assist--project-required (load-response stage)
@@ -401,72 +350,46 @@ propagates."
            :request-id nil
            :response   nil)))
 
+(-> gemini-code-assist--wait (real) null)
+(defun gemini-code-assist--wait (seconds)
+  "Wait between setup polls under the current host deadline."
+  (sleep seconds)
+  nil)
+
 (-> gemini-code-assist-ensure-setup
     (gemini-code-assist-provider oauth-credentials)
     gemini-code-assist-provider)
 (defun gemini-code-assist-ensure-setup (provider credentials)
-  "Load Code Assist state and onboard the account when necessary."
+  "Load Code Assist state through the shared account setup policy."
   (unless (gemini-code-assist-provider-setup-complete-p provider)
-    (let ((project (or (gemini-code-assist-provider-project provider)
-                       (gemini-code-assist--environment-project))))
-      (when (and project (gemini-code-assist--numeric-string-p project))
-        (error 'gemini-code-assist-invalid-project
-               :message    (format nil
-                                   "Google Cloud project ~A is numeric; Code Assist requires a project ID."
-                                   project)
-               :project    project
-               :stage      ':load
-               :status     nil
-               :request-id nil
-               :response   nil))
-      (let* ((load
-               (gemini-code-assist--post
-                provider credentials
-                :method  "loadCodeAssist"
-                :stage   ':load
-                :request (json-object "cloudaicompanionProject" project
-                                      "metadata" (gemini-code-assist--metadata project))))
-             (current        (json-get load "currentTier"))
-             (loaded-project (json-get load "cloudaicompanionProject")))
-        (if (json-object-p current)
-            (progn
-              (unless (or loaded-project project)
-                (gemini-code-assist--project-required load ':load))
-              (setf (gemini-code-assist-provider-project provider)
-                    (or loaded-project project)
-                    (gemini-code-assist-provider-tier provider)
-                    (gemini-code-assist--tier-id load)))
-            (let* ((tier    (gemini-code-assist--default-tier load))
-                   (tier-id (or (json-get tier "id") "standard-tier"))
-                   (free-p  (string= tier-id "free-tier"))
-                   (onboard
-                     (gemini-code-assist--post
-                      provider credentials
-                      :method  "onboardUser"
-                      :stage   ':onboard
-                      :request (json-object
-                                "tierId" tier-id
-                                "cloudaicompanionProject" (unless free-p project)
-                                "metadata"
-                                (gemini-code-assist--metadata (unless free-p project))))))
-              (loop while (and (not (json-get onboard "done"))
-                               (non-empty-string-p (json-get onboard "name")))
-                    do (sleep 5)
-                       (setf onboard
-                             (gemini-code-assist--operation
-                              provider credentials (json-get onboard "name"))))
-              (let* ((response  (json-get onboard "response"))
-                     (companion (and (json-object-p response)
-                                     (json-get response
-                                               "cloudaicompanionProject")))
-                     (onboard-project
-                       (and (json-object-p companion) (json-get companion "id"))))
-                (unless (or onboard-project project)
-                  (gemini-code-assist--project-required load ':onboard))
-                (setf (gemini-code-assist-provider-project provider)
-                      (or onboard-project project)
-                      (gemini-code-assist-provider-tier provider) tier-id))))
-        (setf (gemini-code-assist-provider-setup-complete-p provider) t))))
+    (multiple-value-bind (project tier)
+        (autolith-supervisor:family-domain-gemini-setup
+         :project   (or (gemini-code-assist-provider-project provider)
+                        (gemini-code-assist--environment-project))
+         :rpc       (lambda (method stage request)
+                      (gemini-code-assist--post provider credentials
+                                                :method method :stage stage :request request))
+         :operation (lambda (name)
+                      (gemini-code-assist--operation provider credentials name))
+         :wait      #'gemini-code-assist--wait
+         :check     (lambda () nil)
+         :fail      (lambda (reason &key stage project response)
+                      (case reason
+                        (:numeric-gemini-project
+                         (error 'gemini-code-assist-invalid-project
+                                :message (format nil "Google Cloud project ~A is numeric; Code Assist requires a project ID."
+                                                 project)
+                                :project project :stage stage :status nil
+                                :request-id nil :response nil))
+                        (:gemini-project-required
+                         (gemini-code-assist--project-required response stage))
+                        (otherwise
+                         (error 'gemini-code-assist-setup-error
+                                :message "Code Assist returned an invalid operation name."
+                                :stage stage :status nil :request-id nil :response nil)))))
+      (setf (gemini-code-assist-provider-project provider) project
+            (gemini-code-assist-provider-tier provider) tier
+            (gemini-code-assist-provider-setup-complete-p provider) t)))
   provider)
 
 

@@ -21,6 +21,8 @@ message TurnStart {
   string turn_id = 1;
   uint64 input_sequence = 2;
   bool continuation = 3;
+  // Requires application.v1. Absent means an ordinary provider turn.
+  ApplicationAction application = 4;
 }
 
 message TurnCancel {
@@ -351,6 +353,14 @@ message RecordRequest {
   optional string cursor = 7;
   uint32 limit = 8;
   autolith.common.v1.ValueMap fields = 9;
+  optional string expected_collection_revision = 10;
+  enum Scope {
+    SCOPE_UNSPECIFIED = 0;
+    WORKSPACE = 1;
+    GLOBAL = 2;
+  }
+  // Requires record-scopes-v1. Omission preserves the attached service scope.
+  optional Scope scope = 11;
 }
 
 message StoredRecord {
@@ -362,6 +372,36 @@ message StoredRecord {
 message RecordResponse {
   repeated StoredRecord records = 1;
   optional string next_cursor = 2;
+  optional string collection_revision = 3;
+}
+
+// Requires knowledge.v1. Fixed operations over parent-authorized knowledge only.
+message KnowledgeRequest {
+  enum Operation {
+    OPERATION_UNSPECIFIED = 0;
+    READ = 1;
+    EDIT = 2;
+    CHECK = 3;
+    RECORD = 4;
+    CONTEXT = 5;
+    EXPAND = 6;
+  }
+  Operation operation = 1;
+  string operation_id = 2;
+  RecordRequest.Scope scope = 3;
+  // Public memory: identifier, never a pathname.
+  string view = 4;
+  optional string expected_revision = 5;
+  optional string query = 6;
+  uint32 limit = 7;
+  // EDIT operations, CHECK tool/arguments, or RECORD handle/result.
+  autolith.common.v1.ValueMap fields = 8;
+}
+
+message KnowledgeResponse {
+  string content = 1;
+  optional string revision = 2;
+  autolith.common.v1.ValueMap fields = 3;
 }
 
 message Grant {
@@ -461,6 +501,142 @@ message Welcome {
   SessionPage resume = 7;
 }
 
+// Parent input is inert data. Only the child may read or evaluate SOURCE.
+message ApplicationAction {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    COMMAND = 1;
+    LISP = 2;
+    ASYNC_LISP = 3;
+    CATALOG = 4;
+    COMPLETION = 5;
+    MESSAGE = 6;
+    RUN_JOB = 7;
+    ACP_PROMPT = 8;
+    ACP_EXTENSION = 9;
+    CONFIGURE = 10;
+    PUMP = 11;
+  }
+  Kind kind = 1;
+  string source = 2;
+  uint32 cursor = 3;
+  repeated string image_paths = 4;
+  autolith.common.v1.ValueMap job = 5;
+}
+
+// Metadata comes from the live child command registry, never parent name tables.
+message ApplicationCommand {
+  string name = 1;
+  repeated string aliases = 2;
+  string argument = 3;
+  string description = 4;
+  string tip = 5;
+  enum BusyBehavior {
+    BUSY_UNSPECIFIED = 0;
+    HOLD = 1;
+    INSPECT = 2;
+    EXECUTE = 3;
+    APPLY = 4;
+    CANCEL = 5;
+  }
+  BusyBehavior busy_behavior = 6;
+  enum TerminalBehavior {
+    TERMINAL_UNSPECIFIED = 0;
+    SHARED = 1;
+    EXCLUSIVE = 2;
+    EXCLUSIVE_WITHOUT_ARGUMENTS = 3;
+  }
+  TerminalBehavior terminal_behavior = 7;
+  repeated string options = 8;
+  bool callable = 9;
+}
+
+message ApplicationResult {
+  string turn_id = 1;
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    OK = 1;
+    ABORTED = 2;
+    ERROR = 3;
+  }
+  Status status = 2;
+  string output = 3;
+  repeated string values = 4;
+  string condition = 5;
+  repeated ApplicationCommand commands = 6;
+  repeated string completions = 7;
+  bool quit = 8;
+  repeated ApplicationCompletion completion_entries = 9;
+  autolith.common.v1.ValueMap job = 10;
+  autolith.common.v1.ValueMap fields = 11;
+}
+
+message ApplicationCompletion {
+  string name = 1;
+  string argument = 2;
+  string description = 3;
+  string primary = 4;
+}
+
+// FIFO parent-created scope inside the current provider turn.
+message ApplicationSteering {
+  string turn_id = 1;
+  string operation_id = 2;
+  uint64 input_sequence = 3;
+  ApplicationAction action = 4;
+}
+
+// Presentation only. The parent validates the fixed kind and inert content.
+message ApplicationEvent {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    TEXT = 1;
+    REASONING = 2;
+    STATUS = 3;
+    TOOL_STARTED = 4;
+    TOOL_FINISHED = 5;
+    PRESENTATION = 6;
+    ACP = 7;
+    UI = 8;
+  }
+  Kind kind = 1;
+  autolith.common.v1.ValueMap fields = 2;
+}
+
+// A bounded wakeup. The parent schedules its known completion pump in a fresh scope.
+message ApplicationNotification {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    ACP_COMPLETION_READY = 1;
+    UI_COMPLETION_READY = 2;
+  }
+  Kind kind = 1;
+  string identifier = 2;
+}
+
+// Fixed parent operations. Arguments are bounded data, not Lisp source.
+message ParentOperation {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    AUTH = 1;
+    MODEL = 2;
+    PREFERENCES = 3;
+    PERMISSIONS = 4;
+    SESSION = 5;
+    RESTART = 6;
+    MCP = 7;
+    WEB = 8;
+  }
+  Kind kind = 1;
+  string turn_id = 2;
+  autolith.common.v1.ValueMap arguments = 3;
+  string operation_id = 4;
+}
+
+message ParentOperationResult {
+  autolith.common.v1.ValueMap fields = 1;
+}
+
 // Private supervisor-agent protocol, not a remote-control service.
 // Directions, validation, durability, and restart rules: docs/parent-agent-protocol.org.
 message Envelope {
@@ -491,5 +667,13 @@ message Envelope {
     ReadyToStop ready_to_stop = 29;
     Failure failure = 30;
     Output output = 31;
+    KnowledgeRequest knowledge_request = 32;
+    KnowledgeResponse knowledge_response = 33;
+    ApplicationResult application_result = 34;
+    ParentOperation parent_operation = 35;
+    ParentOperationResult parent_operation_result = 36;
+    ApplicationSteering application_steering = 37;
+    ApplicationEvent application_event = 38;
+    ApplicationNotification application_notification = 39;
   }
 }

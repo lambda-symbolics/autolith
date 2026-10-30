@@ -179,7 +179,9 @@ streams. The launch owner must then stop and reap the agent and its descendants.
                  (member "session.v1" selected :test #'string=)
                  (subsetp selected offered :test #'string=)
                  (subsetp selected '("session.v1" "model.v1" "records.v1" "access.v1"
-                                     "model-items-v1") :test #'string=)
+                                     "model-items-v1" "knowledge.v1" "record-scopes-v1" "application.v1") :test #'string=)
+                 (or (not (member "record-scopes-v1" selected :test #'string=))
+                     (member "records.v1" selected :test #'string=))
                  (or (not (member "model-items-v1" selected :test #'string=))
                      (member "model.v1" selected :test #'string=))
                  limits
@@ -202,3 +204,53 @@ streams. The launch owner must then stop and reap the agent and its descendants.
                :failure  (parent-proto:make-failure :code     ':invalid-request
                                                      :message "Invalid startup message.")))
   (error 'parent-protocol-error :reason reason))
+
+
+;;;; -- Collection Observations --
+
+(serapeum/types:-> record-collection--text (list) string)
+(defun record-collection--text (snapshot)
+  "Encode an exact structural scope observation with deterministic reader syntax."
+  (with-standard-io-syntax
+    (let ((*package* (find-package '#:keyword)))
+      (write-to-string snapshot :readably t :pretty nil))))
+
+(serapeum/types:-> record-collection--check-capacity
+                   (hash-table &key (:revision string) (:text string) (:reject function)) null)
+(defun record-collection--check-capacity (issued &key revision text reject)
+  "Bound issued scope observations before changing cursors or granting authority."
+  (unless (gethash revision issued)
+    (when (or (>= (hash-table-count issued) 64)
+              (> (+ (length text)
+                    (loop for value being the hash-values of issued sum (length value)))
+                 4194304))
+      (funcall reject ':resource-limit)))
+  nil)
+
+(serapeum/types:-> record-collection--validate (parent-proto:record-request function) null)
+(defun record-collection--validate (request reject)
+  "Accept bounded CREATE guards and full-collection guards for agenda item writes."
+  (when (parent-proto:record-request.has-expected-collection-revision request)
+    (unless (and (or (eq (parent-proto:record-request.operation request) ':create)
+                     (and (eq (parent-proto:record-request.collection request) ':agenda)
+                          (member (parent-proto:record-request.operation request) '(:replace :delete))))
+                 (<= 1 (length (parent-proto:record-request.expected-collection-revision request)) 1024))
+      (funcall reject ':invalid-request)))
+  nil)
+
+(serapeum/types:-> record-collection--guard
+                   (parent-proto:record-request &key (:issued hash-table) (:snapshot list)
+                    (:reject function)) null)
+(defun record-collection--guard (request &key issued snapshot reject)
+  "Check issued authority and exact scope under the caller's store write transaction."
+  (when (parent-proto:record-request.has-expected-collection-revision request)
+    (let ((observed (gethash (parent-proto:record-request.expected-collection-revision request) issued)))
+      (unless (and observed (equal observed (record-collection--text snapshot)))
+        (funcall reject ':revision-conflict))))
+  nil)
+
+(serapeum/types:-> record-collection--revision (string) string)
+(defun record-collection--revision (text)
+  "Digest an exact canonical scope observation."
+  (ironclad:byte-array-to-hex-string
+   (ironclad:digest-sequence ':sha256 (babel:string-to-octets text :encoding ':utf-8))))

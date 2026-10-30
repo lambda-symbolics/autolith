@@ -264,6 +264,14 @@ each is explained once, retries included."
           (setf (gethash identifier *memory-context-turn-changes*) (cons turn advice))
           advice))))
 
+(defgeneric memory-context-remote (request configuration)
+  (:documentation "Return parent contributions and an installed flag, or NIL values without a parent."))
+
+(defmethod memory-context-remote (request configuration)
+  "Select the legacy path unless a parent context adapter is installed."
+  (declare (ignore request configuration))
+  (values nil nil))
+
 (-> memory-related-context (request-context) list)
 (defun memory-related-context (request)
   "Offer memories and facts related to the latest user input in REQUEST.
@@ -271,6 +279,10 @@ each is explained once, retries included."
 Memories are offered as before, with status when their evidence changed.
 Facts are complete and current, so the model can use them without rereading.
 Changes to facts this conversation was given earlier are explained once."
+  (multiple-value-bind (contributions installed-p)
+      (memory-context-remote request (request-context-configuration request))
+    (when installed-p
+      (return-from memory-related-context contributions)))
   (let* ((user-input (request-context-latest-user-text request))
          (query      (and (non-empty-string-p user-input)
                           (memory-context--query user-input))))

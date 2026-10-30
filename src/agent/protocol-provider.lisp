@@ -12,6 +12,9 @@
            :documentation "The connection's sole-reader driver.")
    (profile-id :initarg :profile-id :reader agent-protocol-provider-profile-id
                :documentation "The trusted parent profile identifier.")
+   (reasoning-capabilities :initarg       :reasoning-capabilities
+                           :reader        agent-protocol-provider-reasoning-capabilities
+                           :documentation "Public reasoning support from the selected parent profile.")
    (parameters :initarg :parameters :reader agent-protocol-provider-parameters
                :documentation "Explicit approved generation options.")
    (states :initform (make-hash-table :test #'eq) :reader agent-protocol-provider-states
@@ -24,20 +27,39 @@
 (-> make-agent-protocol-provider
     (configuration t string
      &key (:max-output-tokens (option integer)) (:temperature (option double-float))
-          (:reasoning-effort (option string)) (:reasoning-summary (option string)))
+           (:reasoning-effort (option string)) (:reasoning-summary (option string))
+           (:reasoning-capabilities (option hash-table)))
     agent-protocol-provider)
 (defun make-agent-protocol-provider
     (configuration driver profile-id
-     &key max-output-tokens temperature reasoning-effort reasoning-summary)
-  "Build an explicit parent adapter from approved profile choices, never an endpoint."
+     &key max-output-tokens temperature reasoning-capabilities
+       (reasoning-effort nil effort-p) (reasoning-summary nil summary-p))
+  "Build a parent adapter with optional overrides of live generation settings."
   (unless (non-empty-string-p profile-id)
     (error 'agent-protocol-error :reason ':invalid-provider-profile))
   (make-instance 'agent-protocol-provider :configuration configuration :driver driver
-                 :profile-id (copy-seq profile-id)
-                 :parameters (list :max-output-tokens max-output-tokens
-                                   :temperature       temperature
-                                   :reasoning-effort  reasoning-effort
-                                   :reasoning-summary reasoning-summary)))
+                 :profile-id             (copy-seq profile-id)
+                 :reasoning-capabilities (agent-protocol-provider--capabilities reasoning-capabilities)
+                 :parameters             (append (list :max-output-tokens max-output-tokens :temperature temperature)
+                                                 (when effort-p (list :reasoning-effort reasoning-effort))
+                                                 (when summary-p (list :reasoning-summary reasoning-summary)))))
+
+(-> agent-protocol-provider--capabilities ((option hash-table)) (option hash-table))
+(defun agent-protocol-provider--capabilities (capabilities)
+  "Validate and copy the bounded public capability projection, without inferring support."
+  (when capabilities
+    (let ((copy (make-hash-table :test #'equal)))
+      (unless (<= (hash-table-count capabilities) 2)
+        (error 'agent-protocol-error :reason ':invalid-reasoning-capabilities))
+      (maphash
+       (lambda (key values)
+         (unless (and (member key '("efforts" "summaries") :test #'equal)
+                      (vectorp values) (not (stringp values)) (<= (length values) 64)
+                      (every (lambda (value) (and (stringp value) (<= 1 (length value) 128))) values))
+           (error 'agent-protocol-error :reason ':invalid-reasoning-capabilities))
+         (setf (gethash key copy) (map 'vector #'copy-seq values)))
+       capabilities)
+      copy)))
 
 (defmethod provider-family ((provider agent-protocol-provider))
   "Keep normalized parent items in their own logical conversation family."
@@ -49,6 +71,7 @@
   (let ((copy (apply #'make-agent-protocol-provider configuration
                      (agent-protocol-provider-driver provider)
                      (agent-protocol-provider-profile-id provider)
+                     :reasoning-capabilities (agent-protocol-provider-reasoning-capabilities provider)
                      (agent-protocol-provider-parameters provider))))
     (setf (slot-value copy 'states) (agent-protocol-provider-states provider)
           (slot-value copy 'lock) (agent-protocol-provider-lock provider))
@@ -147,6 +170,8 @@ does not establish completion acceptance or authorize an agent-supplied handle."
                ((equal (first views) "reasoning")
                 (json-object "type" "reasoning" "summary"
                              (vector (json-object "type" "summary_text" "text" (gethash "text" view)))))
+               ((equal (first views) "compaction")
+                (json-object "type" "parent_compaction"))
                (t
                 (json-object "type" "parent_output_view" "view" (agent-context--json item))))))
       (setf (gethash "parent_replay" result) marker)
@@ -234,9 +259,36 @@ does not establish completion acceptance or authorize an agent-supplied handle."
   "Expose the agent context configuration to existing provider observers."
   (agent-protocol-provider-configuration provider))
 
+(define-condition agent-protocol-native-unavailable (error) ()
+  (:documentation "An explicit unsupported native operation permits ordinary summary fallback."))
+
 (defmethod provider-stream-turn
     ((provider agent-protocol-provider) (conversation conversation)
      &key (tool-namespaces #()) (event-callback (constantly nil)) goal-context compaction-p)
+  "Generate ordinary output or a portable summary through the parent."
+  (agent-protocol-provider--stream-turn provider conversation :tool-namespaces tool-namespaces
+    :event-callback event-callback :goal-context goal-context :compaction-p compaction-p))
+
+(defmethod provider-native-compact-conversation
+    ((provider agent-protocol-provider) (conversation conversation)
+     &key (tool-namespaces #()) (event-callback (constantly nil)))
+  "Return an accepted opaque parent checkpoint, or NIL only after explicit unsupported."
+  (handler-case
+      (let* ((result (agent-protocol-provider--stream-turn provider conversation
+                       :tool-namespaces tool-namespaces :event-callback event-callback
+                       :compaction-p t :kind ':native-compaction))
+             (item   (find-if #'conversation-parent-compaction-item-p (provider-result-output-items result))))
+        (unless item (agent-protocol-provider--failure))
+        (values item (provider-result-usage result)))
+    (agent-protocol-native-unavailable () (values nil nil))))
+
+(-> agent-protocol-provider--stream-turn
+    (agent-protocol-provider conversation
+     &key (:tool-namespaces vector) (:event-callback function) (:goal-context (option string))
+          (:compaction-p boolean) (:kind keyword)) provider-result)
+(defun agent-protocol-provider--stream-turn
+    (provider conversation
+     &key (tool-namespaces #()) (event-callback (constantly nil)) goal-context compaction-p (kind ':generate))
   "Run one parent request through the sole reader. Never retry effects after failure.
 Cooperative cancellation drains its ACK and the target terminal. Accepted completion
 still consumes context receipts, but cancellation prevents tool-result publication."
@@ -252,6 +304,15 @@ still consumes context receipts, but cancellation prevents tool-result publicati
            (terminal       nil))
       (unless turn-id (agent-protocol-provider--failure))
       (unless (equal (getf state :turn-id) turn-id) (setf state nil))
+      (loop for (key name) in '((:reasoning-effort "efforts") (:reasoning-summary "summaries"))
+            for capabilities = (agent-protocol-provider-reasoning-capabilities provider)
+            for value = (config key (agent-protocol-provider-configuration provider))
+            when (and capabilities
+                      (find value (gethash name capabilities #()) :test #'equal)
+                      (or (eq key ':reasoning-effort) (getf parameters :reasoning-effort))
+                      (not (loop for tail on parameters by (lambda (tail) (rest (rest tail)))
+                                 thereis (eq (first tail) key))))
+              do (setf (getf parameters key) value))
       (when *provider-maximum-output-tokens*
         (setf (getf parameters :max-output-tokens) *provider-maximum-output-tokens*))
       (when compaction-p (remf parameters :reasoning-summary))
@@ -285,7 +346,7 @@ still consumes context receipts, but cancellation prevents tool-result publicati
         (let ((projection
                 (apply #'agent-context-project (agent-protocol-provider-configuration provider)
                        conversation tool-namespaces :profile-id (agent-protocol-provider-profile-id provider)
-                       :turn-id turn-id :goal-context goal-context :summary-p compaction-p
+                       :turn-id turn-id :goal-context goal-context :summary-p (and compaction-p (eq kind ':generate)) :kind kind
                        :continuation-handle                     (unless compaction-p (getf state :continuation))
                        :turn-state-handle                       (unless compaction-p (getf state :turn-state))
                        parameters)))
@@ -346,6 +407,10 @@ still consumes context receipts, but cancellation prevents tool-result publicati
                            (observe-cancellation)
                           (unless (agent-wire:envelope.has-model-event envelope)
                             (when terminal (finish-cancellation))
+                            (when (and (eq kind ':native-compaction)
+                                       (agent-wire:envelope.has-failure envelope)
+                                       (eq (agent-wire:failure.code (agent-wire:envelope.failure envelope)) ':unsupported))
+                              (error 'agent-protocol-native-unavailable))
                             (agent-protocol-provider--failure))
                           (let ((event (agent-wire:envelope.model-event envelope)))
                             (cond
@@ -368,6 +433,10 @@ still consumes context receipts, but cancellation prevents tool-result publicati
                                  (return result)))
                               ((or terminal-p (agent-wire:model-event.has-failed event))
                                (finish-cancellation)
+                               (when (and (eq kind ':native-compaction)
+                                          (agent-wire:model-event.has-failed event)
+                                          (eq (agent-wire:failure.code (agent-wire:model-event.failed event)) ':unsupported))
+                                 (error 'agent-protocol-native-unavailable))
                                (agent-protocol-provider--failure))
                               ((not cancelled)
                                (agent-protocol-provider--event event #'emit))))))))

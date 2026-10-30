@@ -103,7 +103,9 @@
 (-> agent-context-test--output () null)
 (defun agent-context-test--output ()
   "Keep every public output view detached and replay only its handle after JSON storage."
-  (let* ((projection (make-instance 'agent-context-projection :start nil :delivery nil))
+  (let* ((projection (make-instance 'agent-context-projection
+                                    :start    (agent-wire:make-model-start :kind ':generate)
+                                    :delivery nil))
          (call       (agent-wire:make-tool-call :call-id "call" :name "run" :arguments-json "{malformed"))
          (items      (list
                       (agent-wire:make-output-item
@@ -210,7 +212,14 @@
         (let ((after (agent-context-projection-start (project))))
           (assert (notany (lambda (text) (search "Use this once." text))
                           (agent-wire:model-start.request-suffix after))))
-        (agent-context-test--rejects (lambda () (project :kind ':native-compaction)))
+        (let* ((native (project :kind ':native-compaction))
+               (start  (agent-context-projection-start native)))
+          (assert (eq (agent-wire:model-start.kind start) ':native-compaction))
+          (assert (null (agent-context-projection-delivery native)))
+          (assert (null (agent-wire:model-start.tools start)))
+          (assert (null (agent-wire:model-start.ephemeral-items start)))
+          (assert (null (agent-wire:model-start.request-suffix start))))
+        (agent-context-test--rejects (lambda () (project :kind ':native-compaction :summary-p t)))
         (agent-context-test--rejects (lambda () (project :summary-p t :reasoning-summary "auto"))))))
   nil)
 

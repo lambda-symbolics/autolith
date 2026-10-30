@@ -146,43 +146,33 @@ already authorized the path, use this instead of WORKSPACE-TOOL-PATH."
              :tool-name tool-name))
     canonical))
 
-(-> workspace-tool-authorize-outside-path (tool-context pathname non-empty-string) boolean)
-(defun workspace-tool-authorize-outside-path (context path tool-name)
-  "Return true when full access covers TOOL-NAME reaching PATH outside the roots.
-
-The request is the command \"TOOL-NAME -- PATH\", so a full-access session
-passes without a prompt, saved permissions apply, and ask mode asks once. A
-sandboxed decision is not enough, because the tool itself runs unsandboxed."
-  (let ((approved-p
-          (handler-case
-              (eq (tool-context-authorize-command
-                   context
-                   (format nil "~A -- ~A"
-                           tool-name
-                           (uiop:escape-shell-token (uiop:native-namestring path)))
-                   (config :working-directory (tool-context-configuration context)))
-                  ':full-access)
-            (command-authorization-unavailable ()
-              nil))))
-    approved-p))
+(-> workspace-tool-authorize-outside-path
+    (tool-context pathname non-empty-string &key (:operations list)) boolean)
+(defun workspace-tool-authorize-outside-path (context path tool-name &key (operations '("read")))
+  "Ask for exact OPERATIONS on PATH, or use legacy command approval when unhandled."
+  (let ((decision (tool-context-authorize-path context path operations)))
+    (if (eq decision ':unhandled)
+        (handler-case
+            (eq (tool-context-authorize-command
+                 context (format nil "~A -- ~A" tool-name
+                                 (uiop:escape-shell-token (uiop:native-namestring path)))
+                 (config :working-directory (tool-context-configuration context)))
+                ':full-access)
+          (command-authorization-unavailable ()
+            nil))
+        decision)))
 
 (-> workspace-tool-path
-    (tool-context (option string) &key (:tool-name non-empty-string))
-    pathname)
-(defun workspace-tool-path (context path &key (tool-name "resource"))
-  "Return PATH resolved against CONTEXT's working directory for TOOL-NAME.
-
-A path inside the workspace or source roots is returned directly. Any other path
-needs full access, through WORKSPACE-TOOL-AUTHORIZE-OUTSIDE-PATH, so a session
-with full permissions never refuses one."
+    (tool-context (option string) &key (:tool-name non-empty-string) (:operations list)) pathname)
+(defun workspace-tool-path (context path &key (tool-name "resource") (operations '("read")))
+  "Resolve PATH for TOOL-NAME. Ask for exact OPERATIONS outside the configured roots.
+Legacy observers use command approval. A precise denial never uses that fallback."
   (let ((canonical (workspace-tool-resolve-path context path)))
-    (unless (or (workspace-tool--read-path-allowed-p
-                 canonical (workspace-tool-readable-roots context))
-                (workspace-tool-authorize-outside-path context canonical tool-name))
+    (unless (or (workspace-tool--read-path-allowed-p canonical (workspace-tool-readable-roots context))
+                (workspace-tool-authorize-outside-path context canonical tool-name :operations operations))
       (error 'tool-authority-denied
-             :message
-             (format nil "~A requires full-access approval for path ~A outside the workspace and source roots."
-                     tool-name canonical)
+             :message   (format nil "~A requires full-access approval for path ~A outside the workspace and source roots."
+                                tool-name canonical)
              :tool-name tool-name))
     canonical))
 
@@ -267,7 +257,7 @@ with full permissions never refuses one."
           (tool-failure "The user denied this command." :denied-p t)
           (let ((configuration (tool-context-configuration context))
                 (output-limit  *shell-maximum-output-characters*))
-            (when (eq authorization ':sandboxed)
+            (when (member authorization '(:sandboxed :inherited-scope))
               (workspace-tool-confined-path context directory-argument
                                             :tool-name "shell.run"))
             (tool-execution-invoke
@@ -292,8 +282,8 @@ with full permissions never refuses one."
                     (platform-call-with-command-sandbox
                       *platform* (config :working-directory configuration) #'run
                       :writable-roots (task-worktree-command-writable-roots context)))
-                   (:full-access
-                    (run (external-sandbox-policy) nil)))))
+                  ((:inherited-scope :full-access)
+                   (run (external-sandbox-policy) nil)))))
              :async-p           async-p
              :completion-policy completion-policy
              :parent-call-id    (tool-context-call-id context)))))))

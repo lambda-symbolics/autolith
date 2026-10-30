@@ -1,0 +1,183 @@
+(in-package #:autolith-supervisor)
+
+;;;; -- Parent Request Context and Task Expansion --
+
+(serapeum/types:-> knowledge-service--context-memories (knowledge-service) list)
+(defun knowledge-service--context-memories (service)
+  "Read only memories in the parent's authorized workspace and optional global scope."
+  (memory-records-read (knowledge-service-context service)
+                       :visibility (if (knowledge-service-allow-global-p service)
+                                       ':relevant
+                                       ':workspace)))
+
+(serapeum/types:-> knowledge-service--context-view (knowledge-service list) knowledge-view)
+(defun knowledge-service--context-view (service memories)
+  "Evaluate the selected graph with parent evidence authority, without the global view cache."
+  (let ((context (knowledge-service-context service)))
+    (knowledge-evaluate (knowledge-base-read context)
+                        :workspace (knowledge--workspace context)
+                        :check     (evidence-check-create :memories memories))))
+
+(serapeum/types:-> knowledge-service--context-facts (knowledge-view string) list)
+(defun knowledge-service--context-facts (view query)
+  "Return up to six supported facts ranked with the shared relevance function."
+  (let* ((terms  (memory--search-terms query))
+         (scored (loop for node being the hash-values of (knowledge-view-nodes view)
+                       for score = (and (knowledge-node-supported-p node)
+                                        (knowledge-node-relevance node terms))
+                       when (and score (plusp score))
+                         collect (cons score node)))
+         (ranked (sort scored
+                       (lambda (left right)
+                         (or (> (first left) (first right))
+                             (and (= (first left) (first right))
+                                  (string< (knowledge-node-text (rest left))
+                                           (knowledge-node-text (rest right)))))))))
+    (mapcar #'rest (subseq ranked 0 (min 6 (length ranked))))))
+
+(serapeum/types:-> knowledge-service--context-memory-line (memory-match memory-assessment) string)
+(defun knowledge-service--context-memory-line (match assessment)
+  "Return the same bounded memory metadata used by request-local recall."
+  (let* ((memory (memory-match-memory match))
+         (data   (make-hash-table :test #'equal)))
+    (setf (gethash "id" data) (memory-identifier memory)
+          (gethash "score" data) (memory-match-score match)
+          (gethash "scope" data) (string-downcase (symbol-name (memory-scope memory)))
+          (gethash "updated_at" data) (memory--timestamp-string (memory-updated-at memory))
+          (gethash "title" data) (memory-title memory)
+          (gethash "tags" data) (coerce (memory-tags memory) 'vector)
+          (gethash "excerpt" data) (memory--excerpt (memory-content memory) 180))
+    (unless (eq (memory-assessment-status assessment) ':current)
+      (setf (gethash "status" data) (string-downcase (symbol-name (memory-assessment-status assessment)))
+            (gethash "because" data) (memory-assessment-summary assessment)))
+    (argo:json-encode data)))
+
+(serapeum/types:-> knowledge-service--context-changes
+    (knowledge-service knowledge-view list) list)
+(defun knowledge-service--context-changes (service view offered)
+  "Compare durable previously offered facts and remember the newly offered facts."
+  (knowledge-viewer-update
+   (knowledge-service-context service)
+   (format nil "recall:~A" (knowledge-service-session-id service))
+   (knowledge-view-workspace view)
+   :time (knowledge-view-now view)
+   :function
+   (lambda (previous time first-p)
+     (declare (ignore time))
+     (let* ((given (mapcar (lambda (entry) (getf entry :claim)) previous))
+            (changes
+              (and (not first-p)
+                   (remove-if
+                    (lambda (change)
+                      (or (eq (getf change :kind) ':new)
+                          (and (eq (getf change :kind) ':conflict)
+                               (not (member (getf change :claim) given :test #'string=)))))
+                    (knowledge-view-changes previous view))))
+            (keep  (append given
+                           (mapcar (lambda (change) (getf change :claim)) changes)
+                           (mapcar #'knowledge-node-identifier offered))))
+       (values (if (and first-p (null offered))
+                   ':keep
+                   (remove-if-not (lambda (entry)
+                                    (member (getf entry :claim) keep :test #'string=))
+                                  (knowledge-view-snapshot view)))
+               (list (format nil "~{~A~^~%~}" (knowledge-change-lines changes))
+                     (length changes)))))))
+
+(serapeum/types:-> knowledge-service-context-response
+    (knowledge-service hash-table keyword) parent-proto:knowledge-response)
+(defun knowledge-service-context-response (service fields scope)
+  "Return bounded recall data and once-per-turn changes from parent-owned state."
+  (knowledge-service--fields fields '("query" "turn" "active") '("query" "turn" "active"))
+  (let* ((query  (gethash "query" fields))
+         (turn   (gethash "turn" fields))
+         (active (gethash "active" fields))
+         (cached (knowledge-service-context-cache service)))
+    (unless (and (eq scope ':workspace) (stringp query) (<= 1 (length query) 4096)
+                 (typep turn '(integer 0 1000000000)) (typep active 'boolean))
+      (knowledge-service--reject ':invalid-request))
+    (let* ((context     (knowledge-service-context service))
+           (memories    (knowledge-service--context-memories service))
+           (terms       (memory--search-terms query))
+           (ranked      (sort (remove nil (mapcar (lambda (memory)
+                                                   (memory--match memory query terms)) memories))
+                              #'memory--match-before-p))
+           (selected    (subseq ranked 0 (min 6 (length ranked))))
+           (view        (knowledge-service--context-view service memories))
+           (assessor    (make-instance 'memory-assessor :view view
+                                       :memories              (let ((table (make-hash-table :test #'equal)))
+                                                                (dolist (memory memories table)
+                                                                  (setf (gethash (memory-identifier memory) table) memory)))))
+           (facts       (and active (knowledge-active-p context)
+                             (knowledge-service--context-facts view query)))
+           (assessments (mapcar (lambda (match)
+                                 (memory-assess assessor (memory-match-memory match))) selected))
+           (changes     (when (and active (knowledge-active-p context))
+                          (if (and cached (eql turn (first cached)))
+                              (second cached)
+                              (knowledge-service--context-changes service view facts))))
+           (data        (make-hash-table :test #'equal)))
+      (unless (and cached (eql turn (first cached)))
+        (setf (knowledge-service-context-cache service) (list turn changes)))
+      (setf (gethash "memory_lines" data)
+            (map 'vector #'knowledge-service--context-memory-line selected assessments)
+            (gethash "fact_lines" data)
+            (map 'vector (lambda (node) (argo:json-encode (knowledge-node-json view node))) facts)
+            (gethash "stale_count" data) (count ':stale assessments :key #'memory-assessment-status)
+            (gethash "unverified_count" data) (count ':unverified assessments :key #'memory-assessment-status)
+            (gethash "changes" data) (or (first changes) "")
+            (gethash "change_count" data) (or (second changes) 0))
+      (parent-proto:make-knowledge-response
+       :fields (common-proto:value.map-value (protocol-data->value data))))))
+
+(serapeum/types:-> knowledge-service--expansion-data (t) t)
+(defun knowledge-service--expansion-data (value)
+  "Convert engine plists and pattern lists to portable wire data."
+  (cond
+    ((null value)
+     #())
+    ((and (consp value) (member (first value) '(:text :method :tasks :unmet :nodes)))
+     (let ((table (make-hash-table :test #'equal)))
+       (loop for (key item) on value by (lambda (items) (rest (rest items)))
+             do (setf (gethash (string-downcase (symbol-name key)) table)
+                      (knowledge-service--expansion-data item)))
+       table))
+    ((listp value)
+     (map 'vector #'knowledge-service--expansion-data value))
+    ((keywordp value)
+     (let ((table (make-hash-table :test #'equal)))
+       (setf (gethash "term_keyword" table) (string-downcase (symbol-name value)))
+       table))
+    ((and (rationalp value) (not (integerp value)))
+     (let ((table (make-hash-table :test #'equal)))
+       (setf (gethash "term_ratio" table) (vector (numerator value) (denominator value)))
+       table))
+    (t
+     value)))
+
+(serapeum/types:-> knowledge-service-expand-response
+    (knowledge-service hash-table keyword) parent-proto:knowledge-response)
+(defun knowledge-service-expand-response (service fields scope)
+  "Expand one ground task with bounded search in the selected authorized graph."
+  (knowledge-service--fields fields '("task" "depth_limit" "node_limit") '("task"))
+  (let ((raw   (gethash "task" fields))
+        (depth (gethash "depth_limit" fields 8))
+        (nodes (gethash "node_limit" fields 1000)))
+    (unless (and (eq scope ':workspace) (vectorp raw) (not (stringp raw))
+                 (<= 1 (length raw) 65) (typep depth '(integer 0 8))
+                 (typep nodes '(integer 1 1000)))
+      (knowledge-service--reject ':invalid-request))
+    (let ((task (knowledge--task-from-input raw)))
+      (when (some #'knowledge-variable-p (rest task))
+        (knowledge-service--reject ':invalid-request))
+      (multiple-value-bind (steps outcome details)
+          (knowledge-expand-task-data
+           (knowledge-service--context-view service (knowledge-service--context-memories service))
+           task :depth-limit depth :node-limit nodes)
+        (let ((data (make-hash-table :test #'equal)))
+          (setf (gethash "steps" data) (knowledge-service--expansion-data steps)
+                (gethash "status" data) (string-downcase (symbol-name outcome))
+                (gethash "details" data) (if details (knowledge-service--expansion-data details)
+                                              (make-hash-table :test #'equal)))
+          (parent-proto:make-knowledge-response
+           :fields (common-proto:value.map-value (protocol-data->value data))))))))

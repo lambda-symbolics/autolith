@@ -1,71 +1,7 @@
 (in-package #:autolith)
 
-;;;; -- Diagnosis --
-
-;;; A diagnosis says what may be wrong and how to find out:
-;;;
-;;;   (:diagnosis :id "remote-service" :parameters ("?service")
-;;;    :hypotheses ((:id "unavailable"
-;;;                  :predicts (("service.reachable" "?service" :false))
-;;;                  :repair "Restart the service.")
-;;;                 (:id "stale-endpoint"
-;;;                  :predicts (("service.reachable" "?service" :true)
-;;;                             ("endpoint.current" "?service" :false))))
-;;;    :probes ((:tool "service.ping" :arguments (("service" "?service")) :cost 1)))
-;;;
-;;; Each hypothesis predicts facts. A probe is a tool call whose action
-;;; contracts observe facts from its result. Running a diagnosis first checks
-;;; the predictions against facts already known, then repeatedly runs the
-;;; probe that tells apart the most pairs of remaining hypotheses per unit of
-;;; cost, at most three, until one hypothesis remains or no probe can tell the
-;;; rest apart. A hypothesis is eliminated only when a fact contradicts one of
-;;; its predictions; a prediction nothing observed stays open. Probes run as
-;;; ordinary tool calls inside one step, so no model request falls between
-;;; them, and every case is recorded with the facts that decided it.
-
-(defparameter *knowledge-diagnosis-hypothesis-limit* 4
-  "The most hypotheses one diagnosis weighs.")
-
-(defparameter *knowledge-diagnosis-probe-limit* 8
-  "The most probes one diagnosis lists.")
-
 (defparameter *knowledge-diagnosis-run-limit* 3
   "The most probes one case runs before reporting what remains open.")
-
-
-;;;; -- Validation --
-
-(-> knowledge-diagnosis-p (t) boolean)
-(defun knowledge-diagnosis-p (diagnosis)
-  "Return true when DIAGNOSIS has the structure of a validated diagnosis."
-  (and (proper-list-p diagnosis)
-       (eq (first diagnosis) :diagnosis)
-       (evenp (length (rest diagnosis)))
-       (let ((properties (rest diagnosis)))
-         (and (knowledge-rule-name-p (getf properties :id))
-              (every #'knowledge-variable-p (getf properties :parameters))
-              (<= 1 (length (getf properties :hypotheses)) *knowledge-diagnosis-hypothesis-limit*)
-              (every (lambda (hypothesis)
-                       (and (proper-list-p hypothesis)
-                            (knowledge-rule-name-p (getf hypothesis :id))
-                            (getf hypothesis :predicts)
-                            (every #'consp (getf hypothesis :predicts))
-                            (or (null (getf hypothesis :repair))
-                                (stringp (getf hypothesis :repair)))))
-                     (getf properties :hypotheses))
-              (<= (length (getf properties :probes)) *knowledge-diagnosis-probe-limit*)
-              (every (lambda (probe)
-                       (and (proper-list-p probe)
-                            (non-empty-string-p (getf probe :tool))
-                            (every (lambda (argument)
-                                     (and (proper-list-p argument)
-                                          (= (length argument) 2)
-                                          (stringp (first argument))))
-                                   (getf probe :arguments))
-                            (realp (getf probe :cost))
-                            (plusp (getf probe :cost))))
-                     (getf properties :probes))))
-       t))
 
 (-> knowledge-make-diagnosis
     (&key (:id string) (:parameters sequence) (:hypotheses sequence) (:probes sequence)
@@ -152,7 +88,6 @@ positive cost. Every variable must be a parameter."
           (unless (= (length names) (length (remove-duplicates names :test #'string=)))
             (knowledge--fail ':invalid-diagnosis id "Hypothesis names must differ.")))
         diagnosis))))
-
 
 ;;;; -- Stored Diagnoses and Cases --
 

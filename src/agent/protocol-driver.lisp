@@ -223,10 +223,15 @@ Do not join from a driver callback; close there and join from its owner."
 (-> agent-protocol-driver--terminal-p (agent-wire:envelope) boolean)
 (defun agent-protocol-driver--terminal-p (envelope)
   "Classify already validated replies without consulting mutable client state."
-  (if (eq 'agent-wire:model-event (agent-wire:envelope.body-case envelope))
-      (not (null (member (agent-wire:model-event.event-case (agent-wire:envelope.model-event envelope))
-                         '(agent-wire:complete agent-wire:failed))))
-      t))
+  (case (agent-wire:envelope.body-case envelope)
+    (agent-wire:model-event
+     (not (null (member (agent-wire:model-event.event-case (agent-wire:envelope.model-event envelope))
+                        '(agent-wire:complete agent-wire:failed)))))
+    (agent-wire:access-decision
+     (not (eq ':pending-approval
+              (agent-wire:access-decision.state (agent-wire:envelope.access-decision envelope)))))
+    (otherwise
+     t)))
 
 (-> agent-protocol-driver--read (agent-protocol-driver) null)
 (defun agent-protocol-driver--read (driver)

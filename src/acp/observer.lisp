@@ -31,9 +31,11 @@
           (agentcomms:make-agent-update-buffer
            (acp-session-service session) (acp-session-identifier session)))))
 
-(-> acp-observer-create (acp-session) acp-observer)
-(defun acp-observer-create (session)
-  "Create a fresh presentation sink for SESSION's next user turn."
+(defgeneric acp-observer-create (session)
+  (:documentation "Create the presentation and authority adapter for SESSION's next turn."))
+
+(defmethod acp-observer-create ((session acp-session))
+  "Create the default ACP presentation sink for a native application session."
   (make-instance 'acp-observer :session session
                  :turn-sequence         (conversation-next-sequence
                                          (application-conversation (acp-session-application session)))))

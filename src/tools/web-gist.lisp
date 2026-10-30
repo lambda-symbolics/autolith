@@ -39,7 +39,10 @@
              :message   "web_extra.gist requires a non-empty string url."
              :tool-name "web_extra.gist"))
     (handler-case
-        (let* ((output            (web-gist--retrieve url))
+        (let* ((output            (multiple-value-bind (text parent-p)
+                                     (web-parent-output (tool-context-conversation context)
+                                                        "gist" arguments)
+                                   (if parent-p text (web-gist--retrieve url))))
                (observed-at       (knowledge-now))
                (overflow-function *tool-result-overflow-function*)
                (content-object    nil)

@@ -73,6 +73,8 @@
          (list "AUTOLITH_SITE_CONFIG_ROOT" nil)
          (list "AUTOLITH_RECOVERED" nil)
          (list "AUTOLITH_AGENT_LAUNCHER" nil)
+         (list "AUTOLITH_ACTIVE_CORE" (or (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE")
+                                          (uiop:getenv "AUTOLITH_ACTIVE_CORE")))
          (list "AUTOLITH_SBCL" (lisp-worker-sbcl-command)))
    function))
 
@@ -91,22 +93,28 @@
                      (acp-launcher-test-failure-stderr condition)))))
 
 (-> acp-launcher-tests--initialize
-    (string &key (:arguments list) (:directory pathname) (:timeout real)) hash-table)
+    (string &key (:arguments list) (:directory pathname) (:timeout real)
+                 (:session-directory (option string)))
+    (values hash-table (option string) &optional))
 (defun acp-launcher-tests--initialize (program &key arguments
                                                   (directory *default-pathname-defaults*)
-                                                  (timeout 180))
-  "Initialize PROGRAM over its actual standard I/O and return the protocol response."
-  (let ((channel (agentcomms:acp-launch-agent program
-                                             :arguments arguments
-                                             :directory directory))
-        (client  (make-instance 'agentcomms:acp-client))
-        (result  nil)
-        (failure nil))
+                                                  (timeout 180) session-directory)
+  "Initialize PROGRAM over standard I/O and optionally create a native session.
+Return the initialization response and the new session identity, if requested."
+  (let ((channel    (agentcomms:acp-launch-agent program
+                                                :arguments arguments
+                                                :directory directory))
+        (client     (make-instance 'agentcomms:acp-client))
+        (result     nil)
+        (identifier nil)
+        (failure    nil))
     (unwind-protect
          (handler-case
              (progn
                (agentcomms:acp-client-connect client channel)
-               (setf result (agentcomms:client-initialize client :timeout timeout)))
+              (setf result (agentcomms:client-initialize client :timeout timeout))
+              (when session-directory
+                (setf identifier (agentcomms:client-new-session client session-directory))))
            (serious-condition (condition)
              (setf failure condition)))
       (handler-case
@@ -121,32 +129,36 @@
         (error 'acp-launcher-test-failure
                :cause failure :exit-code (agentcomms:acp-process-channel-exit-code channel)
                :stderr (subseq diagnostics (max 0 (- (length diagnostics) 8192))))))
-    result))
+    (values result identifier)))
 
 (-> test-acp-launcher-source-stdio-roundtrip () null)
 (defun test-acp-launcher-source-stdio-roundtrip ()
-  "Initialize through the real source launcher and require a clean protocol response."
+  "Initialize and create a native session through the public source launcher."
   (with-test-configuration (configuration root)
     (declare (ignore configuration))
     (acp-launcher-tests--call-with-roots
      root
      (lambda ()
-       (let ((result
-               (acp-launcher-tests--initialize
-                (lisp-worker-sbcl-command)
-                :arguments (list "--noinform" "--no-sysinit" "--no-userinit" "--script"
-                                 (namestring (asdf:system-relative-pathname
-                                              :autolith "script/launcher.lisp"))
-                                 "--from-source" "--pristine" "acp")
-                :directory root)))
-         (test-assert
-          (equal "autolith" (agentcomms:json-get
-                             (agentcomms:json-get result "agentInfo") "name"))
-          "the source launcher emits JSON-RPC without preceding diagnostics")
-         (test-assert
-          (agentcomms:acp-capability-enabled-p
-           (agentcomms:json-get result "agentCapabilities") "loadSession")
-          "the subprocess advertises durable session loading")))))
+       (let ((workspace (merge-pathnames "workspace/" root)))
+         (ensure-directories-exist (merge-pathnames "probe" workspace))
+        (multiple-value-bind (result identifier)
+            (acp-launcher-tests--initialize
+             (lisp-worker-sbcl-command)
+             :arguments (list "--noinform" "--no-sysinit" "--no-userinit" "--script"
+                              (namestring (asdf:system-relative-pathname
+                                           :autolith "script/launcher.lisp"))
+                              "--from-source" "--pristine" "acp")
+             :directory workspace :session-directory (namestring workspace))
+          (test-assert
+           (equal "autolith" (agentcomms:json-get
+                              (agentcomms:json-get result "agentInfo") "name"))
+           "the source launcher emits JSON-RPC without preceding diagnostics")
+          (test-assert
+           (agentcomms:acp-capability-enabled-p
+            (agentcomms:json-get result "agentCapabilities") "loadSession")
+           "the subprocess advertises durable session loading")
+          (test-assert (and (stringp identifier) (plusp (length identifier)))
+                       "the parent creates a native-isolated ACP session"))))))
   nil)
 
 (-> test-acp-launcher-failure-keeps-stdout-clean () null)
@@ -192,7 +204,7 @@
 
 (-> test-launcher-agent-supervisor-routing () null)
 (defun test-launcher-agent-supervisor-routing ()
-  "Route source, core, and probe executions through the supervisor and executable wrapper."
+  "Route public CLI commands to the parent and fixed workers through the agent wrapper."
   (with-test-fixture (':posix-shell "agent launcher executable wrapper")
     (with-test-configuration (configuration root)
       (declare (ignore configuration))
@@ -204,7 +216,7 @@
              (payload "spaces ; $(touch unexpected-shell-file) *"))
         (recovery-tests--write-executable
          runtime
-         (format nil "#!/bin/sh~%case \"$*\" in~%  *autolith-supervisor*) exec \"$AUTOLITH_TEST_REAL_SBCL\" \"$@\" ;;~%  *--autolith-internal-active-image-probe*) exit 0 ;;~%esac~%printf 'agent-output\\n'~%exit 64~%"))
+         (format nil "#!/bin/sh~%case \"$*\" in~%  *parent.lisp*) printf '%s\\n' \"$@\" >> \"$AUTOLITH_TEST_PARENT_LOG\"; printf 'parent-output\\n'; exit 64 ;;~%  *autolith-supervisor*) exec \"$AUTOLITH_TEST_REAL_SBCL\" \"$@\" ;;~%  *--autolith-internal-active-image-probe*) exit 0 ;;~%esac~%printf 'agent-output\\n'~%exit 64~%"))
         (recovery-tests--write-executable
          wrapper
          (format nil "#!/bin/sh~%printf 'WRAPPER\\n' >> \"$AUTOLITH_TEST_LAUNCH_LOG\"~%printf '%s\\n' \"$@\" >> \"$AUTOLITH_TEST_LAUNCH_LOG\"~%exec \"$@\"~%"))
@@ -222,6 +234,7 @@
                 ("AUTOLITH_TEST_REAL_SBCL" sbcl)
                 ("AUTOLITH_AGENT_LAUNCHER" (namestring wrapper))
                 ("AUTOLITH_TEST_LAUNCH_LOG" (namestring log))
+                ("AUTOLITH_TEST_PARENT_LOG" (namestring (merge-pathnames "parent.log" root)))
                 ("AUTOLITH_ACTIVE_CORE" (namestring core)))
              (dolist (shell-p '(t nil))
                (dolist (source-p '(t nil))
@@ -237,7 +250,7 @@
                                     (namestring (asdf:system-relative-pathname
                                                  :autolith "script/launcher.lisp"))))
                           (when source-p (list "--from-source"))
-                          (list "acp" payload))))
+                          (list "--worker" payload))))
                    (multiple-value-bind (output diagnostics status)
                        (uiop:run-program command :directory root :input nil
                                                 :output ':string :error-output ':string
@@ -261,5 +274,43 @@
                                  (format nil "selected entrypoint shell=~S source=~S: ~S"
                                          shell-p source-p lines)))
                    (test-assert (not (probe-file (merge-pathnames "unexpected-shell-file" root)))
-                                "shell syntax in an argument is inert"))))))))))
+                                "shell syntax in an argument is inert"))))
+             (dolist (shell-p '(t nil))
+               (dolist (source-p '(t nil))
+                 (dolist (arguments (list nil (list "acp" payload)
+                                         (list "--help") (list "--image" "named")))
+                   (when (probe-file log)
+                     (delete-file log))
+                   (let* ((parent-log (merge-pathnames "parent.log" root))
+                          (command
+                            (append
+                             (if shell-p
+                                 (list "bash" (namestring (asdf:system-relative-pathname
+                                                           :autolith "bin/autolith")))
+                                 (list sbcl "--noinform" "--no-sysinit" "--no-userinit"
+                                       "--script" (namestring (asdf:system-relative-pathname
+                                                               :autolith "script/launcher.lisp"))))
+                             (when source-p (list "--from-source"))
+                             arguments)))
+                     (when (probe-file parent-log)
+                       (delete-file parent-log))
+                     (multiple-value-bind (output diagnostics status)
+                         (uiop:run-program command :directory root :input nil
+                                                  :output ':string :error-output ':string
+                                                  :ignore-error-status t)
+                       (declare (ignore diagnostics))
+                       (test-assert (and (= status 64)
+                                         (string= output (format nil "parent-output~%")))
+                                    "public commands run in the selected host runtime"))
+                     (let* ((lines    (uiop:read-file-lines parent-log))
+                            (expected (append (list "--cli")
+                                              (when source-p (list "--from-source"))
+                                              arguments)))
+                       (test-assert (equal (subseq lines (- (length lines) (length expected)))
+                                           expected)
+                                    "the parent receives CLI arguments without shell parsing")
+                      (test-assert (not (probe-file log))
+                                   "the launcher does not apply the agent wrapper to the parent")
+                      (test-assert (not (member (namestring core) lines :test #'equal))
+                                   "public startup does not select a legacy agent core"))))))))))))
   nil)

@@ -33,7 +33,9 @@
    (returned :initform nil :accessor model-invocation-returned
              :documentation "Executor return is available in the independent result slot.")
    (result :initform nil :accessor model-invocation-result
-           :documentation "Validated library result or NIL after an executor error.")
+             :documentation "Validated library result or NIL after an executor error.")
+   (failure-code :initform ':unavailable :accessor model-invocation-failure-code
+                 :documentation "Safe public failure classification from the executor boundary.")
    (first-retry :initform nil :accessor model-invocation-first-retry
                 :documentation "Initial pinned-library attempt announcement was consumed.")
    (accepting :initform nil :accessor model-invocation-accepting
@@ -267,6 +269,12 @@ callback returns promptly without I/O or waiting. The owner calls it directly."
            (model-event-collector-receive collector event))))
    :bytes (* 8 1024 1024)))
 
+(defgeneric model-service-executor-failure-code (condition invocation)
+  (:documentation "Classify an executor failure without exposing private condition data.")
+  (:method ((condition error) invocation)
+    (declare (ignore condition invocation))
+    ':unavailable))
+
 (declaim (ftype (function (model-service model-invocation) null) model-service--execute))
 
 (defun model-service--execute (service invocation)
@@ -277,7 +285,9 @@ callback returns promptly without I/O or waiting. The owner calls it directly."
              (unless (model-invocation-cancelled-p service invocation)
                (setf result (funcall (model-service-executor service) invocation
                                      (lambda (event) (model-service--event service invocation event)))))
-           (error () nil))
+            (error (condition)
+              (setf (model-invocation-failure-code invocation)
+                    (model-service-executor-failure-code condition invocation))))
       (let ((mailbox (model-service-mailbox service)))
         (bordeaux-threads:with-lock-held ((model-runtime-mailbox-lock mailbox))
           (setf (model-invocation-result invocation) result
@@ -315,7 +325,7 @@ acceptance remains pending until its durable outcome is known. No storage runs h
             ((model-invocation-cancelled-p service invocation)
              (model-service--cancel-owned service invocation))
             (t
-             (model-event-collector-fail collector)
+              (model-event-collector-fail collector :code (model-invocation-failure-code invocation))
              (setf (model-invocation-terminal invocation) ':failed)))
         (error ()
           (if (and (model-invocation-cancelled-p service invocation)
@@ -350,7 +360,7 @@ acceptance remains pending until its durable outcome is known. No storage runs h
       (when (model-service-active service)
         (reject ':resource-limit)
         (return-from model-service--start nil))
-      (unless (eq (parent-proto:model-start.kind start) ':generate)
+      (unless (member (parent-proto:model-start.kind start) '(:generate :native-compaction))
         (reject ':unsupported)
         (return-from model-service--start nil))
       (let ((inputs
@@ -360,6 +370,13 @@ acceptance remains pending until its durable outcome is known. No storage runs h
                                              :replay-resolver
                                              (make-model-replay-resolver (model-service-replay-store service)
                                                                         :turn-id (session-runtime-turn-id runtime))))
+                (model-projection-error (condition)
+                  (reject (if (and (eq (parent-proto:model-start.kind start) ':native-compaction)
+                                   (eq (model-projection-error-field condition) ':kind)
+                                   (eq (model-projection-error-reason condition) ':unsupported))
+                              ':unsupported
+                              ':invalid-request))
+                  (return-from model-service--start nil))
                 (error () nil))))
         (unless inputs
           (reject ':invalid-request)

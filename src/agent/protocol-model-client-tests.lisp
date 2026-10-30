@@ -17,13 +17,13 @@
    parent (agent-wire:make-envelope :turn-start (agent-wire:make-turn-start :turn-id "turn" :input-sequence 1)))
   nil)
 
-(-> agent-model-test--start (agent-protocol-client) integer)
-(defun agent-model-test--start (client)
+(-> agent-model-test--start (agent-protocol-client &key (:kind keyword)) integer)
+(defun agent-model-test--start (client &key (kind ':generate))
   "Negotiate model support, receive the turn, and start ordinary generation."
   (agent-protocol-handshake client :features '("session.v1" "model.v1" "model-items-v1"))
   (agent-protocol-receive client)
   (agent-protocol-model-start client (agent-wire:make-model-start :profile-id "profile" :turn-id "turn"
-                                                               :kind ':generate)))
+                                                              :kind kind)))
 
 (-> agent-model-test--item (string &optional (integer 0)) agent-wire:output-item)
 (defun agent-model-test--item (handle &optional (index 0))
@@ -123,8 +123,8 @@
         ':request-limit))))
   nil)
 
-(-> agent-model-test--bad-stream (list keyword) null)
-(defun agent-model-test--bad-stream (events reason)
+(-> agent-model-test--bad-stream (list keyword &key (:kind keyword)) null)
+(defun agent-model-test--bad-stream (events reason &key (kind ':generate))
   "Reject an invalid peer sequence through the actual framed reader."
   (agent-protocol-test--peers
    (lambda (parent)
@@ -135,7 +135,7 @@
          (autolith-supervisor::parent-connection-send
           parent (agent-wire:make-envelope :reply-to id :model-event event)))))
    (lambda (client)
-     (agent-model-test--start client)
+     (agent-model-test--start client :kind kind)
      (agent-model-test--rejects
       (lambda () (dotimes (index (length events)) (agent-protocol-receive client))) reason)
      (assert (eq ':closed (autolith-supervisor::parent-connection-phase client)))))
@@ -218,6 +218,21 @@
   (agent-model-test--stream)
   (agent-model-test--failures)
   (agent-model-test--detached-state)
+  (agent-model-test--bad-stream
+   (list (agent-model-test--begin)
+         (agent-wire:make-model-event :index 2 :attempt 1 :complete
+          (agent-wire:make-model-complete :reason ':stop :compaction-outcome ':compacted)))
+   ':invalid-model-complete :kind ':native-compaction)
+  (let ((item (agent-wire:make-output-item :item-index 0 :replay-handle "native-handle" :family "responses"
+                                         :compaction (agent-wire:make-compaction-view))))
+    (dolist (kind '(:generate :native-compaction))
+      (agent-model-test--bad-stream
+       (list (agent-model-test--begin)
+             (agent-wire:make-model-event :index 2 :attempt 1 :item-completed item)
+             (agent-wire:make-model-event :index 3 :attempt 1 :complete
+              (agent-wire:make-model-complete :reason ':stop :output-items (list item)
+               :compaction-outcome (if (eq kind ':generate) ':compacted ':compaction-outcome-unspecified))))
+       ':invalid-model-complete :kind kind)))
   (let ((item (agent-model-test--item "handle")))
     (dolist (case (list
                    (list (list (agent-model-test--begin :index 2)) ':invalid-model-event)

@@ -42,73 +42,17 @@ only dimension writer that keeps both in step and repaints."
   (terminal-relayed-resize-publish rows columns)
   nil)
 
-(defmethod image-daemon:transport-rows ((terminal terminal))
-  "Return TERMINAL's row count to the image-daemon relay."
-  (terminal-rows terminal))
-
-(defmethod (setf image-daemon:transport-rows) (value (terminal terminal))
-  "Set TERMINAL's row count from the image-daemon relay."
-  (setf (terminal-rows terminal) value))
-
-(defmethod image-daemon:transport-columns ((terminal terminal))
-  "Return TERMINAL's column count to the image-daemon relay."
-  (terminal-columns terminal))
-
-(defmethod (setf image-daemon:transport-columns) (value (terminal terminal))
-  "Set TERMINAL's column count from the image-daemon relay."
-  (setf (terminal-columns terminal) value))
-
-(defmethod image-daemon:transport-started-p ((terminal terminal))
-  "Return whether TERMINAL has been started."
-  (terminal-started-p terminal))
-
-(defmethod (setf image-daemon:transport-started-p) (value (terminal terminal))
-  "Record whether TERMINAL has been started."
-  (setf (terminal-started-p terminal) value))
-
-(defmethod image-daemon:transport-interactive-p ((terminal terminal))
-  "Return whether TERMINAL accepts interactive input."
-  (terminal-interactive-p terminal))
-
-(defmethod (setf image-daemon:transport-interactive-p) (value (terminal terminal))
-  "Record whether TERMINAL accepts interactive input."
-  (setf (terminal-interactive-p terminal) value))
-
-(defmethod image-daemon:transport-styled-p ((terminal terminal))
-  "Return whether TERMINAL renders styled output."
-  (terminal-styled-p terminal))
-
-(defmethod (setf image-daemon:transport-styled-p) (value (terminal terminal))
-  "Record whether TERMINAL renders styled output."
-  (setf (terminal-styled-p terminal) value))
-
-(defmethod image-daemon:transport-start ((terminal stream-terminal))
-  "Start the direct stream TERMINAL on behalf of the relay."
-  (terminal-start terminal))
-
 (defmethod terminal-start ((terminal localgroup-terminal))
   "Start the relay TERMINAL through the image-daemon transport protocol."
   (image-daemon:transport-start terminal))
-
-(defmethod image-daemon:transport-stop ((terminal stream-terminal))
-  "Stop the direct stream TERMINAL on behalf of the relay."
-  (terminal-stop terminal))
 
 (defmethod terminal-stop ((terminal localgroup-terminal))
   "Stop the relay TERMINAL through the image-daemon transport protocol."
   (image-daemon:transport-stop terminal))
 
-(defmethod image-daemon:transport-write ((terminal stream-terminal) text)
-  "Write TEXT to the direct stream TERMINAL on behalf of the relay."
-  (terminal--write terminal text))
-
 (defmethod terminal--write ((terminal localgroup-terminal) text)
   "Write TEXT through the relay TERMINAL to its direct terminal or client."
   (image-daemon:transport-write terminal text))
-
-(defmethod image-daemon:transport-flush ((terminal stream-terminal))
-  "Flush the direct stream TERMINAL on behalf of the relay."
-  (terminal-flush terminal))
 
 (defmethod terminal-plain-output-p ((terminal localgroup-terminal))
   "Defer to the direct terminal; without one the relay awaits a client.
@@ -123,30 +67,17 @@ would only spill into its normal buffer."
   "Flush the relay TERMINAL through the image-daemon transport protocol."
   (image-daemon:transport-flush terminal))
 
-(defmethod image-daemon:transport-input-ready-p ((terminal stream-terminal))
-  "Return whether the direct stream TERMINAL has input ready."
-  (terminal-input-ready-p terminal))
-
 (defmethod terminal-input-ready-p ((terminal localgroup-terminal))
   "Return whether the relay TERMINAL has input ready from its owner."
   (image-daemon:transport-input-ready-p terminal))
-
-(defmethod image-daemon:transport-read-event ((terminal stream-terminal))
-  "Read one input event from the direct stream TERMINAL."
-  (terminal-read-event terminal))
 
 (defmethod terminal-read-event ((terminal localgroup-terminal))
   "Read one input event from the relay TERMINAL's current owner."
   (image-daemon:transport-read-event terminal))
 
-(defmethod image-daemon:transport-set-dimensions
-    ((terminal terminal) columns &key rows)
-  "Resize TERMINAL to COLUMNS and, when supplied, ROWS."
-  (terminal-set-dimensions terminal columns :rows rows))
-
 (defmethod image-daemon:transport-resize
     ((terminal localgroup-terminal) &key rows columns styled-p)
-  "Adopt a client's styling and relay its ROWS and COLUMNS to the interactive reader."
+  "Adopt client styling and publish its dimensions for the interactive reader."
   (setf (terminal-interactive-p terminal) t
         (terminal-styled-p terminal) (not (null styled-p)))
   (terminal-relayed-resize-publish rows columns)

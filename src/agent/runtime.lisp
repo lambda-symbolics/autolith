@@ -196,6 +196,9 @@ needs the few most recent calls to recognize an oscillation."
 (defgeneric agent-observer-authorize-command (observer command directory)
   (:documentation "Return the execution permission for COMMAND in DIRECTORY."))
 
+(defgeneric agent-observer-authorize-path (observer path operations)
+  (:documentation "Return T, NIL, or :UNHANDLED for exact filesystem OPERATIONS on PATH."))
+
 (defgeneric agent-observer-authorize-tool (observer tool arguments)
   (:documentation "Return :ALLOW or :DENY for external TOOL and ARGUMENTS."))
 
@@ -253,6 +256,12 @@ needs the few most recent calls to recognize an oscillation."
   "Deny COMMAND when OBSERVER has no authorization interface."
   (declare (ignore observer command directory))
   ':deny)
+
+(defmethod agent-observer-authorize-path
+    ((observer agent-observer) (path pathname) operations)
+  "Use legacy command approval when OBSERVER has no precise path interface."
+  (declare (ignore observer path operations))
+  ':unhandled)
 
 (defmethod agent-observer-authorize-tool
     ((observer agent-observer) (tool tool) (arguments hash-table))
@@ -380,6 +389,13 @@ needs the few most recent calls to recognize an oscillation."
   (with-recursive-lock-held ((serialized-agent-observer-lock observer))
     (agent-observer-authorize-command
      (serialized-agent-observer-delegate observer) command directory)))
+
+(defmethod agent-observer-authorize-path
+    ((observer serialized-agent-observer) (path pathname) operations)
+  "Forward exact path authorization under the observer callback lock."
+  (with-recursive-lock-held ((serialized-agent-observer-lock observer))
+    (agent-observer-authorize-path
+     (serialized-agent-observer-delegate observer) path operations)))
 
 (defmethod agent-observer-authorize-tool
     ((observer serialized-agent-observer)

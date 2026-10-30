@@ -5,70 +5,65 @@ Autolith is a terminal agent in a live Common Lisp image. The running
 system can be inspected and changed by both the agent, and the user.
 
 Agent definitions live in the =autolith= package and the =autolith-agent= ASDF
-system. The separate =autolith-supervisor= system uses its own package and
-currently loads only ASDF/UIOP. This is the process-only implementation, not a
-permanent dependency restriction. The =autolith= system is a compatibility entry
-point for the agent. Generated Protobuf bindings may use their own packages.
+system. The trusted parent uses the =autolith-supervisor= package and focused
+systems for the interface, providers, private storage, and access policy.
+It does not load the agent ASDF system. The =autolith= system is a compatibility
+entry point for the agent. Generated Protobuf bindings use their own packages.
 
 * System
 
 #+BEGIN_SRC text
-                         +--------------------+
-                         | stable launcher    |
-                         | provenance checks  |
-                         +---------+----------+
-                                   |
-                         +----------v-----------+
-                         | minimal supervisor   |
-                         | spawn, wait, cleanup |
-                         +----------+-----------+
-                                    |
-                     +--------------v---------------+
-                    | active Autolith Lisp image    |
-                    | terminal, agent, tools, state |
-                    +--+-----------+-----------+----+
-                       |           |           |
-              +--------v--+   +----v----+  +---v----------------+
-              | provider  |   | durable |  | isolated workers    |
-              | HTTP/SSE  |   | records |  | search and lisp.*   |
-              +-----------+   +----+----+  +---------------------+
-                                  |
-                    +-------------v--------------+
-                    | XDG data and state roots    |
-                    | conversations, memories,    |
-                    | agendas, images, credentials|
-                    +----------------------------+
+  +------------------------------+
+  | stable launcher              |
+  | provenance and image choice  |
+  +--------------+---------------+
+                 |
+  +--------------v---------------+
+  | trusted parent               |
+  | terminal, approvals, ACP     |
+  | providers and credentials    |
+  | private records and policy   |
+  +--------------+---------------+
+                 | bounded Protobuf protocol
+  +--------------v---------------+
+  | restricted agent Lisp image  |
+  | reasoning, tools, mutations  |
+  +--------------+---------------+
+                 |
+  +--------------v---------------+
+  | isolated workers             |
+  | search and lisp.*             |
+  +------------------------------+
 #+END_SRC
 
 - The *stable launcher* checks runtime and source provenance, then starts
   the active image or recovery
-- The *supervisor* starts the agent as a child process with inherited terminal
-  descriptors. An optional external launcher selects the OS user and sandbox.
-  Agent configuration and private mutations load only in the agent process.
-- The *active image* operates the session: input, provider turns, tools, and
-  the live terminal region
-- *Workers* handle search (the special fff worker) and =lisp.*= REPLs.
-  They live in separate Lisp images and cannot directly modify the agent.
-- *Durable records* live under reasonable XDG folders. This roughly includes
-  conversations, memories, agendas, images, and credentials
+- The *trusted parent* owns terminal I/O, approvals, provider requests,
+  credentials, private records, and native child isolation. It loads only explicit
+  trusted provider extensions. Agent init files and private mutations execute in
+  the child.
+- The *active image* runs reasoning, commands, tools, and self-modification.
+  It sends interface events and bounded service requests to the parent.
+- *Workers* handle search and =lisp.*= REPLs in separate Lisp images.
+- *Durable records* use parent-private XDG folders. Selected agent code and
+  initialization files have exact read-only projections into the child.
 - The *recovery image* is a separately built pristine core, which Autolith
   will reboot into in case the current image is FUBAR. Autolith can work
   using the recovery image to either fix figure out the issue with your
   current image, or try to finish your task if that's a priority.
 
-** Planned trusted parent
+** Trusted parent protocol
 
-The target boundary and Protobuf wire schemas are specified in
-[[file:parent-agent-protocol.org][Parent-Agent Protocol]]. The current diagram above describes implemented
-ownership; the default launch path does not use the protocol. The optional
-=autolith-supervisor/protocol= system supplies generated bindings, bounded wire
-validation, portable values, and startup negotiation. The optional
+The boundary and Protobuf wire schemas are specified in
+[[file:parent-agent-protocol.org][Parent-Agent Protocol]]. The default launch path uses this protocol.
+The =autolith-supervisor/protocol= system supplies generated bindings, bounded
+wire validation, portable values, and startup negotiation. The
 =autolith-supervisor/session= system adds durable session storage and the
 =session.v1= dispatcher, with bounded requests, output, and shutdown handling.
-The optional =autolith-supervisor/model= system adds trusted model profiles and
-semantic request projection through the provider library's wire API, plus a
-private replay journal. Request projection checks family capabilities, parameter
-limits, and replay-handle authority before request construction.
+The =autolith-supervisor/model= system adds trusted model profiles and semantic
+request projection through the provider library's wire API, plus a private replay
+journal. Request projection checks family capabilities, parameter limits, and
+replay-handle authority before request construction.
 
 The replay journal stores provisional provider items and public events before
 publication. After final provider validation and cleanup, commit the accepted
@@ -136,9 +131,17 @@ driver during shutdown. Queue overflow or disconnect closes the connection; it
 never authorizes an effect retry.
 
 The optional =autolith-protocol-client/records= system adds typed record requests
-and the agenda adapter. Use =agent-protocol-record-request= through the driver,
-then consume one terminal response. The parent selects the record scope and
-checks durable operation identities. The client has no private store path.
+and agenda, memory, and papercut adapters. Use =agent-protocol-record-request=
+through the driver, then consume one terminal response. The parent selects the
+record scope and checks durable operation identities. The client has no private
+store path.
+
+The shared agenda, memory, and papercut systems contain the domain types, record
+validation, and stores. Legacy agent adapters use those same implementations.
+The parent record services compare revisions and exact snapshots within the
+write transaction. They commit operation receipts with each mutation. The
+=autolith-supervisor/records= dispatcher reserves session-wide operation IDs
+before domain dispatch. Domain receipts are the only stored operation results.
 
 Use =make-agent-protocol-provider= to select an explicit parent profile for the
 existing agent provider protocol. The adapter projects logical context and maps
@@ -148,17 +151,42 @@ use those handles even if the agent changed the displayed item. Provider credent
 and transport configuration do not enter this adapter.
 
 The =autolith-supervisor/accounts= system contains shared OAuth storage, refresh,
-and credential scopes. The legacy agent imports the same implementation. Shared
-ChatGPT HTTP headers and stream opening are in =autolith-supervisor/provider-http=.
-The optional =autolith-supervisor/provider-executor= uses trusted profile-to-account
-bindings and the provider library's encoder, parser, and retry engine. It confirms
-transport closure before model acceptance.
+and credential scopes. The =autolith-supervisor/family-accounts= system adds
+provider-family settings and authentication. The legacy agent imports these
+implementations. Shared ChatGPT HTTP headers and stream opening are in
+=autolith-supervisor/provider-http=. Parent executors use trusted
+profile-to-account bindings and the provider library's encoder, parser, and retry
+engine. They confirm transport closure before model acceptance.
+
+Parent-backed =web.run= and =web_extra.gist= use the fixed =WEB= parent operation.
+=src/agent/protocol-web.lisp= sends commands, text history, or a URL. The parent
+selects the profile, account, endpoint, credentials, and search mode in
+=supervisor/parent-web.lisp=. It returns public text and bounds request lifetime
+and response size. Page retrieval uses parent tool authorization for the initial
+URL and each redirect. A parent refusal does not select the standalone transport.
 
 The optional =autolith-supervisor/private-process= system provides a private duplex
 connection through an inherited descriptor, with separate bounded diagnostics and
 explicit child environment. POSIX cleanup covers the child process group. Windows
 uses a native job object. POSIX workers that create another process group need
 separate launch integration before full descendant cleanup can be claimed.
+
+The optional =autolith-supervisor/access= system stores approved policy and
+operation receipts separately from the active instance revision. The session
+adapter runs approval outside the session owner, records parent-authored access
+outcomes, and requests replacement after approval. An already-active grant does
+not require another approval or revision. Cancellation and policy commit share
+one control lock.
+
+The native backend has one adapter per supported host. Darwin uses a deny-default
+Seatbelt policy and inherited process-control restrictions. Linux uses a minimal
+Bubblewrap root, an inherited syscall filter, and a delegated cgroup v2 subtree.
+Windows uses the pinned AppContainer helper and native job objects. Each adapter
+rejects grant masks it cannot enforce before approval, checks private file
+identities against admitted scopes, and requires external descendant cleanup
+before replacement. Trusted host writers must not add private aliases after
+admission. Missing native prerequisites stop launch; there is no process-only
+fallback for the parent application.
 
 Use =agent-protocol-session-start= after handshake to create a parent-backed
 conversation and a separate turn worker. Session reads and acknowledged appends
@@ -171,16 +199,17 @@ updates after durable turn and stop transitions. The callback receives the event
 kind, turn ID, and outcome outside the lifecycle lock. Use the separate terminal
 system for bounded trusted input, approval prompts, and escaped agent output.
 
-The default launch path does not install these optional adapters. Parent terminal
-ownership, private-record access, sandbox policy restart, and full process launch
-still need integration. Keep the legacy launch path as the default until the
-integrated path passes end-to-end tests.
+The default =autolith= entry starts the trusted parent interface through
+=autolith-supervisor --cli=. The explicit =script/parent CONFIGURATION.sexp=
+entry accepts bounded data-only configuration. Both compose terminal, provider,
+session, record, and native policy services. The child enters the standard agent
+core with =--parent-agent= before agent initialization or mutations load.
+Every launch requires native base isolation; =:access-p= selects the optional
+access request feature. The controller closes the old launch before replacement.
 
-In the target, the supervisor is the persistent trusted parent. It owns terminal
-I/O and approvals, provider credentials and response streaming, private
-configuration and records, policy, and sandbox lifecycle. It may load focused
-libraries for these services without loading the agent ASDF system. Parent
-configuration is separate from agent initialization Lisp. Private agent
+The parent owns terminal I/O and approvals, provider credentials and response
+streaming, private configuration and records, policy, and child lifecycle.
+Parent configuration is separate from agent initialization Lisp. Private agent
 mutations and agent-supplied Lisp never execute in the parent image.
 
 The restricted agent owns reasoning, tools, workers, and self-modification. It

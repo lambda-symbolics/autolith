@@ -99,7 +99,7 @@
 
 (-> agent-protocol-agenda-query
     (agent-protocol-agenda &key (:query string) (:limit integer) (:cursor (option string)))
-    (values list (option string)))
+    (values list (option string) (option string)))
 (defun agent-protocol-agenda-query (adapter &key (query "") (limit 256) cursor)
   "Return one complete page of parent items and the optional next cursor."
   (let ((response
@@ -109,7 +109,9 @@
     (values (mapcar (lambda (record) (agent-protocol-agenda--item adapter record))
                     (agent-wire:record-response.records response))
             (when (agent-wire:record-response.has-next-cursor response)
-              (agent-wire:record-response.next-cursor response)))))
+              (agent-wire:record-response.next-cursor response))
+            (when (agent-wire:record-response.has-collection-revision response)
+              (agent-wire:record-response.collection-revision response)))))
 
 (-> agent-protocol-agenda--write-result
     (agent-protocol-agenda agent-wire:record-response) agent-protocol-agenda-item)
@@ -122,45 +124,53 @@
 
 (-> agent-protocol-agenda-create
     (agent-protocol-agenda &key (:text string) (:status agenda-status)
-     (:memory-identifiers list) (:operation-id string))
+     (:memory-identifiers list) (:operation-id string) (:expected-collection-revision (option string)))
     agent-protocol-agenda-item)
 (defun agent-protocol-agenda-create
-    (adapter &key text (status ':todo) memory-identifiers (operation-id (make-identifier)))
+       (adapter
+        &key text (status ':todo) memory-identifiers (operation-id (make-identifier))
+        expected-collection-revision)
   "Create one parent item. Retain OPERATION-ID if the outcome is unknown."
-  (agent-protocol-agenda--write-result
-   adapter (agent-protocol-agenda--exchange
-            adapter (agent-wire:make-record-request
-                     :collection ':agenda :operation ':create :operation-id operation-id
-                     :fields (agent-protocol-agenda--fields text status memory-identifiers)))))
+  (agent-protocol-agenda--write-result adapter
+   (agent-protocol-agenda--exchange adapter
+    (apply #'agent-wire:make-record-request :collection ':agenda :operation ':create :operation-id
+           operation-id :fields (agent-protocol-agenda--fields text status memory-identifiers)
+           (when expected-collection-revision
+             (list :expected-collection-revision expected-collection-revision))))))
 
 (-> agent-protocol-agenda-replace
     (agent-protocol-agenda agent-protocol-agenda-item
-     &key (:text string) (:status agenda-status) (:memory-identifiers list) (:operation-id string))
+     &key (:text string) (:status agenda-status) (:memory-identifiers list) (:operation-id string) (:expected-collection-revision (option string)))
     agent-protocol-agenda-item)
 (defun agent-protocol-agenda-replace
-    (adapter item &key (text (agenda-item-text item)) (status (agenda-item-status item))
-                   (memory-identifiers (agenda-item-memory-identifiers item))
-                   (operation-id (make-identifier)))
+       (adapter item
+        &key (text (agenda-item-text item)) (status (agenda-item-status item))
+        (memory-identifiers (agenda-item-memory-identifiers item)) (operation-id (make-identifier))
+        expected-collection-revision)
   "Replace complete writable fields against ITEM's exact parent revision."
-  (agent-protocol-agenda--write-result
-   adapter (agent-protocol-agenda--exchange
-            adapter (agent-wire:make-record-request
-                     :collection ':agenda :operation ':replace :operation-id operation-id
-                     :record-id         (agenda-item-identifier item)
-                     :expected-revision (agent-protocol-agenda-item-revision item)
-                     :fields            (agent-protocol-agenda--fields text status memory-identifiers)))))
+  (agent-protocol-agenda--write-result adapter
+   (agent-protocol-agenda--exchange adapter
+    (apply #'agent-wire:make-record-request :collection ':agenda :operation ':replace :operation-id
+           operation-id :record-id (agenda-item-identifier item) :expected-revision
+           (agent-protocol-agenda-item-revision item) :fields
+           (agent-protocol-agenda--fields text status memory-identifiers)
+           (when expected-collection-revision
+             (list :expected-collection-revision expected-collection-revision))))))
 
 (-> agent-protocol-agenda-delete
-    (agent-protocol-agenda agent-protocol-agenda-item &key (:operation-id string)) null)
-(defun agent-protocol-agenda-delete (adapter item &key (operation-id (make-identifier)))
+    (agent-protocol-agenda agent-protocol-agenda-item &key (:operation-id string) (:expected-collection-revision (option string))) null)
+(defun agent-protocol-agenda-delete
+       (adapter item &key (operation-id (make-identifier)) expected-collection-revision)
   "Delete ITEM against its exact parent revision, without retrying."
   (let ((response
-          (agent-protocol-agenda--exchange
-           adapter (agent-wire:make-record-request
-                    :collection ':agenda :operation ':delete :operation-id operation-id
-                    :record-id         (agenda-item-identifier item)
-                    :expected-revision (agent-protocol-agenda-item-revision item)))))
-    (when (or (agent-wire:record-response.records response)
-              (agent-wire:record-response.has-next-cursor response))
+         (agent-protocol-agenda--exchange adapter
+          (apply #'agent-wire:make-record-request :collection ':agenda :operation ':delete
+                 :operation-id operation-id :record-id (agenda-item-identifier item)
+                 :expected-revision (agent-protocol-agenda-item-revision item)
+                 (when expected-collection-revision
+                   (list :expected-collection-revision expected-collection-revision))))))
+    (when
+        (or (agent-wire:record-response.records response)
+            (agent-wire:record-response.has-next-cursor response))
       (agent-protocol-agenda--invalid adapter))
     nil))

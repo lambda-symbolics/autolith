@@ -11,3 +11,9 @@
                     (declare (ignore condition))
                     (error 'supervisor-interrupted :signal 2))))
     (funcall function)))
+
+(declaim (ftype (function () list) supervisor--shell-runtime-roots))
+
+(defun supervisor--shell-runtime-roots ()
+  "Use explicit native runtime roots for Windows shell installations."
+  nil)

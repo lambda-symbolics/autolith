@@ -52,6 +52,14 @@
                                               (session-dispatch-test-output-lock stream)))))
   (call-next-method))
 
+(defclass session-dispatch-test-access () ()
+  (:documentation "An access adapter for repeated runtime attachment checks."))
+
+(defmethod session-access-attach ((service session-dispatch-test-access) runtime)
+  "Accept a runtime without starting access workers."
+  (declare (ignore service runtime))
+  nil)
+
 (declaim (ftype (function () integer) run-session-dispatch-tests))
 
 (defun run-session-dispatch-tests ()
@@ -341,6 +349,18 @@
                                                           (session-runtime-connection runtime)
                                                           :features '("session.v1" "model.v1")) nil)
                   (parent-protocol-error () t)))
+         (session-runtime-disconnect runtime)))
+      (fixture
+       (lambda (runtime receive response rejection note display time)
+         (declare (ignore receive response rejection note display time))
+         (let ((access (make-instance 'session-dispatch-test-access)))
+           (loop repeat 3 do
+             (check (typep (session-runtime-open
+                            (session-runtime-store runtime)
+                            (session-runtime-connection runtime)
+                            :features       '("session.v1" "access.v1")
+                            :access-service access)
+                           'session-runtime))))
          (session-runtime-disconnect runtime)))
       (fixture
        (lambda (runtime receive response rejection note display time)

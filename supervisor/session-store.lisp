@@ -17,6 +17,8 @@
        :documentation "The parent-assigned durable session identity.")
    (lock-pathname :initarg :lock-pathname :reader session-store-lock-pathname
                   :documentation "The common lock used by every reader and writer.")
+   (read-only-p :initarg :read-only-p :initform nil :reader session-store-read-only-p
+                :documentation "Whether reads must leave a crash tail and active turn untouched.")
    (cache :initform nil :accessor session-store-cache
           :documentation "Validated state and offset, used only under the file lock."))
   (:documentation "A parent-owned session log, independent of the agent image.
@@ -273,6 +275,36 @@ Preserve optional presence, ordered items, raw strings, and shared Value types."
       (session-store--reject ':invalid-agent-record)))
   nil)
 
+(declaim (ftype (function (list) null) session-store--parent-note-check))
+
+(defun session-store--parent-note-check (payload)
+  "Validate the reserved parent-authored access outcome note."
+  (let* ((names     (and (eq (first payload) ':map) (mapcar #'first (second payload))))
+         (outcome   (session-store--field payload "access_outcome"))
+         (fields    (and (eq (first outcome) ':map) (second outcome)))
+         (kind      (session-store--field outcome "kind"))
+         (operation (session-store--field outcome "operation_id"))
+         (sequence  (session-store--field outcome "sequence"))
+         (revision  (session-store--field outcome "policy_revision"))
+         (identity  (session-store--field payload "parent_note_id"))
+         (text      (session-store--field payload "text")))
+    (unless (and (equal (sort names #'string<) '("access_outcome" "parent_note_id" "text"))
+                 (equal (sort (mapcar #'first fields) #'string<)
+                        '("kind" "operation_id" "policy_revision" "sequence"))
+                 (eq (first kind) ':string)
+                 (member (second kind) '("pending" "denied" "cancelled" "approved" "failed" "expired"
+                                         "preparing" "stopped" "active" "closed") :test #'string=)
+                 (eq (first operation) ':string) (<= (length (second operation)) 256)
+                 (eq (first sequence) ':integer) (typep (second sequence) '(integer 1))
+                 (eq (first revision) ':string)
+                 (let ((number (ignore-errors (parse-integer (second revision)))))
+                   (and (typep number '(unsigned-byte 64))
+                        (string= (second revision) (format nil "~D" number))))
+                 (eq (first identity) ':string) (session-store--identifier-p (second identity))
+                 (eq (first text) ':string) (<= (length (second text)) 4096))
+      (session-store--reject ':invalid-parent-note)))
+  nil)
+
 (declaim (ftype (function (keyword list) null) session-store--payload-check))
 
 (defun session-store--payload-check (kind payload)
@@ -295,7 +327,19 @@ Preserve optional presence, ordered items, raw strings, and shared Value types."
                       '("outcome"))
                      (otherwise
                       (session-store--reject ':invalid-kind))))
-         (allowed  (if (eq kind ':turn-outcome) '("outcome" "reason") required)))
+         (allowed  (case kind
+                      (:user-input
+                       '("text" "time" "application_kind" "application_cursor"
+                         "application_images" "application_job"))
+                      (:note
+                       '("text" "time" "application_scope" "application_kind" "application_cursor"
+                         "application_images" "application_job" "application_result" "legacy_header"))
+                     (:turn-outcome
+                      '("outcome" "reason"))
+                     ((:tool-started :tool-finished)
+                      (append required '("parent_call_id" "source")))
+                     (otherwise
+                      required))))
     (unless (and (every (lambda (key) (member key names :test #'equal)) required)
                  (every (lambda (key) (member key allowed :test #'equal)) names))
       (session-store--reject ':invalid-fields))
@@ -303,6 +347,47 @@ Preserve optional presence, ordered items, raw strings, and shared Value types."
       (let ((field (session-store--field payload name)))
         (when (and field (not (eq (first field) ':string)))
           (session-store--reject ':invalid-field-type))))
+    (let ((time (session-store--field payload "time")))
+      (when (and time (not (and (eq (first time) ':integer)
+                               (typep (second time) '(integer 0 #x7fffffffffffffff)))))
+        (session-store--reject ':invalid-field-type)))
+    (let ((header (session-store--field payload "legacy_header")))
+      (when (and header
+                 (not (and (eq kind ':note) (eq (first header) ':map)
+                           (every (lambda (entry)
+                                    (and (member (first entry)
+                                                 '("id" "created-at" "title" "title-source" "prompt-cache-key"
+                                                   "model" "model-provider" "reasoning-effort" "artifact-root")
+                                                 :test #'equal)
+                                         (member (first (second entry)) '(:string :integer))))
+                                  (second header)))))
+        (session-store--reject ':invalid-legacy-header)))
+    (let ((application-kind (session-store--field payload "application_kind"))
+          (cursor           (session-store--field payload "application_cursor"))
+          (scope            (session-store--field payload "application_scope"))
+          (images           (session-store--field payload "application_images")))
+      (when (and application-kind
+                 (not (and (eq (first application-kind) ':string)
+                           (member (second application-kind)
+                                   '("command" "lisp" "async-lisp" "catalog" "completion" "message"
+                                     "run-job" "acp-prompt" "acp-extension" "configure") :test #'string=))))
+        (session-store--reject ':invalid-field-type))
+      (when (and cursor
+                 (not (and (eq (first cursor) ':integer)
+                           (<= 0 (second cursor)
+                               (length (second (session-store--field payload "text")))))))
+        (session-store--reject ':invalid-field-type))
+      (when (and scope
+                 (not (and (eq (first scope) ':string)
+                           (session-store--identifier-p (second scope)))))
+        (session-store--reject ':invalid-field-type))
+      (when (and images
+                 (not (and (eq (first images) ':list) (<= (length (second images)) 32)
+                           (every (lambda (image)
+                                    (and (eq (first image) ':string)
+                                         (<= 1 (length (second image)) 8192)))
+                                  (second images)))))
+        (session-store--reject ':invalid-field-type)))
     (when (eq kind ':tool-started)
       (unless (and (session-store--identifier-p
                     (second (session-store--field payload "call_id")))
@@ -310,6 +395,15 @@ Preserve optional presence, ordered items, raw strings, and shared Value types."
                     (second (session-store--field payload "name")))
                    (eq (first (session-store--field payload "arguments")) ':map))
         (session-store--reject ':invalid-field-type)))
+    (when (member kind '(:tool-started :tool-finished))
+      (let ((parent (session-store--field payload "parent_call_id"))
+            (source (session-store--field payload "source")))
+        (unless (or (and (null parent) (null source))
+                    (and (eq (first parent) ':string)
+                         (session-store--identifier-p (second parent))
+                         (eq (first source) ':string)
+                         (member (second source) '("worker" "task-inspector") :test #'equal)))
+          (session-store--reject ':invalid-nested-call))))
     (when (eq kind ':tool-finished)
       (unless (and (session-store--identifier-p
                     (second (session-store--field payload "call_id")))
@@ -319,6 +413,38 @@ Preserve optional presence, ordered items, raw strings, and shared Value types."
       (unless (member (second (session-store--field payload "outcome"))
                       '("completed" "cancelled" "failed" "interrupted") :test #'equal)
         (session-store--reject ':invalid-outcome))))
+  nil)
+
+(declaim (ftype (function (hash-table string keyword &key (:payload list) (:failure (or null keyword))) null)
+                session-store--call-check))
+
+(defun session-store--call-check (calls turn kind &key payload failure)
+  "Validate call ownership, bounded nesting, and exact completion identity."
+  (let* ((call   (second (session-store--field payload "call_id")))
+         (parent (second (session-store--field payload "parent_call_id")))
+         (source (second (session-store--field payload "source")))
+         (prior  (gethash call calls)))
+    (flet ((reject (code)
+             (session-store--reject (or failure code))))
+      (if (eq kind ':tool-started)
+          (progn
+            (when prior (reject ':call-conflict))
+            (when (>= (loop for entry being the hash-values of calls
+                            count (equal turn (first entry))) 65536)
+              (reject ':call-limit))
+            (when parent
+              (loop for identifier = parent then (fourth entry)
+                    for entry = (gethash identifier calls)
+                    for depth from 1
+                    while identifier
+                    do (unless (and (< depth 32) (not (equal identifier call))
+                                    entry (equal turn (first entry))
+                                    (eq (second entry) ':started))
+                         (reject ':invalid-nested-parent)))))
+          (unless (and prior (equal (first prior) turn)
+                       (eq (second prior) ':started)
+                       (equal parent (fourth prior)) (equal source (fifth prior)))
+            (reject ':unmatched-tool-finish)))))
   nil)
 
 (defclass session-store-state ()
@@ -386,14 +512,21 @@ integers, numbers, byte arrays, lists, maps, booleans, strings, and null."
     (destructuring-bind (sequence event turn kind payload origin) data
       (unless (and (eql sequence (1+ (length records)))
                    (session-store--identifier-p event)
-                   (session-store--identifier-p turn)
+                   (or (session-store--identifier-p turn)
+                       (and (equal turn "") (eq origin ':parent) (eq kind ':note)
+                            (session-store--field payload "access_outcome")))
                    (not (gethash event events)))
         (session-store--reject ':corrupt-log))
       (let ((model-result (and (eq kind ':note)
                                (session-store--field payload "model_result"))))
-        (if (and (eq origin ':parent) model-result)
-            (session-store--model-payload-check payload)
-            (session-store--payload-check kind payload)))
+        (cond
+          ((and (eq origin ':parent) model-result)
+           (session-store--model-payload-check payload))
+          ((and (eq origin ':parent) (eq kind ':note)
+                (session-store--field payload "access_outcome"))
+           (session-store--parent-note-check payload))
+          (t
+           (session-store--payload-check kind payload))))
       (cond
         ((and (eq origin ':parent) (eq kind ':note)
               (session-store--field payload "model_result"))
@@ -404,6 +537,17 @@ integers, numbers, byte arrays, lists, maps, booleans, strings, and null."
                         (not (gethash key events)))
              (session-store--reject ':corrupt-log))
            (setf (gethash key events) data)))
+        ((and (eq origin ':parent) (eq kind ':note)
+              (session-store--field payload "access_outcome"))
+         (let ((key (list ':parent-note (second (session-store--field payload "parent_note_id")))))
+           (unless (and (null continuation) (or (equal turn "") (gethash turn turns))
+                        (not (gethash key events)))
+             (session-store--reject ':corrupt-log))
+           (setf (gethash key events) data)))
+        ((and (eq origin ':parent) (eq kind ':note)
+              (session-store--field payload "application_scope"))
+         (unless (and (equal active turn) (null continuation))
+           (session-store--reject ':corrupt-log)))
         ((and (eq origin ':parent) (member kind '(:user-input :note)))
          (when (or active (gethash turn turns)
                    (and continuation
@@ -423,17 +567,15 @@ integers, numbers, byte arrays, lists, maps, booleans, strings, and null."
         (t
          (session-store--reject ':corrupt-log)))
       (when (member kind '(:tool-started :tool-finished))
+        (session-store--call-check calls turn kind :payload payload :failure ':corrupt-log)
         (let* ((call  (second (session-store--field payload "call_id")))
                (prior (gethash call calls)))
           (if (eq kind ':tool-started)
-              (progn
-                (when prior (session-store--reject ':corrupt-log))
-                (setf (gethash call calls) (list turn ':started sequence)))
-              (progn
-                (unless (and prior (equal (first prior) turn)
-                             (eq (second prior) ':started))
-                  (session-store--reject ':corrupt-log))
-                (setf (second prior) ':finished)))))
+              (setf (gethash call calls)
+                    (list turn ':started sequence
+                          (second (session-store--field payload "parent_call_id"))
+                          (second (session-store--field payload "source"))))
+              (setf (second prior) ':finished))))
       (setf (gethash event events) data
             (session-store-state-active state) active)
       (vector-push-extend data records)))
@@ -481,7 +623,7 @@ the full log. Clear partial state on every failed operation."
                path :start-position (session-store-state-position state))
             (declare (ignore count))
             (unless header (session-store--reject ':corrupt-header))
-            (when incomplete
+            (when (and incomplete (not (session-store-read-only-p store)))
               (sexp-store:log-repair-tail path))
             (setf (session-store-state-position state) position
                   (session-store-state-information state)
@@ -502,6 +644,7 @@ the full log. Clear partial state on every failed operation."
 
 (defun session-store--commit (store data &optional continuation)
   "Publish one record and its deduplication identity in the same log entry."
+  (when (session-store-read-only-p store) (session-store--reject ':read-only))
   (sexp-store:log-append
    (session-store-pathname store)
    (list ':session-entry :version 1 :record data :continuation continuation)
@@ -516,14 +659,20 @@ the full log. Clear partial state on every failed operation."
         for event = (format nil "parent/~D/~D" sequence suffix)
         unless (gethash event events) return event))
 
-(declaim (ftype (function (session-store string string &key (:continuation-sequence t))
+(declaim (ftype (function (session-store string string
+                           &key (:continuation-sequence t) (:application t))
                          cl-protobufs.autolith.parent.v1:turn-start)
                 session-store-start-turn))
 
-(defun session-store-start-turn (store turn-id text &key continuation-sequence)
-  "Commit input before returning the TurnStart that the parent can dispatch."
-  (unless (and (session-store--identifier-p turn-id) (stringp text))
+(defun session-store-start-turn (store turn-id text &key continuation-sequence application)
+  "Commit exact input and optional inert application action before dispatch."
+  (unless (and (session-store--identifier-p turn-id) (stringp text)
+               (not (and continuation-sequence application)))
     (session-store--reject ':invalid-turn))
+  (when application
+    (protocol-application-action-validate application)
+    (unless (string= text (parent-proto:application-action.source application))
+      (session-store--reject ':invalid-turn)))
   (session-store--locked
    store
    (lambda (records active events turns calls)
@@ -538,11 +687,18 @@ the full log. Clear partial state on every failed operation."
        (session-store--commit
         store (list sequence (session-store--parent-event sequence events) turn-id
                     (if continuation-sequence ':note ':user-input)
-                    (list ':map (list (list "text" (list ':string text)))) ':parent)
+                    (if application
+                        (session-store--value-data
+                         (protocol-data->value (protocol-application-action->data application)))
+                        (list ':map (list (list "text" (list ':string text)))))
+                    ':parent)
         continuation-sequence)
-       (cl-protobufs.autolith.parent.v1:make-turn-start
-        :turn-id turn-id :input-sequence (or continuation-sequence sequence)
-        :continuation (not (null continuation-sequence)))))))
+       (let ((start (parent-proto:make-turn-start
+                     :turn-id turn-id :input-sequence (or continuation-sequence sequence)
+                     :continuation (not (null continuation-sequence)))))
+         (when application
+           (setf (parent-proto:turn-start.application start) application))
+         start)))))
 
 (declaim (ftype (function (session-store string keyword &key (:reason t)) integer)
                 session-store-finish-turn))
@@ -584,34 +740,41 @@ the full log. Clear partial state on every failed operation."
                                         (list "reason" (list ':string reason)))) ':parent))
          sequence)))))
 
-(declaim (ftype (function (t string &key (:recover-interrupted boolean)) session-store)
+(declaim (ftype (function (t string &key (:recover-interrupted boolean) (:read-only-p boolean)) session-store)
                 session-store-open))
 
-(defun session-store-open (pathname session-id &key (recover-interrupted t))
+(defun session-store-open (pathname session-id &key (recover-interrupted t) read-only-p)
   "Open a private session log or create it with SESSION-ID.
 
 Recovery closes an unfinished turn as interrupted. Unfinished tool starts keep
 their unknown-effect status; this API never retries a tool. Use recovery once
-when taking ownership after termination, not when opening a concurrent handle."
+when taking ownership after termination, not when opening a concurrent handle.
+READ-ONLY-P forbids creation, tail repair, recovery outcomes, and all writes."
   (unless (session-store--identifier-p session-id)
     (session-store--reject ':invalid-session-id))
-  (let* ((path  (merge-pathnames pathname))
-         (store (make-instance 'session-store :pathname path :id session-id
-                               :lock-pathname (pathname (concatenate 'string
-                                                          (namestring path) ".lock")))))
-    (ensure-directories-exist path)
-    (handler-case
-        (ls-flock:with-file-lock ((session-store-lock-pathname store))
-          (unless (probe-file path)
-            (sexp-store:log-write path
-                                 (list (list ':session-header :version 1 :id session-id))
-                                 :require-absent t)))
-      (error () (session-store--reject ':storage-failure)))
+  (let* ((absolute (merge-pathnames pathname))
+         ;; Preserve an extensionless destination during atomic publication.
+         (path     (make-pathname :type     (or (pathname-type absolute) ':unspecific)
+                                  :defaults absolute))
+         (store    (make-instance 'session-store :pathname path :id session-id :read-only-p read-only-p
+                                 :lock-pathname (pathname (concatenate 'string
+                                                            (namestring path) ".lock")))))
+    (if read-only-p
+        (unless (probe-file path) (session-store--reject ':unknown-session))
+        (progn
+          (ensure-directories-exist path)
+          (handler-case
+              (ls-flock:with-file-lock ((session-store-lock-pathname store))
+                (unless (probe-file path)
+                  (sexp-store:log-write path
+                                       (list (list ':session-header :version 1 :id session-id))
+                                       :require-absent t)))
+            (error () (session-store--reject ':storage-failure)))))
     (session-store--locked store
-                          (lambda (records active events turns calls)
-                            (declare (ignore records active events turns calls))
-                            nil))
-    (when recover-interrupted (session-store-interrupt store))
+                           (lambda (records active events turns calls)
+                             (declare (ignore records active events turns calls))
+                             nil))
+    (when (and recover-interrupted (not read-only-p)) (session-store-interrupt store))
     store))
 
 (declaim (ftype (function (session-store t) cl-protobufs.autolith.parent.v1:session-ack)
@@ -650,13 +813,7 @@ metadata even for duplicate events. Tool starts must commit before execution."
               :event-id event :sequence (first prior)))))
        (unless (equal active turn) (session-store--reject ':inactive-turn))
        (when (member kind '(:tool-started :tool-finished))
-         (let* ((call  (second (session-store--field payload "call_id")))
-                (prior (gethash call calls)))
-           (if (eq kind ':tool-started)
-               (when prior (session-store--reject ':call-conflict))
-               (unless (and prior (equal (first prior) turn)
-                            (eq (second prior) ':started))
-                 (session-store--reject ':unmatched-tool-finish)))))
+          (session-store--call-check calls turn kind :payload payload))
        (setf (first data) (1+ (length records)) (sixth data) ':agent)
        (session-store--commit store data)
        (cl-protobufs.autolith.parent.v1:make-session-ack
@@ -830,3 +987,46 @@ This is diagnostic data, not a queue of operations to retry."
                   collect (list :call-id (copy-seq call) :turn-id (copy-seq (first state))
                                  :start-sequence (third state) :effects ':unknown))
            #'< :key (lambda (entry) (getf entry :start-sequence))))))
+
+(declaim (ftype (function (session-store &key (:event-id string) (:turn-id string) (:payload t))
+                         cl-protobufs.autolith.parent.v1:session-ack) session-store-parent-note))
+
+(defun session-store-parent-note (store &key event-id (turn-id "") payload)
+  "Publish a trusted access outcome without opening or finishing a turn.
+EVENT-ID is a durable parent-only idempotency key, not an agent record ID.
+Choose a collision-free record ID and return it in SessionAck. An empty TURN-ID
+makes a session-level note; a nonempty ID must name an existing turn. PAYLOAD
+contains access_outcome and text. Do not expose this API to agent dispatch."
+  (unless (and (session-store--identifier-p event-id)
+               (or (equal turn-id "") (session-store--identifier-p turn-id)))
+    (session-store--reject ':invalid-request))
+  (let ((encoded (session-store--value-data
+                  (if (typep payload 'cl-protobufs.autolith.common.v1:value)
+                      payload (protocol-data->value payload)))))
+    (unless (and (eq (first encoded) ':map)
+                 (null (session-store--field encoded "parent_note_id")))
+      (session-store--reject ':invalid-parent-note))
+    (push (list "parent_note_id" (list ':string event-id)) (second encoded))
+    (setf (second encoded) (sort (second encoded) #'string< :key #'first))
+    (session-store--parent-note-check encoded)
+    (session-store--locked
+     store
+     (lambda (records active events turns calls)
+       (declare (ignore active calls))
+       (let* ((key   (list ':parent-note event-id))
+              (prior (gethash key events)))
+         (when prior
+           (unless (and (equal (third prior) turn-id)
+                        (session-store--exact-p (fifth prior) encoded))
+             (session-store--reject ':event-conflict))
+           (return-from session-store-parent-note
+             (cl-protobufs.autolith.parent.v1:make-session-ack
+              :event-id (second prior) :sequence (first prior))))
+         (unless (or (equal turn-id "") (gethash turn-id turns))
+           (session-store--reject ':inactive-turn))
+         (let* ((sequence  (1+ (length records)))
+                (record-id (session-store--parent-event sequence events))
+                (data      (list sequence record-id turn-id ':note encoded ':parent)))
+           (session-store--commit store data)
+           (cl-protobufs.autolith.parent.v1:make-session-ack
+            :event-id record-id :sequence sequence)))))))

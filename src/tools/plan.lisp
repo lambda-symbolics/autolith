@@ -47,7 +47,10 @@
                          (context tool-context)
                          (arguments hash-table))
   "Read the current workspace plan."
-  (declare (ignore tool arguments))
+  (declare (ignore tool))
+  (multiple-value-bind (result installed-p) (knowledge-plan-tool-remote context arguments ':list)
+    (when installed-p
+      (return-from tool-execute result)))
   (handler-case
       (let* ((configuration (tool-context-configuration context))
              (plan          (plan-load configuration))
@@ -88,50 +91,23 @@
               (list :verify (knowledge--pattern-from-input verify schema-function
                                                            :negatable t))))))
 
-(-> plan-tool--receipts (list (option workspace-plan) (option knowledge-view)) list)
-(defun plan-tool--receipts (steps previous view)
-  "Return STEPS with a receipt on each structured step newly marked done.
-
-A step keeps the receipt it had under the same id; a step done now records the
-bindings and facts satisfying its requirements at this moment, so a later
-change to those facts can be reported without repeating the step."
-  (mapcar
-   (lambda (step)
-     (let* ((identifier (getf step :id))
-            (old        (and identifier previous
-                             (find identifier (workspace-plan-steps previous)
-                                   :key #'plan-step-identifier :test #'equal))))
-       (cond
-         ((not (and (eq (plan--status (getf step :status)) ':done)
-                    (or (getf step :requires) (getf step :verify))
-                    view))
-          step)
-         ((and old (eq (plan-step-status old) ':done) (plan-step-receipt old))
-          (append step (list :receipt (plan-step-receipt old))))
-         (t
-          (let ((solution (first (knowledge-view-solve view (getf step :requires) :limit 1))))
-            (append step
-                    (list :receipt (list :time     (knowledge-now)
-                                         :bindings (first solution)
-                                         :facts    (mapcar #'knowledge-node-identifier
-                                                           (rest solution))
-                                         :texts    (mapcar #'knowledge-node-text
-                                                           (rest solution))))))))))
-   steps))
-
 (defmethod tool-execute ((tool plan-update-tool)
                          (context tool-context)
                          (arguments hash-table))
   "Replace the current workspace plan, checking steps that depend on facts."
   (declare (ignore tool))
+
+  (multiple-value-bind (result installed-p) (knowledge-plan-tool-remote context arguments ':update)
+    (when installed-p
+      (return-from tool-execute result)))
   (handler-case
       (let* ((configuration (tool-context-configuration context))
              (raw-steps     (gethash "steps" arguments))
              (explanation   (gethash "explanation" arguments))
-             (base          (knowledge-base-read configuration))
+             (base          nil)
              (schema-function
                (lambda (predicate)
-                 (knowledge-base-schema base predicate
+                 (knowledge-base-schema (or base (setf base (knowledge-base-read configuration))) predicate
                                         :workspace (knowledge--workspace configuration))))
              (steps
                (if (vectorp raw-steps)
@@ -145,7 +121,7 @@ change to those facts can be reported without repeating the step."
              (plan
                (if steps
                    (plan-update configuration
-                                (plan-tool--receipts steps (plan-load configuration) view)
+                                (plan-steps-with-receipts steps (plan-load configuration) view)
                                 :explanation (and (stringp explanation) explanation))
                    (progn
                      (plan-clear configuration)
@@ -168,6 +144,9 @@ change to those facts can be reported without repeating the step."
                          (arguments hash-table))
   "Expand a task with its methods into a checked plan, without a model."
   (declare (ignore tool))
+  (multiple-value-bind (result installed-p) (knowledge-expand-tool-remote context arguments)
+    (when installed-p
+      (return-from tool-execute result)))
   (handler-case
       (let* ((configuration (tool-context-configuration context))
              (task          (knowledge--task-from-input (tool-argument arguments "task" :required t)))

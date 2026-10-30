@@ -749,117 +749,177 @@ them, so a replacement that omits them keeps the recorded versions."
       (memory-resource--fail "~A" (autolith-error-message condition)))))
 
 (defmethod resource-apply-operations
-    ((resource memory-resource) (context tool-context)
-     &key base-revision operations)
+           ((resource memory-resource) (context tool-context) &key base-revision operations)
   "Apply exactly one revision-gated append-only mutation to RESOURCE."
   (unless (and (listp operations) (= (length operations) 1))
-    (error 'tool-error
-           :message   "memory: resources require exactly one operation per resource.edit call."
-           :tool-name "resource.edit"))
+    (error 'tool-error :message
+           "memory: resources require exactly one operation per resource.edit call." :tool-name
+           "resource.edit"))
   (let ((operation (memory-resource--normalize-operation (first operations))))
     (memory-resource--validate-operation-target resource operation)
     (let* ((conversation  (tool-context-conversation context))
            (configuration (tool-context-configuration context))
            (now           (get-universal-time))
-           ;; Evidence is checked, and outside paths authorized, before the
-           ;; memory lock is taken.
            (evidence-arguments
-             (append
-              (and (getf operation :sources-p)
-                   (list :sources
-                         (mapcar (lambda (request)
-                                   (memory-resource--observe-source context request now))
-                                 (getf operation :sources))))
-              (and (getf operation :premises-p)
-                   (list :premises (getf operation :premises))))))
-      (with-recursive-lock-held (*memory-lock*)
-        (with-recursive-lock-held
-            ((conversation-resource-observation-lock conversation))
-          (let* ((state
-                   (resource-item-find-observation-state
-                    conversation resource base-revision))
-                 (base-observation
-                   (resource-observation-state-observation state))
-                 (current
-                   (handler-case
-                       (memory-resource--current-observation resource context)
-                     (memory-resource-not-found ()
-                       (error 'resource-revision-stale
-                              :uri               (resource-uri resource)
-                              :expected-revision base-revision
-                              :actual-revision   nil)))))
-            (unless (and
-                     (string= (resource-observation-revision current)
-                              (resource-observation-revision base-observation))
-                     (equal (memory-observation-snapshot current)
-                            (memory-observation-snapshot base-observation)))
-              (error 'resource-revision-stale
-                     :uri               (resource-uri resource)
-                     :expected-revision base-revision
-                     :actual-revision
-                     (resource-observation-revision current)))
-            (case (getf operation :kind)
-              (:remember
-               (let* ((scope
-                        (ecase (memory-collection-resource-visibility resource)
-                          (:workspace
-                           ':workspace)
-                          (:global
-                           ':global)))
-                      (memory
-                        (memory-resource--remember
-                         configuration
-                         :title              (getf operation :title)
-                         :content            (getf operation :content)
-                         :scope              scope
-                         :tags               (getf operation :tags)
-                         :source-conversation
-                         (conversation-identifier conversation)
-                         :evidence-arguments evidence-arguments))
-                      (item-resource
-                        (memory-resource--make-item
-                         (memory-identifier memory))))
-                 (values
-                  (memory-resource--item-observation item-resource context)
-                  (format nil "Created memory ~A."
-                          (memory-identifier memory))
-                  (resource-uri item-resource))))
-              (:replace
-               (memory-resource--remember
-                configuration
-                :identifier         (memory-resource-identifier resource)
-                :title              (getf operation :title)
-                :content            (getf operation :content)
-                :scope              (getf operation :scope)
-                :tags               (getf operation :tags)
-                :source-conversation
-                (conversation-identifier conversation)
-                :evidence-arguments evidence-arguments)
-               (values
-                (memory-resource--item-observation resource context)
-                (format nil "Replaced memory ~A."
-                        (memory-resource-identifier resource))
-                (resource-uri resource)))
-              (:forget
-               (let ((memory
-                       (memory-forget
-                        configuration
-                        (memory-resource-identifier resource)
-                        :source-conversation
-                        (conversation-identifier conversation))))
-                 (values
-                  (memory-resource--forgotten-observation resource memory)
-                  (format nil "Forgot memory ~A.~@[ These memories relied on it and are now stale: ~{~A~^, ~}.~]"
-                          (memory-resource-identifier resource)
-                          (mapcar (lambda (dependent)
-                                    (format nil "~A \"~A\""
-                                            (resource-item-uri
-                                             "memory" (memory-identifier dependent))
-                                            (memory-title dependent)))
-                                  (memory-assessor-dependents
-                                   (memory-assessor-create configuration)
-                                   (memory-identifier memory))))
-                  nil))))))))))
+            (append
+             (and (getf operation :sources-p)
+                  (list :sources
+                        (mapcar
+                         (lambda (request) (memory-resource--observe-source context request now))
+                         (getf operation :sources))))
+             (and (getf operation :premises-p) (list :premises (getf operation :premises))))))
+      (let ((memory-transaction-values nil))
+        (autolith-supervisor::memory-state-transact configuration
+                                                    (lambda (memory-state)
+                                                      (declare (ignore memory-state))
+                                                      (setf memory-transaction-values
+                                                              (multiple-value-list
+                                                               (with-recursive-lock-held (*memory-lock*)
+                                                                 (with-recursive-lock-held ((conversation-resource-observation-lock
+                                                                                             conversation))
+                                                                   (let* ((state
+                                                                           (resource-item-find-observation-state
+                                                                            conversation resource
+                                                                            base-revision))
+                                                                          (base-observation
+                                                                           (resource-observation-state-observation
+                                                                            state))
+                                                                          (current
+                                                                           (handler-case
+                                                                            (memory-resource--current-observation
+                                                                             resource context)
+                                                                            (memory-resource-not-found
+                                                                             nil
+                                                                             (error
+                                                                              'resource-revision-stale
+                                                                              :uri
+                                                                              (resource-uri
+                                                                               resource)
+                                                                              :expected-revision
+                                                                              base-revision
+                                                                              :actual-revision
+                                                                              nil)))))
+                                                                     (unless
+                                                                         (and
+                                                                          (string=
+                                                                           (resource-observation-revision
+                                                                            current)
+                                                                           (resource-observation-revision
+                                                                            base-observation))
+                                                                          (equal
+                                                                           (memory-observation-snapshot
+                                                                            current)
+                                                                           (memory-observation-snapshot
+                                                                            base-observation)))
+                                                                       (error
+                                                                        'resource-revision-stale
+                                                                        :uri
+                                                                        (resource-uri resource)
+                                                                        :expected-revision
+                                                                        base-revision
+                                                                        :actual-revision
+                                                                        (resource-observation-revision
+                                                                         current)))
+                                                                     (case (getf operation :kind)
+                                                                       (:remember
+                                                                        (let* ((scope
+                                                                                (ecase
+                                                                                    (memory-collection-resource-visibility
+                                                                                     resource)
+                                                                                  (:workspace
+                                                                                   ':workspace)
+                                                                                  (:global
+                                                                                   ':global)))
+                                                                               (memory
+                                                                                (memory-resource--remember
+                                                                                 configuration
+                                                                                 :title
+                                                                                 (getf operation
+                                                                                       :title)
+                                                                                 :content
+                                                                                 (getf operation
+                                                                                       :content)
+                                                                                 :scope scope :tags
+                                                                                 (getf operation
+                                                                                       :tags)
+                                                                                 :source-conversation
+                                                                                 (conversation-identifier
+                                                                                  conversation)
+                                                                                 :evidence-arguments
+                                                                                 evidence-arguments))
+                                                                               (item-resource
+                                                                                (memory-resource--make-item
+                                                                                 (memory-identifier
+                                                                                  memory))))
+                                                                          (values
+                                                                           (memory-resource--item-observation
+                                                                            item-resource context)
+                                                                           (format nil
+                                                                                   "Created memory ~A."
+                                                                                   (memory-identifier
+                                                                                    memory))
+                                                                           (resource-uri
+                                                                            item-resource))))
+                                                                       (:replace
+                                                                        (memory-resource--remember
+                                                                         configuration :identifier
+                                                                         (memory-resource-identifier
+                                                                          resource)
+                                                                         :title
+                                                                         (getf operation :title)
+                                                                         :content
+                                                                         (getf operation :content)
+                                                                         :scope
+                                                                         (getf operation :scope)
+                                                                         :tags
+                                                                         (getf operation :tags)
+                                                                         :source-conversation
+                                                                         (conversation-identifier
+                                                                          conversation)
+                                                                         :evidence-arguments
+                                                                         evidence-arguments)
+                                                                        (values
+                                                                         (memory-resource--item-observation
+                                                                          resource context)
+                                                                         (format nil
+                                                                                 "Replaced memory ~A."
+                                                                                 (memory-resource-identifier
+                                                                                  resource))
+                                                                         (resource-uri resource)))
+                                                                       (:forget
+                                                                        (let ((memory
+                                                                               (memory-forget
+                                                                                configuration
+                                                                                (memory-resource-identifier
+                                                                                 resource)
+                                                                                :source-conversation
+                                                                                (conversation-identifier
+                                                                                 conversation))))
+                                                                          (values
+                                                                           (memory-resource--forgotten-observation
+                                                                            resource memory)
+                                                                           (format nil
+                                                                                   "Forgot memory ~A.~@[ These memories relied on it and are now stale: ~{~A~^, ~}.~]"
+                                                                                   (memory-resource-identifier
+                                                                                    resource)
+                                                                                   (mapcar
+                                                                                    (lambda
+                                                                                        (dependent)
+                                                                                      (format nil
+                                                                                              "~A \"~A\""
+                                                                                              (resource-item-uri
+                                                                                               "memory"
+                                                                                               (memory-identifier
+                                                                                                dependent))
+                                                                                              (memory-title
+                                                                                               dependent)))
+                                                                                    (memory-assessor-dependents
+                                                                                     (memory-assessor-create
+                                                                                      configuration)
+                                                                                     (memory-identifier
+                                                                                      memory))))
+                                                                           nil)))))))))))
+        (values-list memory-transaction-values)))))
 
 
 ;;;; -- Resource Tool Methods --

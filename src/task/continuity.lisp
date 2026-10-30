@@ -391,6 +391,7 @@ repeating the task's external effects is safe; it is an assertion, not a test."
                    (execute)))))
       (conversation-append-record
        conversation (list :task-inspector-result :call-id call-id
+                           :parent-call-id       (tool-context-call-id context)
                           :success-p             (tool-result-success-p result)
                           :content               (bounded-string (tool-result-content result) :limit 8000)))
       (values result call-id))))

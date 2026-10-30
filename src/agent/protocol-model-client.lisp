@@ -8,6 +8,8 @@
 (defclass agent-model-request ()
   ((index :initform 0 :accessor agent-model-request-index
           :documentation "Last validated request-wide event index.")
+   (kind :initarg :kind :initform ':generate :reader agent-model-request-kind
+         :documentation "Admitted operation, used to validate its terminal compaction outcome.")
    (attempt :initform 0 :accessor agent-model-request-attempt
             :documentation "Last started attempt.")
    (maximum :initform nil :accessor agent-model-request-maximum
@@ -30,7 +32,7 @@
 
 (-> agent-protocol-model-start (agent-protocol-client agent-wire:model-start) integer)
 (defun agent-protocol-model-start (client start)
-  "Send ordinary generation for the active turn and return its request ID.
+  "Send generation or native compaction for the active turn and return its request ID.
 Receive every correlated event through AGENT-PROTOCOL-RECEIVE. Items and handles
 are provisional until the terminal COMPLETE. Do not execute tools from deltas or
 ITEM-COMPLETED events. A cancellation acknowledgement is not a terminal result."
@@ -45,7 +47,7 @@ ITEM-COMPLETED events. A cancellation acknowledgement is not a terminal result."
        (unless (and turn (null (agent-protocol-client-stop client))
                     (string= (agent-wire:model-start.turn-id start)
                              (agent-wire:turn-start.turn-id (agent-wire:envelope.turn-start turn)))
-                    (eq (agent-wire:model-start.kind start) ':generate))
+                    (member (agent-wire:model-start.kind start) '(:generate :native-compaction)))
          (error 'agent-protocol-error :reason ':invalid-model-start))
        (when (or (>= (hash-table-count (agent-protocol-client-pending client))
                      (agent-wire:limits.max-in-flight-requests
@@ -55,7 +57,8 @@ ITEM-COMPLETED events. A cancellation acknowledgement is not a terminal result."
                               count (typep expected 'agent-model-request)))
                      *agent-protocol-model-history-limit*))
          (error 'agent-protocol-error :reason ':request-limit))
-       (values (agent-wire:make-envelope :model-start start) (make-instance 'agent-model-request))))))
+      (values (agent-wire:make-envelope :model-start start)
+              (make-instance 'agent-model-request :kind (agent-wire:model-start.kind start)))))))
 
 (-> agent-protocol-cancel-request (agent-protocol-client (integer 1)) integer)
 (defun agent-protocol-cancel-request (client request-id)
@@ -111,7 +114,10 @@ ITEM-COMPLETED events. A cancellation acknowledgement is not a terminal result."
                  (member (agent-wire:model-complete.reason complete) '(:stop :tool-calls :output-limit :filtered))
                  (member (agent-wire:model-complete.turn-completion complete)
                          '(:turn-completion-unspecified :ended :continued))
-                 (eq (agent-wire:model-complete.compaction-outcome complete) ':compaction-outcome-unspecified)
+                 (if (eq (agent-model-request-kind request) ':native-compaction)
+                     (and (eq (agent-wire:model-complete.compaction-outcome complete) ':compacted)
+                          (some #'agent-wire:output-item.has-compaction items))
+                     (eq (agent-wire:model-complete.compaction-outcome complete) ':compaction-outcome-unspecified))
                  (= (length items) (length saved))
                  (every (lambda (item bytes) (equalp (cl-protobufs:serialize-to-bytes item) bytes)) items saved)
                  (every (lambda (handle) (< 0 (length handle) 1025))

@@ -348,19 +348,14 @@
                                 (list :state ':unfinished)))))
               (telemetry--call-safely #'telemetry-shutdown)))))))
 
-(-> run-job--execute-with-application
-    (configuration run-job-request keyword)
+(-> run-job-execute-application
+    (application run-job-request keyword)
     (values keyword t (option string) list (option keyword) (option string)))
-(defun run-job--execute-with-application (configuration request permission-mode)
-  "Execute a child while its caller owns telemetry through result publication."
-  (let ((application        nil)
-        (event-orchestrator nil)
+(defun run-job-execute-application (application request permission-mode)
+  "Execute a contracted task using an existing application without owning its lifecycle."
+  (let ((event-orchestrator nil)
         (event-listener     nil))
     (unwind-protect
-         (progn
-           (setf application
-                 (application-create configuration
-                                     :permission-mode permission-mode))
            (let* ((definition
                     (run-job--resolve-definition
                      (application-configuration application) request))
@@ -427,7 +422,7 @@
                                              (run-job--read-task-result-artifact artifact-path)
                                            (run-job-error () nil)))
                                     result)))
-                         (return-from run-job--execute-with-application
+                        (return-from run-job-execute-application
                            (values
                             ':timed-out nil (task-job-execution-identifier job)
                             (run-job--usage usage-result)
@@ -442,11 +437,11 @@
                                 (handler-case
                                     (run-job--read-task-result-artifact artifact-path)
                                   (run-job-error (condition)
-                                    (return-from run-job--execute-with-application
-                                      (values
-                                       ':failed nil trace-id usage
-                                       (run-job-error-category condition)
-                                       (princ-to-string condition)))))
+                                   (return-from run-job-execute-application
+                                       (values
+                                        ':failed nil trace-id usage
+                                        (run-job-error-category condition)
+                                        (princ-to-string condition)))))
                                 compact-result))
                           (status         (getf result :status)))
                      (setf usage (run-job--usage result))
@@ -478,9 +473,18 @@
                                ':child-failure)
                          (or
                           (getf result :error)
-                          "The child failed before yielding structured data."))))))))))
+                          "The child failed before yielding structured data.")))))))))
       (when (and event-orchestrator event-listener)
-        (task-orchestrator-remove-listener event-orchestrator event-listener))
+        (task-orchestrator-remove-listener event-orchestrator event-listener)))))
+
+(-> run-job--execute-with-application
+    (configuration run-job-request keyword)
+    (values keyword t (option string) list (option keyword) (option string)))
+(defun run-job--execute-with-application (configuration request permission-mode)
+  "Create a legacy headless application and close only the resources owned here."
+  (let ((application (application-create configuration :permission-mode permission-mode)))
+    (unwind-protect
+         (run-job-execute-application application request permission-mode)
       (run-job--close-application application))))
 
 (-> run-job--success-result-valid-p (t list) boolean)

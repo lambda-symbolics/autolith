@@ -7,20 +7,31 @@
            :documentation "The established sole-reader driver; output never receives frames.")
    (turn-id :initarg :turn-id :reader agent-protocol-observer-turn-id
             :documentation "A trusted caller function returning the current turn ID or NIL.")
+   (command-policy :initarg :command-policy :initform ':deny
+                   :type          (member :deny :inherited-scope)
+                   :reader        agent-protocol-observer-command-policy
+                   :documentation "Explicit parent permission to run commands inside inherited native scope.")
    (lock :initform      (bordeaux-threads:make-lock "agent protocol presentation")
          :reader        agent-protocol-observer-lock
          :documentation "Keeps one presentation's bounded chunks contiguous."))
-  (:documentation "A presentation-only observer using existing one-way Output frames.
+  (:documentation "A parent-backed observer using existing one-way Output frames.
 All frames are untrusted PROGRESS text. Labels carry display context, not parent
-turn authority. Authorization methods use the base observer's denial behavior.
-The client write timeout and parent consumer apply backpressure. There is no
-queue, output acknowledgment, private terminal access or additional reader."))
+turn authority. Command permission requires explicit inherited native scope.
+The client write timeout and parent consumer apply backpressure."))
 
-(-> make-agent-protocol-observer (agent-protocol-driver &key (:turn-id function))
+(-> make-agent-protocol-observer
+    (agent-protocol-driver &key (:turn-id function) (:command-policy (member :deny :inherited-scope)))
     (values agent-protocol-observer &optional))
-(defun make-agent-protocol-observer (driver &key (turn-id (constantly nil)))
-  "Make a presentation observer for DRIVER. TURN-ID reads trusted lifecycle state."
-  (values (make-instance 'agent-protocol-observer :driver driver :turn-id turn-id)))
+(defun make-agent-protocol-observer (driver &key (turn-id (constantly nil)) (command-policy ':deny))
+  "Make a parent-backed observer. The parent must enforce inherited scope before Welcome."
+  (values (make-instance 'agent-protocol-observer :driver driver :turn-id turn-id
+                                                :command-policy command-policy)))
+
+(defmethod agent-observer-authorize-command
+    ((observer agent-protocol-observer) (command string) (directory pathname))
+  "Use only the parent's explicit inherited native command policy."
+  (declare (ignore command directory))
+  (agent-protocol-observer-command-policy observer))
 
 (-> agent-protocol-observer--label (string) string)
 (defun agent-protocol-observer--label (text)

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+source_root=$(CDPATH= cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+exec "$source_root/bin/autolith-runtime" \
+  --script "$source_root/script/parent.lisp" "$@"

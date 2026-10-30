@@ -9412,3 +9412,35 @@
                               (search "A[Start]" text))
                           "closed blocks render diagrams and interrupted blocks render source")))))))
   nil)
+
+(-> test-application-input-failure-backtrace () null)
+(defun test-application-input-failure-backtrace ()
+  "Test reader failure transfers its original condition and safe stack to the owner."
+  (with-test-configuration (configuration)
+    (let* ((application (make-instance 'application
+                                       :configuration configuration
+                                       :conversation  (conversation-create configuration)
+                                       :ui            (terminal-ui-create
+                                                       :terminal (make-instance 'recording-terminal))))
+           (controller  (make-instance 'application-input-controller
+                                       :application application
+                                       :main-thread (current-thread)))
+           (original    (make-condition 'simple-error :format-control "Input failed."))
+           (backtrace   (application-safe-backtrace)))
+      (setf (application-input-controller application) controller)
+      (unwind-protect
+           (progn
+             (test-assert (consp backtrace) "safe stack contains call names")
+             (application-input-controller--record-failure controller original backtrace)
+             (handler-case
+                 (progn
+                   (application-input-controller--next-work controller)
+                   (test-assert nil "reader failure reaches its owner"))
+               (application-input-failed (condition)
+                 (test-assert
+                  (and (eq (application-input-failed-original-condition condition) original)
+                       (equal (application-input-failed-backtrace condition) backtrace))
+                  "reader failure preserves the condition and safe stack"))))
+        (application-input-controller-stop controller)
+        (application-release-conversation-lease application))))
+  nil)

@@ -440,8 +440,8 @@
       (unwind-protect
            (test-call-with-function-replacements
             (list (list 'workspace-tool-authorize-outside-path
-                        (lambda (context path tool-name)
-                          (declare (ignore context path tool-name))
+                        (lambda (context path tool-name &key operations)
+                          (declare (ignore context path tool-name operations))
                           (incf authorizations)
                           allowed)))
             (lambda ()

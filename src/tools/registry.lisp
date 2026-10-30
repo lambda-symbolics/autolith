@@ -328,16 +328,28 @@
     (tool-context string pathname)
     keyword)
 (defun tool-context-authorize-command (context command directory)
-  "Return :DENY, :SANDBOXED, or :FULL-ACCESS for COMMAND in DIRECTORY."
+  "Return :DENY, :SANDBOXED, :INHERITED-SCOPE, or :FULL-ACCESS for COMMAND."
   (let* ((function (tool-context-command-authorization-function context))
          (decision (if function
                        (funcall function command directory)
                        ':deny)))
-    (unless (member decision '(:deny :sandboxed :full-access))
+    (unless (member decision '(:deny :sandboxed :inherited-scope :full-access))
       (error 'tool-error
              :message   (format nil "Command authorization returned invalid decision ~S."
                                 decision)
              :tool-name "shell.run"))
+    decision))
+
+(-> tool-context-authorize-path (tool-context pathname list) (member t nil :unhandled))
+(defun tool-context-authorize-path (context path operations)
+  "Return an exact path decision, or :UNHANDLED for legacy command approval."
+  (let* ((observer (tool-context-observer context))
+         (decision (if observer
+                       (agent-observer-authorize-path observer path operations)
+                       ':unhandled)))
+    (unless (member decision '(t nil :unhandled))
+      (error 'tool-error :message  "Path authorization returned an invalid decision."
+                        :tool-name "resource"))
     decision))
 
 (-> tool-context-authorize-tool

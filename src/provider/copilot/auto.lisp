@@ -29,9 +29,9 @@
             (copilot-auto-provider-preferred-model provider)))
     replacement))
 
-(-> copilot-auto--session (copilot-auto-provider oauth-credentials) json-object)
-(defun copilot-auto--session (provider credentials)
-  "Acquire a request-scoped Auto token without retaining secret-bearing failures."
+(-> copilot-auto--acquire-session (copilot-auto-provider oauth-credentials) json-object)
+(defun copilot-auto--acquire-session (provider credentials)
+  "Read an Auto session with host HTTP and sanitized transport failures."
   (handler-case
       (multiple-value-bind (body status)
           (provider-call-with-response-deadline
@@ -57,13 +57,24 @@
                                    :message "Copilot Auto returned invalid JSON.")))))
           (unless (json-object-p document)
             (error 'configuration-error :message "Copilot Auto returned invalid JSON."))
-          (let ((expires-at (json-get document "expires_at")))
-            (when (and (integerp expires-at)
-                       (<= expires-at (- (get-universal-time) 2208988800)))
-              (error 'configuration-error :message "Copilot Auto returned an expired session.")))
           document))
     (http-request-failed (condition)
       (provider--signal-http-status-failure provider (response-status condition)))))
+
+(-> copilot-auto--session (copilot-auto-provider oauth-credentials) json-object)
+(defun copilot-auto--session (provider credentials)
+  "Acquire and validate a request-scoped Auto session through shared policy."
+  (autolith-supervisor:family-domain-copilot-session
+   :acquire (lambda () (copilot-auto--acquire-session provider credentials))
+   :now     (lambda () (- (get-universal-time) 2208988800))
+   :check   (lambda () nil)
+   :fail    (lambda (reason)
+              (error 'configuration-error
+                     :message (case reason
+                                (:expired-auto-session
+                                 "Copilot Auto returned an expired session.")
+                                (otherwise
+                                 "Copilot Auto returned invalid JSON."))))))
 
 (-> copilot-auto--catalog (configuration) json-object)
 (defun copilot-auto--catalog (configuration)
@@ -84,20 +95,21 @@
 (-> copilot-auto--model
     (copilot-auto-provider json-object &key (:vision-p boolean)) (values list string))
 (defun copilot-auto--model (provider session &key vision-p)
-  "Resolve an entitled concrete model, refreshing stale catalog metadata once."
+  "Resolve an entitled concrete model through shared one-refresh selection."
   (let ((configuration (provider-configuration provider)))
-    (labels ((resolve-model ()
-               (copilot-auto-session-model
-                session (copilot-auto--catalog configuration)
-                :model-prefix "copilot/" :vision-p vision-p
-                :preferred-model (copilot-auto-provider-preferred-model provider))))
-      (handler-case (resolve-model)
-        (cl-llm-provider-api:provider-error ()
-          (copilot--fetch-models configuration :enable-p nil)
-          (handler-case (resolve-model)
-            (cl-llm-provider-api:provider-error ()
-              (error 'configuration-error
-                     :message "Copilot Auto returned no usable tool-capable model or a malformed session."))))))))
+    (autolith-supervisor:family-domain-copilot-model
+     :session         session
+     :catalog         (lambda () (copilot-auto--catalog configuration))
+     :refresh         (lambda ()
+                        (copilot--fetch-models configuration :enable-p nil)
+                        (copilot-auto--catalog configuration))
+     :vision-p        vision-p
+     :preferred-model (copilot-auto-provider-preferred-model provider)
+     :check           (lambda () nil)
+     :fail            (lambda (reason)
+                        (declare (ignore reason))
+                        (error 'configuration-error
+                               :message "Copilot Auto returned no usable tool-capable model or a malformed session.")))))
 
 (defmethod provider-call-with-request-adapter
     ((provider copilot-auto-provider) (credentials oauth-credentials) (function function)

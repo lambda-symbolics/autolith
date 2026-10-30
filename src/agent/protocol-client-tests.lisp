@@ -333,6 +333,30 @@
        (agent-protocol-test--expect ':invalid-session-page (lambda () (agent-protocol-receive client))))))
   nil)
 
+(-> agent-protocol-test--turnless-notes () null)
+(defun agent-protocol-test--turnless-notes ()
+  "Accept parent policy notes without a turn and reject turnless agent records."
+  (dolist (case '((:parent :note t) (:agent :note nil)
+                  (:parent :user-input nil) (:parent :turn-outcome nil)))
+    (destructuring-bind (origin kind accepted-p) case
+      (let ((welcome (agent-protocol-test--welcome)))
+        (setf (agent-wire:welcome.resume welcome)
+              (agent-wire:make-session-page
+               :high-water-sequence 1
+               :records             (list (agent-wire:make-session-record
+                                           :sequence 1 :event-id "policy-event" :origin origin :kind kind
+                                           :payload (autolith-supervisor::protocol-data->value "policy changed")))))
+        (agent-protocol-test--fixture
+         (list (agent-protocol-test--envelope 1 :reply-to 1 :welcome welcome))
+         (lambda (client)
+           (if accepted-p
+               (progn
+                 (agent-protocol-handshake client)
+                 (assert (= 1 (agent-protocol-client-last-sequence client))))
+               (agent-protocol-test--expect ':invalid-session-page
+                                            (lambda () (agent-protocol-handshake client)))))))))
+  nil)
+
 (-> agent-protocol-test--lifecycle-errors () null)
 (defun agent-protocol-test--lifecycle-errors ()
   "Reject unselected and wrong-direction operations; ignore inactive cancellation."
@@ -746,6 +770,7 @@
   (agent-protocol-test--limits)
   (agent-protocol-test--terminal-replies)
   (agent-protocol-test--invalid-pages)
+  (agent-protocol-test--turnless-notes)
   (agent-protocol-test--lifecycle-errors)
   (agent-protocol-test--deadline)
   (agent-protocol-test--session-runtime)

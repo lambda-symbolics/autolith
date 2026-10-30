@@ -142,7 +142,7 @@
    (backtrace
     :initarg       :backtrace
     :reader        application-input-failed-backtrace
-    :type          (option string)
+    :type          list
     :documentation "The backtrace captured on the terminal reader thread."))
   (:documentation
    "An internal control condition transferring reader failure to the main thread.")
@@ -316,41 +316,6 @@
                      (permissions-load-warning-cause condition))))
   (:documentation "Malformed command permissions were ignored to fail closed."))
 
-(define-condition agenda-error (autolith-error)
-  ((pathname
-    :initarg       :pathname
-    :reader        agenda-error-pathname
-    :type          pathname
-    :documentation "The workspace-agenda file being read or written.")
-   (operation
-    :initarg       :operation
-    :reader        agenda-error-operation
-    :type          keyword
-    :documentation "The agenda operation that failed.")
-   (cause
-    :initarg       :cause
-    :reader        agenda-error-cause
-    :type          t
-    :documentation "The underlying agenda failure, when available."))
-  (:documentation "Workspace agendas could not be validated, read, or persisted."))
-
-(define-condition agenda-load-warning (warning)
-  ((pathname
-    :initarg       :pathname
-    :reader        agenda-load-warning-pathname
-    :type          pathname
-    :documentation "The malformed workspace-agenda pathname.")
-   (cause
-    :initarg       :cause
-    :reader        agenda-load-warning-cause
-    :type          agenda-error
-    :documentation "The structured workspace-agenda read failure."))
-  (:report (lambda (condition stream)
-             (format stream "Ignoring workspace agendas at ~A: ~A"
-                     (agenda-load-warning-pathname condition)
-                     (agenda-load-warning-cause condition))))
-  (:documentation "Malformed workspace-agenda state was ignored during startup."))
-
 (define-condition conversation-error (autolith-error)
   ((pathname
     :initarg       :pathname
@@ -412,48 +377,6 @@
     :type          t
     :documentation "The underlying migration failure, when available."))
   (:documentation "Legacy conversation identifiers could not be migrated safely."))
-
-(define-condition memory-error (autolith-error)
-  ((pathname
-    :initarg       :pathname
-    :reader        memory-error-pathname
-    :type          pathname
-    :documentation "The persistent memory file being processed.")
-   (identifier
-    :initarg       :identifier
-    :initform      nil
-    :reader        memory-error-identifier
-    :type          (option string)
-    :documentation "The memory identifier involved in the failure, when known."))
-  (:documentation "Persistent memory data is invalid or cannot be updated."))
-
-(define-condition knowledge-error (autolith-error)
-  ((code
-    :initarg       :code
-    :initform      ':invalid
-    :reader        knowledge-error-code
-    :type          keyword
-    :documentation "A stable reason callers and tools can distinguish.")
-   (subject
-    :initarg       :subject
-    :initform      nil
-    :reader        knowledge-error-subject
-    :documentation "The identifier, predicate, or value involved, when known."))
-  (:documentation "Structured knowledge, or an operation on it, is invalid."))
-
-(define-condition papercut-error (autolith-error)
-  ((pathname
-    :initarg       :pathname
-    :reader        papercut-error-pathname
-    :type          pathname
-    :documentation "The persistent papercut file being processed.")
-   (identifier
-    :initarg       :identifier
-    :initform      nil
-    :reader        papercut-error-identifier
-    :type          (option string)
-    :documentation "The papercut identifier involved in the failure, when known."))
-  (:documentation "Persistent papercut data is invalid or cannot be updated."))
 
 (define-condition tool-error (autolith-error)
   ((tool-name

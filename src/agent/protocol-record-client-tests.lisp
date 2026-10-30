@@ -103,6 +103,20 @@
   (agent-record-test--exchange
    (agent-record-test--write ':replace)
    (agent-wire:make-envelope :failure (agent-wire:make-failure :code ':revision-conflict :retryable t)) nil)
+  (let ((request (agent-record-test--write ':create))
+        (fields  (make-hash-table :test #'equal))
+        (source  (make-hash-table :test #'equal)))
+    (setf (gethash "user" source) "Use Common Lisp for automation."
+          (gethash "title" fields) "Title"
+          (gethash "content" fields) "Body"
+          (gethash "tags" fields) #()
+          (gethash "scope" fields) "global"
+          (gethash "sources" fields) (vector source)
+          (gethash "premises" fields) #("memory-1")
+          (agent-wire:record-request.fields request)
+          (cl-protobufs.autolith.common.v1:value.map-value
+           (autolith-supervisor::protocol-data->value fields)))
+    (assert (null (agent-record--validate-request request))))
   nil)
 
 (-> agent-record-test--invalid-response () null)
@@ -113,7 +127,7 @@
   (agent-record-test--exchange (agent-record-test--query)
                                (agent-wire:make-envelope :failure (agent-wire:make-failure)) t)
   (dolist (kind '(:empty-id :empty-revision :wrong-fields :duplicate :page-limit :write-cursor
-                  :wrong-id :missing-write :delete-record :empty-cursor :cursor-without-records))
+                  :wrong-id :missing-write :delete-record :empty-cursor :cursor-without-records :bad-evidence))
     (let* ((record   (agent-record-test--record))
            (request  (case kind
                        ((:write-cursor :wrong-id :missing-write)
@@ -130,7 +144,13 @@
          (setf (agent-wire:stored-record.revision record) ""))
         (:wrong-fields
          (setf (agent-wire:stored-record.fields record)
-               (agent-record-test--map '("title" "Title" "content" "Body" "scope" "global"))))
+              (agent-record-test--map '("title" "Title" "content" "Body" "unknown" "global"))))
+        (:bad-evidence
+         (let ((source (make-hash-table :test #'equal)))
+           (setf (gethash "kind" source) "file"
+                 (agent-wire:stored-record.fields record)
+                 (agent-record-test--map
+                  (list "title" "Title" "content" "Body" "sources" (vector source))))))
         ((:duplicate :page-limit)
          (setf (agent-wire:record-response.records response) (list record (agent-record-test--record)))
          (when (eq kind ':duplicate) (setf (agent-wire:record-request.limit request) 2)))
@@ -191,7 +211,7 @@
                (agent-record-test--map
                 (append '("title" "Title" "content" "Body")
                         (case kind (:scope
-                                    '("scope" "global"))
+                                    '("scope" "private"))
                               (:unknown
                                '("extra" "text")) (:bad-tags
                                                    '("tags" "tag")))))))
@@ -273,6 +293,37 @@
                   :record-response (agent-wire:make-record-response :records (list record))) nil))))
   nil)
 
+(-> agent-record-test--scopes () null)
+(defun agent-record-test--scopes ()
+  "Reject scope without negotiation and reject scope outside the memory collection."
+  (agent-protocol-test--peers
+   (lambda (parent)
+     (autolith-supervisor::parent-connection-handshake parent (agent-record-test--welcome))
+     (assert (eq 'agent-wire:output
+                 (agent-wire:envelope.body-case (autolith-supervisor::parent-connection-receive parent)))))
+   (lambda (client)
+     (agent-protocol-handshake client :features '("session.v1" "records.v1"))
+     (assert (handler-case
+                 (progn (agent-protocol-record-request client (agent-record-test--query) :scope ':global) nil)
+               (agent-protocol-error (condition)
+                 (eq ':record-scopes-not-negotiated (agent-protocol-error-reason condition)))))
+     (assert (zerop (hash-table-count (agent-protocol-client-pending client))))
+     (agent-protocol-output client ':diagnostic "done")))
+  (dolist (collection '(:agenda :papercut))
+    (assert (handler-case
+                (progn (agent-record--validate-request
+                        (agent-wire:make-record-request :collection collection :operation ':query :limit 1
+                                                        :scope ':workspace)) nil)
+              (agent-protocol-error (condition)
+                (eq ':invalid-record-request (agent-protocol-error-reason condition))))))
+  (assert (handler-case
+              (progn (agent-record--validate-request
+                      (agent-wire:make-record-request :collection ':memory :operation ':query :limit 1
+                                                      :scope ':scope-unspecified)) nil)
+            (agent-protocol-error (condition)
+              (eq ':invalid-record-request (agent-protocol-error-reason condition)))))
+  nil)
+
 (-> run-agent-protocol-record-tests () integer)
 (defun run-agent-protocol-record-tests ()
   "Run serialized record-client success, failure, and strict validation checks."
@@ -281,4 +332,5 @@
   (agent-record-test--invalid-response)
   (agent-record-test--detached)
   (agent-record-test--collections)
-  5)
+  (agent-record-test--scopes)
+  6)

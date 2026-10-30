@@ -2931,17 +2931,18 @@ may fill the remainder."
                   (return))))))))
   nil)
 
-(-> application-render-records
-    (application &key (:streamed-assistant-text (option string))
-                      (:streamed-reasoning-text (option string)))
-    null)
-(defun application-render-records
+(defgeneric application-render-records
     (application &key streamed-assistant-text streamed-reasoning-text)
-  "Append APPLICATION's not-yet-rendered durable transcript records once.
+  (:documentation
+   "Append APPLICATION's not-yet-rendered durable transcript records once.
 
 Assistant and reasoning records are suppressed only when their joined durable
 text exactly matches the corresponding streamed text. Suppressed identifiers
-remain finalized so later conversation replay cannot duplicate streamed rows."
+remain finalized so later conversation replay cannot duplicate streamed rows."))
+
+(defmethod application-render-records
+    ((application application) &key streamed-assistant-text streamed-reasoning-text)
+  "Present the file-backed application transcript and publish recovery state."
   (with-recursive-lock-held ((application-render-lock application))
     (cond
       ((and (not (application-transcript-synchronized-p application))

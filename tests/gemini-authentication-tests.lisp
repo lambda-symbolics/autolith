@@ -167,4 +167,25 @@
                     *gemini-test-saved-credentials*)
                    "access-login"))
      "Gemini login publishes credentials through the credential manager"))
+  (with-test-configuration (configuration)
+    (with-test-environment (("AUTOLITH_GEMINI_OAUTH_CLIENT_ID" "environment-client")
+                            ("AUTOLITH_GEMINI_OAUTH_CLIENT_SECRET" "environment-secret"))
+      (let ((manager (gemini-credential-manager-create configuration)))
+        (test-call-with-function-replacements
+         (list
+          (list 'cl-rfc8252:browser-authentication-login
+                (lambda (client received &rest options)
+                  (declare (ignore client options))
+                  (test-assert (eq manager received) "Gemini login uses the agent manager")
+                  (test-assert
+                   (equal "environment-client" (autolith-supervisor::gemini-oauth-client-id))
+                   "Gemini login uses the manager's environment client ID")
+                  (test-assert
+                   (equal "environment-secret" (autolith-supervisor::gemini-oauth-client-secret))
+                   "Gemini login uses the manager's environment client secret")
+                  (make-instance 'oauth-credentials
+                                 :access-token "fixture-token" :refresh-token nil :id-token nil
+                                 :expires-at nil :account-id nil
+                                 :source-path (configuration-gemini-auth-path configuration)))))
+         (lambda () (gemini-oauth-login manager :open-browser-p nil))))))
   nil)

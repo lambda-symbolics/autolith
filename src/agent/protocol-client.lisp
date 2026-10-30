@@ -195,7 +195,9 @@ Keep old entries so retries and later pages cannot erase evidence of a conflict.
           (and (< sequence (agent-wire:session-record.sequence record))
                (<= (agent-wire:session-record.sequence record) high)
                (plusp (length (agent-wire:session-record.event-id record)))
-               (plusp (length (agent-wire:session-record.turn-id record)))
+               (or (plusp (length (agent-wire:session-record.turn-id record)))
+                   (and (eq ':parent (agent-wire:session-record.origin record))
+                        (eq ':note (agent-wire:session-record.kind record))))
                (member (agent-wire:session-record.origin record) '(:parent :agent))
                (member (agent-wire:session-record.kind record)
                        '(:user-input :assistant-message :tool-started :tool-finished :note
@@ -229,7 +231,10 @@ Call INITIALIZE with Welcome before Ready. Do not read the channel in that callb
 The deadline covers I/O and initialization. Return the accepted Welcome."
   (unless (and (member "session.v1" features :test #'equal)
                (= (length features) (length (remove-duplicates features :test #'equal)))
-               (subsetp features '("session.v1" "model.v1" "model-items-v1" "records.v1") :test #'equal)
+               (subsetp features '("session.v1" "model.v1" "model-items-v1" "records.v1" "access.v1"
+                                   "knowledge.v1" "record-scopes-v1" "application.v1") :test #'equal)
+               (or (not (member "record-scopes-v1" features :test #'equal))
+                   (member "records.v1" features :test #'equal))
                (eq (not (null (member "model.v1" features :test #'equal)))
                    (not (null (member "model-items-v1" features :test #'equal)))))
     (error 'agent-protocol-error :reason ':unsupported-features))
@@ -379,6 +384,19 @@ Do not retry effects after disconnect."
                                 (plusp (agent-wire:turn-start.input-sequence turn)))
                            (setf (agent-protocol-client-turn client) (agent-protocol--message-copy envelope))
                            (progn (setf accepted nil) (setf rejection ':invalid-request)))))
+                    (agent-wire:application-steering
+                     (let* ((steering (agent-wire:envelope.application-steering envelope))
+                            (turn     (agent-protocol-client-turn client)))
+                       (if (and turn
+                                (string= (agent-wire:application-steering.turn-id steering)
+                                         (agent-wire:turn-start.turn-id (agent-wire:envelope.turn-start turn)))
+                                (plusp (length (agent-wire:application-steering.operation-id steering)))
+                                (plusp (agent-wire:application-steering.input-sequence steering))
+                                (member "application.v1" (agent-wire:welcome.features
+                                                           (agent-protocol-client-welcome client)) :test #'equal))
+                           (autolith-supervisor::protocol-application-action-validate
+                            (agent-wire:application-steering.action steering))
+                           (progn (setf accepted nil) (setf rejection ':invalid-request)))))
                     (agent-wire:turn-cancel
                      (let ((id
                             (agent-wire:turn-cancel.turn-id
@@ -439,6 +457,11 @@ Do not retry effects after disconnect."
           (setf (agent-protocol-client-last-sequence client)
                 (max (agent-protocol-client-last-sequence client)
                      (agent-wire:session-ack.sequence ack))))))
+      (agent-wire:parent-operation-result
+       (autolith-supervisor::protocol-map->data
+        (agent-wire:parent-operation-result.fields
+         (agent-wire:envelope.parent-operation-result envelope))
+        :max-depth 8 :max-entries 4096))
       (agent-wire:failure
        (agent-protocol--failure client (agent-wire:envelope.failure envelope)))))
   t)

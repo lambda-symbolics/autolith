@@ -1488,12 +1488,15 @@ a crash may leave one that a later lease acquisition can reuse safely."
     (conversation family &key (include-ephemeral-p t))
   "Return CONVERSATION's provider projection usable by FAMILY."
   (with-recursive-lock-held ((conversation-append-lock conversation))
-    (clinker-transcript:items-for-family
-     (conversation-input-items-for-request
-      conversation :include-ephemeral-p include-ephemeral-p)
-     family
-     :item-families    (conversation-input-item-families conversation)
-     :handoff-families (conversation-portable-handoff-families conversation))))
+    (remove-if
+     (lambda (item)
+       (and (conversation-parent-compaction-item-p item) (not (eq family ':parent))))
+     (clinker-transcript:items-for-family
+      (conversation-input-items-for-request
+       conversation :include-ephemeral-p include-ephemeral-p)
+      family
+      :item-families    (conversation-input-item-families conversation)
+      :handoff-families (conversation-portable-handoff-families conversation)))))
 
 (-> conversation-compaction-summary-view
     (conversation list &optional (option keyword))
@@ -1687,8 +1690,10 @@ copied."
               (delete-file (image-attachment-pathname attachment))))))))
   nil)
 
-(-> conversation-image-artifact-root (conversation) pathname)
-(defun conversation-image-artifact-root (conversation)
+(defgeneric conversation-image-artifact-root (conversation)
+  (:documentation "Return the approved binary image artifact directory for CONVERSATION."))
+
+(defmethod conversation-image-artifact-root ((conversation conversation))
   "Return CONVERSATION's private binary image artifact directory."
   (let* ((conversation-root
            (uiop:pathname-directory-pathname

@@ -10,11 +10,12 @@ defensive decoding, portable value conversion, and startup negotiation are
 implemented as standalone libraries. The optional
 =autolith-supervisor/protocol= system loads without the agent system.
 
-The default launch path does not use this protocol yet. The supervisor starts,
-waits for, and cleans up its direct child; the agent handles terminal I/O,
-provider transport, and private storage. Keep this launch path as the default
-until the new path passes end-to-end tests. See [[file:architecture.org][Architecture]] for the
-current implementation.
+Ordinary =bin/autolith= launches use =script/parent.lisp --cli= and this
+protocol. The trusted parent owns terminal input and rendering, provider
+credentials and callbacks, provider transport, approvals, and private storage.
+Agent initialization and private mutation replay run in the restricted child.
+See [[file:architecture.org][Architecture]] for the current implementation. The sections below also
+specify protocol requirements beyond the implemented services.
 
 Use Protobuf for typed messages. Use the common data types in later public
 schemas, but define remote control as a separate interface with its own
@@ -115,12 +116,109 @@ terminates =Hello= while opening a handshake obligation of its own. =Ready=
 terminates that obligation. Each =reply_to= names the immediately preceding
 handshake message. A handshake failure terminates startup and stops the child.
 
-The features are =session.v1=, =model.v1=, =records.v1=, and =access.v1=.
+The features are =session.v1=, =model.v1=, =records.v1=, =record-scopes-v1=,
+=knowledge.v1=, and =access.v1=. =record-scopes-v1= requires =records.v1=.
 =session.v1= is mandatory; the others are enabled only when offered by the agent
 and selected by the parent. Reject calls to unselected services. Lifecycle,
 output, and structured errors are always available. Startup must finish within
 a parent-configured deadline, default 30 seconds, or the parent stops the child.
 A major-version mismatch fails startup; optional additions use feature names.
+
+* Structured knowledge and scoped memory
+
+The optional =knowledge.v1= service uses the shared knowledge engine in the
+parent. The agent sends bounded portable data in =KnowledgeRequest= and receives
+=KnowledgeResponse= or a fixed =Failure= code. Neither side reads Lisp forms
+from request fields. The service does not accept store paths or executable code.
+The parent supplies the store context, workspace, evidence policy, and admission
+callback when it creates the service.
+
+=RecordRequest.scope= requires =record-scopes-v1=. Omit it for the original
+=records.v1= workspace behavior. Explicit scopes select memory services that the
+parent configured. Global memory requires a separate parent grant. Cursors,
+record revisions, and collection guards are scope-bound. An operation ID binds
+the full request, including its scope. A scope move requires both configured
+services to share the same trusted store context. The returned item can then be
+edited through its new scope.
+
+=KnowledgeRequest.scope= selects workspace or global knowledge. An unspecified
+scope means workspace. The parent must enable global access. Workspace reads
+include global facts only with that permission. The parent projects the complete
+graph before evaluation, rendering, admission checks, and writes. Another
+workspace's facts cannot satisfy a contract or a rule in this scope.
+
+| Operation | Fields and result |
+|-----------+-------------------|
+| =READ= | =view= names =facts=, =predicates=, =rules=, =methods=, =contracts=, =procedures=, =changes=, or =claim/ID=. Returns text and an exact graph revision. Only =facts= accepts =query= and =limit=. |
+| =EDIT= | =view= is =facts=. =fields.operations= contains 1 to 16 public edit maps. Requires an issued =expected_revision= and a stable =operation_id=. Returns text and a new revision. |
+| =CHECK= | =fields= contains =tool= and an =arguments= map. Returns =none=true=, a refusal, or an opaque handle with an optional passive-mode refusal. |
+| =RECORD= | =fields= contains a parent-issued =handle= and successful tool-result text in =result=. To release a failed or abandoned call, send =outcome="abandoned"= and omit =result=. Requires a stable =operation_id=. Returns claim IDs and mapping errors. |
+| =CONTEXT= | Workspace-only fields are =query=, =turn=, and =active=. Returns memory and fact lines, change text, and stale, unverified, and change counts. |
+| =EXPAND= | Workspace-only fields are =task= and optional =depth_limit= and =node_limit=. Returns plan steps, status, and details. |
+| =READ= with =view= =plan= | Workspace-only =fields.action= selects =prepare=, =render=, =changes=, or =delivered=. The parent checks bounded step requirements and verification patterns against its authorized graph. The agent stores the plan. |
+
+=READ=, =CHECK=, =CONTEXT=, and =EXPAND= use an empty operation ID. Non-view
+operations use an empty view and no revision guard. Unknown fields and operations
+fail. Public edits cover predicate definitions, fact assertion and retraction,
+rule proposals, method definitions, and contract proposals. Recipe resources are
+not part of this checkout's interface.
+
+The parent checks the full authorized graph against an issued observation under
+the store lock. It stages the complete edit batch and its receipt, then appends
+both together. A failed batch publishes neither data nor a receipt. A repeated
+session and operation ID with the same canonical request returns the saved
+response before checking the guard or handle. This also works after reopening
+the service. Reusing that ID for different data fails.
+
+Only parent policy can admit a rule or contract. The callback receives the exact
+kind, scope, ID, version, and proposed data. A child request cannot admit its own
+proposal. File evidence must pass parent root and quote checks. User evidence
+must match parent input history. URL evidence is an observation only when a
+trusted parent retrieval callback supplies checked evidence. Other URLs support
+proposals.
+
+The production startup configuration supplies =knowledge_mode= as =active=,
+=passive=, or =off=. Active mode checks requirements before a tool call and
+records successful results. Passive mode records results without refusing the
+call. Off mode bypasses knowledge capture. Parent-backed tools never reopen a
+local private knowledge store. The parent also checks its own mode before it
+includes facts in turn context. A child cannot enable parent-disabled context.
+
+Plan completion receipts are opaque parent-issued tokens. The parent binds each
+token to the workspace, global-access grant, step identity and text,
+requirements, and verification pattern. The issuer session is audit metadata.
+It stores receipt state separately from viewer snapshots and checks the binding after a service reopen. Plan requests do not change the
+knowledge graph.
+
+Plan fields include =steps= and =canonical=. For =prepare=, send new steps in
+model input form and the prior canonical steps in =previous=. The parent returns
+normalized steps, rendered text, and change lines in =fields=, without a graph
+revision. For the other actions, send canonical typed terms and opaque receipt
+tokens. =changes= supplies active-mode advice; =delivered= records the snapshot
+shown by a normal plan tool. The agent caches advice for one conversation turn.
+Explicit plan tools check current facts in all three knowledge modes.
+
+A plan has at most 32 steps and each step has at most 32 required patterns.
+Plan text is at most 500 characters per step; an explanation is at most 4096
+characters. Rendered plan text and each change line are at most 131072 characters.
+The parent keeps at most 128 receipt tokens per workspace, with current tokens
+first. The private receipt snapshot permits 32 workspaces, 1024 tokens, and 8 MiB
+per store. Unknown, expired, changed-step, and cross-workspace tokens fail with
+=permission-denied=. A cold service reads the same private receipt snapshot.
+
+Each knowledge request and response is at most 1 MiB and must fit the negotiated
+frame limit. Record and knowledge traffic share a limit of 64 requests and 8 MiB
+per second. Fact views return at most 50 results. Query text is at most 4096
+characters; rendered content and recorded result text are at most 262144
+characters. Issued graph observations and outstanding contract handles each have
+64 entries and a 4 MiB budget. A committed =RECORD= consumes its handle; its
+durable receipt permits retries, including after reopening the service. An
+abandoned outcome records no claims or predictions. The agent releases handles
+on failed results and nonlocal exits. Retraction requires the exact claim owner
+scope, including when the request identifies a support instead of its claim.
+Session and operation IDs are at most 256
+characters. Context turn numbers range from 0 to 1000000000. Expansion depth is
+at most 8, and the node limit ranges from 1 to 1000.
 
 * Messages and completion
 
@@ -161,11 +259,13 @@ otherwise end it with =CANCELLED=. An unknown target is =INVALID_REQUEST=.
 Retain terminal request IDs for the connection so repeated cancellation can
 return =already_terminal=true=. Agent termination cancels its provider calls.
 
-Access states =PENDING_APPROVAL= and =APPROVED_PENDING_RESTART= are nonterminal;
-=DENIED=, =ACTIVE=, =FAILED=, and =EXPIRED= are terminal. Cancellation before
-policy commit prevents the grant. After commit, cancellation does not revoke
-policy; report the committed state and restart, or close with the restart. The
-parent records the final disposition even if the old instance never receives it.
+Access state =PENDING_APPROVAL= is nonterminal. States
+=APPROVED_PENDING_RESTART=, =DENIED=, =ACTIVE=, =FAILED=, and =EXPIRED= are
+terminal for the request on its current connection. After a restart, the parent
+reports the active policy in =Welcome=. Cancellation before policy commit
+prevents the grant. After commit, cancellation does not revoke policy. Report
+the committed state and restart. The parent records the final disposition even
+if the old instance never receives it.
 
 A =Failure= contains a stable code and a redacted explanation. =retryable= is
 advice, not permission to repeat an operation with possible external effects.
@@ -476,6 +576,17 @@ ASSESS, and CLOSE require the exact ID and expected revision. They do not
 accept query pagination fields. REPLACE replaces writable fields completely.
 An empty =RecordResponse= acknowledges a delete; other writes return the
 resulting record and revision. Conflicts return =REVISION_CONFLICT=.
+
+QUERY returns =collection_revision= for an exact structural snapshot of the full
+parent-authorized collection scope, independent of the query filter. All pages
+of one query retain that revision. The parent retains bounded issued observations.
+CREATE can supply =expected_collection_revision=. Agenda REPLACE and DELETE can
+also supply it, in addition to the item revision. The parent checks the issued
+observation against the current exact scope inside the same write transaction,
+before any append or receipt. Unknown or stale observations fail with
+=REVISION_CONFLICT=. Omission preserves the low-level write contract. The guard
+is part of the operation payload identity. An identical committed retry returns
+its receipt before checking the guard, including after its observation expires.
 
 All writes require a nonempty =operation_id=. Persist their payload identity
 and result atomically with the write, scoped to the session. Identical retries

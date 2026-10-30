@@ -53,6 +53,90 @@
                (cl-protobufs.autolith.parent.v1:session-ack.sequence ack)))
       (unwind-protect
            (progn
+             ;; Nested calls retain their own identities and an active parent chain.
+             (let* ((path  (path))
+                    (store (session-store-open path "nested-session")))
+               (session-store-start-turn store "nested-turn" "input")
+               (labels ((start (event call &key parent (source "worker"))
+                          (append-request
+                           event "nested-turn" ':tool-started
+                           (if parent
+                               (map-value "call_id" call "name" "fixture.effect"
+                                          "arguments" (make-hash-table :test 'equal)
+                                          "parent_call_id" parent "source" source)
+                               (map-value "call_id" call "name" "fixture.effect"
+                                          "arguments" (make-hash-table :test 'equal)))))
+
+                        (finish (event call &key parent (source "worker"))
+                          (append-request
+                           event "nested-turn" ':tool-finished
+                           (if parent
+                               (map-value "call_id" call "result" "done" "is_error" nil
+                                          "parent_call_id" parent "source" source)
+                               (map-value "call_id" call "result" "done" "is_error" nil)))))
+                 (session-store-append store (start "root-start" "root"))
+                 (dolist (parent '("missing" "child"))
+                   (rejects (lambda () (session-store-append store (start "bad-parent" "child" :parent parent)))
+                            ':invalid-nested-parent))
+                 (rejects (lambda () (session-store-append store (start "bad-source" "child" :parent "root" :source "model")))
+                          ':invalid-nested-call)
+                 (rejects (lambda ()
+                            (session-store-append
+                             store (append-request "missing-source" "nested-turn" ':tool-started
+                                                   (map-value "call_id" "child" "name" "fixture.effect"
+                                                              "arguments" (make-hash-table :test 'equal)
+                                                              "parent_call_id" "root"))))
+                          ':invalid-nested-call)
+                 (let* ((request (start "child-start" "child" :parent "root"))
+                        (ack     (session-store-append store request)))
+                   (check (= (sequence-of ack) (sequence-of (session-store-append store request))))
+                   (rejects (lambda () (session-store-append store (start "duplicate-start" "child" :parent "root")))
+                            ':call-conflict)
+                   (rejects (lambda () (session-store-append store (start "child-start" "other-child" :parent "root")))
+                            ':event-conflict))
+                 (dolist (request (list (finish "missing-identity" "child")
+                                       (finish "wrong-parent" "child" :parent "other")
+                                       (finish "wrong-source" "child" :parent "root" :source "task-inspector")
+                                       (finish "missing-start" "other" :parent "root")))
+                   (rejects (lambda () (session-store-append store request)) ':unmatched-tool-finish))
+                 (let* ((request (finish "child-finish" "child" :parent "root"))
+                        (ack     (session-store-append store request)))
+                   (check (= (sequence-of ack) (sequence-of (session-store-append store request)))))
+                 (rejects (lambda () (session-store-append store (finish "duplicate-finish" "child" :parent "root")))
+                          ':unmatched-tool-finish)
+                 (rejects (lambda () (session-store-append store (start "closed-parent" "grandchild" :parent "child")))
+                          ':invalid-nested-parent)
+                 (loop for depth from 1 below 32
+                       for parent = "root" then call
+                       for call = (format nil "depth-~D" depth)
+                       do (session-store-append store (start (format nil "start-~D" depth) call :parent parent)))
+                 (rejects (lambda () (session-store-append store (start "depth-overflow" "too-deep" :parent "depth-31")))
+                          ':invalid-nested-parent)
+                 ;; Cold replay retains the same parent links and completed state.
+                 (setf store (session-store-open path "nested-session" :recover-interrupted nil))
+                 (check (= 35 (length (records (read-page store)))))
+                 (rejects (lambda () (session-store-append store (start "cold-duplicate" "child" :parent "root")))
+                          ':call-conflict)
+                 (session-store-finish-turn store "nested-turn" ':completed)
+                 (session-store-start-turn store "later-turn" "next")
+                 (rejects (lambda ()
+                            (session-store-append
+                             store (append-request "cross-turn" "later-turn" ':tool-started
+                                                   (map-value "call_id" "later-child" "name" "fixture.effect"
+                                                              "arguments" (make-hash-table :test 'equal)
+                                                              "parent_call_id" "root" "source" "worker"))))
+                          ':invalid-nested-parent)))
+             ;; Check the inclusive per-turn call bound without writing 65536 records.
+             (let ((calls   (make-hash-table :test 'equal))
+                   (payload (session-store--value-data
+                             (map-value "call_id" "next" "name" "fixture.effect"
+                                        "arguments" (make-hash-table :test 'equal)))))
+               (dotimes (index 65535)
+                 (setf (gethash (format nil "call-~D" index) calls) (list "bounded" ':started index)))
+               (check (null (session-store--call-check calls "bounded" ':tool-started :payload payload)))
+               (setf (gethash "last" calls) (list "bounded" ':started 65536))
+               (rejects (lambda () (session-store--call-check calls "bounded" ':tool-started :payload payload))
+                        ':call-limit))
              ;; Parent model results have a separate trusted shape and retry identity.
              (let* ((path      (path))
                     (store     (session-store-open path "model-session"))

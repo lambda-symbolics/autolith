@@ -734,7 +734,8 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
                    "resource.read")
                   (:edit
                    "resource.edit"))))
-          (unless (workspace-tool-authorize-outside-path context path tool-name)
+          (unless (workspace-tool-authorize-outside-path
+                   context path tool-name :operations (if (eq operation ':edit) '("write") '("read")))
             (error 'tool-error
                    :message
                    (format nil "~A requires full-access approval for path ~A outside the workspace and source roots."

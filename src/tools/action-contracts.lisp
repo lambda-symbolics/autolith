@@ -115,9 +115,23 @@ original metadata as provenance and adapt visible section ranges to its prefix."
                    :error-code        (tool-result-error-code result)
                    :denied-p          (tool-result-denied-p result))))
 
+(defgeneric tool-context-parent-contracts-p (context)
+  (:documentation "Return whether CONTEXT uses parent-owned knowledge contracts."))
+
+(defmethod tool-context-parent-contracts-p ((context t))
+  "Use local contracts unless a parent knowledge adapter is installed."
+  (declare (ignore context))
+  nil)
+
+(defgeneric tool-execute-parent-contracts (tool context arguments)
+  (:documentation "Execute a tool with parent-owned contract checks and result recording."))
+
 (-> tool-execute-with-contracts (tool tool-context json-object) tool-result)
 (defun tool-execute-with-contracts (tool context arguments)
   "Execute TOOL with ARGUMENTS under CONTEXT, honoring the contracts describing the call."
+  (when (tool-context-parent-contracts-p context)
+    (return-from tool-execute-with-contracts
+      (tool-execute-parent-contracts tool context arguments)))
   (let* ((configuration (tool-context-configuration context))
          (name          (tool-canonical-name tool))
          (matches       (and configuration

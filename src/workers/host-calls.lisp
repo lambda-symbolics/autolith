@@ -94,6 +94,17 @@ Intersect requests with the originating turn's policy and exact tool registry."
                                  (format nil "Tool ~A is unavailable to this worker request." name)))))
       (values names t))))
 
+(-> worker-host--call-id ((option string) list) string)
+(defun worker-host--call-id (parent-call-id identity)
+  "Return a bounded replay-stable identifier for one nested worker call.
+Hash the full identity tuple; retain the ancestor separately in the audit record."
+  (let ((data (with-standard-io-syntax
+                (write-to-string (list parent-call-id (getf identity :session)
+                                       (getf identity :request-id) (getf identity :call-id))))))
+    (concatenate 'string "worker:"
+                 (ironclad:byte-array-to-hex-string
+                  (ironclad:digest-sequence ':sha256 (utf8-string-to-octets data))))))
+
 (-> worker-host--context (tool-context string) tool-context)
 (defun worker-host--context (origin call-id)
   "Clone ORIGIN's exact authority, changing only the correlated call identity."
@@ -154,10 +165,7 @@ CONTEXT is host-owned data; worker payloads cannot replace its authority."
          (worker-host--reject ':invalid-arguments
                               "Use worker-tool-call with an exact tool name and JSON object source."))
        (let* ((name         (getf payload :tool))
-              (call-id      (format nil "worker:~A:~A:~A:~A"
-                                    (or (tool-context-call-id origin) "local")
-                                    (getf identity :session) (getf identity :request-id)
-                                    (getf identity :call-id)))
+              (call-id      (worker-host--call-id (tool-context-call-id origin) identity))
               (conversation (tool-context-conversation origin))
               (call-context (worker-host--context origin call-id))
               (observer     (tool-context-observer origin))
@@ -170,55 +178,58 @@ CONTEXT is host-owned data; worker payloads cannot replace its authority."
                              :arguments        (getf payload :arguments)))
          (unwind-protect
               (progn
-                (setf result
-                      (cond
-                        ((not (member name names :test #'string=))
-                         (tool-failure "Tool is not in this worker request's host-tools allowlist."
-                                       :code ':capability-denied))
-                       ((and (uiop:string-prefix-p "lisp." name)
-                             (equal (json-get (json-decode (getf payload :arguments)) "target") "self"))
-                        (tool-failure "Worker host calls do not carry active-image authority."
+               (setf result
+                     (cond
+                       ((not (member name names :test #'string=))
+                        (tool-failure "Tool is not in this worker request's host-tools allowlist."
                                       :code ':capability-denied))
-                       ((worker-host--reentrant-p name
-                                                  (json-decode (getf payload :arguments)) :repl repl)
-                        (tool-failure "The calling REPL is awaiting this callback. Select a different REPL for nested execution."
-                                      :code ':worker-reentrancy))
-                       (t
-                        (let ((tool (find name (tool-registry-tools (tool-context-registry origin))
-                                          :key #'tool-canonical-name :test #'string=)))
-                          (cond
-                            ((null tool)
-                             (tool-failure "The requested host tool is no longer available."
-                                           :code ':tool-unavailable))
-                            ((string= (tool-namespace tool) "self")
-                             (tool-failure "Worker host calls do not carry active-image authority."
-                                           :code ':capability-denied))
-                            (t
-                             (let ((call (json-object "namespace" (tool-namespace tool)
-                                                      "name" (tool-name tool)
-                                                      "call_id" call-id
-                                                      "arguments" (getf payload :arguments))))
-                                (flet ((execute ()
-                                         (tool-registry-execute-call
-                                          (tool-context-registry origin) call call-context)))
-                                  (if observer
-                                      (agent-observer-call-with-tool-execution observer call-id #'execute)
-                                      (execute))))))))))
-                (let ((portable (worker-host--result result)))
-                  (conversation-append-record
-                   conversation (list :worker-tool-result :call-id call-id
-                                      :parent-call-id     (tool-context-call-id origin)
-                                      :identity identity :result portable))
-                  (setf completed-p t)
-                  portable))
+                      ((and (uiop:string-prefix-p "lisp." name)
+                            (equal (json-get (json-decode (getf payload :arguments)) "target") "self"))
+                       (tool-failure "Worker host calls do not carry active-image authority."
+                                     :code ':capability-denied))
+                      ((worker-host--reentrant-p name
+                                                 (json-decode (getf payload :arguments)) :repl repl)
+                       (tool-failure "The calling REPL is awaiting this callback. Select a different REPL for nested execution."
+                                     :code ':worker-reentrancy))
+                      (t
+                       (let ((tool (find name (tool-registry-tools (tool-context-registry origin))
+                                         :key #'tool-canonical-name :test #'string=)))
+                         (cond
+                           ((null tool)
+                            (tool-failure "The requested host tool is no longer available."
+                                          :code ':tool-unavailable))
+                           ((string= (tool-namespace tool) "self")
+                            (tool-failure "Worker host calls do not carry active-image authority."
+                                          :code ':capability-denied))
+                           (t
+                            (let ((call (json-object "namespace" (tool-namespace tool)
+                                                     "name" (tool-name tool)
+                                                     "call_id" call-id
+                                                     "arguments" (getf payload :arguments))))
+                               (flet ((execute ()
+                                        (tool-registry-execute-call
+                                         (tool-context-registry origin) call call-context)))
+                                 (if observer
+                                     (agent-observer-call-with-tool-execution observer call-id #'execute)
+                                     (execute))))))))))
+               (let ((portable (worker-host--result result)))
+                 (conversation-append-record
+                  conversation (list :worker-tool-result :call-id call-id
+                                     :parent-call-id     (tool-context-call-id origin)
+                                     :identity identity :result portable))
+                 (setf completed-p t)
+                 portable))
            (unless completed-p
-             (conversation-append-record
-              conversation (list :worker-tool-result :call-id call-id
-                                 :parent-call-id     (tool-context-call-id origin)
-                                 :identity identity :result
-                                 (list :success-p nil :category ':failure
-                                       :code  ':unknown-outcome
-                                     :content *conversation-interrupted-tool-output*))))))))))
+             ;; An uncertain outcome is an audit note, never a finished tool event.
+             (handler-case
+                 (conversation-append-record
+                  conversation (list :worker-tool-interrupted :call-id call-id
+                                     :parent-call-id          (tool-context-call-id origin)
+                                     :identity identity :result
+                                     (list :success-p nil :category ':failure
+                                           :code    ':unknown-outcome
+                                           :content *conversation-interrupted-tool-output*)))
+               (error () nil)))))))))
 
 (-> worker-host-request (sbcl-worker keyword list
                          &key (:context tool-context) (:tools list)) list)

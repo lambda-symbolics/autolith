@@ -1211,9 +1211,9 @@ socket."
     (executable-skill-register-tools registry)
     (skill-edit-augment-tool-registry registry)
     (when (fboundp 'structural-register-default-tools)
-      (structural-register-default-tools registry))
+      (funcall (symbol-function 'structural-register-default-tools) registry))
     (when (fboundp 'debug-register-default-tools)
-      (debug-register-default-tools registry))
+      (funcall (symbol-function 'debug-register-default-tools) registry))
     (when immutable-p
       (default-tools--remove-mutable-self-tools registry))
     registry))

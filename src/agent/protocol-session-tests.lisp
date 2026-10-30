@@ -30,10 +30,17 @@
 
 (-> agent-session-test--start (agent-protocol-client function) agent-protocol-session)
 (defun agent-session-test--start (client runner)
-  "Build an isolated bridge with an explicit turn runner and no worker startup."
-  (agent-protocol-session-start client (make-configuration) "profile"
-                                :worker ':fixture :tool-registry (make-instance 'tool-registry)
-                                :run-turn runner))
+  "Build a bridge with an explicit turn runner and bind its observer after driver creation."
+  (agent-protocol-session-start
+   client (make-configuration) "profile"
+   :worker ':fixture :tool-registry (make-instance 'tool-registry)
+   :observer-factory
+   (lambda (driver session)
+     (assert (eq driver (agent-protocol-session-driver session)))
+     (assert (null (agent-protocol-session-worker session)))
+     (assert (null (agent-protocol-session-agent session)))
+     (make-instance 'agent-observer))
+   :run-turn runner))
 
 (-> agent-session-test--until-finish (t) null)
 (defun agent-session-test--until-finish (runtime)
@@ -432,6 +439,193 @@
           (agent-session-test--cleanup path)))))
   nil)
 
+(defclass agent-session-test-effect-tool (tool)
+  ((function :initarg :function :reader agent-session-test-effect-tool-function
+             :documentation "The observable effect body."))
+  (:documentation "A registered tool used by real nested dispatch checks."))
+
+(defmethod tool-execute ((tool agent-session-test-effect-tool) (context tool-context) (arguments hash-table))
+  "Run the nested fixture through the ordinary registry boundary."
+  (funcall (agent-session-test-effect-tool-function tool) context arguments))
+
+(defclass agent-session-test-effect-observer (agent-observer)
+  ((interrupt-p :initarg :interrupt-p :reader agent-session-test-effect-observer-interrupt-p
+                :documentation "Whether to interrupt after a nested effect returns."))
+  (:documentation "Inject a lost completion after an effect, outside the registry handler."))
+
+(define-condition agent-session-test-completion-interrupted (error) ()
+  (:documentation "A fixture effect returned before its completion path failed."))
+
+(defmethod agent-observer-call-with-tool-execution
+    ((observer agent-session-test-effect-observer) identifier function)
+  "Interrupt only nested completion after the real effect has run."
+  (let ((result (funcall function)))
+    (when (and (agent-session-test-effect-observer-interrupt-p observer)
+               (not (equal identifier "outer")))
+      (error 'agent-session-test-completion-interrupted))
+    result))
+
+(-> agent-session-test--nested
+    (&key (:worker-p boolean) (:interrupted-p boolean) (:lost-finish-ack-p boolean)) null)
+(defun agent-session-test--nested (&key worker-p interrupted-p lost-finish-ack-p)
+  "Run real worker or task-inspector effects over the sole-reader parent connection."
+  (uiop:with-temporary-file (:pathname path :stream stream)
+    (close stream) (delete-file path)
+    (let* ((root             (uiop:ensure-directory-pathname (make-pathname :type "nested" :defaults path)))
+           (configuration
+             (apply #'make-configuration
+                    :source-root       (asdf:system-source-directory :autolith-agent)
+                    :working-directory (asdf:system-source-directory :autolith-agent)
+                    :config-root       (merge-pathnames "config/" root)
+                    :data-root         (merge-pathnames "data/" root)
+                    :state-root        (merge-pathnames "state/" root)
+                    :cache-root        (merge-pathnames "cache/" root)
+                    :telemetry-enabled-p nil :onboarding-p nil
+                    (let ((core (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE")))
+                      (when (non-empty-string-p core) (list :active-image-core (pathname core))))))
+           (registry         (make-instance 'tool-registry))
+           (pool             (and worker-p (lisp-worker-pool-create configuration)))
+           (effects          0)
+           (outer-id         (make-string 1024 :initial-element #\p))
+           (observed-records nil)
+           (turn-failure     nil)
+           (nested-id        nil))
+      (tool-registry-register
+       registry (make-instance 'agent-session-test-effect-tool
+                               :namespace "session-test" :name "effect"
+                               :description "Count an actual nested effect."
+                               :parameters  (tool-object-schema (json-object) nil)
+                               :function
+                               (lambda (context arguments)
+                                 (declare (ignore arguments))
+                                 (setf nested-id (tool-context-call-id context))
+                                 (incf effects)
+                                 (tool-success "effect complete"))))
+      (unwind-protect
+           (progn
+             (agent-session-test--exchange
+              path
+              (lambda (runtime)
+                (autolith-supervisor::session-runtime-start-turn runtime "nested" "input")
+                (if lost-finish-ack-p
+                    (loop
+                      (multiple-value-bind (request bytes)
+                          (autolith-supervisor::parent-connection-receive
+                           (autolith-supervisor::session-runtime-connection runtime))
+                        (let ((record (and (agent-wire:envelope.has-session-append request)
+                                           (agent-wire:session-append.record (agent-wire:envelope.session-append request)))))
+                          (if (and record (eq (agent-wire:session-record.kind record) ':tool-finished)
+                                   (gethash "source" (autolith-supervisor::protocol-value->data
+                                                      (agent-wire:session-record.payload record))))
+                              (progn
+                                (autolith-supervisor::session-store-append
+                                 (autolith-supervisor::session-runtime-store runtime)
+                                 (agent-wire:envelope.session-append request))
+                                (autolith-supervisor::session-runtime-disconnect runtime)
+                                (return))
+                              (autolith-supervisor::session-runtime--incoming
+                               nil runtime request :bytes (length bytes))))))
+                    (agent-session-test--until-finish runtime))
+                (setf observed-records
+                      (agent-wire:session-page.records
+                       (autolith-supervisor::session-store-read
+                        (autolith-supervisor::session-runtime-store runtime)
+                        (agent-wire:make-session-read :limit 256))))
+                (unless lost-finish-ack-p (agent-session-test--stop runtime)))
+              (lambda (client)
+                (let ((session
+                        (agent-protocol-session-start
+                         client configuration "profile" :tool-registry registry :worker (or pool ':fixture)
+                         :observer (make-instance 'agent-session-test-effect-observer :interrupt-p interrupted-p)
+                         :run-turn
+                         (lambda (session observer)
+                           (let* ((conversation (agent-protocol-session-conversation session))
+                                  (context      (make-instance 'tool-context :configuration configuration
+                                                               :conversation conversation :registry registry
+                                                               :agent                       (agent-protocol-session-agent session)
+                                                               :worker pool :observer observer :call-id outer-id)))
+                             (conversation-append-provider-item
+                              conversation (json-object "type" "function_call" "call_id" outer-id
+                                                        "name" "fixture.outer" "arguments" "{}"))
+                             (handler-case
+                                 (agent-observer-call-with-tool-execution
+                                  observer outer-id
+                                  (lambda ()
+                                    (if worker-p
+                                        (worker-host-eval-request
+                                         (lisp-worker-pool-worker pool "nested-session") ':eval
+                                         (list :forms '("(autolith:worker-tool-call \"session-test.effect\" \"{}\")"))
+                                         :context context :tools '("session-test.effect") :enabled-p t)
+                                        (task-continuity-dispatch context "session-test" "effect" :arguments (json-object)))))
+                               (agent-session-test-completion-interrupted () (assert interrupted-p))
+                               (error (condition) (setf turn-failure condition)))
+                             (assert (= 1 effects))
+                             (assert (not (find nested-id (conversation-input-items conversation)
+                                                :test #'equal :key (lambda (item) (json-get item "call_id")))))
+                             (unless (or interrupted-p lost-finish-ack-p)
+                               (conversation-append-record conversation (list :tool-result :call-id outer-id
+                                                                              :status ':ok :output "done"))))))))
+                  (unwind-protect
+                       (progn
+                         (agent-protocol-session-join session :timeout 90)
+                         (if lost-finish-ack-p
+                             (assert (agent-protocol-session-failure session))
+                             (progn
+                               (assert (agent-protocol-session-stopped session))
+                               (assert (null (agent-protocol-session-failure session))))))
+                    (agent-protocol-session-close session)
+                    (agent-protocol-session-join session :timeout 3)))))
+             (let* ((starts   (remove-if-not (lambda (record) (eq (agent-wire:session-record.kind record) ':tool-started)) observed-records))
+                    (finishes (remove-if-not (lambda (record) (eq (agent-wire:session-record.kind record) ':tool-finished)) observed-records))
+                    (nested   (find nested-id starts :test #'equal
+                                    :key                   (lambda (record)
+                                                             (gethash "call_id" (autolith-supervisor::protocol-value->data
+                                                                                 (agent-wire:session-record.payload record)))))))
+               (unless lost-finish-ack-p
+                 (assert (null turn-failure) () "Nested dispatch failed: ~A" turn-failure))
+               (assert (= 1 effects))
+               (assert (= 2 (length starts)))
+               (assert (= (cond (lost-finish-ack-p
+                                 1) (interrupted-p
+                                     0) (t
+                                         2)) (length finishes)))
+               (assert nested)
+               (let ((payload (autolith-supervisor::protocol-value->data (agent-wire:session-record.payload nested))))
+                 (assert (equal outer-id (gethash "parent_call_id" payload)))
+                 (assert (equal (if worker-p "worker" "task-inspector") (gethash "source" payload))))
+               (assert (notany (lambda (record)
+                                 (let ((local (agent-session--local-record record)))
+                                   (and (member (first local) '(:worker-tool-result :task-inspector-result)) interrupted-p)))
+                               observed-records)))
+             ;; A fresh session must not turn nested audit calls into model calls.
+             (agent-session-test--exchange
+              path
+              (lambda (runtime)
+                (autolith-supervisor::session-runtime-start-turn runtime "resumed" "next")
+                (agent-session-test--until-finish runtime)
+                (agent-session-test--stop runtime))
+              (lambda (client)
+                (let ((session
+                        (agent-session-test--start
+                         client (lambda (session observer)
+                                  (declare (ignore observer))
+                                  (let ((items (conversation-input-items (agent-protocol-session-conversation session))))
+                                    (assert (= 1 effects))
+                                    (assert (not (find nested-id items :test #'equal
+                                                      :key                   (lambda (item) (json-get item "call_id")))))
+                                    (when (or interrupted-p lost-finish-ack-p)
+                                      (assert (search *conversation-interrupted-tool-output* (json-encode items)))))))))
+                  (unwind-protect
+                       (progn
+                         (agent-protocol-session-join session :timeout 5)
+                         (assert (null (agent-protocol-session-failure session))))
+                    (agent-protocol-session-close session)
+                    (agent-protocol-session-join session :timeout 3))))))
+        (when pool (lisp-worker-pool-stop-all pool))
+        (agent-session-test--cleanup path)
+        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
+  nil)
+
 (-> run-agent-protocol-session-tests () integer)
 (defun run-agent-protocol-session-tests ()
   "Run focused parent-backed conversation and turn lifecycle checks."
@@ -443,4 +637,9 @@
   (agent-session-test--paging)
   (agent-session-test--lost-ack)
   (agent-session-test--result-classification)
-  8)
+  (dolist (worker-p '(nil t))
+    (dolist (mode '(:completed :interrupted :lost-finish-ack))
+      (agent-session-test--nested :worker-p         worker-p
+                                 :interrupted-p     (eq mode ':interrupted)
+                                 :lost-finish-ack-p (eq mode ':lost-finish-ack))))
+  14)

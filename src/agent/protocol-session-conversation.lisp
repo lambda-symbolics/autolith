@@ -5,6 +5,8 @@
 (defclass agent-session-conversation (conversation)
   ((driver :initarg :driver :accessor agent-session-conversation-driver
            :documentation "The sole-reader driver used for authoritative session operations.")
+   (artifact-root :initform nil :accessor agent-session-conversation-artifact-root
+    :documentation "An approved read-only legacy artifact projection supplied by the parent.")
    (records :initform nil :accessor agent-session-conversation-records
             :documentation "Acknowledged or parent-read records, in chronological order.")
    (high-water :initform 0 :accessor agent-session-conversation-high-water
@@ -21,6 +23,10 @@
    (repairs :initform nil :accessor agent-session-conversation-repairs
             :documentation "Truthful missing-result records to publish before the next model request."))
   (:documentation "An in-memory projection with parent-owned durable storage. No legacy sidecars."))
+
+(defmethod conversation-image-artifact-root ((conversation agent-session-conversation))
+  "Resolve imported images only under the parent's public projection."
+  (or (agent-session-conversation-artifact-root conversation) (call-next-method)))
 
 (defmethod conversation--restore-provider-item ((conversation agent-session-conversation) item)
   "Preserve new parent records exactly, including malformed argument strings."
@@ -47,20 +53,41 @@
                              (incf (agent-session-conversation-counter conversation))))
            (payload  (make-hash-table :test #'equal))
            (kind     ':note)
-           (call-id  (getf (rest record) :call-id)))
+           (call-id  (getf (rest record) :call-id))
+           (started  (gethash call-id (agent-session-conversation-started-calls conversation))))
       (unless (and turn-id (conversation--record-form-p record)
                    (not (conversation--property-present-p (rest record) ':seq)))
         (error 'agent-protocol-error :reason ':invalid-agent-record))
       (setf (gethash "version" payload) 1
             (gethash "agent_record" payload) (agent-session-value-encode record))
-      (when (and (eq (first record) ':tool-result)
-                 (equal turn-id (gethash call-id (agent-session-conversation-started-calls conversation))))
-        (setf kind ':tool-finished
-              payload (let ((result (make-hash-table :test #'equal)))
-                        (setf (gethash "call_id" result) call-id
-                              (gethash "result" result) payload
-                              (gethash "is_error" result) (not (eq (getf (rest record) :status) ':ok)))
-                        result)))
+      (when (and (member (first record) '(:tool-result :worker-tool-result :task-inspector-result))
+                 (equal turn-id (first started)))
+        (let ((source (case (first record)
+                        (:worker-tool-result
+                         "worker")
+                        (:task-inspector-result
+                         "task-inspector"))))
+          (unless (and (eq (fourth started) ':started) (equal source (second started)))
+            (error 'agent-protocol-error :reason ':mismatched-tool-result))
+          (when (and source
+                     (not (equal (getf (rest record) :parent-call-id) (third started))))
+            (error 'agent-protocol-error :reason ':mismatched-tool-result))
+          (setf kind ':tool-finished
+                payload (let ((result (make-hash-table :test #'equal)))
+                          (setf (gethash "call_id" result) call-id
+                                (gethash "result" result) payload
+                                (gethash "is_error" result)
+                                (case (first record)
+                                  (:tool-result
+                                   (not (eq (getf (rest record) :status) ':ok)))
+                                  (:worker-tool-result
+                                   (not (getf (getf (rest record) :result) :success-p)))
+                                  (:task-inspector-result
+                                   (not (getf (rest record) :success-p)))))
+                          (when source
+                            (setf (gethash "source" result) source
+                                  (gethash "parent_call_id" result) (third started)))
+                          result))))
       (let* ((wire      (agent-wire:make-session-record
                          :event-id event-id :turn-id turn-id :kind kind
                          :payload (autolith-supervisor::protocol-data->value payload)))
@@ -70,6 +97,8 @@
         (setf (agent-wire:session-record.sequence wire) sequence
               (agent-wire:session-record.origin wire) ':agent)
         (agent-session--retain conversation wire)
+        (when (eq kind ':tool-finished)
+          (setf (fourth started) ':finished))
         ;; The existing callers install their prepared projection only after append.
         (setf (conversation-next-sequence conversation) (1+ sequence))
         (conversation--note-activity conversation sequenced)
@@ -125,7 +154,19 @@
            (error 'agent-protocol-error :reason ':invalid-agent-record))
          (list* (first local) :seq sequence :time 0 (rest local))))
       ((and (eq (agent-wire:session-record.origin record) ':parent)
-            (eq (agent-wire:session-record.kind record) ':user-input))
+            (eq (agent-wire:session-record.kind record) ':note)
+            (hash-table-p (gethash "legacy_header" payload)))
+       (let ((header (gethash "legacy_header" payload)))
+         (list* ':conversation
+           (loop for (name key) in '(("id" :id) ("created-at" :created-at) ("title" :title)
+                                     ("title-source" :title-source) ("prompt-cache-key" :prompt-cache-key)
+                                     ("model" :model) ("model-provider" :model-provider)
+                                     ("reasoning-effort" :reasoning-effort) ("artifact-root" :artifact-root))
+                 when (nth-value 1 (gethash name header))
+                   append (list key (gethash name header))))))
+      ((and (eq (agent-wire:session-record.origin record) ':parent)
+            (eq (agent-wire:session-record.kind record) ':user-input)
+            (not (gethash "application_kind" payload)))
        (let ((text (gethash "text" payload)))
          (list :message :seq sequence :time 0 :role ':user :content text
                :wire-json (json-encode (user-message-item text nil)))))
@@ -177,8 +218,13 @@ Do not run a tool, repeat a model request, or write a repair during this read."
           (cond
             (local
              (unless (and handle (gethash handle seen))
-               (conversation--apply-record conversation local)
-               (when handle (setf (gethash handle seen) t))))
+               (when (and (eq (first local) ':conversation) (getf (rest local) :artifact-root))
+                (setf (agent-session-conversation-artifact-root conversation)
+                      (uiop:ensure-directory-pathname (getf (rest local) :artifact-root))))
+              (if (eq (first local) ':conversation)
+                  (agent-session--restore-header conversation (rest local))
+                  (conversation--apply-record conversation local))
+              (when handle (setf (gethash handle seen) t))))
             ((and (eq (agent-wire:session-record.origin record) ':parent)
                   (eq (agent-wire:session-record.kind record) ':note))
              (agent-session--restore-model-result conversation record seen :saved-records saved))
@@ -225,8 +271,9 @@ Do not run a tool, repeat a model request, or write a repair during this read."
   "Restore a started call absent from accepted provider output, without executing it."
   (let* ((payload (autolith-supervisor::protocol-value->data (agent-wire:session-record.payload record)))
          (id      (gethash "call_id" payload)))
-    (unless (find id (conversation-input-items conversation)
-                  :test #'equal :key (lambda (item) (and (function-call-item-p item) (json-get item "call_id"))))
+    (unless (or (gethash "source" payload)
+                (find id (conversation-input-items conversation)
+                      :test #'equal :key (lambda (item) (and (function-call-item-p item) (json-get item "call_id")))))
       (conversation--append-input-item
        conversation (json-object "type" "function_call" "call_id" id
                                  "name" (gethash "name" payload)
@@ -262,4 +309,24 @@ Do not run a tool, repeat a model request, or write a repair during this read."
           for record = (first (agent-session-conversation-repairs conversation))
           do (conversation-append-record conversation record)
              (pop (agent-session-conversation-repairs conversation))))
+  nil)
+
+(-> agent-session--restore-header (agent-session-conversation list) null)
+(defun agent-session--restore-header (conversation properties)
+  "Restore approved imported metadata without changing the parent session identity."
+  (dolist (entry '((:title conversation-title) (:prompt-cache-key conversation-prompt-cache-key)
+                   (:model conversation-model) (:model-provider conversation-model-provider)
+                   (:reasoning-effort conversation-reasoning-effort)))
+    (when (conversation--property-present-p properties (first entry))
+      (funcall (fdefinition (list 'setf (second entry)))
+               (getf properties (first entry)) conversation)))
+  (when (getf properties :created-at)
+    (setf (slot-value conversation 'created-at) (getf properties :created-at)))
+  (when (getf properties :title-source)
+    (setf (conversation-title-source conversation)
+      (find (getf properties :title-source) '(:initial :generated :manual :user)
+        :test #'string-equal :key #'symbol-name)))
+  (when (getf properties :artifact-root)
+    (setf (agent-session-conversation-artifact-root conversation)
+          (uiop:ensure-directory-pathname (getf properties :artifact-root))))
   nil)

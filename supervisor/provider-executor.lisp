@@ -199,66 +199,128 @@
               (dexador.error:response-status condition)
               (dexador.error:response-headers condition)))))
 
+(defvar *provider-executor-wire-provider* nil
+  "The request-local family adapter used by the shared transport engine.")
+
+(defvar *provider-executor-additional-secrets* nil
+  "Additional request-local transport credentials, including Auto session tokens.")
+
+(defgeneric provider-executor-with-credentials (account &key executor state invocation function force-refresh)
+  (:documentation "Scope trusted credentials and account authentication transport for one attempt."))
+
+(defmethod provider-executor-with-credentials ((account chatgpt-account)
+                                               &key executor state invocation function force-refresh)
+  "Use the shared credential manager without changing compatibility behavior."
+  (declare (ignore executor state invocation))
+  (cl-rfc8628:call-with-credentials (chatgpt-account-credential-manager account)
+                                    function :force-refresh force-refresh))
+
+(defgeneric provider-executor-open-stream
+    (account &key executor request credentials invocation turn-state)
+  (:documentation "Open the parent-selected transport for one account attempt."))
+
+(defmethod provider-executor-open-stream
+           ((account chatgpt-account) &key executor request credentials invocation turn-state)
+  "Open the compatibility ChatGPT transport with explicit trusted metadata."
+  (funcall (chatgpt-executor-opener executor) (chatgpt-account-endpoint account) request
+           credentials :session-id (chatgpt-executor-session-id executor) :turn-state turn-state
+           :user-agent (chatgpt-executor-user-agent executor) :deadline-seconds
+           (- (model-invocation-deadline invocation) (funcall (chatgpt-executor-clock executor)))))
+
+(defgeneric provider-executor-attempt
+    (account &key executor state invocation credentials callback)
+  (:documentation "Encode and execute one authenticated attempt under the shared retry budget."))
+
 (declaim (ftype (function (&key (:executor chatgpt-executor) (:state provider-http-state)
                                (:invocation model-invocation) (:account chatgpt-account)
                                (:request hash-table) (:credentials cl-rfc8628:oauth-credentials)
                                (:turn-state (or null string)) (:callback function)) t)
                 chatgpt-executor--request))
 
-(defun chatgpt-executor--request (&key executor state invocation account request credentials
-                                      turn-state callback)
+(defun chatgpt-executor--request
+       (&key executor state invocation account request credentials turn-state callback)
   "Run the shared request engine and verify strict cleanup outside its suppressed cleanup hook."
   (let ((clock    (chatgpt-executor-clock executor))
         (closer   (chatgpt-executor-closer executor))
-        (provider (make-instance 'chatgpt-wire-provider)))
+        (provider (or *provider-executor-wire-provider* (make-instance 'chatgpt-wire-provider))))
     (unwind-protect
-         (cl-llm-provider-api::provider--call-with-transport-normalization
-          (lambda ()
-            (cl-llm-provider-api::provider-execute-request
-             provider request :secrets (cl-rfc8628:oauth-credentials-secret-values credentials)
-             :event-callback           (lambda (event)
-                                         (provider-http--check-invocation state invocation clock)
-                                         (funcall callback event))
-             :transport
-             (lambda (encoded)
-               (provider-http--open
-                state
-                (lambda ()
-                  (provider-http--http-values
-                   (lambda ()
-                     (provider-http--check-invocation state invocation clock)
-                     (funcall (chatgpt-executor-opener executor)
-                              (chatgpt-account-endpoint account) encoded credentials
-                              :session-id       (chatgpt-executor-session-id executor)
-                              :turn-state turn-state :user-agent (chatgpt-executor-user-agent executor)
-                              :deadline-seconds (- (model-invocation-deadline invocation) (funcall clock))))))
-                closer))
-             :call-with-deadline
-             (lambda (function)
-               (provider-http--check-invocation state invocation clock)
-               (cl-llm-provider-api:provider-call-with-response-deadline
-                (- (model-invocation-deadline invocation) (funcall clock)) function))
-             :cleanup                  (lambda (stream)
-                                         (declare (ignore stream))
-                                         (provider-http--close state closer)))))
-      ;; PROVIDER-EXECUTE-REQUEST suppresses cleanup errors, including our hook's errors.
+        (cl-llm-provider-api:provider--call-with-transport-normalization
+         (lambda ()
+           (cl-llm-provider-api:provider-execute-request provider request :secrets
+                                                         (append
+                                                          *provider-executor-additional-secrets*
+                                                          (cl-rfc8628:oauth-credentials-secret-values
+                                                           credentials))
+                                                         :event-callback
+                                                         (lambda (event)
+                                                           (provider-http--check-invocation state
+                                                            invocation clock)
+                                                           (funcall callback event))
+                                                         :transport
+                                                         (lambda (encoded)
+                                                           (provider-http--open state
+                                                            (lambda ()
+                                                              (provider-http--http-values
+                                                               (lambda ()
+                                                                 (provider-http--check-invocation
+                                                                  state invocation clock)
+                                                                 (provider-executor-open-stream
+                                                                  account :executor executor
+                                                                  :request encoded :credentials
+                                                                  credentials :invocation
+                                                                  invocation :turn-state
+                                                                  turn-state))))
+                                                            closer))
+                                                         :call-with-deadline
+                                                         (lambda (function)
+                                                           (provider-http--check-invocation state
+                                                            invocation clock)
+                                                           (cl-llm-provider-api:provider-call-with-response-deadline
+                                                            (-
+                                                             (model-invocation-deadline invocation)
+                                                             (funcall clock))
+                                                            function))
+                                                         :cleanup
+                                                         (lambda (stream)
+                                                           (declare (ignore stream))
+                                                           (provider-http--close state closer)))))
       (provider-http--close state closer))))
+
+(defmethod provider-executor-attempt
+           ((account chatgpt-account) &key executor state invocation credentials callback)
+  "Encode a ChatGPT generation request through the shared Responses library."
+  (destructuring-bind
+      (projection tools profile kind summary-p continuation turn-state)
+      (model-invocation-inputs invocation)
+    (declare (ignore summary-p))
+    (unless (and (eq kind ':generate) (eq (model-profile-family profile) ':responses))
+      (error 'provider-executor-error :reason ':unsupported))
+    (let* ((provider (make-instance 'chatgpt-wire-provider))
+           (request  (cl-llm-provider-api:provider-request-object provider projection tools)))
+      (when continuation (setf (gethash "previous_response_id" request) continuation))
+      (unless (gethash "include" request)
+        (setf (gethash "include" request) #("reasoning.encrypted_content")))
+      (setf (gethash "prompt_cache_key" request) (chatgpt-executor-session-id executor))
+      (chatgpt-executor--request :executor executor :state state :invocation invocation :account
+       account :request request :credentials credentials :turn-state turn-state :callback
+       callback))))
 
 (declaim (ftype (function (chatgpt-executor provider-http-state model-invocation
                            &key (:callback function)) t) chatgpt-executor--run))
 
 (defun chatgpt-executor--run (executor state invocation &key callback)
   "Encode one admitted projection and share one retry budget across HTTP and refresh recovery."
-  (destructuring-bind (projection tools profile kind summary-p continuation turn-state)
+  (destructuring-bind
+      (projection tools profile kind summary-p continuation turn-state)
       (model-invocation-inputs invocation)
-    (declare (ignore summary-p))
-    (unless (and (eq kind ':generate) (eq (model-profile-family profile) ':responses))
-      (error 'provider-executor-error :reason ':unsupported))
+    (declare (ignore projection tools kind summary-p continuation turn-state))
     (let* ((account          (gethash profile (chatgpt-executor-accounts executor)))
            (maximum-attempts (chatgpt-executor-maximum-attempts executor))
            (clock            (chatgpt-executor-clock executor))
-           (provider         (make-instance 'chatgpt-wire-provider))
-           (attempts 0) (refresh nil) (refreshed nil) (retry-announced nil))
+           (attempts         0)
+           (refresh          nil)
+           (refreshed        nil)
+           (retry-announced  nil))
       (unless (typep account 'chatgpt-account)
         (error 'provider-executor-error :reason ':unknown-account))
       (labels ((check ()
@@ -274,9 +336,11 @@
                          (error 'provider-executor-error :reason ':attempt-limit))
                        (setf retry-announced t)
                        (funcall callback
-                                (make-instance 'cl-llm-provider-api:provider-retry-event
-                                               :attempt (1+ attempts) :maximum-attempts maximum-attempts
-                                               :delay (cl-llm-provider-api:provider-retry-event-delay event))))
+                                (make-instance 'cl-llm-provider-api:provider-retry-event :attempt
+                                               (1+ attempts) :maximum-attempts maximum-attempts
+                                               :delay
+                                               (cl-llm-provider-api:provider-retry-event-delay
+                                                event))))
                      (funcall callback event)))
 
                (attempt (event-callback)
@@ -286,48 +350,43 @@
                    (error 'provider-executor-error :reason ':attempt-limit))
                  (incf attempts)
                  (setf retry-announced nil)
-                 (cl-rfc8628:call-with-credentials
-                  (chatgpt-account-credential-manager account)
+                 (provider-executor-with-credentials account :executor executor :state state
+                  :invocation invocation :function
                   (lambda (credentials)
                     (setf refresh nil)
                     (check)
-                    (let ((request (cl-llm-provider-api:provider-request-object provider projection tools)))
-                      (when continuation (setf (gethash "previous_response_id" request) continuation))
-                      (unless (gethash "include" request)
-                        (setf (gethash "include" request) #("reasoning.encrypted_content")))
-                      (setf (gethash "prompt_cache_key" request) (chatgpt-executor-session-id executor))
-                      (prog1
-                          (chatgpt-executor--request
-                           :executor executor :state state :invocation invocation :account account
-                           :request request :credentials credentials :turn-state turn-state
-                           :callback event-callback)
-                        (check))))
+                    (prog1
+                        (provider-executor-attempt account :executor executor :state state
+                         :invocation invocation :credentials credentials :callback event-callback)
+                      (check)))
                   :force-refresh refresh)))
         (check)
-        (funcall callback (make-instance 'cl-llm-provider-api:provider-retry-event
-                                        :attempt 1 :maximum-attempts maximum-attempts :delay 0))
+        (funcall callback
+                 (make-instance 'cl-llm-provider-api:provider-retry-event :attempt 1
+                                :maximum-attempts maximum-attempts :delay 0))
         (unwind-protect
-             (cl-llm-provider-api:call-with-streaming-retries
-              (lambda (event-callback)
-                (handler-case (attempt event-callback)
-                  (cl-llm-provider-api:provider-unauthorized (condition)
-                    (unless (and (not refreshed) (< attempts maximum-attempts)
-                                 (cl-rfc8628:credential-manager-refreshable-p
-                                  (chatgpt-account-credential-manager account)))
-                      (error condition))
-                    (setf refresh t refreshed t)
-                    ;; Re-enter the same engine, not a nested authentication retry ladder.
-                    (error 'cl-llm-provider-api:provider-retryable-error
-                           :message "Refresh ChatGPT credentials before retry." :status 401))))
-              #'observe :maximum-retries (1- maximum-attempts)
-              :maximum-streaming-retries (min 2 (1- maximum-attempts))
-              :sleep-function            (lambda (seconds)
-                                           (check)
-                                           (provider-http--sleep
-                                            state (min seconds (- (model-invocation-deadline invocation)
-                                                                  (funcall clock))) clock)
-                                           (check))
-              :delay-function            (chatgpt-executor-delay-function executor))
+            (cl-llm-provider-api:call-with-streaming-retries
+             (lambda (event-callback)
+               (handler-case (attempt event-callback)
+                             (cl-llm-provider-api:provider-unauthorized (condition)
+                              (unless
+                                  (and (not refreshed) (< attempts maximum-attempts)
+                                       (cl-rfc8628:credential-manager-refreshable-p
+                                        (chatgpt-account-credential-manager account)))
+                                (error condition))
+                              (setf refresh t
+                                    refreshed t)
+                              (error 'cl-llm-provider-api:provider-retryable-error :message
+                                     "Refresh parent account credentials before retry." :status
+                                     401))))
+             #'observe :maximum-retries (1- maximum-attempts) :maximum-streaming-retries
+             (min 2 (1- maximum-attempts)) :sleep-function
+             (lambda (seconds)
+               (check)
+               (provider-http--sleep state
+                (min seconds (- (model-invocation-deadline invocation) (funcall clock))) clock)
+               (check))
+             :delay-function (chatgpt-executor-delay-function executor))
           (provider-http--close state (chatgpt-executor-closer executor)))))))
 
 (declaim (ftype (function (&key (:accounts hash-table) (:session-id string) (:user-agent string)

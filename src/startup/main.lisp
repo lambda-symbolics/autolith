@@ -1392,7 +1392,14 @@ autolith uninstall removes the installation and keeps user data."
 (defun main (arguments)
   "Run the Autolith command described by ARGUMENTS with stable exit classification."
   (handler-case
-      (main-dispatch arguments)
+      (if (equal arguments '("--parent-agent"))
+          (progn
+            ;; This child-only path precedes private configuration and mutations.
+            (unless (fboundp 'agent-protocol-entry-run)
+              (error 'autolith-error
+                     :message "The active core lacks the parent entry; rebuild it with script/build-active."))
+            (uiop:symbol-call '#:autolith '#:agent-protocol-entry-run))
+          (main-dispatch arguments))
     ((or autolith-error cl-llm-provider-api:provider-api-error) (condition)
       (format *error-output* "Autolith could not start: ~A~%" condition)
       (uiop:quit 64)))

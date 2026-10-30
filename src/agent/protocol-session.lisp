@@ -11,8 +11,24 @@
           :documentation "The agent with an explicit parent provider and conversation.")
    (conversation :initform nil :accessor agent-protocol-session-conversation
                  :documentation "The parent-backed conversation projection.")
-   (observer :initarg :observer :reader agent-protocol-session-observer
-             :documentation "The caller's presentation and authorization observer.")
+   (application :initform nil :accessor agent-protocol-session-application
+                :documentation "The explicit in-memory application projection; no private startup reads.")
+   (application-evaluators :initform nil :accessor agent-protocol-session-application-evaluators
+    :documentation "Threads currently evaluating child Lisp, protected by the lifecycle lock.")
+   (application-worker :initform nil :accessor agent-protocol-session-application-worker
+    :documentation "Application scope lifecycle state.")
+   (application-input :initform nil :accessor agent-protocol-session-application-input
+    :documentation "Application scope lifecycle state.")
+   (application-active :initform nil :accessor agent-protocol-session-application-active
+    :documentation "Application scope lifecycle state.")
+   (steering :initform nil :accessor agent-protocol-session-steering
+    :documentation "Application scope lifecycle state.")
+   (input-closed :initform nil :accessor agent-protocol-session-input-closed
+    :documentation "Application scope lifecycle state.")
+   (application-ready :initform (bordeaux-threads:make-condition-variable) :reader agent-protocol-session-application-ready :documentation "Wake the FIFO application worker.")
+   (application-identifiers :initform (make-hash-table :test 'equal) :reader agent-protocol-session-application-identifiers :documentation "Bounded scope identity and persistence states.")
+   (observer :initarg :observer :accessor agent-protocol-session-observer
+             :documentation "The presentation observer, bound before the turn worker starts.")
    (run-turn :initarg :run-turn :reader agent-protocol-session-run-turn
              :documentation "The turn runner, called with session and guarded observer.")
    (lock :initform (bordeaux-threads:make-lock "agent session lifecycle")
@@ -71,9 +87,8 @@
   (agent-observer-status (agent-session-observer-delegate observer) status details))
 
 (defmethod agent-observer-take-steering ((observer agent-session-observer))
-  "Keep parent input ordering; this bridge does not accept private terminal steering."
-  (declare (ignore observer))
-  nil)
+  "Return parent input in accepted order."
+  (agent-application-input-take-steering (agent-session-observer-session observer)))
 
 (defmethod agent-observer-apply-pending-operations ((observer agent-session-observer) agent)
   "Check the lifecycle before invoking caller-owned pending operations."
@@ -85,38 +100,76 @@
   (agent-session--check-running (agent-session-observer-session observer))
   (agent-observer-authorize-command (agent-session-observer-delegate observer) command directory))
 
+(defmethod agent-observer-authorize-path ((observer agent-session-observer) path operations)
+  "Check cancellation before forwarding precise filesystem authorization."
+  (agent-session--check-running (agent-session-observer-session observer))
+  (agent-observer-authorize-path (agent-session-observer-delegate observer) path operations))
+
 (defmethod agent-observer-authorize-tool ((observer agent-session-observer) tool arguments)
   "Check the lifecycle before asking the caller to authorize a tool."
   (agent-session--check-running (agent-session-observer-session observer))
   (agent-observer-authorize-tool (agent-session-observer-delegate observer) tool arguments))
 
+(defmethod agent-observer-steering-persisted ((observer agent-session-observer) identifier)
+  "Acknowledge the durable provider input to the FIFO worker."
+  (agent-application-input-steering-persisted (agent-session-observer-session observer) identifier))
+
+(-> agent-session--execution-call (agent-session-conversation string) (values hash-table t t))
+(defun agent-session--execution-call (conversation identifier)
+  "Resolve model calls or explicit nested declarations without changing model history."
+  (let* ((model (find identifier (conversation-input-items conversation)
+                      :test #'equal :key (lambda (item)
+                                           (and (function-call-item-p item) (json-get item "call_id")))))
+         (nested
+           (loop for record in (reverse (agent-session-conversation-records conversation))
+                 for local = (agent-session--local-record record)
+                 when (and (member (first local) '(:worker-tool-call :task-inspector-call))
+                           (equal identifier (getf (rest local) :call-id)))
+                   return local)))
+    (when (and model nested)
+      (error 'agent-protocol-error :reason ':ambiguous-tool-call))
+    (cond
+      (nested
+       (let ((parent (getf (rest nested) :parent-call-id))
+             (name   (getf (rest nested) :tool))
+             (source (if (eq (first nested) ':worker-tool-call) "worker" "task-inspector")))
+         (unless (and (non-empty-string-p parent) (non-empty-string-p name)
+                      (json-object-source-p (getf (rest nested) :arguments)))
+           (error 'agent-protocol-error :reason ':invalid-nested-call))
+         (values (json-object "call_id" identifier "name" name
+                              "arguments" (getf (rest nested) :arguments))
+                 parent source)))
+      (model
+       (values model nil nil))
+      (t
+       (error 'agent-protocol-error :reason ':unknown-tool-call)))))
+
 (defmethod agent-observer-call-with-tool-execution ((observer agent-session-observer) identifier function)
-  "Acknowledge ToolStarted before invoking FUNCTION. Never retry uncertain effects."
+  "Acknowledge each model or nested start before execution. Never retry uncertain effects."
   (let* ((session      (agent-session-observer-session observer))
-         (conversation (agent-protocol-session-conversation session))
-         (call         (find identifier (conversation-input-items conversation)
-                             :test #'equal :key (lambda (item)
-                                                  (and (function-call-item-p item) (json-get item "call_id")))))
-         (payload      (make-hash-table :test #'equal)))
+         (conversation (agent-protocol-session-conversation session)))
     (agent-session--check-running session)
-    (unless call (error 'agent-protocol-error :reason ':unknown-tool-call))
-    (setf (gethash "call_id" payload) identifier
-          (gethash "name" payload) (conversation--tool-call-name call)
-          (gethash "arguments" payload) (agent-context--data (json-decode (json-get call "arguments"))))
     (with-recursive-lock-held ((conversation-append-lock conversation))
-      (let* ((client (agent-protocol-session-client session))
-             (record (agent-wire:make-session-record
-                      :event-id (format nil "agent-start/~A/~D"
-                                        (autolith-supervisor::parent-connection-instance-id client)
-                                        (incf (agent-session-conversation-counter conversation)))
-                      :turn-id (agent-session-conversation-turn-id conversation) :kind ':tool-started
-                      :payload  (autolith-supervisor::protocol-data->value payload)))
-             (ack    (agent-session--append conversation record)))
-        (setf (agent-wire:session-record.sequence record) (agent-wire:session-ack.sequence ack)
-              (agent-wire:session-record.origin record) ':agent
-              (gethash identifier (agent-session-conversation-started-calls conversation))
-              (agent-session-conversation-turn-id conversation))
-        (agent-session--retain conversation record)))
+      (multiple-value-bind (call parent source) (agent-session--execution-call conversation identifier)
+        (let* ((client  (agent-protocol-session-client session))
+               (payload (json-object "call_id" identifier
+                                     "name" (conversation--tool-call-name call)
+                                     "arguments" (agent-context--data (json-decode (json-get call "arguments"))))))
+          (when parent
+            (setf (gethash "parent_call_id" payload) parent
+                  (gethash "source" payload) source))
+          (let* ((record (agent-wire:make-session-record
+                          :event-id (format nil "agent-start/~A/~D"
+                                            (autolith-supervisor::parent-connection-instance-id client)
+                                            (incf (agent-session-conversation-counter conversation)))
+                          :turn-id (agent-session-conversation-turn-id conversation) :kind ':tool-started
+                          :payload  (autolith-supervisor::protocol-data->value payload)))
+                 (ack    (agent-session--append conversation record)))
+            (setf (agent-wire:session-record.sequence record) (agent-wire:session-ack.sequence ack)
+                  (agent-wire:session-record.origin record) ':agent
+                  (gethash identifier (agent-session-conversation-started-calls conversation))
+                  (list (agent-session-conversation-turn-id conversation) source parent ':started))
+            (agent-session--retain conversation record)))))
     (agent-session--check-running session)
     (agent-observer-call-with-tool-execution (agent-session-observer-delegate observer) identifier function)))
 
@@ -135,13 +188,18 @@
 (-> agent-protocol-session-start
     (agent-protocol-client configuration string
      &key (:tool-registry (option tool-registry)) (:worker t)
-          (:observer (option agent-observer)) (:run-turn function))
+           (:observer (option agent-observer)) (:observer-factory (option function)) (:run-turn function)
+           (:reasoning-capabilities (option hash-table)))
     agent-protocol-session)
 (defun agent-protocol-session-start
-    (client configuration profile-id &key tool-registry worker observer (run-turn #'agent-session--run-default))
-  "Start an optional real agent session after handshake, with explicit configuration/profile.
-Own the client receive lifecycle until CLOSE and JOIN. The worker reads and
-projects parent history before a turn; callbacks never run turn work themselves."
+    (client configuration profile-id &key tool-registry worker observer observer-factory reasoning-capabilities
+                                          (run-turn #'agent-session--run-default))
+  "Start a real agent session after handshake with explicit configuration and profile.
+Supply OBSERVER or OBSERVER-FACTORY, not both. The factory receives the driver
+and session after receive ownership transfers and before the turn worker starts.
+It must return an AGENT-OBSERVER. Close and join the session after use."
+  (when (and observer observer-factory)
+    (error 'agent-protocol-error :reason ':conflicting-observers))
   (let* ((session      (make-instance 'agent-protocol-session :client client :run-turn run-turn
                                      :observer (or observer (make-instance 'agent-observer))))
          (conversation (make-instance 'agent-session-conversation
@@ -150,50 +208,76 @@ projects parent history before a turn; callbacks never run turn work themselves.
                                       :persisted-p t :created-at (get-universal-time)
                                       :model      (config :model configuration)
                                       :model-provider "parent" :reasoning-effort (config :reasoning-effort configuration)
-                                      :next-sequence 1 :input-items nil :driver nil)))
+                                      :next-sequence 1 :input-items nil :driver nil))
+         (started      nil))
     (setf (agent-protocol-session-conversation session) conversation)
-    (handler-case
-        (progn
-          (setf (agent-protocol-session-driver session)
-                (agent-protocol-driver-start
-                 client :lifecycle (lambda (driver envelope)
-                                     (declare (ignore driver))
-                                     (agent-session--lifecycle session envelope))
-                 :disconnect       (lambda (driver condition)
-                                     (declare (ignore driver))
-                                     (agent-session--disconnect session condition))))
-          (setf (agent-session-conversation-driver conversation) (agent-protocol-session-driver session)
-                (agent-protocol-session-agent session)
-                (agent-create :configuration configuration :conversation conversation
-                              :provider (make-agent-protocol-provider configuration (agent-protocol-session-driver session) profile-id)
-                              :tool-registry tool-registry :worker worker))
-          (setf (agent-protocol-session-worker session)
-                (bordeaux-threads:make-thread (lambda () (agent-session--work session)) :name "parent-backed agent turn"))
-          session)
-      (error (condition)
+    (unwind-protect
+         (progn
+           (setf (agent-protocol-session-driver session)
+                 (agent-protocol-driver-start
+                  client :lifecycle (lambda (driver envelope)
+                                      (declare (ignore driver))
+                                      (agent-session--lifecycle session envelope))
+                  :disconnect       (lambda (driver condition)
+                                      (declare (ignore driver))
+                                      (agent-session--disconnect session condition))))
+           (setf (agent-session-conversation-driver conversation) (agent-protocol-session-driver session))
+           (when observer-factory
+             (let ((value (funcall observer-factory (agent-protocol-session-driver session) session)))
+               (unless (typep value 'agent-observer)
+                 (error 'agent-protocol-error :reason ':invalid-observer))
+               (setf (agent-protocol-session-observer session) value)))
+           (setf (agent-protocol-session-agent session)
+                 (agent-create :configuration configuration :conversation conversation
+                               :provider (make-agent-protocol-provider
+                                          configuration (agent-protocol-session-driver session) profile-id
+                                          :reasoning-capabilities reasoning-capabilities)
+                               :tool-registry tool-registry :worker worker))
+           (agent-application-input-start session)
+           (setf (agent-protocol-session-worker session)
+                 (bordeaux-threads:make-thread (lambda () (agent-session--work session)) :name "parent-backed agent turn")
+                 started t)
+           session)
+      (unless started
         (when (agent-protocol-session-driver session)
-          (agent-protocol-driver-close (agent-protocol-session-driver session) :condition condition)
-          (agent-protocol-driver-join (agent-protocol-session-driver session)))
-        (error condition)))))
+          (agent-protocol-driver-close (agent-protocol-session-driver session))
+          (agent-protocol-driver-join (agent-protocol-session-driver session)))))))
 
 (-> agent-session--lifecycle (agent-protocol-session agent-wire:envelope) null)
 (defun agent-session--lifecycle (session envelope)
-  "Latch lifecycle messages in wire order; leave all slow work to the turn worker."
-  (bordeaux-threads:with-lock-held ((agent-protocol-session-lock session))
-    (case (agent-wire:envelope.body-case envelope)
-      (agent-wire:turn-start
-       (when (or (agent-protocol-session-turn session) (agent-protocol-session-stop session))
-         (error 'agent-protocol-error :reason ':overlapping-turn))
-       (setf (agent-protocol-session-turn session) envelope
-             (agent-protocol-session-cancelled session) nil))
-      (agent-wire:turn-cancel
-       (let ((turn (agent-protocol-session-turn session)))
-         (when (and turn (equal (agent-wire:turn-start.turn-id (agent-wire:envelope.turn-start turn))
-                               (agent-wire:turn-cancel.turn-id (agent-wire:envelope.turn-cancel envelope))))
-           (setf (agent-protocol-session-cancelled session) t))))
-      (agent-wire:prepare-stop
-       (setf (agent-protocol-session-stop session) t)))
-    (bordeaux-threads:condition-notify (agent-protocol-session-ready session)))
+  "Latch lifecycle messages in wire order and wake both workers."
+  (let ((reject nil))
+    (bordeaux-threads:with-lock-held ((agent-protocol-session-lock session))
+      (case (agent-wire:envelope.body-case envelope)
+        (agent-wire:turn-start
+         (when (or (agent-protocol-session-turn session) (agent-protocol-session-stop session))
+           (error 'agent-protocol-error :reason ':overlapping-turn))
+         (clrhash (agent-protocol-session-application-identifiers session))
+         (setf (agent-protocol-session-turn session) envelope
+               (agent-protocol-session-cancelled session) nil
+               (agent-protocol-session-input-closed session) nil
+               (agent-protocol-session-steering session) nil
+               (agent-protocol-session-application-input session) nil))
+        (agent-wire:application-steering
+         (unless (agent-application-input-deliver session envelope)
+           (setf reject t)))
+        (agent-wire:turn-cancel
+         (setf (agent-protocol-session-cancelled session) t))
+        (agent-wire:prepare-stop
+         (setf (agent-protocol-session-stop session) t)))
+      (bordeaux-threads:condition-notify (agent-protocol-session-ready session))
+      (bordeaux-threads:condition-notify (agent-protocol-session-application-ready session)))
+    (when (or (agent-protocol-session-cancelled session) (agent-protocol-session-stop session))
+      (dolist (thread (bordeaux-threads:with-lock-held ((agent-protocol-session-lock session))
+                       (copy-list (agent-protocol-session-application-evaluators session))))
+        (when (bordeaux-threads:thread-alive-p thread)
+          (bordeaux-threads:interrupt-thread thread
+            (lambda ()
+              (when (member (bordeaux-threads:current-thread)
+                            (agent-protocol-session-application-evaluators session))
+                (error 'application-turn-cancelled)))))))
+    (when reject
+      (agent-protocol--reject (agent-protocol-session-client session) envelope ':invalid-request)))
   nil)
 
 (-> agent-session--disconnect (agent-protocol-session condition) null)
@@ -202,6 +286,7 @@ projects parent history before a turn; callbacks never run turn work themselves.
   (bordeaux-threads:with-lock-held ((agent-protocol-session-lock session))
     (unless (or (agent-protocol-session-failure session) (agent-protocol-session-stopped session))
       (setf (agent-protocol-session-failure session) condition))
+    (bordeaux-threads:condition-notify (agent-protocol-session-application-ready session))
     (setf (agent-protocol-session-cancelled session) t)
     (bordeaux-threads:condition-notify (agent-protocol-session-ready session)))
   nil)
@@ -257,14 +342,19 @@ projects parent history before a turn; callbacks never run turn work themselves.
              (progn
                (agent-session-conversation-publish-repairs conversation)
                (agent-session--check-running session)
-               (funcall (agent-protocol-session-run-turn session) session
-                        (make-instance 'agent-session-observer :session session
-                                       :delegate                        (agent-protocol-session-observer session)))
+               (if (agent-wire:turn-start.has-application start)
+                   (agent-session--application-turn session start)
+                   (funcall (agent-protocol-session-run-turn session) session
+                            (make-instance 'agent-session-observer :session session
+                                           :delegate                        (agent-protocol-session-observer session))))
                (agent-session--check-running session)
                (setf outcome ':completed))
            (application-turn-cancelled () (setf outcome ':cancelled))
            (error () (setf outcome (if (agent-protocol-session-cancelled-p session) ':cancelled ':failed))))
-      (setf (agent-session-conversation-turn-id conversation) nil))
+      (agent-application-input-finish session
+       (make-instance 'agent-session-observer :session session
+         :delegate                                     (agent-protocol-session-observer session)))
+     (setf (agent-session-conversation-turn-id conversation) nil))
     ;; Clear the local turn before sending: the peer may immediately submit its next turn.
     (bordeaux-threads:with-lock-held ((agent-protocol-session-lock session))
       (setf (agent-protocol-session-turn session) nil))
@@ -285,6 +375,8 @@ projects parent history before a turn; callbacks never run turn work themselves.
   (handler-case
       (sb-ext:with-timeout timeout
         (let ((thread (agent-protocol-session-worker session)))
+          (when thread (bordeaux-threads:join-thread thread)))
+        (let ((thread (agent-protocol-session-application-worker session)))
           (when thread (bordeaux-threads:join-thread thread)))
         (agent-protocol-driver-join (agent-protocol-session-driver session) :timeout timeout))
     (sb-ext:timeout ()

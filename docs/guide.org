@@ -34,37 +34,76 @@ The work indicator displays =REPL= with one letter highlighted in sequence.
 
 * Agent process and supervisor
 
-Start =autolith= as usual. The stable launcher selects an image and starts a
-small =autolith-supervisor= process. The supervisor starts the agent, waits
-for it, and returns its exit status. The agent inherits terminal input and
-output directly.
+Start =autolith= as usual. The stable launcher selects an image and starts
+=autolith-supervisor --cli=. The trusted parent owns the terminal interface,
+approvals, provider credentials and transport, and private records. It starts
+the agent in native isolation. The agent runs reasoning, tools, workers, commands,
+and live Lisp changes through the parent protocol.
 
-Set =AUTOLITH_AGENT_LAUNCHER= to an executable wrapper to select another OS
-user or an OS sandbox:
+Use the same fullscreen composer, command editor, completion, and CLI options.
+Agent initialization and private mutation replay run only in the child.
+The parent does not evaluate ordinary agent init files.
+
+For a direct process-only command, use =bin/autolith-supervisor -- COMMAND ARG...=,
+or =bin/autolith-supervisor --launcher EXECUTABLE -- COMMAND ARG...=.
+This explicit process runner does not provide the normal parent interface.
+=bin/autolith-agent= starts the agent from source; =bin/autolith-active= is its
+compatibility entry point. Load =autolith-agent= for agent development. Load
+=autolith-supervisor= separately for parent development.
+
+Use =script/parent CONFIGURATION.sexp [SESSION-ID]= to supply an explicit parent
+configuration instead of the normal CLI configuration. The private API is
+specified in [[file:parent-agent-protocol.org][Parent-Agent Protocol]], with Protobuf schemas under =proto/=.
+Each child launch requires native isolation, including when =:access-p= is =nil=.
+Enable =:access-p= to offer restart-based access requests.
+
+Keep the configuration outside writable child scopes. Supply one data-only
+version-1 plist with absolute paths for =:runtime=, =:agent-core=, =:worker-core=,
+=:source-root=, =:workspace=, =:private-root=, and =:temporary-root=. Supply trusted
+=:runtime-roots=, =:profiles=, =:profile-id=, and =:account-configuration=. Use source-matched
+agent and worker cores. The parent rejects overlapping private and child scopes.
+Set =:knowledge-mode= to ="active"=, ="passive"=, or ="off"=; the default is
+="active"=. Set =:allow-global-p t= only when the child may use global memory
+and knowledge. The default scope is the configured workspace. For rule and
+contract admission, review the exact proposal in the parent terminal and type
+=YES=. All other answers deny admission. A trusted embedding may supply
+=:knowledge-approval= and =:url-evidence= callbacks to =make-parent-application=.
+
+
+On Linux, install the trusted native helper outside writable child scopes. Nix
+packages include it. For a source installation, compile it with:
 
 #+BEGIN_SRC sh
-AUTOLITH_AGENT_LAUNCHER=/absolute/path/to/agent-launcher autolith
+cc -O2 -Wall -Wextra -Werror supervisor/access-native-linux-helper.c \\
+  -o "$HOME/.local/libexec/autolith-access-linux"
 #+END_SRC
 
-The supervisor passes the complete agent command as separate arguments to
-that executable. Configure the user, mounts, environment, and access rules in
-the wrapper. Use =exec= for the final agent command. No shell parses the
-wrapper value. Make the runtime, source, selected image, and required data
-available to the target user inside the sandbox. Active-image probes use the
-same wrapper. Pristine recovery runs through the stable launcher outside
-this wrapper.
+Set parent-only =AUTOLITH_NATIVE_LINUX_HELPER= to that absolute executable path.
+Set =AUTOLITH_NATIVE_CGROUP_ROOT= to a private delegated cgroup v2 subtree with
+=cgroup.kill=. Install Bubblewrap and the pinned =cl-exec-sandbox= helper.
+On Windows, install the pinned AppContainer helper. On Darwin, use Seatbelt.
+A missing enforcement or cleanup prerequisite stops launch.
 
-For a direct command, use =bin/autolith-supervisor -- COMMAND ARG...=, or
-=bin/autolith-supervisor --launcher EXECUTABLE -- COMMAND ARG...=.
-=bin/autolith-agent= starts the agent from source; =bin/autolith-active= is
-its compatibility entry point. Load =autolith-agent= for agent development.
-Load =autolith-supervisor= separately for supervisor development.
+** Trusted provider extensions
 
-This is the current process-only supervisor. The planned trusted-parent API is
-specified in [[file:parent-agent-protocol.org][Parent-Agent Protocol]], with Protobuf schemas under =proto/=.
-That design moves provider transport, private storage, approvals, and sandbox
-policy into the parent. Those services and restart-based access grants are not
-yet available through the current supervisor.
+Move executable custom provider definitions from ordinary agent init files into
+separate trusted parent extension files. These files execute with full parent
+authority, including access to provider credentials. Keep them outside the
+workspace, temporary directories, and all other child-writable scopes.
+
+In the version-8 preferences, set =:provider-extensions= to a list such as:
+
+#+BEGIN_SRC lisp
+(:provider-extensions
+ ((:source :user :path #P"/absolute/trusted/path/providers.lisp")))
+#+END_SRC
+
+Use =:source :site= for site definitions and =:source :user= for user definitions.
+In each file, call =autolith-supervisor:register-parent-provider= with the provider
+name and the existing =register-provider= factory, authentication, discovery, and
+endpoint keywords. Use =autolith-supervisor:unregister-parent-provider= to remove
+a definition from its layer. The parent loads these files in the trusted registry
+context. Parent provider callbacks never execute in the agent.
 
 * Terminal diagrams
 
@@ -1995,6 +2034,18 @@ Provider preference fields are sent as supplied, including =order=,
 =allow_fallbacks=, =only=, =ignore=, =sort=, and =max_price=.
 
 ** Commands
+
+Use =/network status= in the parent terminal to inspect session network access.
+Use =/network on= to request unrestricted outbound access, including private
+and local network addresses. Type =YES= in the trusted parent prompt to approve.
+Use =/network off= to revoke the grant. Both changes restart the child after
+its old native process has stopped. During an active turn, the command waits
+in the input queue. The grant ends when you switch sessions.
+
+This command is available in line and fullscreen terminal modes. Use
+=/help network= for help. Windows does not support this network grant.
+ACP cannot approve it because approval requires the trusted parent terminal.
+
 
 #+BEGIN_SRC lisp
 (define-application-command my-version-command

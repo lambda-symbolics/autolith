@@ -14,6 +14,10 @@
                  :documentation "A trusted poll function taking seconds and returning line, state.")
    (renderer :initarg :renderer :reader parent-terminal-renderer
              :documentation "A synchronous function of region, kind and portable payload plist.")
+   (exclusive-input :initarg :exclusive-input :reader parent-terminal-exclusive-input
+                    :documentation "Calls a thunk while the complete modal input operation owns the frontend.")
+   (read-function :initarg :read-function :reader parent-terminal-read-function
+                  :documentation "Optional complete modal reader taking timeout and cancellation keywords.")
    (clock :initarg :clock :reader parent-terminal-clock
           :documentation "The trusted monotonic seconds function.")
    (write-timeout :initarg :write-timeout :reader parent-terminal-write-timeout
@@ -56,21 +60,25 @@ line output. No renderer, source or callback is supplied by the agent."))
 (declaim (ftype (function (&key (:input-source function) (:renderer function)
                               (:clock function) (:write-timeout real)
                               (:maximum-bytes integer) (:bytes-per-second integer)
-                              (:events-per-second integer))
+                               (:events-per-second integer) (:exclusive-input function)
+                               (:read-function (or null function)))
                          (values parent-terminal &optional))
                 make-parent-terminal))
 
 (defun make-parent-terminal (&key input-source renderer (clock #'parent-terminal--clock)
                                  (write-timeout 1) (maximum-bytes 32768)
-                                 (bytes-per-second 65536) (events-per-second 128))
+                                 (bytes-per-second 65536) (events-per-second 128)
+                                 (exclusive-input #'funcall) read-function)
   "Make an explicit parent terminal. Callbacks execute only in the trusted parent."
   (unless (and (functionp input-source) (functionp renderer) (functionp clock)
+               (functionp exclusive-input) (or (null read-function) (functionp read-function))
                (plusp write-timeout) (plusp maximum-bytes)
                (plusp bytes-per-second) (plusp events-per-second))
     (error 'parent-terminal-error :reason ':invalid-configuration))
   (values (make-instance 'parent-terminal :input-source input-source :renderer renderer :clock clock
                          :write-timeout write-timeout :maximum-bytes maximum-bytes
-                         :bytes-per-second bytes-per-second :events-per-second events-per-second)))
+                         :bytes-per-second bytes-per-second :events-per-second events-per-second
+                         :exclusive-input exclusive-input :read-function read-function)))
 
 (declaim (ftype (function (parent-terminal) boolean) parent-terminal-closed-p))
 
@@ -172,6 +180,24 @@ The optional trusted TURN-ID function reads current runtime lifecycle state."
 Polls last at most 0.05 seconds. Cancellation and close do not need the input lock.
 An input source that exceeds its poll contract signals :BLOCKED-INPUT. A second
 reader signals :INPUT-BUSY. Stop the ordinary input reader before an approval."
+  (when (parent-terminal-read-function terminal)
+    (let ((lock (parent-terminal-input-lock terminal)))
+      (unless (bordeaux-threads:acquire-lock lock nil)
+        (error 'parent-terminal-error :reason ':input-busy))
+      (unwind-protect
+           (multiple-value-bind (line state)
+               (funcall (parent-terminal-read-function terminal) :timeout timeout
+                        :cancelled                                        (lambda ()
+                                                                            (or (parent-terminal-closed-p terminal)
+                                                                                (and cancelled (funcall cancelled)))))
+             (unless (and (member state '(:line :eof :cancelled :timeout))
+                          (if (eq state ':line)
+                              (and (stringp line)
+                                   (<= (parent-terminal--bytes line) (parent-terminal-maximum-bytes terminal)))
+                              (null line)))
+               (error 'parent-terminal-error :reason ':invalid-input))
+             (return-from parent-terminal-read-input (values line state)))
+        (bordeaux-threads:release-lock lock))))
   (let ((deadline (and timeout (+ (funcall (parent-terminal-clock terminal)) timeout)))
         (lock     (parent-terminal-input-lock terminal)))
     (unless (bordeaux-threads:acquire-lock lock nil)
@@ -268,6 +294,19 @@ Return :EOF or :CANCELLED after invoking the corresponding optional callback."
 
 (defun parent-terminal-approve (terminal grants &key (operation-id "") (reason "")
                                                    (timeout 60) cancelled)
+  "Hold frontend input ownership from the exact approval display through consent."
+  (funcall (parent-terminal-exclusive-input terminal)
+           (lambda ()
+             (parent-terminal--approve terminal grants :operation-id operation-id
+                                       :reason reason :timeout timeout :cancelled cancelled))))
+
+(declaim (ftype (function (parent-terminal sequence &key (:operation-id string)
+                                                      (:reason string) (:timeout real)
+                                                      (:cancelled (or null function)))
+                         (values boolean vector)) parent-terminal--approve))
+
+(defun parent-terminal--approve (terminal grants &key (operation-id "") (reason "")
+                                                   (timeout 60) cancelled)
   "Prompt for exact parent-resolved GRANTS. Return consent and the displayed snapshot.
 The caller must apply that snapshot, not a subsequently modified grant request.
 Agent reason text has its own untrusted region. Only an exact trusted input YES
@@ -301,6 +340,55 @@ access by itself and does not restart an agent or mutate policy."
           (parent-terminal-read-input terminal :timeout timeout :cancelled cancelled)
         (values (and (eq state ':line) (string= line "YES")) snapshot)))))
 
+(declaim (ftype (function (parent-terminal &key (:kind keyword) (:scope keyword)
+                                               (:identifier string) (:version integer)
+                                               (:proposal t) (:timeout real)
+                                               (:cancelled (or null function)))
+                         boolean) parent-terminal-approve-knowledge))
+
+(defun parent-terminal-approve-knowledge (terminal &key kind scope identifier version proposal
+                                                      (timeout 60) cancelled)
+  "Hold frontend input ownership for the complete knowledge admission prompt."
+  (funcall (parent-terminal-exclusive-input terminal)
+           (lambda ()
+             (parent-terminal--approve-knowledge terminal :kind kind :scope scope
+                                                :identifier identifier :version version
+                                                :proposal proposal :timeout timeout
+                                                :cancelled cancelled))))
+
+(declaim (ftype (function (parent-terminal &key (:kind keyword) (:scope keyword)
+                                              (:identifier string) (:version integer)
+                                              (:proposal t) (:timeout real)
+                                              (:cancelled (or null function)))
+                         boolean) parent-terminal--approve-knowledge))
+
+(defun parent-terminal--approve-knowledge (terminal &key kind scope identifier version proposal
+                                                      (timeout 60) cancelled)
+  "Ask for exact rule or contract admission using only parent-owned terminal input.
+The renderer receives text, not the mutable proposal. Only YES grants consent."
+  (unless (and (member kind '(:rule :contract)) (member scope '(:workspace :global))
+               (typep version '(integer 1)) (<= 1 (length identifier) 256))
+    (error 'parent-terminal-error :reason ':invalid-configuration))
+  (let* ((*print-readably* t)
+         (*print-circle*   t)
+         (*print-pretty*   nil)
+         (text             (format nil "kind=~S scope=~S id=~S version=~D proposal=~S"
+                                   kind scope identifier version proposal)))
+    (when (> (parent-terminal--bytes text) (parent-terminal-maximum-bytes terminal))
+      (error 'parent-terminal-error :reason ':prompt-limit))
+    (bordeaux-threads:with-lock-held ((parent-terminal-render-lock terminal))
+      (when (parent-terminal-closed-p terminal)
+        (error 'parent-terminal-error :reason ':closed))
+      (handler-case
+          (sb-ext:with-timeout (parent-terminal-write-timeout terminal)
+            (funcall (parent-terminal-renderer terminal) ':trusted ':knowledge-approval
+                     (list :text (parent-terminal-escape text))))
+        (sb-ext:timeout ()
+          (error 'parent-terminal-error :reason ':blocked-output)))
+      (multiple-value-bind (line state)
+          (parent-terminal-read-input terminal :timeout timeout :cancelled cancelled)
+        (and (eq state ':line) (string= line "YES") t)))))
+
 (declaim (ftype (function (string) string) parent-terminal--quoted-field))
 
 (defun parent-terminal--quoted-field (text)
@@ -319,22 +407,28 @@ access by itself and does not restart an agent or mutate policy."
 All text is escaped by the terminal before this callback. Grant fields are exact
 portable snapshot data; escape each field here instead of printing Lisp objects."
   (lambda (region kind payload)
-    (if (and (eq region ':trusted) (eq kind ':approval))
-        (progn
-          (format stream "PARENT | ACCESS ~A~%" (getf payload :operation-id))
-          (loop for grant across (getf payload :grants)
-                do (format stream "PARENT | ~A target=~A duration=~A operations=["
-                           (getf grant :resource)
-                           (parent-terminal--quoted-field (getf grant :target))
-                           (getf grant :duration))
-                   (loop for operation across (getf grant :operations)
-                         for first-p = t then nil
-                         do (unless first-p (write-string "," stream))
-                            (write-string (parent-terminal--quoted-field operation) stream))
-                   (write-line "]" stream))
-          (write-line "PARENT | Type YES to approve these exact grants; any other answer denies." stream))
-        (format stream "AGENT | ~A~@[ turn=~A~] | ~A~%"
-                kind (getf payload :turn-id) (getf payload :text)))
+    (cond
+      ((and (eq region ':trusted) (eq kind ':network-approval))
+       (format stream "PARENT | NETWORK ~A~%" (getf payload :text)))
+      ((and (eq region ':trusted) (eq kind ':knowledge-approval))
+       (format stream "PARENT | KNOWLEDGE ~A~%" (getf payload :text))
+       (write-line "PARENT | Type YES to admit this exact proposal; any other answer denies." stream))
+      ((and (eq region ':trusted) (eq kind ':approval))
+       (format stream "PARENT | ACCESS ~A~%" (getf payload :operation-id))
+       (loop for grant across (getf payload :grants)
+             do (format stream "PARENT | ~A target=~A duration=~A operations=["
+                        (getf grant :resource)
+                        (parent-terminal--quoted-field (getf grant :target))
+                        (getf grant :duration))
+                (loop for operation across (getf grant :operations)
+                      for first-p = t then nil
+                      do (unless first-p (write-string "," stream))
+                         (write-string (parent-terminal--quoted-field operation) stream))
+                (write-line "]" stream))
+       (write-line "PARENT | Type YES to approve these exact grants; any other answer denies." stream))
+      (t
+       (format stream "AGENT | ~A~@[ turn=~A~] | ~A~%"
+               kind (getf payload :turn-id) (getf payload :text))))
     (finish-output stream)))
 
 (declaim (ftype (function (stream &key (:maximum-bytes integer)) function)

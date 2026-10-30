@@ -189,16 +189,18 @@ can assert on the exact failure message through the second return value."
    :output              output
    :error-output        (if ignore-error-status ':string ':output)))
 
-(-> release-script-tests--pty-command (string string) list)
+(-> release-script-tests--pty-command (string (option string)) list)
 (defun release-script-tests--pty-command (command answer)
-  "Return a platform PTY command running shell COMMAND and submitting ANSWER."
+  "Return a platform PTY command, optionally submitting ANSWER to a prompt."
   (if (member :darwin *features*)
       (list "env"
             (format nil "AUTOLITH_TEST_PTY_COMMAND=~A" command)
-            (format nil "AUTOLITH_TEST_PTY_ANSWER=~A" answer)
+            (format nil "AUTOLITH_TEST_PTY_ANSWER=~A" (or answer ""))
             "/usr/bin/expect"
             "-c"
-            "set timeout 30; spawn -noecho /bin/sh -c \"$env(AUTOLITH_TEST_PTY_COMMAND)\"; expect -exact {[Y/n]}; send -- \"$env(AUTOLITH_TEST_PTY_ANSWER)\\r\"; expect eof; catch wait result; exit [lindex $result 3]")
+            (if answer
+                "set timeout 30; spawn -noecho /bin/sh -c \"$env(AUTOLITH_TEST_PTY_COMMAND)\"; expect -exact {[Y/n]}; send -- \"$env(AUTOLITH_TEST_PTY_ANSWER)\\r\"; expect eof; catch wait result; exit [lindex $result 3]"
+                "set timeout 30; spawn -noecho /bin/sh -c \"$env(AUTOLITH_TEST_PTY_COMMAND)\"; expect eof; catch wait result; exit [lindex $result 3]"))
       (list "env" "SHELL=/bin/sh" "script" "-q" "-e" "-c" command "/dev/null")))
 
 (-> release-script-tests--chmod (string pathname) null)
@@ -762,7 +764,7 @@ printf 'subprocess %s\\n' \"$*\" >> \"${AUTOLITH_TEST_EVENT_LOG:?}\"
 
 (-> release-script-tests--source-launcher (pathname pathname) null)
 (defun release-script-tests--source-launcher (source-root root)
-  "Exercise source-image selection, bootstrap prompting, and forced source use."
+  "Exercise trusted-parent routing, runtime selection, and source-launcher maintenance."
   (let* ((fixture-root       (merge-pathnames "source-launcher/" root))
          (bin-directory      (merge-pathnames "bin/" fixture-root))
          (script-directory   (merge-pathnames "script/" fixture-root))
@@ -807,6 +809,7 @@ for argument in \"$@\"; do
     */bin/autolith-agent) mode=SOURCE ;;
     */autolith-active.core) mode=ACTIVE ;;
     */recovery/launcher.lisp) mode=RECOVERY ;;
+    */script/parent.lisp) mode=PARENT ;;
   esac
 done
 if [ \"$probe\" = true ]; then
@@ -817,7 +820,7 @@ case \" $* \" in
   *\" fixture-update \"*) exit 76 ;;
   *\" fixture-data-failure \"*) exit 1 ;;
 esac
-if [ \"$mode\" = SOURCE ]; then
+if [ \"$mode\" = PARENT ]; then
   case \" $* \" in
     *\" fixture-active-failure \"*) exit 1 ;;
     *\" fixture-runtime-loss \"*) rm -- \"$0\"; exit 1 ;;
@@ -848,10 +851,10 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
               (list (namestring launcher) "--from-source" "fixture-argument")
               :environment environment)))
       (test-assert
-       (and (search "SOURCE" source-output)
-            (not (search "fast startup image" source-output))
-            (not (search "--from-source" (uiop:read-file-string log))))
-       "--from-source quietly bypasses images and is not forwarded")
+       (and (search "PARENT" source-output)
+            (search "--cli --from-source fixture-argument" source-output)
+            (search "--from-source" (uiop:read-file-string log)))
+       "--from-source selects the parent and forwards its source-mode option")
       (let* ((recorded-command
                (merge-pathnames "autolith/runtimes/command" data-home))
              (missing-runtime       (merge-pathnames "missing-sbcl" fixture-root))
@@ -871,7 +874,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
                    environment :test #'equal))))
           (dolist (runtime (list missing-runtime nonexecutable-runtime fixture-root))
             (test-assert
-             (search "SOURCE" (run-with-runtime runtime))
+             (search "PARENT" (run-with-runtime runtime))
              "unavailable configured runtimes fall back to the executable registry runtime")
             (test-assert
              (search "RECOVERY" (run-with-runtime runtime "fixture-active-failure"))
@@ -893,7 +896,7 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
                 (list (namestring launcher) "--from-source")
                 :environment fallback-environment)))
         (test-assert
-         (and (search "SOURCE" output)
+         (and (search "PARENT" output)
               (uiop:directory-exists-p
                (merge-pathnames
                 ".local/state/autolith/crash-pointers/" home))
@@ -1027,37 +1030,28 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
               (zerop (length (uiop:read-file-string log))))
          "update help exits without starting the source application"))
       (release-script-tests--write-file log "")
-      (let* ((command
-               (format nil
-                       "env ~{~A~^ ~} ~A fixture-argument"
-                       (mapcar #'uiop:escape-shell-token environment)
-                       (uiop:escape-shell-token (namestring launcher))))
-             (output
-               (with-input-from-string (input (format nil "y~%"))
-                 (uiop:run-program
-                  (release-script-tests--pty-command command "y")
-                  :input               input
-                  :output              ':string
-                  :error-output        ':output
-                  :ignore-error-status t)))
+      (release-script-tests--write-file active-core "stale agent image")
+      (release-script-tests--write-file active-manifest
+                                        "(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1)")
+      (let* ((output (release-script-tests--run
+                      (list (namestring launcher) "fixture-argument")
+                      :environment environment))
              (events (uiop:read-file-string log)))
         (test-assert
-         (and (search "fast startup image is missing or stale" output)
-              (search "BOOTSTRAP" events)
-              (search "ACTIVE" output)
-              (not (search "SOURCE" output)))
-         (format nil
-                 "accepting the interactive prompt bootstraps and starts the new image:~%terminal: ~A~%events: ~A"
-                 output events)))
+         (and (search "PARENT" output)
+              (search "--cli fixture-argument" output)
+              (not (search "BOOTSTRAP" events))
+              (not (search (namestring active-core) events)))
+         "ordinary startup uses the parent without probing or loading a legacy agent image"))
       (let ((output
               (release-script-tests--run
                (list (namestring launcher) "resume" "--pristine")
                :environment environment)))
         (test-assert
-         (and (search "SOURCE" output)
+         (and (search "PARENT" output)
               (search "--pristine" output)
-              (not (search "ACTIVE" output)))
-         "pristine startup bypasses an available active core and forwards its flag"))
+              (not (search (namestring active-core) output)))
+         "pristine selection reaches the parent without loading a legacy agent image"))
       (dolist (arguments '(("--" "--recovery" "--from-source")
                            ("--image" "--from-source")
                            ("--image" "--recovery")))
@@ -1065,9 +1059,9 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
                        (cons (namestring launcher) arguments)
                        :environment environment)))
           (test-assert
-           (and (search "ACTIVE" output)
+           (and (search "PARENT" output)
                 (search (format nil "~{~A~^ ~}" arguments) output))
-           "launcher-looking operands are forwarded to the active image")))
+           "launcher-looking operands are forwarded to the parent")))
       (dolist (pathname (list active-core active-manifest))
         (when (probe-file pathname)
           (delete-file pathname)))
@@ -1078,20 +1072,16 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
                        (mapcar #'uiop:escape-shell-token environment)
                        (uiop:escape-shell-token (namestring launcher))))
              (output
-               (with-input-from-string (input (format nil "n~%"))
-                 (uiop:run-program
-                  (release-script-tests--pty-command command "n")
-                  :input               input
-                  :output              ':string
-                  :error-output        ':output
-                  :ignore-error-status t)))
+              (uiop:run-program
+               (release-script-tests--pty-command command nil)
+               :input nil :output ':string :error-output ':output
+               :ignore-error-status t))
              (events (uiop:read-file-string log)))
         (test-assert
-         (and (search "fast startup image is missing or stale" output)
-              (search "SOURCE" output)
-              (not (search "BOOTSTRAP" events)))
-         (format nil
-                 "declining the interactive prompt loads source without bootstrapping: ~A"
+         (and (search "PARENT" output)
+              (not (search "BOOTSTRAP" events))
+              (not (search "fast startup image is missing or stale" output)))
+         (format nil "terminal startup enters the parent without a legacy bootstrap prompt: ~A"
                  output))))
    nil))
 

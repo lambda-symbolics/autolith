@@ -15,60 +15,11 @@
   "https://chatgpt.com/backend-api/codex/responses"
   "The current ChatGPT Codex Responses endpoint.")
 
-;; ChatGPT browser OAuth behavior inspected at
-;; https://github.com/openai/codex commit
-;; 94cbbddafc1776d5e377bca1b05932c697e82238.
-(defparameter *openai-oauth-issuer* "https://auth.openai.com"
-  "The OpenAI issuer serving ChatGPT browser OAuth.")
-
-(defparameter *openai-oauth-scopes*
-  '("openid"
-    "profile"
-    "email"
-    "offline_access"
-    "api.connectors.read"
-    "api.connectors.invoke")
-  "The scopes requested by ChatGPT browser OAuth.")
-
-(defparameter *openai-oauth-originator* "autolith"
-  "The honest client originator sent during ChatGPT browser OAuth.")
-
-(defparameter *chatgpt-oauth-callback-ports* '(1455 1457)
-  "The localhost callback ports allowed by the ChatGPT OAuth client.")
-
-(defparameter *chatgpt-oauth-callback-timeout* 900
-  "The maximum seconds to wait for the ChatGPT browser callback.")
-
 (defparameter *chatgpt-oauth-request-timeout* 5
   "The maximum seconds allowed to read one local callback request line.")
 
 (defparameter *chatgpt-oauth-request-line-limit* 8192
   "The maximum characters accepted in one local callback request line.")
-
-;; Gemini CLI OAuth behavior inspected at google-gemini/gemini-cli commit
-;; 0bd1d439751478771c45d3d0895a6a9760554bf4. The installed application uses
-;; PKCE as a public client. Autolith deliberately does not embed its client
-;; secret; deployments that require one may provide it through the environment.
-(defparameter *gemini-oauth-client-id*
-  "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
-  "The public Google installed-application client identifier used by Gemini CLI.")
-
-(defparameter *gemini-oauth-authorization-endpoint*
-  "https://accounts.google.com/o/oauth2/v2/auth"
-  "The Google OAuth authorization endpoint used for Gemini subscription login.")
-
-(defparameter *gemini-oauth-token-endpoint*
-  "https://oauth2.googleapis.com/token"
-  "The Google OAuth token endpoint used for Gemini subscription credentials.")
-
-(defparameter *gemini-oauth-scopes*
-  '("https://www.googleapis.com/auth/cloud-platform"
-    "https://www.googleapis.com/auth/userinfo.email"
-    "https://www.googleapis.com/auth/userinfo.profile")
-  "The Google scopes required by Gemini Code Assist subscription access.")
-
-(defparameter *gemini-oauth-callback-timeout* 300
-  "The maximum seconds to wait for the installed-app loopback callback.")
 
 (-> gemini-oauth-client-id () string)
 (defun gemini-oauth-client-id ()
@@ -88,12 +39,6 @@
   "https://cli-chat-proxy.grok.com/v1/responses"
   "The current Grok subscription Responses endpoint.")
 
-(defparameter *grok-oauth-issuer* "https://auth.x.ai"
-  "The xAI OAuth issuer serving Grok subscription authentication.")
-
-(defparameter *grok-oauth-client-id* "b1a00492-073a-47ea-816f-4c329264a828"
-  "The public OAuth client identifier used by Grok Build compatible clients.")
-
 ;; The proxy gates requests on this protocol revision and rejects missing or
 ;; older versions as HTTP 426; on 2026-10-02 the proxy required 1.0.13 or
 ;; later. Autolith implements the wire dialect of grok-build 1.0.13,
@@ -102,21 +47,9 @@
 (defparameter *grok-client-protocol-version* "1.0.13"
   "The grok-build release whose Grok proxy wire protocol Autolith implements.")
 
-
-;; Nous Portal authentication and inference behavior verified against Hermes
-;; Agent reference commit f293e7206b4ddd66042329442c6afebc19a8808d.
-(defparameter *nous-portal-url* "https://portal.nousresearch.com"
-  "The Nous Research portal serving OAuth device authentication.")
-
 (defparameter *nous-inference-base-url*
   "https://inference-api.nousresearch.com/v1"
   "The Nous Research inference API base URL.")
-
-(defparameter *nous-oauth-client-id* "hermes-cli"
-  "The public OAuth client identifier accepted by Nous Portal.")
-
-(defparameter *nous-oauth-scope* "inference:invoke"
-  "The OAuth scope required to invoke Nous Research inference models.")
 
 (-> nous-portal-url () string)
 (defun nous-portal-url ()
@@ -218,13 +151,6 @@
 
 (defparameter *anthropic-api-version* "2023-06-01"
   "The Anthropic API version header sent with every request.")
-
-(defparameter *grok-oauth-scopes*
-  '("openid" "profile" "email" "offline_access"
-    "grok-cli:access" "api:access"
-    "conversations:read" "conversations:write"
-    "workspaces:read" "workspaces:write")
-  "The OAuth scopes requested for Grok subscription access.")
 
 (defparameter *mistral-chat-completions-endpoint*
   "https://api.mistral.ai/v1/chat/completions"

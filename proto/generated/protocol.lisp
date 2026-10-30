@@ -57,7 +57,9 @@
   (input-sequence
    :index 2 :type cl-protobufs:uint64 :kind :scalar :label (:optional) :field-presence :implicit :json-name "inputSequence")
   (continuation
-   :index 3 :type cl:boolean :kind :scalar :label (:optional) :field-presence :implicit :json-name "continuation"))
+   :index 3 :type cl:boolean :kind :scalar :label (:optional) :field-presence :implicit :json-name "continuation")
+  (application
+   :index 4 :type application-action :kind :message :label (:optional) :field-presence :explicit :json-name "application"))
 
 (pi:define-message turn-cancel
     ()
@@ -550,6 +552,12 @@
     (:delete :index 4)
     (:assess :index 5)
     (:close :index 6))
+
+  (pi:define-enum record-request.scope
+      ()
+    (:scope-unspecified :index 0)
+    (:workspace :index 1)
+    (:global :index 2))
   ;; Fields
   (pi:define-oneof -record-id (:synthetic-p t)
     (record-id
@@ -563,6 +571,12 @@
   (pi:define-oneof -cursor (:synthetic-p t)
     (cursor
      :index 7 :type cl:string :kind :scalar :label (:optional) :field-presence :explicit :json-name "cursor"))
+  (pi:define-oneof -expected-collection-revision (:synthetic-p t)
+    (expected-collection-revision
+     :index 10 :type cl:string :kind :scalar :label (:optional) :field-presence :explicit :json-name "expectedCollectionRevision"))
+  (pi:define-oneof -scope (:synthetic-p t)
+    (scope
+     :index 11 :type record-request.scope :kind :enum :label (:optional) :field-presence :explicit :json-name "scope" :default :scope-unspecified))
   (collection
    :index 1 :type record-request.collection :kind :enum :label (:optional) :field-presence :implicit :json-name "collection" :default :collection-unspecified)
   (operation
@@ -590,8 +604,55 @@
   (pi:define-oneof -next-cursor (:synthetic-p t)
     (next-cursor
      :index 2 :type cl:string :kind :scalar :label (:optional) :field-presence :explicit :json-name "nextCursor"))
+  (pi:define-oneof -collection-revision (:synthetic-p t)
+    (collection-revision
+     :index 3 :type cl:string :kind :scalar :label (:optional) :field-presence :explicit :json-name "collectionRevision"))
   (records
    :index 1 :type stored-record :kind :message :label (:repeated :list) :field-presence :implicit :json-name "records"))
+
+(pi:define-message knowledge-request
+    ()
+  ;; Nested enums
+
+  (pi:define-enum knowledge-request.operation
+      ()
+    (:operation-unspecified :index 0)
+    (:read :index 1)
+    (:edit :index 2)
+    (:check :index 3)
+    (:record :index 4)
+    (:context :index 5)
+    (:expand :index 6))
+  ;; Fields
+  (pi:define-oneof -expected-revision (:synthetic-p t)
+    (expected-revision
+     :index 5 :type cl:string :kind :scalar :label (:optional) :field-presence :explicit :json-name "expectedRevision"))
+  (pi:define-oneof -query (:synthetic-p t)
+    (query
+     :index 6 :type cl:string :kind :scalar :label (:optional) :field-presence :explicit :json-name "query"))
+  (operation
+   :index 1 :type knowledge-request.operation :kind :enum :label (:optional) :field-presence :implicit :json-name "operation" :default :operation-unspecified)
+  (operation-id
+   :index 2 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "operationId")
+  (scope
+   :index 3 :type record-request.scope :kind :enum :label (:optional) :field-presence :implicit :json-name "scope" :default :scope-unspecified)
+  (view
+   :index 4 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "view")
+  (limit
+   :index 7 :type cl-protobufs:uint32 :kind :scalar :label (:optional) :field-presence :implicit :json-name "limit")
+  (fields
+   :index 8 :type cl-protobufs.autolith.common.v1::value-map :kind :message :label (:optional) :field-presence :explicit :json-name "fields"))
+
+(pi:define-message knowledge-response
+    ()
+  ;; Fields
+  (pi:define-oneof -revision (:synthetic-p t)
+    (revision
+     :index 2 :type cl:string :kind :scalar :label (:optional) :field-presence :explicit :json-name "revision"))
+  (content
+   :index 1 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "content")
+  (fields
+   :index 3 :type cl-protobufs.autolith.common.v1::value-map :kind :message :label (:optional) :field-presence :explicit :json-name "fields"))
 
 (pi:define-message grant
     ()
@@ -739,6 +800,200 @@
   (resume
    :index 7 :type session-page :kind :message :label (:optional) :field-presence :explicit :json-name "resume"))
 
+(pi:define-message application-action
+    ()
+  ;; Nested enums
+
+  (pi:define-enum application-action.kind
+      ()
+    (:kind-unspecified :index 0)
+    (:command :index 1)
+    (:lisp :index 2)
+    (:async-lisp :index 3)
+    (:catalog :index 4)
+    (:completion :index 5)
+    (:message :index 6)
+    (:run-job :index 7)
+    (:acp-prompt :index 8)
+    (:acp-extension :index 9)
+    (:configure :index 10)
+    (:pump :index 11))
+  ;; Fields
+  (kind
+   :index 1 :type application-action.kind :kind :enum :label (:optional) :field-presence :implicit :json-name "kind" :default :kind-unspecified)
+  (source
+   :index 2 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "source")
+  (cursor
+   :index 3 :type cl-protobufs:uint32 :kind :scalar :label (:optional) :field-presence :implicit :json-name "cursor")
+  (image-paths
+   :index 4 :type cl:string :kind :scalar :label (:repeated :list) :field-presence :implicit :json-name "imagePaths")
+  (job
+   :index 5 :type cl-protobufs.autolith.common.v1::value-map :kind :message :label (:optional) :field-presence :explicit :json-name "job"))
+
+(pi:define-message application-command
+    ()
+  ;; Nested enums
+
+  (pi:define-enum application-command.busy-behavior
+      ()
+    (:busy-unspecified :index 0)
+    (:hold :index 1)
+    (:inspect :index 2)
+    (:execute :index 3)
+    (:apply :index 4)
+    (:cancel :index 5))
+
+  (pi:define-enum application-command.terminal-behavior
+      ()
+    (:terminal-unspecified :index 0)
+    (:shared :index 1)
+    (:exclusive :index 2)
+    (:exclusive-without-arguments :index 3))
+  ;; Fields
+  (name
+   :index 1 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "name")
+  (aliases
+   :index 2 :type cl:string :kind :scalar :label (:repeated :list) :field-presence :implicit :json-name "aliases")
+  (argument
+   :index 3 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "argument")
+  (description
+   :index 4 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "description")
+  (tip
+   :index 5 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "tip")
+  (busy-behavior
+   :index 6 :type application-command.busy-behavior :kind :enum :label (:optional) :field-presence :implicit :json-name "busyBehavior" :default :busy-unspecified)
+  (terminal-behavior
+   :index 7 :type application-command.terminal-behavior :kind :enum :label (:optional) :field-presence :implicit :json-name "terminalBehavior" :default :terminal-unspecified)
+  (options
+   :index 8 :type cl:string :kind :scalar :label (:repeated :list) :field-presence :implicit :json-name "options")
+  (callable
+   :index 9 :type cl:boolean :kind :scalar :label (:optional) :field-presence :implicit :json-name "callable"))
+
+(pi:define-message application-result
+    ()
+  ;; Nested enums
+
+  (pi:define-enum application-result.status
+      ()
+    (:status-unspecified :index 0)
+    (:ok :index 1)
+    (:aborted :index 2)
+    (:error :index 3))
+  ;; Fields
+  (turn-id
+   :index 1 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "turnId")
+  (status
+   :index 2 :type application-result.status :kind :enum :label (:optional) :field-presence :implicit :json-name "status" :default :status-unspecified)
+  (output
+   :index 3 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "output")
+  (values
+   :index 4 :type cl:string :kind :scalar :label (:repeated :list) :field-presence :implicit :json-name "values")
+  (condition
+   :index 5 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "condition")
+  (commands
+   :index 6 :type application-command :kind :message :label (:repeated :list) :field-presence :implicit :json-name "commands")
+  (completions
+   :index 7 :type cl:string :kind :scalar :label (:repeated :list) :field-presence :implicit :json-name "completions")
+  (quit
+   :index 8 :type cl:boolean :kind :scalar :label (:optional) :field-presence :implicit :json-name "quit")
+  (completion-entries
+   :index 9 :type application-completion :kind :message :label (:repeated :list) :field-presence :implicit :json-name "completionEntries")
+  (job
+   :index 10 :type cl-protobufs.autolith.common.v1::value-map :kind :message :label (:optional) :field-presence :explicit :json-name "job")
+  (fields
+   :index 11 :type cl-protobufs.autolith.common.v1::value-map :kind :message :label (:optional) :field-presence :explicit :json-name "fields"))
+
+(pi:define-message application-completion
+    ()
+  ;; Fields
+  (name
+   :index 1 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "name")
+  (argument
+   :index 2 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "argument")
+  (description
+   :index 3 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "description")
+  (primary
+   :index 4 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "primary"))
+
+(pi:define-message application-steering
+    ()
+  ;; Fields
+  (turn-id
+   :index 1 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "turnId")
+  (operation-id
+   :index 2 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "operationId")
+  (input-sequence
+   :index 3 :type cl-protobufs:uint64 :kind :scalar :label (:optional) :field-presence :implicit :json-name "inputSequence")
+  (action
+   :index 4 :type application-action :kind :message :label (:optional) :field-presence :explicit :json-name "action"))
+
+(pi:define-message application-event
+    ()
+  ;; Nested enums
+
+  (pi:define-enum application-event.kind
+      ()
+    (:kind-unspecified :index 0)
+    (:text :index 1)
+    (:reasoning :index 2)
+    (:status :index 3)
+    (:tool-started :index 4)
+    (:tool-finished :index 5)
+    (:presentation :index 6)
+    (:acp :index 7)
+    (:ui :index 8))
+  ;; Fields
+  (kind
+   :index 1 :type application-event.kind :kind :enum :label (:optional) :field-presence :implicit :json-name "kind" :default :kind-unspecified)
+  (fields
+   :index 2 :type cl-protobufs.autolith.common.v1::value-map :kind :message :label (:optional) :field-presence :explicit :json-name "fields"))
+
+(pi:define-message application-notification
+    ()
+  ;; Nested enums
+
+  (pi:define-enum application-notification.kind
+      ()
+    (:kind-unspecified :index 0)
+    (:acp-completion-ready :index 1)
+    (:ui-completion-ready :index 2))
+  ;; Fields
+  (kind
+   :index 1 :type application-notification.kind :kind :enum :label (:optional) :field-presence :implicit :json-name "kind" :default :kind-unspecified)
+  (identifier
+   :index 2 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "identifier"))
+
+(pi:define-message parent-operation
+    ()
+  ;; Nested enums
+
+  (pi:define-enum parent-operation.kind
+      ()
+    (:kind-unspecified :index 0)
+    (:auth :index 1)
+    (:model :index 2)
+    (:preferences :index 3)
+    (:permissions :index 4)
+    (:session :index 5)
+    (:restart :index 6)
+    (:mcp :index 7)
+    (:web :index 8))
+  ;; Fields
+  (kind
+   :index 1 :type parent-operation.kind :kind :enum :label (:optional) :field-presence :implicit :json-name "kind" :default :kind-unspecified)
+  (turn-id
+   :index 2 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "turnId")
+  (arguments
+   :index 3 :type cl-protobufs.autolith.common.v1::value-map :kind :message :label (:optional) :field-presence :explicit :json-name "arguments")
+  (operation-id
+   :index 4 :type cl:string :kind :scalar :label (:optional) :field-presence :implicit :json-name "operationId"))
+
+(pi:define-message parent-operation-result
+    ()
+  ;; Fields
+  (fields
+   :index 1 :type cl-protobufs.autolith.common.v1::value-map :kind :message :label (:optional) :field-presence :explicit :json-name "fields"))
+
 (pi:define-message envelope
     ()
   ;; Fields
@@ -786,7 +1041,23 @@
     (failure
      :index 30 :type failure :kind :message :label (:optional) :field-presence :explicit :json-name "failure")
     (output
-     :index 31 :type output :kind :message :label (:optional) :field-presence :explicit :json-name "output"))
+     :index 31 :type output :kind :message :label (:optional) :field-presence :explicit :json-name "output")
+    (knowledge-request
+     :index 32 :type knowledge-request :kind :message :label (:optional) :field-presence :explicit :json-name "knowledgeRequest")
+    (knowledge-response
+     :index 33 :type knowledge-response :kind :message :label (:optional) :field-presence :explicit :json-name "knowledgeResponse")
+    (application-result
+     :index 34 :type application-result :kind :message :label (:optional) :field-presence :explicit :json-name "applicationResult")
+    (parent-operation
+     :index 35 :type parent-operation :kind :message :label (:optional) :field-presence :explicit :json-name "parentOperation")
+    (parent-operation-result
+     :index 36 :type parent-operation-result :kind :message :label (:optional) :field-presence :explicit :json-name "parentOperationResult")
+    (application-steering
+     :index 37 :type application-steering :kind :message :label (:optional) :field-presence :explicit :json-name "applicationSteering")
+    (application-event
+     :index 38 :type application-event :kind :message :label (:optional) :field-presence :explicit :json-name "applicationEvent")
+    (application-notification
+     :index 39 :type application-notification :kind :message :label (:optional) :field-presence :explicit :json-name "applicationNotification"))
   (pi:define-oneof -reply-to (:synthetic-p t)
     (reply-to
      :index 4 :type cl-protobufs:uint64 :kind :scalar :label (:optional) :field-presence :explicit :json-name "replyTo"))
@@ -806,9 +1077,38 @@ access-decision.state
 access-decision.state-int-to-keyword
 access-decision.state-keyword-to-int
 access-request
+action
 active-grants
 after-sequence
+aliases
 already-terminal
+application
+application-action
+application-action.kind
+application-action.kind-int-to-keyword
+application-action.kind-keyword-to-int
+application-command
+application-command.busy-behavior
+application-command.busy-behavior-int-to-keyword
+application-command.busy-behavior-keyword-to-int
+application-command.terminal-behavior
+application-command.terminal-behavior-int-to-keyword
+application-command.terminal-behavior-keyword-to-int
+application-completion
+application-event
+application-event.kind
+application-event.kind-int-to-keyword
+application-event.kind-keyword-to-int
+application-notification
+application-notification.kind
+application-notification.kind-int-to-keyword
+application-notification.kind-keyword-to-int
+application-result
+application-result.status
+application-result.status-int-to-keyword
+application-result.status-keyword-to-int
+application-steering
+argument
 arguments
 arguments-json
 arguments-json-delta
@@ -816,19 +1116,26 @@ attempt
 attempt-failed
 attempt-started
 block-index
+busy-behavior
 cache-write-tokens
 cached-input-tokens
 call-id
+callable
 cancel-ack
 cancel-request
 capability-id
 channel
 code
 collection
+collection-revision
+commands
 compaction
 compaction-outcome
 compaction-view
 complete
+completion-entries
+completions
+condition
 configuration
 content
 content-block
@@ -849,6 +1156,7 @@ elapsed-seconds
 envelope
 ephemeral-items
 event-id
+expected-collection-revision
 expected-revision
 explanation
 failed
@@ -874,6 +1182,8 @@ high-water-sequence
 hosted-tool
 hosted-tool-view
 hosted-tools
+identifier
+image-paths
 index
 input-schema
 input-sequence
@@ -883,7 +1193,13 @@ is-error
 item-completed
 item-index
 items
+job
 kind
+knowledge-request
+knowledge-request.operation
+knowledge-request.operation-int-to-keyword
+knowledge-request.operation-keyword-to-int
+knowledge-response
 last-session-sequence
 limit
 limits
@@ -927,6 +1243,7 @@ next-policy-revision
 operation
 operation-id
 operations
+options
 origin
 outcome
 output
@@ -937,10 +1254,16 @@ output-tokens
 output.channel
 output.channel-int-to-keyword
 output.channel-keyword-to-int
+parent-operation
+parent-operation-result
+parent-operation.kind
+parent-operation.kind-int-to-keyword
+parent-operation.kind-keyword-to-int
 payload
 phase
 policy-revision
 prepare-stop
+primary
 profile-id
 progress
 protocol
@@ -948,6 +1271,7 @@ protocol-major
 provider-usage
 purpose
 query
+quit
 ready
 ready-to-stop
 reason
@@ -965,6 +1289,9 @@ record-request.collection-keyword-to-int
 record-request.operation
 record-request.operation-int-to-keyword
 record-request.operation-keyword-to-int
+record-request.scope
+record-request.scope-int-to-keyword
+record-request.scope-keyword-to-int
 record-response
 records
 replay-handle
@@ -979,6 +1306,7 @@ resume
 retryable
 revision
 role
+scope
 sequence
 session-ack
 session-append
@@ -992,6 +1320,7 @@ session-record.kind-keyword-to-int
 session-record.origin
 session-record.origin-int-to-keyword
 session-record.origin-keyword-to-int
+source
 stable-prefix
 state
 status
@@ -1000,8 +1329,10 @@ strict
 summary
 target
 temperature
+terminal-behavior
 text
 text-delta
+tip
 tool-call
 tool-call-delta
 tool-definition
@@ -1022,5 +1353,7 @@ turn-start
 turn-state-handle
 usage
 usage-observed
+values
+view
 welcome
 wrap-up-event-id))

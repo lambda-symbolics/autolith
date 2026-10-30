@@ -251,6 +251,19 @@ exist yet, and is only put in directory form."
                                     (declare (ignore configuration))
                                     *default-reasoning-effort*))
 
+(define-setting :reasoning-summary (choice-setting)
+  :label                           "Reasoning summary"
+  :group                           :model
+  :documentation                   "The requested reasoning summary mode for supported parent profiles."
+  :type                            'non-empty-string
+  :scope                           :durable
+  :environment                     "AUTOLITH_REASONING_SUMMARY"
+  :deferrable-p                    t
+  :options                         (lambda (configuration)
+                                     (declare (ignore configuration))
+                                     '("auto" "concise" "detailed" "none"))
+  :default                         "auto")
+
 (define-setting :openrouter-provider-routing (string-setting)
   :label                                     "OpenRouter provider routing"
   :group                                     :model

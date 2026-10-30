@@ -16,10 +16,10 @@
                         (model-replay-store-error (condition)
                           (or (null code) (eq code (model-replay-store-error-code condition)))))))
 
-             (path ()
-               (let ((path (merge-pathnames
-                            (format nil "autolith-model-replay-~36R.sexp" (random (expt 36 20)))
-                            (uiop:temporary-directory))))
+             (path (&optional (type "sexp"))
+               (let ((path (make-pathname
+                            :name (format nil "autolith-model-replay-~36R" (random (expt 36 20)))
+                            :type type :defaults (uiop:temporary-directory))))
                  (push path paths)
                  path))
 
@@ -502,6 +502,20 @@
                  (rejects (lambda () (fail store invalid)) ':invalid-event)
                  (check (eq ':running (model-replay-store-status store "request"))))
                (check (= 1 (length (model-replay-store-events store "request")))))
+             ;; Extensionless journals use the exact path for creation and replacement.
+             (let* ((journal      (path nil))
+                    (session-path (path nil))
+                    (store        (model-replay-store-open journal "session")))
+               (session-store-open session-path "session")
+               (check (probe-file session-path))
+               (check (probe-file journal))
+               (start store)
+               (model-replay-store-compact store)
+               (check (probe-file journal))
+               (check (not (probe-file (make-pathname :type "tmp" :defaults journal))))
+               (check (eq ':interrupted
+                          (model-replay-store-status
+                           (model-replay-store-open journal "session") "request"))))
              checks)
         (dolist (path paths)
           (dolist (file (list path (pathname (concatenate 'string (namestring path) ".lock"))))

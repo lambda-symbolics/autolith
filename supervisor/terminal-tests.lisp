@@ -102,6 +102,32 @@
                        :renderer     (lambda (&rest data) (declare (ignore data)))
                        :input-source (lambda (seconds) (declare (ignore seconds)) (sleep 10)))))
         (rejects (lambda () (parent-terminal-read-input terminal)) ':blocked-input))
+      (dolist (case '(("YES" :line t) ("yes" :line nil) ("NO" :line nil)
+                      (nil :eof nil) (nil :timeout nil)))
+        (destructuring-bind (line state expected) case
+          (let* ((shown    nil)
+                 (terminal (make-parent-terminal
+                            :input-source (source line state)
+                            :renderer     (lambda (region kind payload)
+                                            (setf shown (list region kind payload))))))
+            (check (eq expected
+                       (parent-terminal-approve-knowledge
+                        terminal :kind ':rule :scope ':workspace :identifier "rule-1"
+                        :version 2 :proposal '(:rule :id "rule-1" :version 2) :timeout 0.01)))
+            (check (equal (subseq shown 0 2) '(:trusted :knowledge-approval)))
+            (check (search "rule-1" (getf (third shown) :text))))))
+      (let ((terminal (make-parent-terminal :input-source (source "YES" ':line)
+                                             :renderer    (lambda (&rest values) (declare (ignore values))))))
+        (check (not (parent-terminal-approve-knowledge
+                     terminal :kind ':contract :scope ':global :identifier "contract-1"
+                     :version 1 :proposal nil :cancelled (constantly t))))
+        (rejects (lambda () (parent-terminal-approve-knowledge
+                             terminal :kind ':rule :scope ':global :identifier "oversize"
+                             :version 1 :proposal (make-string 32769))) ':prompt-limit)
+        (parent-terminal-close terminal)
+        (rejects (lambda () (parent-terminal-approve-knowledge
+                             terminal :kind ':rule :scope ':workspace :identifier "closed"
+                             :version 1 :proposal nil)) ':closed))
       (let* ((stream   (make-string-output-stream))
              (grant    (parent-proto:make-grant :resource ':filesystem :target "/resolved/private"
                                                :operations '("read" "write") :duration ':session))

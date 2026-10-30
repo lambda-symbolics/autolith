@@ -5,6 +5,39 @@
 (defclass session-runtime ()
   ((service :initarg :service :initform nil :reader session-runtime-service
             :documentation "Optional parent model service; NIL keeps synchronous session-only behavior.")
+   (record-service :initarg :record-service :initform nil :reader session-runtime-record-service
+                   :documentation "Trusted optional records dispatcher.")
+   (knowledge-service :initarg :knowledge-service :initform nil :reader session-runtime-knowledge-service
+                      :documentation "Trusted optional knowledge service.")
+   (access-service :initarg :access-service :initform nil :reader session-runtime-access-service
+                   :documentation "Trusted optional asynchronous access service.")
+   (application-service :initarg :application-service :initform nil
+                        :reader        session-runtime-application-service
+                        :documentation "The trusted fixed-operation service.")
+   (application-result :initform nil :accessor session-runtime-application-result
+                       :documentation "One validated result for the active application turn.")
+   (application-callback :initarg :application-callback :initform nil
+                         :reader        session-runtime-application-callback
+                         :documentation "Short callback for a validated child application result.")
+   (application-scopes :initform      (make-hash-table :test #'equal)
+                       :reader        session-runtime-application-scopes
+                       :documentation "Bounded active-input scopes created only by the parent.")
+   (application-finish :initform nil :accessor session-runtime-application-finish
+                       :documentation "A TurnFinish held until every admitted active scope terminates.")
+   (application-event-callback :initarg :application-event-callback :initform nil
+                               :reader        session-runtime-application-event-callback
+                               :documentation "Short callback for fixed-kind inert UI events.")
+   (application-notification-callback :initarg :application-notification-callback :initform nil
+    :reader        session-runtime-application-notification-callback
+    :documentation "Short callback for fixed completion wakeups.")
+   (features :initarg :features :reader session-runtime-features
+             :documentation "Exact selected and installed feature set.")
+   (record-window :initform 0 :accessor session-runtime-record-window
+                  :documentation "Start of the one-second record admission window.")
+   (record-count :initform 0 :accessor session-runtime-record-count
+                 :documentation "Record requests admitted in the current window.")
+   (record-bytes :initform 0 :accessor session-runtime-record-bytes
+                 :documentation "Encoded record input bytes admitted in the current window.")
    (store :initarg :store :reader session-runtime-store
           :documentation "The attached parent-owned durable session.")
    (connection :initarg :connection :reader session-runtime-connection
@@ -61,12 +94,107 @@
                   :documentation "Start of the current output-rate window.")
    (output-bytes :initform 0 :accessor session-runtime-output-bytes
                  :documentation "Sanitized byte count in the current window, limited to 65536."))
-  (:documentation "Mandatory session.v1 service with no model, record, or access authority.
+  (:documentation "Parent session.v1 service with optional trusted model, record, and access services.
 Call RECEIVE in one reader loop. Lifecycle calls may run on other threads. Output
 callbacks receive only transient, untrusted text; render it outside approval UI.
 No output queue is retained. Call EXPIRE from the parent's deadline scheduler.
 After EXPIRE or DISCONNECT, stop the child tree, then AWAIT-CLOSE before reusing
 this session store. Deadline enforcement never waits for peer I/O or callbacks."))
+
+(defgeneric session-knowledge-attach (service runtime)
+  (:documentation "Validate a trusted knowledge binding before runtime admission."))
+
+(defmethod session-knowledge-attach ((service t) runtime)
+  "Reject an unknown knowledge service."
+  (declare (ignore runtime))
+  (when service (error 'parent-protocol-error :reason ':invalid-knowledge-service)))
+
+(defgeneric session-knowledge-handle (service request)
+  (:documentation "Handle one bounded knowledge request through trusted service data."))
+
+(defgeneric session-knowledge-error-code (condition)
+  (:documentation "Map a knowledge failure to a fixed public code."))
+
+(defmethod session-knowledge-error-code ((condition t))
+  "Redact unknown knowledge failures."
+  (declare (ignore condition))
+  ':internal)
+
+(defgeneric session-record-scopes-p (service)
+  (:documentation "Return whether SERVICE implements explicit authorized record scopes."))
+
+(defmethod session-record-scopes-p ((service t))
+  "Legacy record bindings have one attached scope."
+  (declare (ignore service))
+  nil)
+
+(defgeneric session-record-attach (service runtime)
+  (:documentation "Validate the trusted records binding before runtime admission."))
+
+(defmethod session-record-attach ((service t) runtime)
+  "Reject a trusted object without a record service adapter."
+  (declare (ignore runtime))
+  (error 'parent-protocol-error :reason ':invalid-record-service))
+
+(defmethod session-record-attach ((service null) runtime)
+  "No record service is installed."
+  (declare (ignore runtime))
+  nil)
+
+(defgeneric session-record-handle (service request)
+  (:documentation "Serve one bounded RecordRequest on the existing storage owner."))
+
+(defgeneric session-record-error-code (condition)
+  (:documentation "Return a fixed public code for a record service condition."))
+
+(defmethod session-record-error-code ((condition error))
+  "Redact unexpected record failures."
+  ':internal)
+
+(defgeneric session-access-attach (service runtime)
+  (:documentation "Attach trusted access policy. Do not block for approval."))
+
+(defgeneric session-access-dispatch (service runtime request)
+  (:documentation "Admit AccessRequest asynchronously; return true when handled."))
+
+(defgeneric session-access-cancel (service runtime request)
+  (:documentation "Handle cancellation only for an owned access target; return true when handled."))
+
+(defgeneric session-access-fence (service runtime reason &key turn-id)
+  (:documentation "Latch access cancellation without I/O or approval waits."))
+
+(defgeneric session-access-quiesce (service runtime)
+  (:documentation "Join access workers before session store reuse."))
+
+(defmethod session-access-attach ((service t) runtime)
+  "Reject a trusted object without an access service adapter."
+  (declare (ignore runtime))
+  (error 'parent-protocol-error :reason ':invalid-access-service))
+
+(defmethod session-access-attach ((service null) runtime)
+  "No access policy is installed."
+  (declare (ignore runtime))
+  nil)
+
+(defmethod session-access-dispatch ((service null) runtime request)
+  "Decline access dispatch."
+  (declare (ignore runtime request))
+  nil)
+
+(defmethod session-access-cancel ((service null) runtime request)
+  "Decline access cancellation."
+  (declare (ignore runtime request))
+  nil)
+
+(defmethod session-access-fence ((service null) runtime reason &key turn-id)
+  "No access work needs cancellation."
+  (declare (ignore runtime reason turn-id))
+  nil)
+
+(defmethod session-access-quiesce ((service null) runtime)
+  "No access workers exist."
+  (declare (ignore runtime))
+  nil)
 
 (defgeneric session-runtime--operation (service runtime function)
   (:documentation "Run FUNCTION under the session lock or on the installed service owner."))
@@ -146,10 +274,11 @@ this session store. Deadline enforcement never waits for peer I/O or callbacks."
   (declare (ignore runtime))
   nil)
 
-(declaim (ftype (function (session-runtime keyword (or null string) (or null keyword)) null)
+(declaim (ftype (function (session-runtime keyword &key (:turn-id (or null string))
+                                                       (:outcome (or null keyword))) null)
                 session-runtime--notify))
 
-(defun session-runtime--notify (runtime kind turn-id outcome)
+(defun session-runtime--notify (runtime kind &key turn-id outcome)
   "Notify trusted control code after a durable transition, outside the lifecycle lock.
 The callback must only update short control state. A callback error closes the runtime."
   (when (session-runtime-lifecycle-callback runtime)
@@ -165,37 +294,78 @@ The callback must only update short control state. A callback error closes the r
 (declaim (ftype (function (session-store parent-connection &key (:features list)
                            (:output-callback (or null function)) (:clock function)
                            (:initial-sequence integer) (:resume-page (or null parent-proto:session-page))
-                            (:model-service t) (:lifecycle-callback (or null function)))
+                            (:model-service t) (:record-service t) (:access-service t) (:knowledge-service t)
+                            (:application-event-callback (or null function)) (:application-notification-callback (or null function))
+                             (:application-service t) (:application-callback (or null function))
+                            (:lifecycle-callback (or null function)))
                          session-runtime)
                 session-runtime-open))
 
 (defun session-runtime-open (store connection &key (features '("session.v1"))
                                                    output-callback (clock #'session-runtime--clock)
-                                                   (initial-sequence 0) resume-page model-service lifecycle-callback)
+                                                   (initial-sequence 0) resume-page model-service
+                                                   record-service access-service knowledge-service lifecycle-callback
+                                                   application-event-callback application-notification-callback
+                                                    application-service application-callback)
   "Attach STORE to a ready CONNECTION. Supply the delivered Welcome RESUME-PAGE.
-INITIAL-SEQUENCE can describe earlier delivered resume data. Select only session.v1
-in Welcome. A read after the last page record continues that snapshot; another
-after_sequence starts a new snapshot. Only one sequential read cursor is retained."
+INITIAL-SEQUENCE can describe earlier delivered resume data. Select exactly the
+features for the installed services in Welcome. A read after the last page record
+continues that snapshot; another after_sequence starts a new snapshot."
   (let* ((records       (when resume-page (parent-proto:session-page.records resume-page)))
          (last-sequence (if records (parent-proto:session-record.sequence (first (last records))) 0))
          (high          (parent-proto:session-page.high-water-sequence
                          (session-store-read store (parent-proto:make-session-read :limit 1)))))
     (unless (and (eq ':ready (parent-connection-phase connection))
-                 (equal features (if model-service '("session.v1" "model.v1" "model-items-v1") '("session.v1")))
+                 (session-store--proper-list-p features)
+                 (every #'stringp features)
+                 (equal (sort (copy-list features) #'string<)
+                        (sort (copy-list
+                               (append '("session.v1")
+                                       (when model-service '("model.v1" "model-items-v1"))
+                                       (when record-service '("records.v1"))
+                                       (when knowledge-service '("knowledge.v1"))
+                                       (when (member "record-scopes-v1" features :test #'equal)
+                                         '("record-scopes-v1"))
+                                       (when access-service '("access.v1"))
+                                       (when (member "application.v1" features :test #'equal)
+                                         '("application.v1"))))
+                              #'string<))
+                 (or (not (member "record-scopes-v1" features :test #'equal))
+                     (session-record-scopes-p record-service))
                  (<= 0 initial-sequence high)
                  (or (null resume-page)
                      (<= 0 last-sequence (parent-proto:session-page.high-water-sequence resume-page) high))
                  (or (null lifecycle-callback) (functionp lifecycle-callback)))
       (error 'parent-protocol-error :reason ':invalid-session-runtime))
     (let ((runtime (make-instance 'session-runtime :store store :connection connection
-                                 :initial-sequence   (max initial-sequence last-sequence)
+                                 :initial-sequence                   (max initial-sequence last-sequence)
                                  :output-callback output-callback :clock clock :service model-service
-                                 :lifecycle-callback lifecycle-callback)))
+                                 :record-service record-service :access-service access-service
+                                 :knowledge-service                  knowledge-service
+                                 :application-service                application-service
+                                 :application-event-callback         application-event-callback
+                                  :application-notification-callback application-notification-callback
+                                  :application-callback              application-callback
+                                 :features                           (copy-list features)
+                                 :lifecycle-callback                 lifecycle-callback)))
       (when (and resume-page (parent-proto:session-page.has-more resume-page) records)
         (setf (session-runtime-page-after runtime) last-sequence
               (session-runtime-page-high runtime) (parent-proto:session-page.high-water-sequence resume-page)))
+      (session-record-attach record-service runtime)
+      (session-knowledge-attach knowledge-service runtime)
+      (session-access-attach access-service runtime)
       (session-runtime--attach model-service runtime)
       runtime)))
+
+(defmethod session-runtime--fence :after ((service t) runtime reason &key turn-id)
+  "Fence access work with model work without approval waits."
+  (session-access-fence (session-runtime-access-service runtime) runtime reason :turn-id turn-id)
+  nil)
+
+(defmethod session-runtime--quiesce :before ((service t) runtime)
+  "Join access workers while the storage owner is still available."
+  (session-access-quiesce (session-runtime-access-service runtime) runtime)
+  nil)
 
 (declaim (ftype (function (session-runtime) null) session-runtime--disconnect))
 
@@ -286,10 +456,11 @@ after_sequence starts a new snapshot. Only one sequential read cursor is retaine
     (error 'parent-protocol-error :reason ':in-flight-limit))
   nil)
 
-(declaim (ftype (function (session-runtime string string &key (:continuation-sequence t)) integer)
+(declaim (ftype (function (session-runtime string string
+                           &key (:continuation-sequence t) (:application t)) integer)
                 session-runtime-start-turn))
 
-(defun session-runtime-start-turn (runtime turn-id text &key continuation-sequence)
+(defun session-runtime-start-turn (runtime turn-id text &key continuation-sequence application)
   "Reserve a turn, persist input, then send TurnStart. Never replay on send loss."
   (with-session-runtime-owner (runtime)
    (bordeaux-threads:with-lock-held ((session-runtime-lifecycle-lock runtime))
@@ -297,12 +468,19 @@ after_sequence starts a new snapshot. Only one sequential read cursor is retaine
          (and (eq ':running (session-runtime-phase runtime)) (null (session-runtime-turn-request runtime)))
        (error 'parent-protocol-error :reason ':not-accepting-turns))
      (session-runtime--available runtime)
-     (setf (session-runtime-turn-id runtime) turn-id
-           (session-runtime-turn-request runtime) 0))
+     (when (and application (not (member "application.v1" (session-runtime-features runtime)
+                                        :test #'equal)))
+       (error 'parent-protocol-error :reason ':application-feature-required))
+     (clrhash (session-runtime-application-scopes runtime))
+    (setf (session-runtime-application-finish runtime) nil)
+    (setf (session-runtime-application-result runtime) nil)
+    (setf (session-runtime-turn-id runtime) turn-id
+          (session-runtime-turn-request runtime) 0))
    (handler-case
     (let* ((start
-            (session-store-start-turn (session-runtime-store runtime) turn-id text :continuation-sequence
-                                      continuation-sequence))
+            (session-store-start-turn (session-runtime-store runtime) turn-id text
+                                      :continuation-sequence continuation-sequence
+                                      :application           application))
            (envelope (parent-proto:make-envelope :turn-start start)))
       (session-runtime--send (session-runtime-service runtime) runtime envelope)
       (progn
@@ -509,6 +687,104 @@ Truncate rendered output to 32768 UTF-8 bytes, including line labels."
         do (setf after (parent-proto:session-record.sequence (first (last records))))
         finally (return nil)))
 
+(declaim (ftype (function (session-runtime parent-proto:envelope) null) session-runtime--record))
+
+(defun session-runtime--record (runtime envelope)
+  "Serve records on the current owner with bounded input, output and storage rate."
+  (let* ((request (parent-proto:envelope.record-request envelope))
+         (service (session-runtime-record-service runtime))
+         (bytes   (length (cl-protobufs:serialize-to-bytes request)))
+         (now     (funcall (session-runtime-clock runtime))))
+    (unless (and service (member "records.v1" (session-runtime-features runtime) :test #'string=))
+      (session-runtime--failure runtime envelope ':unsupported)
+      (return-from session-runtime--record nil))
+    (when
+        (and (parent-proto:record-request.has-scope request)
+             (not (member "record-scopes-v1" (session-runtime-features runtime) :test #'equal)))
+      (session-runtime--failure runtime envelope ':unsupported)
+      (return-from session-runtime--record nil))
+    (when (>= (- now (session-runtime-record-window runtime)) 1)
+      (setf (session-runtime-record-window runtime) now
+            (session-runtime-record-count runtime) 0
+            (session-runtime-record-bytes runtime) 0))
+    (when
+        (or (>= (session-runtime-record-count runtime) 64) (> bytes 1048576)
+            (> (+ (session-runtime-record-bytes runtime) bytes) 8388608))
+      (session-runtime--failure runtime envelope ':resource-limit)
+      (return-from session-runtime--record nil))
+    (incf (session-runtime-record-count runtime))
+    (incf (session-runtime-record-bytes runtime) bytes)
+    (handler-case
+     (let* ((response (session-record-handle service request))
+            (reply
+             (parent-proto:make-envelope :reply-to        (parent-proto:envelope.message-id envelope)
+                                         :record-response response)))
+       (when
+           (or (> (length (cl-protobufs:serialize-to-bytes response)) 1048576)
+               (>
+                (+ 64
+                   (session-output--bytes
+                    (parent-connection-instance-id (session-runtime-connection runtime)))
+                   (length (cl-protobufs:serialize-to-bytes reply)))
+                (parent-proto:limits.max-frame-bytes
+                 (parent-connection-limits (session-runtime-connection runtime)))))
+         (session-runtime--failure runtime envelope ':resource-limit)
+         (return-from session-runtime--record nil))
+       (session-runtime--send (session-runtime-service runtime) runtime reply))
+     (error (condition)
+            (let ((code (session-record-error-code condition)))
+              (session-runtime--failure runtime envelope
+               (if (member code
+                           '(:invalid-request :permission-denied :unsupported :resource-limit
+                             :revision-conflict :unavailable :internal))
+                   code
+                   ':internal))))))
+  nil)
+
+(declaim (ftype (function (session-runtime parent-proto:envelope) null) session-runtime--knowledge))
+
+(defun session-runtime--knowledge (runtime envelope)
+  "Serve bounded knowledge requests under the shared private-storage rate limit."
+  (let* ((request (parent-proto:envelope.knowledge-request envelope))
+         (service (session-runtime-knowledge-service runtime))
+         (bytes   (length (cl-protobufs:serialize-to-bytes request)))
+         (now     (funcall (session-runtime-clock runtime))))
+    (unless (and service (member "knowledge.v1" (session-runtime-features runtime) :test #'equal))
+      (session-runtime--failure runtime envelope ':unsupported)
+      (return-from session-runtime--knowledge nil))
+    (when (>= (- now (session-runtime-record-window runtime)) 1)
+      (setf (session-runtime-record-window runtime) now
+            (session-runtime-record-count runtime) 0
+            (session-runtime-record-bytes runtime) 0))
+    (when (or (>= (session-runtime-record-count runtime) 64)
+              (> bytes 1048576)
+              (> (+ bytes (session-runtime-record-bytes runtime)) 8388608))
+      (session-runtime--failure runtime envelope ':resource-limit)
+      (return-from session-runtime--knowledge nil))
+    (incf (session-runtime-record-count runtime))
+    (incf (session-runtime-record-bytes runtime) bytes)
+    (handler-case
+        (let* ((response (session-knowledge-handle service request))
+               (reply    (parent-proto:make-envelope
+                          :reply-to           (parent-proto:envelope.message-id envelope)
+                          :knowledge-response response)))
+          (when (or (> (length (cl-protobufs:serialize-to-bytes response)) 1048576)
+                    (> (+ 64 (session-output--bytes
+                              (parent-connection-instance-id (session-runtime-connection runtime)))
+                          (length (cl-protobufs:serialize-to-bytes reply)))
+                       (parent-proto:limits.max-frame-bytes
+                        (parent-connection-limits (session-runtime-connection runtime)))))
+            (session-runtime--failure runtime envelope ':resource-limit)
+            (return-from session-runtime--knowledge nil))
+          (session-runtime--send (session-runtime-service runtime) runtime reply))
+      (error (condition)
+        (let ((code (session-knowledge-error-code condition)))
+          (session-runtime--failure runtime envelope
+                                    (if (member code '(:invalid-request :permission-denied :unsupported
+                                                       :resource-limit :revision-conflict :unavailable :internal))
+                                        code ':internal))))))
+  nil)
+
 (declaim (ftype (function (session-runtime parent-proto:envelope) null) session-runtime--dispatch))
 
 (defun session-runtime--dispatch (runtime request)
@@ -537,6 +813,20 @@ Truncate rendered output to 32768 UTF-8 bytes, including line labels."
               reply-p
               (not reply-p))
         (reject)
+        (return-from session-runtime--dispatch nil))
+      (when (and (eq body 'parent-proto:cancel-request)
+                 (session-access-cancel (session-runtime-access-service runtime) runtime request))
+        (return-from session-runtime--dispatch nil))
+      (when (eq body 'parent-proto:record-request)
+        (session-runtime--record runtime request)
+        (return-from session-runtime--dispatch nil))
+      (when (eq body 'parent-proto:knowledge-request)
+        (session-runtime--knowledge runtime request)
+        (return-from session-runtime--dispatch nil))
+      (when (and (eq body 'parent-proto:access-request)
+                 (session-runtime-access-service runtime)
+                 (member "access.v1" (session-runtime-features runtime) :test #'string=)
+                 (session-access-dispatch (session-runtime-access-service runtime) runtime request))
         (return-from session-runtime--dispatch nil))
       (when (session-runtime--model-dispatch (session-runtime-service runtime) runtime request)
         (return-from session-runtime--dispatch nil))
@@ -637,7 +927,7 @@ Truncate rendered output to 32768 UTF-8 bytes, including line labels."
                   (session-store-finish-turn (session-runtime-store runtime) turn-id outcome)
                   (setf (session-runtime-turn-id runtime) nil
                         (session-runtime-turn-request runtime) nil)
-                  (session-runtime--notify runtime ':turn-finished turn-id outcome))
+                  (session-runtime--notify runtime ':turn-finished :turn-id turn-id :outcome outcome))
                 (reject))))
          (parent-proto:ready-to-stop
           (let ((ready (parent-proto:envelope.ready-to-stop request)))
@@ -658,7 +948,7 @@ Truncate rendered output to 32768 UTF-8 bytes, including line labels."
                             (session-runtime-turn-request runtime) nil
                             (session-runtime-turn-id runtime) nil
                             stopped t)))
-                  (when stopped (session-runtime--notify runtime ':stopped nil nil)))
+                  (when stopped (session-runtime--notify runtime ':stopped)))
                 (reject))))
          (parent-proto:failure
           (let ((failure (parent-proto:envelope.failure request)))
@@ -673,7 +963,7 @@ Truncate rendered output to 32768 UTF-8 bytes, including line labels."
                                              ':failed :reason "Agent rejected the turn.")
                   (setf (session-runtime-turn-request runtime) nil
                         (session-runtime-turn-id runtime) nil)
-                  (session-runtime--notify runtime ':turn-finished turn-id ':failed))
+                  (session-runtime--notify runtime ':turn-finished :turn-id turn-id :outcome ':failed))
                 (reject))))
          (parent-proto:output
           (let* ((output  (parent-proto:envelope.output request))
@@ -701,7 +991,8 @@ Truncate rendered output to 32768 UTF-8 bytes, including line labels."
                             (handler-case
                              (funcall (session-runtime-output-callback runtime) channel safe-text)
                              (error nil (reject ':internal)))))))))))
-         ((parent-proto:model-start parent-proto:record-request parent-proto:access-request)
+         ((parent-proto:model-start parent-proto:record-request parent-proto:knowledge-request
+           parent-proto:access-request)
           (when
               (and (member body '(parent-proto:model-start parent-proto:access-request))
                    (session-runtime--history-full-p runtime request :table

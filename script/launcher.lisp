@@ -55,7 +55,7 @@
 (defparameter *launcher-value-options*
   '("--permissions" "--image" "-i" "--localgroup-handoff" "--id" "--input"
     "--output" "--events" "--generation" "--status" "--capsule" "--original-argument"
-    "--workspace")
+    "--workspace" "--site-config-root")
   "Options whose next argument is forwarded verbatim, as script/launcher-cli.sh does.")
 
 (defparameter *launcher-terminal-statuses* '(64 76 130 143)
@@ -503,11 +503,26 @@ of deleting them, as the Windows update path also hands off to the user."
         (t
          (launcher-note "~A" (launcher-style "2" "Please answer yes or no.")))))))
 
+(defun launcher-parent-cli-p (arguments)
+  "Select the trusted parent for every public command and ordinary session."
+  (not (member (first arguments)
+               '("--worker" "--parent-agent" "--model-catalog-worker" "--telemetry-worker"
+                 "--autolith-internal-active-image-probe"
+                 "--autolith-internal-image-commit-replay-probe")
+               :test #'equal)))
+
 (defun launcher-run-active (context request)
   "Run the session for REQUEST and return its exit status."
   (autolith-script-setenv "AUTOLITH_SOURCE_ROOT"
                           (uiop:native-namestring (launcher-context-source-root context)))
   (let ((arguments (launcher-request-arguments request)))
+    (when (launcher-parent-cli-p arguments)
+      (launcher-refresh-sandbox)
+      (return-from launcher-run-active
+        (launcher-run
+         (apply #'launcher-script-command context "script/parent.lisp" "--cli"
+                (append (when (launcher-request-from-source-p request) '("--from-source"))
+                        arguments)))))
     (flet ((run-core ()
              (launcher-refresh-sandbox)
              (launcher-run (launcher-agent-command
