@@ -367,6 +367,26 @@ ask for a final usage chunk."
         :stream-usage-p      stream-usage-p))
      :source                   source)))
 
+(-> openai-compatible--cache-stable-prefix (hash-table list list) null)
+(defun openai-compatible--cache-stable-prefix (request durable-items fields)
+  "Cache only the wire prefix unchanged by one-response exchanges.
+
+Encode the complete exchange together so reasoning and parallel calls share
+one assistant message. A partial durable projection can change that message,
+so stop at the first wire difference instead of splitting its source items."
+  (let ((messages (json-get request "messages"))
+        (stable   nil))
+    (loop for durable in (cl-llm-provider-api::openai-compatible--chat-input-messages durable-items)
+          for index from 1 below (length messages)
+          for message = (aref messages index)
+          while (string= (json-encode durable) (json-encode message))
+          do (push message stable))
+    (cl-llm-provider-api::openai-compatible--chat-cache-breakpoint (aref messages 0) fields)
+    (some (lambda (message)
+            (cl-llm-provider-api::openai-compatible--chat-cache-breakpoint message fields))
+          stable))
+  nil)
+
 (defmethod provider-request-object
            ((provider openai-compatible-provider) (conversation conversation)
             (tool-namespaces vector)
@@ -383,19 +403,19 @@ ask for a final usage chunk."
             (context-resolve-request configuration conversation request-namespaces
                                      :goal-context goal-context :compaction-p
                                      compaction-p)))
-         (history
+         (durable-history
           (conversation-input-items-for-family conversation (provider-family provider)
                                                :include-ephemeral-p nil))
-         (ephemeral-items
-          (unless compaction-p
-            (remove-if
-             (lambda (item) (member item history :test #'eq))
-             (conversation-input-items-for-family conversation (provider-family provider)
-                                                  :include-ephemeral-p t))))
+         (history
+          (if compaction-p
+              durable-history
+              (conversation-input-items-for-family conversation (provider-family provider)
+                                                   :include-ephemeral-p t)))
+         (ephemeral-p     (/= (length history) (length durable-history)))
+         (cache-fields    (openai-compatible-provider-cache-breakpoint-fields provider configuration))
          (projection
-          ;; Anchored context joins the durable history before its cache
-          ;; breakpoint where the provider accepts it there; exchanges lasting
-          ;; one response, the goal, and other context follow.
+          ;; Keep the complete assistant exchange intact when encoding Chat.
+          ;; Choose its stable cache boundary afterward if it contains ephemera.
           (multiple-value-bind (items context)
               (if (openai-compatible-provider-anchored-context-p provider)
                   (values (context-delivery-project-items delivery conversation history)
@@ -410,8 +430,7 @@ ask for a final usage chunk."
                          (unless compaction-p
                            (list goal-context context))
                          :options
-                         (list :ephemeral-items ephemeral-items
-                               :tool-choice     *provider-tool-choice*
+                         (list :tool-choice *provider-tool-choice*
                                :stream-usage-p
                                (openai-compatible-provider-stream-usage-p provider)
                                :reasoning-parameter
@@ -426,9 +445,16 @@ ask for a final usage chunk."
                                (openai-compatible-provider-output-ceiling-field
                                 provider)
                                :cache-breakpoint-fields
-                               (openai-compatible-provider-cache-breakpoint-fields
-                                provider configuration))))))
-    (values (provider-request-object provider projection effective-tools) delivery)))
+                               (unless ephemeral-p cache-fields)))))
+         (request         (provider-request-object provider projection effective-tools)))
+    (when (and ephemeral-p cache-fields)
+      (openai-compatible--cache-stable-prefix
+       request
+       (if (openai-compatible-provider-anchored-context-p provider)
+           (context-delivery-project-items delivery conversation durable-history)
+           durable-history)
+       cache-fields))
+    (values request delivery)))
 
 
 ;;;; -- Chat Completions Transport --

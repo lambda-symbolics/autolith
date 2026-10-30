@@ -845,6 +845,7 @@
   test-openrouter-routing-validation
   test-openrouter-provider-routing
   test-openrouter-cache-breakpoints
+  test-openrouter-ephemeral-reasoning
   test-openrouter-anchored-context-prefix
   test-openrouter-routing-environment)
 

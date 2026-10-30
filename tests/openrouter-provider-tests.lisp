@@ -463,3 +463,50 @@
            (openrouter-provider-test--builtin-registration))
       (provider--registry-restore registry-snapshot)))
   nil)
+
+(-> test-openrouter-ephemeral-reasoning () null)
+(defun test-openrouter-ephemeral-reasoning ()
+  "Preserve thinking and parallel-call grouping across a volatile cache boundary."
+  (with-test-environment (("AUTOLITH_OPENROUTER_PROVIDER_ROUTING" nil))
+    (with-test-configuration (configuration)
+      (setf (configuration-validation-deferred-p configuration) t
+            (config :model configuration) (openrouter--model-name "anthropic/claude-haiku-4.5"))
+      (dolist (durable-call-p '(nil t))
+        (let ((conversation (conversation-create configuration)))
+          (conversation-append-user-message conversation "Plan the calls.")
+          (conversation-append-provider-item
+           conversation (json-object "type" "reasoning_content" "content" "Think through this exchange."))
+          (when durable-call-p
+            (conversation-append-provider-item
+             conversation (json-object "type" "function_call" "namespace" "skill" "name" "load"
+                                       "call_id" "barrier" "arguments" "{}")))
+          (conversation-append-provider-item
+           conversation (json-object "type" "function_call" "namespace" "shell" "name" "run"
+                                     "call_id" "blocked" "arguments" "{}")
+           :persistence ':next-response)
+          (when durable-call-p
+            (conversation-append-tool-result conversation "barrier" :tool-name "skill.load"
+                                             :output "Loaded." :success-p t))
+          (conversation-append-tool-result conversation "blocked" :tool-name "shell.run"
+                                           :output "Blocked." :success-p nil :persistence ':next-response)
+          (let* ((request  (provider-request-object (openrouter-provider-create configuration)
+                                                    conversation #()))
+                 (messages (json-get request "messages"))
+                 (answer   (aref messages 2))
+                 (calls    (json-get answer "tool_calls")))
+            (test-assert (and (equal "Think through this exchange." (json-get answer "reasoning_content"))
+                              (= (length calls) (if durable-call-p 2 1))
+                              (equal "blocked" (json-get (aref calls (1- (length calls))) "id")))
+                         "Captured thinking and every same-response call share one assistant message")
+            (test-assert (equal (if durable-call-p "barrier" "blocked")
+                                (json-get (aref messages 3) "tool_call_id"))
+                         "Tool outputs follow the complete assistant call group in wire order")
+            (test-assert (json-get (aref (json-get (aref messages 1) "content") 0) "cache_control")
+                         "The unchanged durable user prefix remains cacheable")
+            (test-assert
+             (loop for message across (subseq messages 2)
+                   for content = (json-get message "content")
+                   always (or (null content) (stringp content)
+                              (notany (lambda (part) (json-get part "cache_control")) content)))
+             "No part of the mixed assistant exchange receives a cache breakpoint"))))))
+  nil)
