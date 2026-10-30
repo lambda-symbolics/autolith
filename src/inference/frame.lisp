@@ -214,11 +214,14 @@ value from the text through the library's answer reader."
 
 (-> rlm--frame-request (string list string) string)
 (defun rlm--frame-request (task views instructions)
-  "Compose the single frame user message from TASK, VIEWS, and INSTRUCTIONS."
-  (format nil "Task: ~A~@[~%~%Read-only context views:~%~%~A~]~%~A"
-          task
+  "Compose the single frame user message from TASK, VIEWS, and INSTRUCTIONS.
+
+The views and answer shape come first and the task last, so frames asking
+different questions of the same views share their request prefix."
+  (format nil "~@[Read-only context views:~%~%~A~%~]~A~%~%Task: ~A"
           (rlm-views-render views)
-          instructions))
+          instructions
+          task))
 
 (-> rlm--frame-conversation (configuration &key (:task string)) conversation)
 (defun rlm--frame-conversation (configuration &key task)

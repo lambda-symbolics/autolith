@@ -269,6 +269,45 @@
        "framed inference forwards provider and nested RLM progress")))
   nil)
 
+(-> test-rlm-frame-shared-prefix () null)
+(defun test-rlm-frame-shared-prefix ()
+  "Put the task after shared views so frames over one context share a prefix."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (evidence      (make-string 6000 :initial-element #\e))
+         (provider
+           (make-instance
+            'rlm-inference-test-provider
+            :results (list (rlm-inference-test-result "first" "one" 10)
+                           (rlm-inference-test-result "second" "two" 10)))))
+    (unwind-protect
+         (progn
+           (dolist (task '("Count the first kind." "Count the second kind."))
+             (infer task :context       (list evidence)
+                         :provider      provider
+                         :configuration configuration))
+           (let ((requests
+                   (mapcar (lambda (snapshot)
+                             (let ((item (first (last snapshot))))
+                               (json-get (aref (json-get item "content") 0) "text")))
+                           (reverse (rlm-inference-test-provider-input-snapshots provider)))))
+             (test-assert
+              (let ((boundary (search "Task: " (first requests))))
+                (and boundary
+                     (string= (subseq (first requests) 0 boundary)
+                              (subseq (second requests) 0 boundary))
+                     (< (search evidence (first requests)) boundary)
+                     (search "Count the second kind." (second requests)
+                             :start2 boundary)))
+              "frames over the same views differ only in their trailing task"))
+           (let ((index (rlm--trace-index-render configuration)))
+             (test-assert
+              (and (search "Count the first kind" index)
+                   (search "Count the second kind" index))
+              "the trace index names each frame by its task")))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-rlm-response-usage-normalization () null)
 (defun test-rlm-response-usage-normalization ()
   "Test inference traces persist canonical provider cache usage."

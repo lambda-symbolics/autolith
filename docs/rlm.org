@@ -36,7 +36,10 @@ A frame never inherits the parent conversation, the agent identity,
 or unrestricted capabilities. It receives the task, the materialized
 context views, the contract, and the remaining budget. This
 containment is what makes recursion cheap and safe: a hundred frames
-cannot pollute the primary conversation or the prompt cache.
+cannot pollute the primary conversation or the prompt cache. The
+frame's request puts the views first, then the answer shape, and the
+task last, so frames asking different questions of the same views
+share a cacheable prefix.
 
 * Context views
 
