@@ -44,15 +44,20 @@ local retention estimate, which only schedules pruning and idle compaction."
 (defparameter *provider-cache-prefix-function* nil
   "A request-local callback receiving prefix fingerprints, or NIL outside observation.")
 
+(defparameter *provider-cache-wire-sequence-fields* '("messages" "input" "contents")
+  "Request fields that hold the ordered conversation, in the order they are looked for.")
+
 (defmethod provider-request-object :around
     ((provider model-provider) (projection cl-llm-provider-api:wire-request)
      (tool-namespaces vector) &key goal-context compaction-p)
-  "Observe the projected prefix without its temporary suffix or retaining prompt text."
+  "Observe the projected prefix and the final request without retaining prompt text."
   (declare (ignore goal-context))
-  (multiple-value-prog1 (call-next-method)
+  (let ((values (multiple-value-list (call-next-method))))
     (when (and *provider-cache-prefix-function* (not compaction-p))
       (funcall *provider-cache-prefix-function*
-               (provider-cache-prefix-create projection tool-namespaces)))))
+               (append (provider-cache-prefix-create projection tool-namespaces)
+                       (list :wire (provider-cache-wire-plan (first values))))))
+    (values-list values)))
 
 (-> provider-cache-prefix-create (cl-llm-provider-api:wire-request vector) list)
 (defun provider-cache-prefix-create (projection tool-namespaces)
@@ -96,6 +101,91 @@ establish shared history growth, never the provider's token boundary."
        (= (provider-cache-prefix-shared-characters previous current)
           (provider-cache-prefix-characters previous))
        t))
+
+(-> provider-cache-wire-plan (json-object) list)
+(defun provider-cache-wire-plan (request)
+  "Fingerprint the final encoded REQUEST as the provider receives it.
+
+Return a property list. :FIELDS pairs each other top-level field name with its
+digest and serialized character count, sorted by name. :ITEMS fingerprints the
+ordered conversation sequence. :BREAKPOINTS lists each explicit cache marker's
+path and requested lifetime, NIL for the service default. A request wrapped in
+a Code Assist envelope is measured through its inner request. No prompt text
+is retained."
+  (let* ((inner    (json-get request "request"))
+         (body     (if (json-object-p inner) inner request))
+         (sequence (find-if (lambda (name)
+                              (provider-cache-wire--array-p (json-get body name)))
+                            *provider-cache-wire-sequence-fields*)))
+    (list :fields
+          (sort (loop for name being the hash-keys of body using (hash-value value)
+                      unless (equal name sequence)
+                        collect (cons name (provider-cache-prefix--entry value)))
+                #'string< :key #'first)
+          :items
+          (and sequence (map 'list #'provider-cache-prefix--entry (json-get body sequence)))
+          :breakpoints
+          (provider-cache-wire--breakpoints body nil))))
+
+(-> provider-cache-wire-change (list list) list)
+(defun provider-cache-wire-change (previous current)
+  "Describe how CURRENT's final request departs from PREVIOUS's.
+
+Both arguments are wire plans. Return a property list: :FIELDS names the
+top-level fields that changed, appeared or disappeared; :FIRST-CHANGED-ITEM is
+the index of the first conversation item that differs, or NIL when CURRENT
+repeats all of PREVIOUS's items; :ITEMS is CURRENT's item count; and
+:BREAKPOINTS-MOVED-P is true when marker positions or lifetimes differ.
+Return NIL when either plan is missing."
+  (when (and previous current)
+    (let* ((old-fields (getf previous :fields))
+           (new-fields (getf current :fields))
+           (old-items  (getf previous :items))
+           (new-items  (getf current :items))
+           (names      (remove-duplicates (mapcar #'first (append old-fields new-fields))
+                                          :test #'string=)))
+      (list :fields
+            (sort (remove-if (lambda (name)
+                               (equal (assoc name old-fields :test #'string=)
+                                      (assoc name new-fields :test #'string=)))
+                             names)
+                  #'string<)
+            :first-changed-item
+            (or (loop for old in old-items
+                      for new in new-items
+                      for index from 0
+                      unless (equal old new)
+                        return index)
+                (and (< (length new-items) (length old-items))
+                     (length new-items)))
+            :items               (length new-items)
+            :breakpoints-moved-p (not (equal (getf previous :breakpoints)
+                                             (getf current :breakpoints)))))))
+
+(-> provider-cache-wire--array-p (t) boolean)
+(defun provider-cache-wire--array-p (value)
+  "Return true when VALUE is a JSON array."
+  (and (vectorp value) (not (stringp value))))
+
+(-> provider-cache-wire--breakpoints (t list) list)
+(defun provider-cache-wire--breakpoints (value path)
+  "Return each cache marker inside VALUE as its path and requested lifetime.
+
+PATH lists, innermost first, the field names and indexes leading to VALUE."
+  (cond
+    ((json-object-p value)
+     (append (let ((control (json-get value "cache_control")))
+               (when (json-object-p control)
+                 (list (list (reverse path) (json-get control "ttl")))))
+             (loop for name being the hash-keys of value using (hash-value child)
+                   unless (equal name "cache_control")
+                     append (provider-cache-wire--breakpoints child (cons name path)))))
+    ((provider-cache-wire--array-p value)
+     (loop for child across value
+           for index from 0
+           append (provider-cache-wire--breakpoints child (cons index path))))
+    (t
+     nil)))
 
 (-> provider-cache-prefix--entry (t) list)
 (defun provider-cache-prefix--entry (value)

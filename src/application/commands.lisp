@@ -317,7 +317,25 @@ transcript renderer, including in fullscreen."
                           (:resumed
                            " · resumed session")
                           (otherwise
-                           ""))))))
+                           ""))))
+   (let ((description (application--wire-change-description (getf miss :wire-change))))
+     (when description
+       (list (terminal-span ':dim (format nil " · request ~A" description)))))))
+
+(-> application--wire-change-description (list) (option string))
+(defun application--wire-change-description (change)
+  "Describe the final-request CHANGE behind a cache notice, or NIL when nothing changed."
+  (let ((parts
+          (remove nil
+                  (list (and (getf change :fields)
+                             (format nil "~{~A~^, ~} changed" (getf change :fields)))
+                        (and (getf change :first-changed-item)
+                             (format nil "item ~D of ~D changed"
+                                     (1+ (getf change :first-changed-item))
+                                     (getf change :items)))
+                        (and (getf change :breakpoints-moved-p)
+                             "cache markers moved")))))
+    (and parts (format nil "~{~A~^, ~}" parts))))
 
 (-> application-note-prompt-cache-request-started (application) null)
 (defun application-note-prompt-cache-request-started (application)

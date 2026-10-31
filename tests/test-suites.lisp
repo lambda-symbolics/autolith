@@ -530,6 +530,7 @@
   test-prompt-cache-baseline-from-conversation
   test-prompt-cache-prefix-progression
   test-prompt-cache-request-observation
+  test-prompt-cache-wire-plan
   test-prompt-cache-miss-notices
   test-cache-misses-command)
 

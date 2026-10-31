@@ -1860,6 +1860,10 @@ A cache miss reports measured lost reads; a stall reports shared-history growth
 in characters because its token count is unknown. Both show cached and total
 input tokens. Notices start with a red =!=. Model changes, idle intervals and
 smaller prompts are local observations, not proof of eviction or routing failure.
+A notice also names what changed in the request as sent, compared with the
+previous one: top-level fields such as =tools= or =system=, the first changed
+message or input item, and moved cache markers. These come from digests of the
+final request, not from provider counters, and keep no prompt text.
 The first request after resuming or compacting establishes a fresh baseline.
 Without comparable read counters or prefix measurements, no loss is inferred
 from total input. The setting is off by default and persists across restarts.
