@@ -457,6 +457,7 @@
                                           (:file "conversation-replay-tests")
                                           (:file "conversation-resource-tests")
                                           (:file "plan-tests")
+                                            (:file "plan-context-tests")
                                           (:file "authentication-tests")
                                           (:file "chatgpt-authentication-tests")
                                           (:file "gemini-authentication-tests")

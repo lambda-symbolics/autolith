@@ -1,5 +1,33 @@
 (in-package #:autolith)
 
+;;;; -- Authoritative Current Plan --
+
+;;; The durable plan is rebuilt from its workspace snapshot on every request.  It
+;;; is authoritative for current constraints; history summaries and plan-change
+;;; advice are not substitutes for this projection.
+
+(-> plan-state-context (request-context) (option context-contribution))
+(defun plan-state-context (request)
+  "Project the exact current workspace plan with its durable resource identity."
+  (let* ((configuration (request-context-configuration request))
+         (plan          (plan-load configuration)))
+    (when plan
+      (make-context-contribution
+       :identifier "active-plan"
+       :instruction
+       (format nil
+               "<active_plan_state resource=~S revision=~D>~%~S~%</active_plan_state>"
+               (namestring (plan--pathname configuration))
+               (workspace-plan-updated-at plan)
+               (plan->form plan))
+       :priority 1000
+       :lifetime ':while-relevant
+       :class ':mandatory
+       :deduplication-key "active-plan"))))
+
+(eval-when (:load-toplevel :execute)
+  (register-context-contributor "active-plan" 'plan-state-context :source ':built-in))
+
 ;;;; -- Plan Change Advice --
 
 ;;; When facts a plan step depends on change between turns, the model is told
