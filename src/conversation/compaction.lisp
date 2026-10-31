@@ -152,13 +152,17 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
        projection (append items ephemeral-items))
       (conversation-compaction--copy-metadata
        (conversation-projection conversation) projection ephemeral-items)
-      (when (eq (first record) :native-compaction)
-        (setf (gethash (first replacement-items)
-                       (clinker-transcript:projection-metadata-table projection ':family))
-              (getf (rest record) :family)
-              (gethash (second replacement-items)
-                       (clinker-transcript:projection-metadata-table projection ':handoff-family))
-              (getf (rest record) :family)))
+        (when (eq (first record) :native-compaction)
+          (let ((family (getf (rest record) :family))
+                (handoff (car (last replacement-items))))
+            (dolist (item replacement-items)
+              (when (native-compaction-item-p item)
+                (setf (gethash item
+                               (clinker-transcript:projection-metadata-table projection ':family))
+                      family)))
+            (setf (gethash handoff
+                           (clinker-transcript:projection-metadata-table projection ':handoff-family))
+                  family)))
       (sb-sys:without-interrupts
         (let ((published (conversation-append-record conversation record)))
           (setf (slot-value conversation 'projection) projection
@@ -186,6 +190,8 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
     list)
 (defun conversation-append-native-compaction
     (conversation window &key family summary compaction unfinished-work)
+  (when (json-object-p window)
+    (setf window (list window)))
   "Persist native WINDOW, portable SUMMARY, and carry-forward state atomically."
   (dolist (item window)
     (native-compaction-item-canonicalize item))

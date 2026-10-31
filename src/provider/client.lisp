@@ -918,19 +918,25 @@ each attempt must stream through."
          :request-id (provider--response-request-id headers)
          :response   nil))
 
+(defclass native-compaction-completed-event (provider-event)
+  ((usage
+    :initarg :usage
+    :reader native-compaction-completed-event-usage)
+   (response-id
+    :initarg :response-id
+    :reader native-compaction-completed-event-response-id))
+  (:documentation "A usage-only completion notification for native compaction."))
+
 (-> provider--decode-native-compaction-response
-    (codex-subscription-provider t &key (:status integer) (:headers t))
+    (codex-subscription-provider t &key (:status integer) (:headers t)
+                                     (:event-callback (option function)))
     (values (option list) (option json-object)))
 (defun provider--decode-native-compaction-response
-    (provider body &key status headers)
+    (provider body &key status headers event-callback)
   "Decode BODY and return its complete normalized compacted output window.
 
-  The endpoint can return a compacted transcript containing ordinary output,
-  multiple checkpoint encodings, or no opaque checkpoint. A window is usable
-  for native replay when it contains at least one opaque checkpoint; ordinary
-  retained items are never discarded. The second value is the response usage
-  object, when the endpoint reported one, so the compaction request can be
-  metered even when the window is unusable."
+  A usage-only completion event is emitted before structural validation, so
+  paid malformed responses are accounted for without exposing response data."
   (let ((source (provider--error-body-text body)))
     (unless (non-empty-string-p source)
       (provider--signal-invalid-native-compaction provider status headers))
@@ -953,12 +959,24 @@ each attempt must stream through."
                              (native-compaction-item-canonicalize normalized))
                            normalized))
                        output))
-              (usage (json-get response "usage")))
-          (values (and (some #'native-compaction-item-p items) items)
-                  (and (json-object-p usage) usage)))))))
+                (usage (json-get response "usage"))
+                (response-id (or (json-get response "id")
+                                 (json-get response "response_id"))))
+            (when (and (functionp event-callback) (json-object-p usage))
+              (funcall event-callback
+                       (make-instance 'native-compaction-completed-event
+                                      :usage usage :response-id response-id)))
+            (unless (every (lambda (item)
+                            (and (json-object-p item)
+                                 (non-empty-string-p (json-get item "type"))))
+                          output)
+              (provider--signal-invalid-native-compaction provider status headers))
+            (values (and (some #'native-compaction-item-p items) items)
+                    (and (json-object-p usage) usage))))))
+)
 
 (defgeneric provider-attempt-native-compaction
-    (provider conversation &key tool-namespaces force-refresh)
+    (provider conversation &key tool-namespaces force-refresh event-callback)
   (:documentation
    "Perform one authenticated Codex native compaction request.
 
@@ -969,7 +987,7 @@ each attempt must stream through."
 (defmethod provider-attempt-native-compaction
     ((provider codex-subscription-provider)
      (conversation conversation)
-     &key tool-namespaces force-refresh)
+     &key tool-namespaces force-refresh event-callback)
   "Perform one native compaction attempt with optional credential refresh."
   (declare (type vector tool-namespaces)
            (type boolean force-refresh))
@@ -993,8 +1011,9 @@ each attempt must stream through."
                 (unless (= status 200)
                   (provider--codex-signal-status-failure
                    provider status :headers headers :raw-body body))
-                (provider--decode-native-compaction-response
-                 provider body :status status :headers headers))))
+                  (provider--decode-native-compaction-response
+                   provider body :status status :headers headers
+                   :event-callback event-callback))))
         (dexador.error:http-request-unauthorized (condition)
           (provider-signal-http-failure provider condition))
         (http-request-failed (condition)
@@ -1020,12 +1039,12 @@ each attempt must stream through."
   (handler-case
       (provider--call-with-bounded-retries
        provider
-       (lambda (force-refresh attempt-callback)
-         (declare (ignore attempt-callback))
-         (provider-attempt-native-compaction
-          provider conversation
-          :tool-namespaces tool-namespaces
-          :force-refresh   force-refresh))
+         (lambda (force-refresh attempt-callback)
+           (provider-attempt-native-compaction
+            provider conversation
+            :tool-namespaces tool-namespaces
+            :force-refresh   force-refresh
+            :event-callback  attempt-callback))
        event-callback)
     (provider-error (condition)
       (if (provider--native-compaction-unavailable-p condition)
