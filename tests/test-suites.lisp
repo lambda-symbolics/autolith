@@ -1137,6 +1137,7 @@
   test-rlm-trace-resource
   test-rlm-endpoint
   test-rlm-endpoint-frames
+  test-rlm-endpoint-child-routing
   test-rlm-frame-set
   test-rlm-environment-reuse
   test-rlm-litmus-completion

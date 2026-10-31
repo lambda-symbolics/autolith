@@ -201,6 +201,18 @@ and =finish= cancels frames still running. The host side is
 =rlm-frame-set-create= with =-submit=, =-status=, =-collect=,
 =-cancel= and =-close=, built on cl-jobpond's =job-await-any=.
 
+* Child routing
+
+Every environment call that starts frames, =infer=, =rlm-map=,
+=rlm-submit= and =rlm-run=, takes =:model= and =:effort=, and a task
+plist's own =:model= and =:effort= win over the call's. A child may use
+any model the root's provider offers, at no more than the root's
+reasoning effort and only at an effort its model supports; the endpoint
+refuses anything else before a frame starts. Routing a child to another
+provider is not supported yet. A child on a different model cannot reuse
+the root's cached views, and the shared token budget counts every model's
+tokens alike; =/status= shows the money each model's requests cost.
+
 * Policies
 
 Decomposition and synthesis are generic functions dispatching on a

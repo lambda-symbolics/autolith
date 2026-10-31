@@ -1738,6 +1738,67 @@ A frame sends its shared views and its task as consecutive user messages."
         (rlm-endpoint-stop endpoint))))
   nil)
 
+(-> test-rlm-endpoint-child-routing () null)
+(defun test-rlm-endpoint-child-routing ()
+  "Route child frames to the root provider's models at no more than the root's effort."
+  (let* ((configuration (test-configuration))
+         (model         (config :model configuration))
+         (efforts       (configuration--reasoning-efforts-for
+                         model (config :model-provider configuration)))
+         (lowest        (first efforts))
+         (highest       (first (last efforts)))
+         (calls         nil)
+         (calls-lock    (make-lock "Autolith child routing test calls")))
+    (setf (configuration-validation-deferred-p configuration) t
+          (config :reasoning-effort configuration) lowest)
+    (let ((endpoint (rlm-endpoint-start
+                     :provider      (make-instance 'rlm-map-test-provider)
+                     :configuration configuration
+                     :budget        (rlm-budget-create :calls 6 :tokens 100000 :depth 2))))
+      (flet ((call (operation &rest arguments)
+               "Send OPERATION with ARGUMENTS and return the response fields."
+               (rest (rlm-endpoint-test-call
+                      endpoint
+                      (list :rlm-request
+                            :token     (rlm-endpoint-token endpoint)
+                            :operation operation
+                            :arguments arguments)))))
+        (unwind-protect
+             (test-call-with-function-replacements
+              (list (list 'infer
+                          (lambda (task &rest arguments)
+                            (with-lock-held (calls-lock)
+                              (push (list task (getf arguments :model) (getf arguments :effort))
+                                    calls))
+                            (values "routed" "routed-trace" 0))))
+              (lambda ()
+                (test-assert (eq (getf (call ':infer :task "cheap" :model model :effort lowest)
+                                       :status)
+                                 ':ok)
+                             "a child may name the root provider's model at the root's effort")
+                (test-assert (equal (first calls) (list "cheap" model lowest))
+                             "the child's model and effort reach its frame")
+                (test-assert (and (< 1 (length efforts))
+                                  (search "may not exceed"
+                                          (getf (call ':infer :task "eager" :effort highest)
+                                                :message)))
+                             "a child may not raise effort above the root's")
+                (test-assert (search "Unsupported model"
+                                     (getf (call ':infer :task "elsewhere" :model "no-such-model")
+                                           :message))
+                             "a child may not name a model the provider does not offer")
+                (let ((handles (getf (call ':submit
+                                           :tasks (list (list :task "own" :effort lowest) "plain")
+                                           :model model)
+                                     :value)))
+                  (dolist (handle handles)
+                    (call ':collect :handles handle :timeout 30)))
+                (test-assert (and (member (list "own" model lowest) calls :test #'equal)
+                                  (member (list "plain" model nil) calls :test #'equal))
+                             "submitted tasks take the call's model and their own effort")))
+          (rlm-endpoint-stop endpoint)))))
+  nil)
+
 (-> test-rlm-endpoint () null)
 (defun test-rlm-endpoint ()
   "Test the loopback endpoint proxies inference under the shared budget."
