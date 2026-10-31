@@ -729,6 +729,7 @@
 (define-test-suite conversation-input-history
   test-conversation-input-history-complete
   test-conversation-input-history-rebuild
+  test-conversation-input-history-streaming
   test-conversation-input-history-append-failures
   test-conversation-input-history-rotation-failure
   test-conversation-input-history-recovery

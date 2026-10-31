@@ -2,18 +2,55 @@
 
 ;;;; -- Complete Editable Input History --
 
-(-> conversation-input-history (conversation) list)
-(defun conversation-input-history (conversation)
-  "Return all editable inputs in chronological order from the maintained sidecar.
-A missing sidecar is built once from durable records. Later reads need only the
-sidecar and, after an interrupted append, the active segment."
+;;; Every editable input stays recallable through an input-only sidecar beside
+;;; the conversation. The sidecar is the index: nothing of it stays resident.
+;;; Reads stream it, keep only what the caller asked for, and rebuilding
+;;; streams durable records into a new sidecar.
+
+(-> conversation-map-input-history (conversation function) null)
+(defun conversation-map-input-history (conversation function)
+  "Call FUNCTION with each editable input of CONVERSATION, oldest first.
+
+Inputs stream from the maintained sidecar. A missing or stale sidecar is built
+once from durable records. FUNCTION runs under the conversation's append and
+source locks, so it must not append to CONVERSATION; it may leave early with
+a nonlocal exit."
   (with-recursive-lock-held ((conversation-append-lock conversation))
     (call-with-file-lock
      (conversation-picker-source-lock-pathname (conversation-pathname conversation))
      (lambda ()
        (conversation-input-history--ensure-current conversation)
-       (mapcar #'copy-seq
-               (deque->list (conversation-input-history-entries conversation)))))))
+       (when (conversation-persisted-p conversation)
+         (log-map (lambda (record)
+                    (when (eq (first record) ':input)
+                      (funcall function (getf (rest record) :source))))
+                  (conversation-input-history-pathname (conversation-pathname conversation)))))))
+  nil)
+
+(-> conversation-input-history-newest (conversation (integer 0)) list)
+(defun conversation-input-history-newest (conversation limit)
+  "Return CONVERSATION's newest LIMIT editable inputs in chronological order.
+
+Only LIMIT inputs are ever held while the sidecar streams."
+  (let ((inputs (make-deque :maximum-count (max 1 limit))))
+    (unless (zerop limit)
+      (conversation-map-input-history conversation
+                                      (lambda (input)
+                                        (deque-push-back inputs input))))
+    (if (zerop limit)
+        nil
+        (deque->list inputs))))
+
+(-> conversation-input-history (conversation) list)
+(defun conversation-input-history (conversation)
+  "Return all editable inputs of CONVERSATION in chronological order.
+
+The list is built for this call and not retained. Prefer
+CONVERSATION-INPUT-HISTORY-NEWEST or CONVERSATION-MAP-INPUT-HISTORY when only
+part of a long history is needed."
+  (let ((inputs nil))
+    (conversation-map-input-history conversation (lambda (input) (push input inputs)))
+    (nreverse inputs)))
 
 (-> conversation--note-input-history (conversation list) null)
 (defun conversation--note-input-history (conversation record)
@@ -46,62 +83,65 @@ sidecar and, after an interrupted append, the active segment."
         :id                         (conversation-identifier conversation)
         :created-at                 (conversation-created-at conversation)))
 
-(-> conversation-input-history--read (conversation) (values t integer boolean))
+(-> conversation-input-history--read (conversation) (values integer boolean))
 (defun conversation-input-history--read (conversation)
-  "Read a validated input-only index, repairing a torn final form.
-Return its input deque, newest indexed sequence and validity flag."
+  "Validate the input-only index while streaming it, repairing a torn final form.
+
+Return its newest indexed sequence and validity flag. No input is retained."
   (handler-case
-      (multiple-value-bind (forms incomplete-p)
-          (log-read (conversation-input-history-pathname
-                     (conversation-pathname conversation)))
-        (let ((header   (first forms))
-              (entries  (make-deque))
-              (sequence 0))
-          (unless (and (eq (first header) ':conversation-input-history)
-                       (eql (getf (rest header) :version) 1)
-                       (equal (getf (rest header) :id)
-                              (conversation-identifier conversation))
-                       (eql (getf (rest header) :created-at)
-                            (conversation-created-at conversation)))
-            (return-from conversation-input-history--read (values nil 0 nil)))
-          (dolist (record (rest forms))
-            (let ((next  (getf (rest record) :seq))
-                  (input (getf (rest record) :source)))
-              (unless (and (eq (first record) ':input)
-                           (typep next '(integer 1))
-                           (> next sequence)
-                           (< next (conversation-next-sequence conversation))
-                           (non-empty-string-p input))
-                (return-from conversation-input-history--read (values nil 0 nil)))
-              (deque-push-back entries (copy-seq input))
-              (setf sequence next)))
+      (let ((pathname (conversation-input-history-pathname (conversation-pathname conversation)))
+            (header-p t)
+            (sequence 0))
+        (multiple-value-bind (position incomplete-p count)
+            (log-map
+             (lambda (record)
+               (if header-p
+                   (progn
+                     (unless (and (eq (first record) ':conversation-input-history)
+                                  (eql (getf (rest record) :version) 1)
+                                  (equal (getf (rest record) :id)
+                                         (conversation-identifier conversation))
+                                  (eql (getf (rest record) :created-at)
+                                       (conversation-created-at conversation)))
+                       (return-from conversation-input-history--read (values 0 nil)))
+                     (setf header-p nil))
+                   (let ((next  (getf (rest record) :seq))
+                         (input (getf (rest record) :source)))
+                     (unless (and (eq (first record) ':input)
+                                  (typep next '(integer 1))
+                                  (> next sequence)
+                                  (< next (conversation-next-sequence conversation))
+                                  (non-empty-string-p input))
+                       (return-from conversation-input-history--read (values 0 nil)))
+                     (setf sequence next))))
+             pathname)
+          (declare (ignore position))
+          (when (zerop count)
+            (return-from conversation-input-history--read (values 0 nil)))
           (when incomplete-p
-            (sexp-store:log-repair-tail
-             (conversation-input-history-pathname
-              (conversation-pathname conversation))))
-          (values entries sequence t)))
+            (sexp-store:log-repair-tail pathname))
+          (values sequence t)))
     (error ()
-      (values nil 0 nil))))
+      (values 0 nil))))
 
 (-> conversation-input-history--rebuild (conversation) null)
 (defun conversation-input-history--rebuild (conversation)
-  "Atomically build the complete sidecar once from authoritative durable records."
-  (let ((records  nil)
-        (entries  (make-deque))
-        (sequence 0))
-    (conversation--map-storage-records
-     (conversation-pathname conversation)
-     (lambda (record)
-       (let ((input (conversation-input-history--record-input record)))
-         (when input
-           (setf sequence (getf (rest record) :seq))
-           (deque-push-back entries (copy-seq input))
-           (push (list :input :seq sequence :source input) records)))))
-    (sexp-store:log-write
+  "Atomically build the complete sidecar from authoritative durable records.
+
+Records stream straight into the new sidecar, so rebuilding holds no history."
+  (let ((sequence 0))
+    (log-write-streaming
      (conversation-input-history-pathname (conversation-pathname conversation))
-     (cons (conversation-input-history--header conversation) (nreverse records)))
-    (setf (conversation-input-history-entries conversation) entries
-          (conversation-input-history-indexed-sequence conversation) sequence
+     (lambda (emit)
+       (funcall emit (conversation-input-history--header conversation))
+       (conversation--map-storage-records
+        (conversation-pathname conversation)
+        (lambda (record)
+          (let ((input (conversation-input-history--record-input record)))
+            (when input
+              (setf sequence (getf (rest record) :seq))
+              (funcall emit (list :input :seq sequence :source input))))))))
+    (setf (conversation-input-history-indexed-sequence conversation) sequence
           (conversation-input-history-last-sequence conversation)
           (max sequence (conversation-input-history-last-sequence conversation))
           (conversation-input-history-loaded-p conversation) t))
@@ -118,22 +158,20 @@ Return its input deque, newest indexed sequence and validity flag."
        (conversation-input-history-pathname (conversation-pathname conversation))
        (list :input :seq sequence :source input)
        :repair-tail-p nil)
-      (deque-push-back (conversation-input-history-entries conversation) (copy-seq input))
       (setf (conversation-input-history-indexed-sequence conversation) sequence)))
   nil)
 
 (-> conversation-input-history--load (conversation) null)
 (defun conversation-input-history--load (conversation)
-  "Load a complete index, rebuilding when it predates the active checkpoint."
-  (multiple-value-bind (entries sequence valid-p)
+  "Validate the index, rebuilding it when it predates the active checkpoint."
+  (multiple-value-bind (sequence valid-p)
       (conversation-input-history--read conversation)
     (let* ((header     (conversation--peek-segment-header
                         (conversation-log-pathname conversation)))
            (checkpoint (getf (rest header) :input-history-last-sequence 0)))
       (if (or (not valid-p) (< sequence checkpoint))
           (conversation-input-history--rebuild conversation)
-          (setf (conversation-input-history-entries conversation) entries
-                (conversation-input-history-indexed-sequence conversation) sequence
+          (setf (conversation-input-history-indexed-sequence conversation) sequence
                 (conversation-input-history-last-sequence conversation)
                 (max sequence (conversation-input-history-last-sequence conversation))
                 (conversation-input-history-loaded-p conversation) t))))
@@ -141,7 +179,7 @@ Return its input deque, newest indexed sequence and validity flag."
 
 (-> conversation-input-history--ensure-current (conversation) null)
 (defun conversation-input-history--ensure-current (conversation)
-  "Load or repair the sidecar under the conversation append and shared source locks.
+  "Validate or repair the sidecar under the conversation append and shared source locks.
 Flush it before rotating the active segment so crash recovery never needs a
 retired segment unless the complete sidecar itself is missing or corrupt."
   (let ((current-p nil))

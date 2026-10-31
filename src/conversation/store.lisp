@@ -373,16 +373,11 @@ not yet been told that work from the previous process is gone.")
     :type     deque
     :documentation
     "Recent bounded local user operations in chronological durable order.")
-   (input-history
-    :initform      (make-deque)
-    :accessor      conversation-input-history-entries
-    :type          deque
-    :documentation "Complete chronological editable inputs loaded from the sidecar.")
    (input-history-loaded-p
     :initform      nil
     :accessor      conversation-input-history-loaded-p
     :type          boolean
-    :documentation "Whether the complete input-only sidecar is loaded into this heap.")
+    :documentation "Whether this heap validated the complete input-only sidecar.")
    (input-history-indexed-sequence
     :initform      0
     :accessor      conversation-input-history-indexed-sequence
