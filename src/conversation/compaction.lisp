@@ -180,26 +180,30 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
    :unfinished-work   unfinished-work))
 
 (-> conversation-append-native-compaction
-    (conversation json-object &key (:family keyword) (:summary string)
-                                   (:compaction (option conversation-compaction))
-                                   (:unfinished-work list))
+    (conversation list &key (:family keyword) (:summary string)
+                             (:compaction (option conversation-compaction))
+                             (:unfinished-work list))
     list)
 (defun conversation-append-native-compaction
-    (conversation item &key family summary compaction unfinished-work)
-  "Persist native ITEM, portable SUMMARY, and carry-forward state atomically."
-  (native-compaction-item-canonicalize item)
-  (unless (and (keywordp family) (native-compaction-item-p item)
+    (conversation window &key family summary compaction unfinished-work)
+  "Persist native WINDOW, portable SUMMARY, and carry-forward state atomically."
+  (dolist (item window)
+    (native-compaction-item-canonicalize item))
+  (unless (and (keywordp family) (listp window) (not (null window))
+               (every #'json-object-p window)
+               (some #'native-compaction-item-p window)
                (non-empty-string-p summary))
     (error 'conversation-invariant-error
-           :message  "A native compaction checkpoint is invalid."
+           :message  "A native compaction window is invalid."
            :pathname (conversation-pathname conversation)
            :sequence (conversation-next-sequence conversation)))
   (conversation-compaction--publish
    conversation
    :compaction        (or compaction (conversation-compaction-capture conversation))
-   :replacement-items (list item (conversation-summary-item summary))
+   :replacement-items (append window (list (conversation-summary-item summary)))
    :record            (list :native-compaction :family family
-                            :wire-json (json-encode item) :summary summary)
+                            :wire-json (json-encode (coerce window 'vector))
+                            :summary summary)
    :unfinished-work   unfinished-work))
 
 
@@ -292,18 +296,29 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
     (unless (and (keywordp family) (stringp wire-json) (non-empty-string-p summary))
       (conversation--record-error
        conversation properties "A persisted native compaction checkpoint is invalid."))
-    (let ((item (handler-case (json-decode wire-json)
-                  (error ()
-                    (conversation--record-error
-                     conversation properties "A native checkpoint is not JSON.")))))
-      (native-compaction-item-canonicalize item)
-      (unless (native-compaction-item-p item)
-        (conversation--record-error
-         conversation properties "A persisted native compaction item is unsupported."))
-      (let* ((summary-item (conversation-summary-item summary))
-             (projection   (clinker-transcript:make-projection :items (list item summary-item))))
-        (setf (gethash item
-                       (clinker-transcript:projection-metadata-table projection ':family)) family
-              (gethash summary-item
-                       (clinker-transcript:projection-metadata-table projection ':handoff-family)) family)
-        (conversation-compaction--restore conversation properties projection)))))
+    (let ((decoded (handler-case (json-decode wire-json)
+                     (error ()
+                       (conversation--record-error
+                        conversation properties "A native checkpoint is not JSON.")))))
+      (let ((window (if (vectorp decoded)
+                        (coerce decoded 'list)
+                        (list decoded))))
+        (dolist (item window)
+          (when (json-object-p item)
+            (native-compaction-item-canonicalize item)))
+        (unless (and (every #'json-object-p window)
+                     (some #'native-compaction-item-p window))
+          (conversation--record-error
+           conversation properties "A persisted native compaction window is unsupported."))
+        (let* ((summary-item (conversation-summary-item summary))
+               (projection (clinker-transcript:make-projection
+                            :items (append window (list summary-item)))))
+          (dolist (item window)
+            (when (native-compaction-item-p item)
+              (setf (gethash item
+                             (clinker-transcript:projection-metadata-table projection ':family))
+                    family)))
+          (setf (gethash summary-item
+                         (clinker-transcript:projection-metadata-table projection ':handoff-family))
+                family)
+          (conversation-compaction--restore conversation properties projection))))))

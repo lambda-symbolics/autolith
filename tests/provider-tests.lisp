@@ -978,17 +978,22 @@
                    (json-encode
                     (json-object
                      "output"
-                     (json-array
-                      (json-object
-                       "type" "message"
-                       "role" "assistant"
-                       "content"
                        (json-array
-                        (json-object "type" "output_text"
-                                     "text" "Ignored compact reply.")))
-                      (json-object "id" "cmp_123"
-                                   "type" "compaction"
-                                   "encrypted_content" "opaque-checkpoint"))))
+                        (json-object "type" "message"
+                                     "role" "user"
+                                     "content"
+                                     (json-array
+                                      (json-object "type" "input_text"
+                                                   "text" "retained user")))
+                        (json-object "id" "cmp_123"
+                                     "type" "compaction"
+                                     "encrypted_content" "opaque-checkpoint")
+                        (json-object "type" "message"
+                                     "role" "assistant"
+                                     "content"
+                                     (json-array
+                                      (json-object "type" "output_text"
+                                                   "text" "retained assistant"))))))
                    200
                    '(("x-request-id" . "native-success"))))))
               (lambda ()
@@ -997,12 +1002,17 @@
                        provider conversation
                        :tool-namespaces schemas
                        :event-callback  #'identity))))
-             (test-assert (native-compaction-item-p result)
-                          "native compaction finds its opaque checkpoint among output")
-             (multiple-value-bind (value present-p) (gethash "id" result)
-               (declare (ignore value))
-               (test-assert (not present-p)
-                            "native compaction drops transient server item identifiers")))
+              (test-assert
+               (and (listp result)
+                    (= (length result) 3)
+                    (string= (json-get (first result) "role") "user")
+                    (native-compaction-item-p (second result))
+                    (string= (json-get (third result) "role") "assistant"))
+               "native compaction returns the complete ordered output window")
+              (multiple-value-bind (value present-p) (gethash "id" (second result))
+                (declare (ignore value))
+                (test-assert (not present-p)
+                             "native compaction drops transient server item identifiers")))
            (let ((result
                    (provider--decode-native-compaction-response
                     provider
@@ -1014,12 +1024,14 @@
                                     "encrypted_content" "legacy-checkpoint")
                        (json-object "type" "context_compaction"
                                     "encrypted_content" "current-checkpoint")))))))
-             (test-assert
-              (and (native-compaction-item-p result)
-                   (string= (json-get result "type") "context_compaction")
-                   (string= (json-get result "encrypted_content")
-                            "current-checkpoint"))
-              "native compaction keeps the newest current checkpoint encoding"))
+              (test-assert
+               (and (listp result)
+                    (= (length result) 2)
+                    (native-compaction-item-p (second result))
+                    (string= (json-get (second result) "type") "context_compaction")
+                    (string= (json-get (second result) "encrypted_content")
+                             "current-checkpoint"))
+               "native compaction keeps the complete window and newest checkpoint encoding"))
            (let ((result
                    (provider--decode-native-compaction-response
                     provider
@@ -1029,9 +1041,11 @@
                       (json-array
                        (json-object "type" "compaction_summary"
                                     "encrypted_content" "legacy-checkpoint")))))))
-             (test-assert
-              (string= (json-get result "type") "compaction")
-              "native compaction canonicalizes Codex's legacy checkpoint alias"))
+               (test-assert
+                (and (listp result)
+                     (= (length result) 1)
+                     (string= (json-get (first result) "type") "compaction"))
+                "native compaction canonicalizes Codex's legacy checkpoint alias"))
            (test-assert
             (null
              (provider--decode-native-compaction-response

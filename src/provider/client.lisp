@@ -920,16 +920,17 @@ each attempt must stream through."
 
 (-> provider--decode-native-compaction-response
     (codex-subscription-provider t &key (:status integer) (:headers t))
-    (values (option json-object) (option json-object)))
+    (values (option list) (option json-object)))
 (defun provider--decode-native-compaction-response
     (provider body &key status headers)
-  "Decode BODY and return its newest normalized opaque compaction output item.
+  "Decode BODY and return its complete normalized compacted output window.
 
-The endpoint can return a compacted transcript containing ordinary output,
-multiple checkpoint encodings, or no opaque checkpoint. The newest usable
-checkpoint carries native state; an opaque-free transcript uses the portable
-summary fallback. The second value is the response usage object, when the
-endpoint reported one, so the compaction request can be metered."
+  The endpoint can return a compacted transcript containing ordinary output,
+  multiple checkpoint encodings, or no opaque checkpoint. A window is usable
+  for native replay when it contains at least one opaque checkpoint; ordinary
+  retained items are never discarded. The second value is the response usage
+  object, when the endpoint reported one, so the compaction request can be
+  metered even when the window is unusable."
   (let ((source (provider--error-body-text body)))
     (unless (non-empty-string-p source)
       (provider--signal-invalid-native-compaction provider status headers))
@@ -944,16 +945,16 @@ endpoint reported one, so the compaction request can be metered."
         (unless (and (vectorp output)
                      (every #'json-object-p output))
           (provider--signal-invalid-native-compaction provider status headers))
-        (let ((items
-                (remove-if-not
-                 #'native-compaction-item-p
-                 (map 'list
-                      (lambda (item)
-                        (native-compaction-item-canonicalize
-                         (provider-normalize-output-item provider item)))
-                      output)))
+          (let ((items
+                  (map 'list
+                       (lambda (item)
+                         (let ((normalized (provider-normalize-output-item provider item)))
+                           (when (native-compaction-item-p normalized)
+                             (native-compaction-item-canonicalize normalized))
+                           normalized))
+                       output))
               (usage (json-get response "usage")))
-          (values (first (last items))
+          (values (and (some #'native-compaction-item-p items) items)
                   (and (json-object-p usage) usage)))))))
 
 (defgeneric provider-attempt-native-compaction
@@ -961,8 +962,9 @@ endpoint reported one, so the compaction request can be metered."
   (:documentation
    "Perform one authenticated Codex native compaction request.
 
-Return the newest opaque checkpoint item and the response usage as two
-values."))
+   Return the complete normalized compacted window and the response usage as
+   two values. The first value is NIL when the response has no usable opaque
+   checkpoint, while the usage value is still returned."))
 
 (defmethod provider-attempt-native-compaction
     ((provider codex-subscription-provider)
@@ -1011,8 +1013,8 @@ values."))
      &key tool-namespaces event-callback)
   "Compact CONVERSATION through the standard Responses compact endpoint.
 
-Return the checkpoint item and the request's usage as two values, or NIL when
-this endpoint is unavailable."
+  Return the complete compacted window and the request's usage as two values,
+  or NIL when this endpoint is unavailable."
   (declare (type vector tool-namespaces)
            (type function event-callback))
   (handler-case
