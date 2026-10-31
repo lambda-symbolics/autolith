@@ -8,6 +8,14 @@
 ;;; claims, and retract supports. Reading folds the log into a KNOWLEDGE-BASE
 ;;; with indexes; reads are cached by the log file's identity, because every
 ;;; publication replaces the file.
+;;;
+;;; The folded base holds what is operational: every active support, the
+;;; evidence it cites, and the most recently retracted supports. Older
+;;; retracted supports are archived. They leave memory, together with evidence
+;;; only they cited and claims they leave without supports, and stay readable
+;;; from the log through the history lookups below. Archived means "not
+;;; resident", never "missing": a record that refers to archived data restores
+;;; it from the log.
 
 (defparameter *knowledge-format-version* 1
   "The readable knowledge log format version.")
@@ -20,6 +28,9 @@
 
 (defparameter *knowledge-diagnosis-case-limit* 20
   "The most recent diagnosis cases kept per workspace for listing.")
+
+(defparameter *knowledge-retracted-support-limit* 1024
+  "The most retracted supports a folded base keeps resident before archiving the oldest.")
 
 (deftype knowledge-basis ()
   "Why a support is believed."
@@ -40,6 +51,27 @@ stopped, and INCOMPLETE-P whether an incomplete final record follows it.")
     :accessor      knowledge-base-revision
     :type          (integer 0)
     :documentation "How many records the log held; each record is one graph revision.")
+   (pathname
+    :initarg       :pathname
+    :initform      nil
+    :accessor      knowledge-base-pathname
+    :type          (option pathname)
+    :documentation "The log the base was folded from, where archived history stays readable.")
+   (retracted-order
+    :initform      (make-deque)
+    :accessor      knowledge-base-retracted-order
+    :type          deque
+    :documentation "Resident retracted support identifiers, oldest retraction first.")
+   (archived-supports
+    :initform      0
+    :accessor      knowledge-base-archived-supports
+    :type          (integer 0)
+    :documentation "How many retracted supports this base archived.")
+   (archived-claims
+    :initform      0
+    :accessor      knowledge-base-archived-claims
+    :type          (integer 0)
+    :documentation "How many claims without resident supports this base archived.")
    (schemas
     :initform      (make-hash-table :test #'equal)
     :reader        knowledge-base-schemas
@@ -54,12 +86,14 @@ stopped, and INCOMPLETE-P whether an incomplete final record follows it.")
     :initform      (make-hash-table :test #'equal)
     :reader        knowledge-base-supports
     :type          hash-table
-    :documentation "Support records by identifier, retracted ones included.")
+    :documentation "Support records by identifier, recently retracted ones included.")
    (claims
     :initform      (make-hash-table :test #'equal)
     :reader        knowledge-base-claims
     :type          hash-table
-    :documentation "Claim plists by identifier: proposition, scope, workspace, supports.")
+    :documentation "Claim plists by identifier: proposition, scope, workspace, supports.
+
+:ARCHIVED-SUPPORTS counts the retracted supports archived from a claim.")
    (predicate-index
     :initform      (make-hash-table :test #'equal)
     :reader        knowledge-base-predicate-index
@@ -368,8 +402,8 @@ by a newer generation stays readable after a rollback."
          (setf (gethash (getf properties :id) (knowledge-base-evidence base))
                (copy-list properties)))
         (:evidence-renewed
-         (let ((evidence (copy-list (gethash (getf properties :id)
-                                             (knowledge-base-evidence base)))))
+         (let ((evidence (copy-list (knowledge--resident-evidence pathname base
+                                                                  (getf properties :id)))))
            (unless evidence
              (fail (format nil "A renewal names unknown evidence ~A." (getf properties :id))))
            (setf (getf evidence :observed-at) (getf properties :observed-at)
@@ -380,7 +414,7 @@ by a newer generation stays readable after a rollback."
                (support  (getf properties :support))
                (evidence (getf properties :evidence)))
            (when (and evidence
-                      (null (gethash evidence (knowledge-base-evidence base))))
+                      (null (knowledge--resident-evidence pathname base evidence)))
              (fail (format nil "Support ~A cites unknown evidence ~A." support evidence)))
            (setf (gethash support (knowledge-base-supports base))
                  (copy-list properties))
@@ -408,15 +442,19 @@ by a newer generation stays readable after a rollback."
            (when evidence
              (knowledge--index-add (knowledge-base-evidence-index base) evidence support))))
         (:support-retracted
-         (let ((support (gethash (getf properties :support)
-                                 (knowledge-base-supports base))))
-           (unless support
-             (fail (format nil "Retraction names unknown support ~A."
-                           (getf properties :support))))
-           (setf (getf support :retracted-at) (getf properties :time)
-                 (getf support :retraction-reason) (getf properties :reason)
-                 (gethash (getf properties :support) (knowledge-base-supports base))
-                 support)))
+         (let* ((identifier (getf properties :support))
+                (support    (copy-list (gethash identifier (knowledge-base-supports base)))))
+           (cond
+             ((and support (null (getf support :retracted-at)))
+              (setf (getf support :retracted-at) (getf properties :time)
+                    (getf support :retraction-reason) (getf properties :reason)
+                    (gethash identifier (knowledge-base-supports base)) support)
+              (deque-push-back (knowledge-base-retracted-order base) identifier))
+             ((or support (knowledge--log-mentions-support-p pathname identifier))
+              ;; Retracting a retracted or archived support again changes nothing.
+              nil)
+             (t
+              (fail (format nil "Retraction names unknown support ~A." identifier))))))
         (:rule-defined
          (let* ((rule  (getf properties :rule))
                 (key   (list (getf properties :scope) (getf properties :workspace)
@@ -520,8 +558,11 @@ by a newer generation stays readable after a rollback."
 
 The reducer replaces entries instead of modifying them, so folding new records
 into the copy leaves BASE, which readers may still be using, unchanged."
-  (let ((copy (make-instance 'knowledge-base)))
-    (setf (knowledge-base-revision copy) (knowledge-base-revision base))
+  (let ((copy (make-instance 'knowledge-base :pathname (knowledge-base-pathname base))))
+    (setf (knowledge-base-revision copy)          (knowledge-base-revision base)
+          (knowledge-base-retracted-order copy)   (deque-copy (knowledge-base-retracted-order base))
+          (knowledge-base-archived-supports copy) (knowledge-base-archived-supports base)
+          (knowledge-base-archived-claims copy)   (knowledge-base-archived-claims base))
     (loop for (source target) in (list (list #'knowledge-base-schemas #'knowledge-base-schemas)
                                        (list #'knowledge-base-evidence #'knowledge-base-evidence)
                                        (list #'knowledge-base-supports #'knowledge-base-supports)
@@ -579,7 +620,8 @@ incomplete final record remains. Position zero starts with the header."
                  (unless (knowledge--record-valid-p form)
                    (knowledge--fail ':corrupt (namestring pathname)
                                     "A complete knowledge record is malformed."))
-                 (knowledge--reduce pathname base form))))
+                 (knowledge--reduce pathname base form)
+                 (knowledge--archive-history base))))
          pathname
          :start-position position)
       (values base next incomplete-p))))
@@ -595,7 +637,7 @@ replacement rereads the whole log."
          (name     (namestring pathname))
          (status   (platform-path-status *platform* pathname :follow-links-p t)))
     (if (null status)
-        (values (make-instance 'knowledge-base) nil)
+        (values (make-instance 'knowledge-base :pathname pathname) nil)
         (with-recursive-lock-held (*knowledge-lock*)
           (destructuring-bind (&optional identity size position base incomplete-p)
               (gethash name *knowledge-base-cache*)
@@ -607,7 +649,9 @@ replacement rereads the whole log."
                  (multiple-value-bind (folded next incomplete-p)
                      (if (and same-p (< size (platform-file-status-size status)))
                          (knowledge--fold-from pathname (knowledge--copy-base base) position)
-                         (knowledge--fold-from pathname (make-instance 'knowledge-base) 0))
+                         (knowledge--fold-from pathname
+                                               (make-instance 'knowledge-base :pathname pathname)
+                                               0))
                    (setf (gethash name *knowledge-base-cache*)
                          (list (platform-file-status-identity status)
                                (platform-file-status-size status)
@@ -623,6 +667,189 @@ replacement rereads the whole log."
              :code    ':storage
              :subject (namestring (sexp-store:store-error-pathname cause))
              :message (sexp-store:store-error-message cause)))))
+
+
+;;;; -- Archived History --
+
+(-> knowledge--archive-history (knowledge-base) null)
+(defun knowledge--archive-history (base)
+  "Archive BASE's oldest retracted supports once it holds more than the limit.
+
+Archiving continues down to the limit once the excess reaches a quarter of it,
+so its cost spreads over many retractions. Each archived support leaves its
+claim, counted in the claim's :ARCHIVED-SUPPORTS; a claim left without
+supports leaves the base and its indexes, and evidence no resident support
+cites leaves too. Entries are replaced, never modified, because earlier bases
+may share them."
+  (let ((order (knowledge-base-retracted-order base))
+        (limit *knowledge-retracted-support-limit*))
+    (when (> (deque-count order) (+ limit (max 1 (floor limit 4))))
+      (loop while (> (deque-count order) limit)
+            do (knowledge--archive-support base (deque-pop-front order)))))
+  nil)
+
+(-> knowledge--archive-support (knowledge-base string) null)
+(defun knowledge--archive-support (base identifier)
+  "Remove retracted support IDENTIFIER from BASE, with whatever only it kept resident."
+  (let ((support (gethash identifier (knowledge-base-supports base))))
+    (when support
+      (remhash identifier (knowledge-base-supports base))
+      (incf (knowledge-base-archived-supports base))
+      (let* ((claim    (getf support :claim))
+             (entry    (gethash claim (knowledge-base-claims base)))
+             (evidence (getf support :evidence)))
+        (when entry
+          (let ((supports (remove identifier (getf entry :supports) :test #'string=)))
+            (if supports
+                (let ((copy (copy-list entry)))
+                  (setf (getf copy :supports)          supports
+                        (getf copy :archived-supports) (1+ (getf entry :archived-supports 0))
+                        (gethash claim (knowledge-base-claims base)) copy))
+                (knowledge--archive-claim base claim entry))))
+        (when evidence
+          (let ((citing (remove identifier
+                                (gethash evidence (knowledge-base-evidence-index base))
+                                :test #'string=)))
+            (if citing
+                (setf (gethash evidence (knowledge-base-evidence-index base)) citing)
+                (progn
+                  (remhash evidence (knowledge-base-evidence-index base))
+                  (remhash evidence (knowledge-base-evidence base)))))))))
+  nil)
+
+(-> knowledge--archive-claim (knowledge-base string list) null)
+(defun knowledge--archive-claim (base claim entry)
+  "Remove CLAIM, whose ENTRY has no resident supports left, from BASE and its indexes."
+  (flet ((unindex (index key)
+           (let ((claims (remove claim (gethash key index) :test #'string=)))
+             (if claims
+                 (setf (gethash key index) claims)
+                 (remhash key index)))))
+    (let ((proposition (getf entry :proposition)))
+      (remhash claim (knowledge-base-claims base))
+      (unindex (knowledge-base-predicate-index base)
+               (knowledge-proposition-predicate proposition))
+      (dolist (term (remove-duplicates
+                     (remove-if-not #'stringp (knowledge-proposition-arguments proposition))
+                     :test #'string=))
+        (unindex (knowledge-base-term-index base) term))
+      (incf (knowledge-base-archived-claims base))))
+  nil)
+
+(-> knowledge--map-log-records ((option pathname) function) null)
+(defun knowledge--map-log-records (pathname function)
+  "Call FUNCTION with each complete record of the knowledge log at PATHNAME.
+
+Transactions are opened, so FUNCTION sees their records one by one. A missing
+log has no records."
+  (when (and pathname (probe-file pathname))
+    (sexp-store:log-map
+     (lambda (form)
+       (labels ((visit (record)
+                  (if (eq (first record) ':transaction)
+                      (dolist (inner (getf (rest record) :records))
+                        (visit inner))
+                      (funcall function record))))
+         (unless (eq (first form) ':knowledge)
+           (visit form))))
+     pathname))
+  nil)
+
+(-> knowledge--log-evidence ((option pathname) list) hash-table)
+(defun knowledge--log-evidence (pathname identifiers)
+  "Return the latest logged state of each evidence in IDENTIFIERS, by identifier."
+  (let ((evidence (make-hash-table :test #'equal)))
+    (knowledge--map-log-records
+     pathname
+     (lambda (record)
+       (let* ((properties (rest record))
+              (identifier (getf properties :id)))
+         (when (member identifier identifiers :test #'equal)
+           (case (first record)
+             (:evidence
+              (setf (gethash identifier evidence) (copy-list properties)))
+             (:evidence-renewed
+              (let ((renewed (copy-list (gethash identifier evidence))))
+                (when renewed
+                  (setf (getf renewed :observed-at) (getf properties :observed-at)
+                        (getf renewed :valid-until) (getf properties :valid-until)
+                        (gethash identifier evidence) renewed)))))))))
+    evidence))
+
+(-> knowledge--resident-evidence ((option pathname) knowledge-base string) (option list))
+(defun knowledge--resident-evidence (pathname base identifier)
+  "Return evidence IDENTIFIER from BASE, restoring it from the log at PATHNAME when archived."
+  (or (gethash identifier (knowledge-base-evidence base))
+      (let ((restored (gethash identifier (knowledge--log-evidence pathname (list identifier)))))
+        (when restored
+          (setf (gethash identifier (knowledge-base-evidence base)) restored))
+        restored)))
+
+(-> knowledge--log-mentions-support-p ((option pathname) string) boolean)
+(defun knowledge--log-mentions-support-p (pathname identifier)
+  "Return true when the knowledge log at PATHNAME asserted support IDENTIFIER."
+  (block found
+    (knowledge--map-log-records pathname
+                                (lambda (record)
+                                  (when (and (eq (first record) ':claim-asserted)
+                                             (equal (getf (rest record) :support) identifier))
+                                    (return-from found t))))
+    nil))
+
+(-> knowledge-base-claim-history (knowledge-base string) (option list))
+(defun knowledge-base-claim-history (base claim)
+  "Return CLAIM's complete logged history from BASE's log, or NIL when it was never asserted.
+
+The plist holds :PROPOSITION, :SCOPE and :WORKSPACE, :SUPPORTS as every
+support plist in assertion order with its retraction fields, and :EVIDENCE as
+a hash table of the evidence they cite. It reads the log, so it serves
+inspection of archived history, not evaluation."
+  (let ((supports (make-hash-table :test #'equal))
+        (order    nil)
+        (first    nil))
+    (knowledge--map-log-records
+     (knowledge-base-pathname base)
+     (lambda (record)
+       (let ((properties (rest record)))
+         (case (first record)
+           (:claim-asserted
+            (when (equal (getf properties :claim) claim)
+              (unless first
+                (setf first properties))
+              (setf (gethash (getf properties :support) supports) (copy-list properties))
+              (push (getf properties :support) order)))
+           (:support-retracted
+            (let ((support (copy-list (gethash (getf properties :support) supports))))
+              (when (and support (null (getf support :retracted-at)))
+                (setf (getf support :retracted-at)      (getf properties :time)
+                      (getf support :retraction-reason) (getf properties :reason)
+                      (gethash (getf properties :support) supports) support))))))))
+    (when first
+      (let ((plists (mapcar (lambda (identifier) (gethash identifier supports))
+                            (reverse order))))
+        (list :proposition (getf first :proposition)
+              :scope       (getf first :scope)
+              :workspace   (getf first :workspace)
+              :supports    plists
+              :evidence    (knowledge--log-evidence
+                            (knowledge-base-pathname base)
+                            (remove nil (mapcar (lambda (support) (getf support :evidence))
+                                                plists))))))))
+
+(-> knowledge-base-archived-p (knowledge-base string) boolean)
+(defun knowledge-base-archived-p (base identifier)
+  "Return true when claim or support IDENTIFIER is logged but no longer resident in BASE."
+  (and (null (knowledge-base-claim base identifier))
+       (null (knowledge-base-support base identifier))
+       (block found
+         (knowledge--map-log-records
+          (knowledge-base-pathname base)
+          (lambda (record)
+            (when (and (eq (first record) ':claim-asserted)
+                       (or (equal (getf (rest record) :claim) identifier)
+                           (equal (getf (rest record) :support) identifier)))
+              (return-from found t))))
+         nil)))
 
 
 ;;;; -- Reading and Transactions --
@@ -944,7 +1171,9 @@ a superseded mapping signals INVALID-CONTRACT without writing any records."
 (defun knowledge-retract (configuration support &key reason source-conversation)
   "Retract SUPPORT, or every active support of a claim when SUPPORT is a claim ID.
 
-Return the retracted support identifiers. Retracted supports stay inspectable."
+Return the retracted support identifiers. Retracted supports stay inspectable,
+recent ones in the folded base and archived ones through
+KNOWLEDGE-BASE-CLAIM-HISTORY."
   (when (and reason (> (length reason) *knowledge-reason-limit*))
     (setf reason (subseq reason 0 *knowledge-reason-limit*)))
   (knowledge-transact
@@ -959,6 +1188,9 @@ Return the retracted support identifiers. Retracted supports stay inspectable."
                             (getf claim :supports))
                            ((knowledge-base-support base support)
                             (list support))
+                           ((knowledge-base-archived-p base support)
+                            ;; Archived history was retracted long ago.
+                            nil)
                            (t
                             (knowledge--fail ':unknown-support support
                                              "No claim or support ~A exists." support)))))

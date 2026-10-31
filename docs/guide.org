@@ -1096,6 +1096,11 @@ in a conversation changes, the next turn explains the change to it once, and
 premise and goes stale when the fact stops holding; a fact can cite a memory
 as evidence.
 
+Autolith keeps every current fact, its sources, and the 1,024 most recently
+retracted sources in memory. Older retractions stay in the knowledge log, so
+=(why "ID")= still explains a long-retracted fact, reading its history from the
+log.
+
 The model reads =memory:facts=, =memory:claim/ID=, =memory:predicates=,
 =memory:rules=, =memory:procedures=, and =memory:changes=, and edits =memory:facts= with
 =predicate-define=, =fact-assert=, =fact-retract=, and =rule-propose=, up to 16

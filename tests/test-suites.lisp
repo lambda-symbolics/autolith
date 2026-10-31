@@ -446,6 +446,7 @@
   test-knowledge-terms
   test-knowledge-schemas
   test-knowledge-store
+  test-knowledge-archived-history
   test-knowledge-applicability
   test-knowledge-quotation-context
   test-knowledge-rule-validation
