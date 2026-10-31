@@ -400,6 +400,13 @@ credentials and model metadata independently of their cached wire routes."
 ':NONE still sends the tool definitions, so the cached prefix they start
 survives a request that must answer without calling one.")
 
+(defparameter *provider-shared-item-count* 0
+  "How many leading durable history items sibling requests repeat.
+
+An inference frame's views are one such item. Routes with explicit cache
+markers end the shared items at their own marker, so frames asking different
+questions of the same views reuse them.")
+
 (defparameter *provider-maximum-output-tokens* nil
   "An optional output token ceiling for the current provider request.
 

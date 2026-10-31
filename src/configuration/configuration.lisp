@@ -421,6 +421,17 @@ exist yet, and is only put in directory form."
   :maximum                                      86400
   :default                                      0)
 
+(define-setting :prompt-cache-ttl (choice-setting)
+  :label                          "Cache lifetime"
+  :group                          :behavior
+  :documentation                  "The prompt-cache lifetime requested from Claude routes that take one: 5m, or 1h at twice the cache-write price."
+  :type                           'non-empty-string
+  :scope                          :durable
+  :options                        (lambda (configuration)
+                                    (declare (ignore configuration))
+                                    (list "5m" "1h"))
+  :default                        "5m")
+
 (define-setting :simple-technical-english-p (boolean-setting)
   :label                                    "Simple Technical English"
   :group                                    :behavior

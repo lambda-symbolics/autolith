@@ -253,6 +253,104 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-provider-prompt-cache-ttl () null)
+(defun test-provider-prompt-cache-ttl ()
+  "Request the configured cache lifetime on Claude routes and nowhere else."
+  (with-test-environment (("AUTOLITH_OPENROUTER_PROVIDER_ROUTING" nil))
+    (with-test-configuration (configuration)
+      (setf (configuration-validation-deferred-p configuration) t)
+      (let ((conversation (conversation-create configuration :identifier "cache-ttl")))
+        (conversation-append-user-message conversation "Cache this history.")
+        (labels ((controls (value)
+                   "Return every cache_control object inside the JSON VALUE."
+                   (cond
+                     ((json-object-p value)
+                      (append (let ((control (json-get value "cache_control")))
+                                (and control (list control)))
+                              (loop for child being the hash-values of value
+                                    append (controls child))))
+                     ((and (vectorp value) (not (stringp value)))
+                      (loop for child across value
+                            append (controls child)))
+                     (t
+                      nil)))
+
+                 (request (route model ttl)
+                   "Encode a request through ROUTE to MODEL with cache lifetime TTL."
+                   (setf (config :prompt-cache-ttl configuration) ttl
+                         (config :model configuration)
+                         (if (eq route ':openrouter) (openrouter--model-name model) model))
+                   (provider-request-object (if (eq route ':openrouter)
+                                                (openrouter-provider-create configuration)
+                                                (anthropic-provider-create configuration))
+                                            conversation (json-array))))
+          (dolist (case '((:anthropic  "claude-haiku-4-5"           "5m" (nil))
+                          (:anthropic  "claude-haiku-4-5"           "1h" ("1h"))
+                          (:openrouter "anthropic/claude-haiku-4.5" "5m" (nil))
+                          (:openrouter "anthropic/claude-haiku-4.5" "1h" ("1h"))
+                          (:openrouter "openai/gpt-5.1"             "1h" (nil))))
+            (destructuring-bind (route model ttl expected) case
+              (test-assert (equal expected
+                                  (remove-duplicates
+                                   (mapcar (lambda (control) (json-get control "ttl"))
+                                           (controls (request route model ttl)))
+                                   :test #'equal))
+                           (format nil "~A ~A markers request lifetime ~A" route model ttl))))
+          (test-assert (equal (conversation-prompt-cache-key conversation)
+                              (json-get (request ':openrouter "anthropic/claude-haiku-4.5" "5m")
+                                        "session_id"))
+                       "OpenRouter requests carry the conversation's session identifier")))))
+  nil)
+
+(-> test-provider-shared-items-breakpoint () null)
+(defun test-provider-shared-items-breakpoint ()
+  "End shared leading items at their own cache marker on Claude routes."
+  (with-test-environment (("AUTOLITH_OPENROUTER_PROVIDER_ROUTING" nil))
+    (with-test-configuration (configuration)
+      (setf (configuration-validation-deferred-p configuration) t)
+      (let ((conversation (conversation-create configuration :identifier "shared-items")))
+        (conversation-append-user-message conversation "Shared views.")
+        (conversation-append-user-message conversation "Task: one question.")
+        (flet ((breakpoints (route count)
+                 "Return the cache marker paths of a request through ROUTE sharing COUNT items."
+                 (setf (config :model configuration)
+                       (if (eq route ':openrouter)
+                           (openrouter--model-name "anthropic/claude-haiku-4.5")
+                           "claude-haiku-4-5"))
+                 (let ((*provider-shared-item-count* count))
+                   (mapcar #'first
+                           (getf (provider-cache-wire-plan
+                                  (provider-request-object
+                                   (if (eq route ':openrouter)
+                                       (openrouter-provider-create configuration)
+                                       (anthropic-provider-create configuration))
+                                   conversation (json-array)))
+                                 :breakpoints)))))
+          (test-assert (and (member '("messages" 0 "content" 0) (breakpoints ':anthropic 1)
+                                    :test #'equal)
+                            (not (member '("messages" 0 "content" 0) (breakpoints ':anthropic 0)
+                                         :test #'equal)))
+                       "Messages marks the shared block inside the merged user message")
+          (test-assert (and (member '("messages" 1 "content" 0) (breakpoints ':openrouter 1)
+                                    :test #'equal)
+                            (not (member '("messages" 1 "content" 0) (breakpoints ':openrouter 0)
+                                         :test #'equal)))
+                       "Chat marks the end of the shared message")
+          (conversation-append-provider-item
+           conversation
+           (json-object "type" "function_call" "namespace" "skill" "name" "load"
+                        "call_id" "volatile-call" "arguments" "{}")
+           :persistence ':next-response)
+          (conversation-append-tool-result conversation "volatile-call"
+                                           :tool-name   "skill.load"
+                                           :output      "Blocked."
+                                           :success-p   nil
+                                           :persistence ':next-response)
+          (test-assert (member '("messages" 1 "content" 0) (breakpoints ':openrouter 1)
+                               :test #'equal)
+                       "Chat keeps the shared marker beside one-response exchanges")))))
+  nil)
+
 (-> test-provider-request-tool-filtering () null)
 (defun test-provider-request-tool-filtering ()
   "Test local web schemas are sent only when the request can execute them."

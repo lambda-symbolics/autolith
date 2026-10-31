@@ -63,7 +63,7 @@
                        "loading alone keeps the durable projection")
           (test-assert (= 1 (conversation-prepare-provider-request
                              loaded :identity (list ':codex "model-a")))
-                       "the first request after a resume precompacts from durable records")
+                       "a resume without a recorded response precompacts")
           (test-assert (equal (precompaction-tests--call-ids loaded)
                               '("succeeded" "steered" "failed-current"))
                        "the resumed projection matches the live one")))))
@@ -107,6 +107,60 @@
                      "a request completing after long retries leaves its cache warm"))))
   nil)
 
+(-> precompaction-tests--resume-fixture (configuration list) list)
+(defun precompaction-tests--resume-fixture (configuration identity)
+  "Create a conversation pruned live and answered by IDENTITY; return its live call ids."
+  (let ((conversation (conversation-create configuration :identifier "precompaction-resume"))
+        (now          (get-universal-time)))
+    (conversation-append-user-message conversation "start")
+    (precompaction-tests--exchange conversation "failed-early")
+    (precompaction-tests--exchange conversation "succeeded" :success-p t)
+    (conversation-append-user-message conversation "next")
+    (conversation-prepare-provider-request conversation
+                                           :identity (list ':codex "model-a") :now now)
+    (test-assert (= 1 (conversation-prepare-provider-request
+                       conversation :identity identity :now now))
+                 "a model switch prunes the live projection")
+    (conversation-append-provider-metadata
+     conversation (list :request-number 1 :request-identity identity))
+    (precompaction-tests--exchange conversation "failed-later")
+    (conversation-append-user-message conversation "again")
+    (precompaction-tests--call-ids conversation)))
+
+(-> test-precompaction-survives-resume () null)
+(defun test-precompaction-survives-resume ()
+  "Replay recorded pruning on load and prune a resumed conversation only when cold."
+  (let ((identity (list ':codex "model-b")))
+    (dolist (case `((,identity          0   300 ("succeeded" "failed-later")
+                     "a prompt resume keeps the warm projection")
+                    (,identity          400 300 ("succeeded")
+                     "a resume after the retention estimate prunes")
+                    (,identity          0   nil ("succeeded")
+                     "a resume with unknown retention prunes")
+                    ((:codex "model-a") 0   300 ("succeeded")
+                     "a resume with another model prunes")))
+      (destructuring-bind (request-identity age idle-seconds expected description) case
+        (with-test-configuration (configuration)
+          (let* ((live   (precompaction-tests--resume-fixture configuration identity))
+                 (loaded (conversation-load-by-id configuration "precompaction-resume")))
+            (test-assert (equal live '("succeeded" "failed-later"))
+                         "later failures wait for the next cold request")
+            (test-assert (equal live (precompaction-tests--call-ids loaded))
+                         "loading replays recorded pruning")
+            (test-assert (equal identity (first (conversation-last-response loaded)))
+                         "loading restores the latest response's identity")
+            (conversation-prepare-provider-request loaded
+                                                   :identity     request-identity
+                                                   :now          (+ (get-universal-time) age)
+                                                   :idle-seconds idle-seconds)
+            (test-assert (equal expected (precompaction-tests--call-ids loaded))
+                         description)
+            (test-assert (equal expected
+                                (precompaction-tests--call-ids
+                                 (conversation-load-by-id configuration "precompaction-resume")))
+                         "pruning on resume is reproduced by the next load"))))))
+  nil)
+
 (-> test-precompaction-before-compaction () null)
 (defun test-precompaction-before-compaction ()
   "Prune resumed history before native or portable threshold compaction captures it."
@@ -143,7 +197,10 @@
                               when (clinker-transcript:function-call-item-p item)
                                 collect (json-get item "call_id"))))
             (test-assert (equal '("succeeded" "failed-current") calls)
-                         "compaction receives successful and current exchanges, not earlier failures"))))))
+                         "compaction receives successful and current exchanges, not earlier failures"))
+          (test-assert (equal (list (provider-family provider) (config :model configuration))
+                              (first (conversation-last-response conversation)))
+                       "completed responses record their request identity")))))
   nil)
 
 (-> test-precompaction-retention-policy () null)

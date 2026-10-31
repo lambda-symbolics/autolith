@@ -524,6 +524,7 @@
   test-prompt-cache-baseline-from-conversation
   test-prompt-cache-prefix-progression
   test-prompt-cache-request-observation
+  test-prompt-cache-wire-plan
   test-prompt-cache-miss-notices
   test-cache-misses-command)
 
@@ -652,7 +653,8 @@
 (define-test-suite precompaction
   test-precompaction-drops-failed-exchanges
   test-precompaction-retention-policy
-  test-precompaction-cold-requests)
+  test-precompaction-cold-requests
+  test-precompaction-survives-resume)
 
 (define-test-suite conversation
   test-conversation-image-input
@@ -760,6 +762,8 @@
   test-provider-request-tool-filtering
   test-provider-reserved-web-schema
   test-provider-tool-choice
+  test-provider-prompt-cache-ttl
+  test-provider-shared-items-breakpoint
   test-provider-native-compaction
   test-provider-rate-limits
   test-provider-context-presentation
