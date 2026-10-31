@@ -1834,6 +1834,15 @@ an explicit estimate, for example
 =(settings :prompt-cache-retention-seconds 1800)= for thirty minutes. Set it to
 zero to use the provider estimate. Both settings persist across restarts.
 
+=(settings :prompt-cache-ttl "1h")= asks the Anthropic API and OpenRouter
+Claude models to keep cache entries for one hour instead of five minutes. A
+one-hour cache write costs twice the base input price, against 1.25 times for
+five minutes, so it pays when a conversation often pauses for between five
+minutes and an hour. Other routes ignore the setting. It does not change the
+retention estimate: with a one-hour lifetime, also set
+=(settings :prompt-cache-retention-seconds 3600)= so precompaction and idle
+compaction use the longer window.
+
 Cache retention depends on the provider, model, routing and account policy.
 The [[https://developers.openai.com/api/docs/guides/prompt-caching][OpenAI API cache documentation]] describes a thirty-minute default for
 GPT-5.6 and later; it does not establish a retention contract for the ChatGPT

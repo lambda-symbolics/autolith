@@ -253,6 +253,51 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-provider-prompt-cache-ttl () null)
+(defun test-provider-prompt-cache-ttl ()
+  "Request the configured cache lifetime on Claude routes and nowhere else."
+  (with-test-environment (("AUTOLITH_OPENROUTER_PROVIDER_ROUTING" nil))
+    (with-test-configuration (configuration)
+      (setf (configuration-validation-deferred-p configuration) t)
+      (let ((conversation (conversation-create configuration :identifier "cache-ttl")))
+        (conversation-append-user-message conversation "Cache this history.")
+        (labels ((controls (value)
+                   "Return every cache_control object inside the JSON VALUE."
+                   (cond
+                     ((json-object-p value)
+                      (append (let ((control (json-get value "cache_control")))
+                                (and control (list control)))
+                              (loop for child being the hash-values of value
+                                    append (controls child))))
+                     ((and (vectorp value) (not (stringp value)))
+                      (loop for child across value
+                            append (controls child)))
+                     (t
+                      nil)))
+
+                 (request (route model ttl)
+                   "Encode a request through ROUTE to MODEL with cache lifetime TTL."
+                   (setf (config :prompt-cache-ttl configuration) ttl
+                         (config :model configuration)
+                         (if (eq route ':openrouter) (openrouter--model-name model) model))
+                   (provider-request-object (if (eq route ':openrouter)
+                                                (openrouter-provider-create configuration)
+                                                (anthropic-provider-create configuration))
+                                            conversation (json-array))))
+          (dolist (case '((:anthropic  "claude-haiku-4-5"           "5m" (nil))
+                          (:anthropic  "claude-haiku-4-5"           "1h" ("1h"))
+                          (:openrouter "anthropic/claude-haiku-4.5" "5m" (nil))
+                          (:openrouter "anthropic/claude-haiku-4.5" "1h" ("1h"))
+                          (:openrouter "openai/gpt-5.1"             "1h" (nil))))
+            (destructuring-bind (route model ttl expected) case
+              (test-assert (equal expected
+                                  (remove-duplicates
+                                   (mapcar (lambda (control) (json-get control "ttl"))
+                                           (controls (request route model ttl)))
+                                   :test #'equal))
+                           (format nil "~A ~A markers request lifetime ~A" route model ttl))))))))
+  nil)
+
 (-> test-provider-request-tool-filtering () null)
 (defun test-provider-request-tool-filtering ()
   "Test local web schemas are sent only when the request can execute them."

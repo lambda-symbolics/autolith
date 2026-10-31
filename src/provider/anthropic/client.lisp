@@ -92,7 +92,9 @@ Return the encoded request and its unconsumed context delivery."
               :options (list :ephemeral-items       ephemeral-items
                              :tool-choice           *provider-tool-choice*
                              :maximum-output-tokens *provider-maximum-output-tokens*
-                             :cache-p               (not compaction-p))))))
+                             :cache-p               (not compaction-p)
+                             :cache-ttl             (provider-prompt-cache-ttl
+                                                     configuration))))))
     (values (provider-request-object provider projection effective-tools)
             delivery)))
 
