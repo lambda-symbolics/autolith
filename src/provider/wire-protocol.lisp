@@ -59,6 +59,20 @@ local retention estimate, which only schedules pruning and idle compaction."
                        (list :wire (provider-cache-wire-plan (first values))))))
     (values-list values)))
 
+(-> provider-shared-items-split (list list) (values list list))
+(defun provider-shared-items-split (items durable-items)
+  "Split projected ITEMS into the shared leading DURABLE-ITEMS and the rest.
+
+*PROVIDER-SHARED-ITEM-COUNT* says how many durable items are shared. Only items
+still in place in ITEMS count, so a projection that moved them shares nothing.
+Return the shared items and the remaining items."
+  (let ((count (loop for item in items
+                     for durable in durable-items
+                     for index below *provider-shared-item-count*
+                     while (eq item durable)
+                     count t)))
+    (values (subseq items 0 count) (nthcdr count items))))
+
 (-> provider-cache-prefix-create (cl-llm-provider-api:wire-request vector) list)
 (defun provider-cache-prefix-create (projection tool-namespaces)
   "Fingerprint PROJECTION's instructions, tools and history, excluding its suffix.
@@ -76,7 +90,8 @@ establish shared history growth, never the provider's token boundary."
                     (getf options :reasoning-effort))))
           :items
           (map 'list #'provider-cache-prefix--entry
-               (cl-llm-provider-api:wire-request-items projection)))))
+               (append (getf options :shared-items)
+                       (cl-llm-provider-api:wire-request-items projection))))))
 
 (-> provider-cache-prefix-characters (list) (integer 0))
 (defun provider-cache-prefix-characters (prefix)

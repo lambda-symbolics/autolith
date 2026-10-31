@@ -76,7 +76,10 @@ Return the encoded request and its unconsumed context delivery."
          (projection
            ;; Anchored context joins the durable history before its cache
            ;; marker; the goal and the rest of the context follow it.
-           (let ((items (context-delivery-project-items delivery conversation durable-items)))
+           (multiple-value-bind (shared items)
+               (provider-shared-items-split
+                (context-delivery-project-items delivery conversation durable-items)
+                durable-items)
              (make-instance
               'cl-llm-provider-api:wire-request
               :model   (config :model configuration)
@@ -89,7 +92,8 @@ Return the encoded request and its unconsumed context delivery."
                         #'non-empty-string-p
                         (list (and (not compaction-p) goal-context)
                               (context-delivery-rendered-tail delivery)))
-              :options (list :ephemeral-items       ephemeral-items
+              :options (list :shared-items          shared
+                             :ephemeral-items       ephemeral-items
                              :tool-choice           *provider-tool-choice*
                              :maximum-output-tokens *provider-maximum-output-tokens*
                              :cache-p               (not compaction-p)

@@ -288,18 +288,17 @@
                          :configuration configuration))
            (let ((requests
                    (mapcar (lambda (snapshot)
-                             (let ((item (first (last snapshot))))
-                               (json-get (aref (json-get item "content") 0) "text")))
+                             (mapcar (lambda (item)
+                                       (json-get (aref (json-get item "content") 0) "text"))
+                                     snapshot))
                            (reverse (rlm-inference-test-provider-input-snapshots provider)))))
              (test-assert
-              (let ((boundary (search "Task: " (first requests))))
-                (and boundary
-                     (string= (subseq (first requests) 0 boundary)
-                              (subseq (second requests) 0 boundary))
-                     (< (search evidence (first requests)) boundary)
-                     (search "Count the second kind." (second requests)
-                             :start2 boundary)))
-              "frames over the same views differ only in their trailing task"))
+              (and (every (lambda (request) (= (length request) 2)) requests)
+                   (string= (first (first requests)) (first (second requests)))
+                   (search evidence (first (first requests)))
+                   (equal (mapcar #'second requests)
+                          '("Task: Count the first kind." "Task: Count the second kind.")))
+              "frames over the same views share their first message and differ in the task"))
            (let ((index (rlm--trace-index-render configuration)))
              (test-assert
               (and (search "Count the first kind" index)
@@ -993,20 +992,21 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
     :documentation "The lock serializing concurrent request counting."))
   (:documentation "A thread-safe provider answering from the request itself."))
 
+(-> rlm-map-test--trailing-user-text (list) (option string))
+(defun rlm-map-test--trailing-user-text (items)
+  "Return the text of the user messages ending ITEMS, joined by blank lines.
+
+A frame sends its shared views and its task as consecutive user messages."
+  (let ((texts (loop for item in (reverse items)
+                     while (and (json-object-p item)
+                                (json-string= (json-get item "role") "user"))
+                     collect (context--message-text item))))
+    (and texts (format nil "~{~A~^~%~%~}" (reverse texts)))))
+
 (-> rlm-map-test--last-user-text (conversation) (option string))
 (defun rlm-map-test--last-user-text (conversation)
-  "Return the newest user message text in CONVERSATION's request items."
-  (loop for item in (reverse (conversation-input-items-for-request
-                              conversation))
-        when (and (json-object-p item)
-                  (json-string= (json-get item "role") "user"))
-          do (let ((content (json-get item "content")))
-               (return
-                 (loop for part across content
-                       when (and (json-object-p part)
-                                 (json-string= (json-get part "type")
-                                               "input_text"))
-                         do (return (json-get part "text")))))))
+  "Return the newest user request text in CONVERSATION's request items."
+  (rlm-map-test--trailing-user-text (conversation-input-items-for-request conversation)))
 
 (defmethod provider-stream-turn
     ((provider rlm-map-test-provider)
@@ -1485,11 +1485,7 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
         (let* ((snapshot
                  (first
                   (rlm-inference-test-provider-input-snapshots provider)))
-               (request-text
-                 (loop for item in (reverse snapshot)
-                       when (and (json-object-p item)
-                                 (string= (or (json-get item "role") "") "user"))
-                         do (return (context--message-text item)))))
+               (request-text (rlm-map-test--trailing-user-text snapshot)))
           (test-assert
            (search "current user instructions" request-text)
            "classification includes a labeled user-instruction view")

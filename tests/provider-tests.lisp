@@ -302,6 +302,55 @@
                        "OpenRouter requests carry the conversation's session identifier")))))
   nil)
 
+(-> test-provider-shared-items-breakpoint () null)
+(defun test-provider-shared-items-breakpoint ()
+  "End shared leading items at their own cache marker on Claude routes."
+  (with-test-environment (("AUTOLITH_OPENROUTER_PROVIDER_ROUTING" nil))
+    (with-test-configuration (configuration)
+      (setf (configuration-validation-deferred-p configuration) t)
+      (let ((conversation (conversation-create configuration :identifier "shared-items")))
+        (conversation-append-user-message conversation "Shared views.")
+        (conversation-append-user-message conversation "Task: one question.")
+        (flet ((breakpoints (route count)
+                 "Return the cache marker paths of a request through ROUTE sharing COUNT items."
+                 (setf (config :model configuration)
+                       (if (eq route ':openrouter)
+                           (openrouter--model-name "anthropic/claude-haiku-4.5")
+                           "claude-haiku-4-5"))
+                 (let ((*provider-shared-item-count* count))
+                   (mapcar #'first
+                           (getf (provider-cache-wire-plan
+                                  (provider-request-object
+                                   (if (eq route ':openrouter)
+                                       (openrouter-provider-create configuration)
+                                       (anthropic-provider-create configuration))
+                                   conversation (json-array)))
+                                 :breakpoints)))))
+          (test-assert (and (member '("messages" 0 "content" 0) (breakpoints ':anthropic 1)
+                                    :test #'equal)
+                            (not (member '("messages" 0 "content" 0) (breakpoints ':anthropic 0)
+                                         :test #'equal)))
+                       "Messages marks the shared block inside the merged user message")
+          (test-assert (and (member '("messages" 1 "content" 0) (breakpoints ':openrouter 1)
+                                    :test #'equal)
+                            (not (member '("messages" 1 "content" 0) (breakpoints ':openrouter 0)
+                                         :test #'equal)))
+                       "Chat marks the end of the shared message")
+          (conversation-append-provider-item
+           conversation
+           (json-object "type" "function_call" "namespace" "skill" "name" "load"
+                        "call_id" "volatile-call" "arguments" "{}")
+           :persistence ':next-response)
+          (conversation-append-tool-result conversation "volatile-call"
+                                           :tool-name   "skill.load"
+                                           :output      "Blocked."
+                                           :success-p   nil
+                                           :persistence ':next-response)
+          (test-assert (member '("messages" 1 "content" 0) (breakpoints ':openrouter 1)
+                               :test #'equal)
+                       "Chat keeps the shared marker beside one-response exchanges")))))
+  nil)
+
 (-> test-provider-request-tool-filtering () null)
 (defun test-provider-request-tool-filtering ()
   "Test local web schemas are sent only when the request can execute them."
