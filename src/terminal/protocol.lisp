@@ -1,8 +1,16 @@
 (in-package #:autolith)
 
 ;;;; -- Terminal Defaults --
-(defparameter *terminal-history-limit* most-positive-fixnum
-  "The practical maximum retained by the line editor, effectively unlimited.")
+(defparameter *terminal-history-limit* 500
+  "The most input history entries the line editor keeps resident.
+
+Older inputs page in from the conversation as history traversal reaches them.")
+
+(defparameter *terminal-history-character-limit* 1048576
+  "The most characters resident line editor history entries may hold together.")
+
+(defparameter *terminal-history-page-size* 100
+  "How many older inputs one history page loads into the line editor.")
 
 (defparameter *terminal-ui-visible-completions* 6
   "The maximum number of candidate rows painted at once.")

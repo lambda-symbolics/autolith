@@ -1861,7 +1861,7 @@ runtimes, which the replacement must retain while retiring the old registry."
 (defun application--conversation-input-history
     (conversation &key (limit *terminal-history-limit*))
   "Return the newest LIMIT editable inputs from CONVERSATION's complete sidecar."
-  (conversation-input-history-newest conversation limit))
+  (conversation-input-history-page conversation :limit limit))
 
 (-> application--install-owned-conversation
     (application conversation &key (:conversation-lease conversation-lease))
@@ -1947,7 +1947,12 @@ runtimes, which the replacement must retain while retiring the old registry."
                (application--load-goal application)
                (context-runtime-reset)
                (when ui
-                 (terminal-ui-load-history ui input-history))
+                 (terminal-ui-load-history
+                  ui input-history
+                  :older-function (lambda (depth)
+                                    (conversation-input-history-page
+                                     conversation :skip  depth
+                                                  :limit *terminal-history-page-size*))))
                (application-localgroup-sync-conversation application)
                (application-publish-recovery-session application)
                (setf committed-p t))
