@@ -176,7 +176,10 @@ Claude breakpoints carry the configured cache lifetime when it is not the defaul
      (conversation conversation)
      (tool-namespaces vector)
      &key goal-context compaction-p)
-  "Translate the namespaced model, reasoning, and provider preferences for OpenRouter."
+  "Translate the namespaced model, reasoning, and provider preferences for OpenRouter.
+
+The conversation's cache key becomes the session identifier, so OpenRouter
+routes every request of the conversation to one provider from the first."
   (multiple-value-bind (request delivery)
       (call-next-method provider conversation tool-namespaces
                         :goal-context goal-context
@@ -189,7 +192,8 @@ Claude breakpoints carry the configured cache lifetime when it is not the defaul
               (provider-configuration provider))))
            (model-supports-reasoning-p
             (openrouter--model-supports-reasoning-p model)))
-      (setf (gethash "model" request) wire-model)
+      (setf (gethash "model" request)      wire-model
+            (gethash "session_id" request) (conversation-prompt-cache-key conversation))
       (when (and effort model-supports-reasoning-p)
         (setf (gethash "reasoning" request)
               (json-object "effort" effort)))

@@ -1841,7 +1841,9 @@ five minutes, so it pays when a conversation often pauses for between five
 minutes and an hour. Other routes ignore the setting. It does not change the
 retention estimate: with a one-hour lifetime, also set
 =(settings :prompt-cache-retention-seconds 3600)= so precompaction and idle
-compaction use the longer window.
+compaction use the longer window. OpenRouter requests carry the conversation's
+cache key as their session identifier, which keeps a conversation on one
+upstream provider from its first request.
 
 Cache retention depends on the provider, model, routing and account policy.
 The [[https://developers.openai.com/api/docs/guides/prompt-caching][OpenAI API cache documentation]] describes a thirty-minute default for
