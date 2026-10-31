@@ -315,6 +315,16 @@ exist yet, and is only put in directory form."
                                                 (declare (ignore configuration))
                                                 *default-compaction-threshold-percent*))
 
+(define-setting :context-output-reserve (integer-setting)
+  :label                                "Context output reserve"
+  :group                                :model
+  :documentation                        "Minimum output-token headroom for request admission. Explicit request output caps reserve at least their full size. Without a cap this is headroom, not an enforced generation limit."
+  :minimum                              1
+  :maximum                              1048576
+  :environment                          "AUTOLITH_CONTEXT_OUTPUT_RESERVE"
+  :default                              (lambda (configuration)
+                                          (max 1 (min 8192 (floor (config :context-window configuration) 10)))))
+
 (define-setting :vertex-project (string-setting)
   :label                        "Vertex project"
   :group                        :model

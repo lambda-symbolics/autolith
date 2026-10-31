@@ -1470,8 +1470,12 @@ tool registry reaches the very next provider request."
    "Return true when AGENT's conversation should compact before continuing."))
 
 (defmethod agent-should-compact-p ((agent agent))
-  "Return true when the newest usage crossed AGENT's compaction limit."
-  (>= (conversation-last-total-tokens (agent-conversation agent))
+  "Compare fresh known input with the soft compaction threshold, independently of paid usage."
+  (>= (context-estimate-known-tokens
+       (agent-configuration agent) (agent-conversation agent)
+       :tool-registry (agent-tool-registry agent)
+       :hurry-up-p    (agent-hurry-up-p agent)
+       :family        (provider-family (agent-provider agent)))
       (configuration-compaction-token-limit (agent-configuration agent))))
 
 (-> agent--note-compaction-request

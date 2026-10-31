@@ -4,6 +4,12 @@
 
 (setf *test-suites* nil)
 
+(define-test-suite context-admission
+  test-context-admission-boundary
+  test-context-admission-fresh-projection
+  test-context-admission-final-request
+  test-context-admission-images)
+
 (define-test-suite telemetry-hooks
   ;; telemetry-hook-model-tests.lisp
   test-telemetry-context-window-streams
