@@ -158,6 +158,12 @@
     :type    keyword
     :documentation
      "The :CONCURRENT, :NESTED, :NESTED-CANCEL, :BLOCKING-TOOL, or :MANIFEST script.")
+   (concurrency-ready
+    :initarg       :concurrency-ready
+    :initform      nil
+    :reader        task-test-provider-concurrency-ready
+    :type          (option sb-thread:semaphore)
+    :documentation "Optional first-request rendezvous with a second provider request.")
    (active-count
     :initform      0
     :accessor      task-test-provider-active-count
@@ -264,7 +270,14 @@
     (unwind-protect
          (progn
            (when (eq (task-test-provider-mode provider) :concurrent)
-             (sleep 0.05))
+             (let ((ready (task-test-provider-concurrency-ready provider)))
+               (cond
+                 ((null ready)
+                  (sleep 0.05))
+                 ((= request-number 1)
+                  (assert (sb-thread:wait-on-semaphore ready :timeout 5)))
+                 ((= request-number 2)
+                  (sb-thread:signal-semaphore ready)))))
            (funcall event-callback
                     (make-instance 'assistant-delta-event :text "task test"))
            (agent-test-result

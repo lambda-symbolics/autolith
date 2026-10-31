@@ -2999,7 +2999,8 @@ exactly that race."
            (platform-setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "2")
            (platform-setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "10000")
            (let* ((provider (make-instance 'task-test-provider
-                                           :mode ':concurrent))
+                                           :mode              ':concurrent
+                                           :concurrency-ready (sb-thread:make-semaphore)))
                   (tasks
                    (coerce
                     (loop for index from 1 to 4
