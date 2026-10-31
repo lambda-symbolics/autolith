@@ -411,6 +411,12 @@
    "content" (json-array
               (json-object "type" "output_text" "text" text))))
 
+(-> agent-test-compaction-message () json-object)
+(defun agent-test-compaction-message ()
+  "Return a structured handoff accepted by the compaction contract."
+  (agent-test-message
+   "[Progress] Earlier work is recorded.\n[Decisions] Continue from the durable state.\n[Context] The prior conversation and references are available.\n[Constraints] Follow the user's stated requirements.\n[Next steps] Resume the pending request and verify its result.\n[References] Use the durable conversation and any cited inference traces."))
+
 (-> agent-test-result
     (string list
      &key
@@ -2348,12 +2354,12 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                         nil)
                     (provider-protocol-error (condition)
                       condition))))
-           (test-assert
-            (and failure
-                 (string= (autolith-error-message failure)
-                          "Compaction produced no summary text.")
-                 (string= (provider-error-response-id failure)
-                          "compact-empty")
+             (test-assert
+              (and failure
+                   (string= (autolith-error-message failure)
+                           "Compaction produced no usable summary handoff.")
+                   (string= (provider-error-response-id failure)
+                            "compact-empty")
                  (null (provider-error-status failure))
                  (null (provider-error-code failure))
                  (null (provider-error-request-id failure))
@@ -2383,7 +2389,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                    "name" "wait"
                    "call_id" "call-compact-wait"
                    "arguments" "{}"))
-                (summary (agent-test-message "Recovered compact summary."))
+                  (summary (agent-test-compaction-message))
                 (provider
                   (make-instance
                    'scripted-provider
@@ -2452,7 +2458,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                    "content" (json-array
                               (json-object
                                "type" "output_text"
-                               "text" "Summary: earlier work is complete."))))
+                                 "text" "[Progress] Earlier work is complete. [Decisions] Continue with the recorded plan. [Context] Prior context is durable. [Constraints] Follow the user's requirements. [Next steps] Resume the pending task. [References] Use the conversation archive."))))
                 (answer-item
                   (json-object
                    "type" "message"
@@ -2525,7 +2531,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                    "content" (json-array
                               (json-object
                                "type" "output_text"
-                               "text" "Portable compaction handoff."))))
+                                 "text" "[Progress] Portable handoff is ready. [Decisions] Continue from durable state. [Context] Prior context is preserved. [Constraints] Respect current requirements. [Next steps] Resume the task. [References] Consult the conversation archive."))))
                 (earlier-item
                   (json-object
                    "type" "message"

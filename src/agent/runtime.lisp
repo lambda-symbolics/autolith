@@ -1501,9 +1501,29 @@ to usage accounting instead of hiding behind the compaction record."
     (agent-observer-status observer :compaction-request-completed details))
   nil)
 
+(-> agent--compaction-summary-structured-p (string) boolean)
+(defun agent--compaction-summary-structured-p (text)
+  "Return true when TEXT contains every required bounded handoff section."
+  (let* ((labels '("[progress]" "[decisions]" "[context]"
+                   "[constraints]" "[next steps]" "[references]"))
+         (lower (string-downcase text)))
+    (and (every (lambda (label)
+                  (let ((start (search label lower)))
+                    (and start
+                         (let* ((content-start (+ start (length label)))
+                                (next (loop for candidate in labels
+                                            for position = (search candidate lower
+                                                                     :start2 content-start)
+                                            when position minimize position)))
+                           (non-empty-string-p
+                            (string-trim '(#\Space #\Tab #\Newline #\Return)
+                                         (subseq lower content-start (or next (length lower)))))))))
+                labels)
+         (<= (length text) 12000))))
+
 (-> agent--compaction-summary-usable-p (provider-result) boolean)
 (defun agent--compaction-summary-usable-p (result)
-  "Return true when RESULT is a completed, tool-free, meaningful handoff."
+  "Return true when RESULT is a completed, structured, tool-free handoff."
   (let* ((text    (provider-result-assistant-text result))
          (trimmed (and (stringp text)
                        (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
@@ -1515,10 +1535,8 @@ to usage accounting instead of hiding behind the compaction record."
                            (equal (json-get item "type") "refusal")))
                     items))
          (non-empty-string-p trimmed)
-         ;; Require a nontrivial handoff, without depending on headings or
-         ;; provider-specific prose formatting.
          (>= (length trimmed) 24)
-         (<= (length trimmed) 12000))))
+         (agent--compaction-summary-structured-p trimmed))))
 
 (-> agent--native-compaction-window (t) list)
 (defun agent--native-compaction-window (value)
@@ -1594,14 +1612,34 @@ to usage accounting instead of hiding behind the compaction record."
      :identity     (list (provider-family provider) (config :model configuration))
      :idle-seconds (provider-prompt-cache-retention-seconds provider configuration))))
 
+(-> agent--validate-compaction-projection
+    (agent conversation &key (:goal-context (option string))
+                      (:tool-restriction-p boolean) (:tool-allowlist (option list)))
+    null)
+(defun agent--validate-compaction-projection
+    (agent candidate &key goal-context tool-restriction-p tool-allowlist)
+  "Reject a candidate checkpoint whose fresh ordinary request cannot fit."
+  (let* ((provider       (agent-provider agent))
+         (tool-namespaces
+           (if tool-restriction-p
+               (tool-registry-provider-schemas
+                (agent-tool-registry agent) :canonical-names tool-allowlist)
+               (tool-registry-provider-schemas (agent-tool-registry agent)))))
+    (multiple-value-bind (request delivery)
+        (provider-request-object provider candidate tool-namespaces
+                                 :goal-context goal-context)
+      (declare (ignore delivery))
+      (provider-check-request-context provider request))))
+
 (-> agent-compact-conversation
     (agent agent-observer &key (:tool-allowlist (option list))
                                (:tool-restriction-p boolean)
+                               (:goal-context (option string))
                                (:request-number (integer 0)))
     (integer 0))
 (defun agent-compact-conversation
-    (agent observer
-     &key tool-allowlist (tool-restriction-p nil) (request-number 0))
+    (agent observer &key tool-allowlist (tool-restriction-p nil)
+                          goal-context (request-number 0))
   "Compact AGENT's conversation with native state when the provider supports it.
 
 A supported native checkpoint becomes the input to the portable summarization
@@ -1659,7 +1697,7 @@ Return the number of requests issued so the turn's request count covers them."
                              :response-id
                              (cl-llm-provider-api::native-compaction-completed-event-response-id
                               event)))
-                          (agent-observer-status observer :provider-progress nil)))
+                            (agent-observer-status observer :provider-progress nil))))
                  (unless native-request-accounted-p
                    (setf native-usage usage))
                  (agent--native-compaction-window window)))
@@ -1720,23 +1758,37 @@ Return the number of requests issued so the turn's request count covers them."
                 summary-conversation result))
       (with-recursive-lock-held ((conversation-append-lock conversation))
         (setf unfinished-work (task-unfinished-work-snapshot agent))
-        (if native-window
-            (conversation-append-native-compaction
-             conversation native-window
-             :family          (provider-family provider)
-             :summary         summary
-             :compaction      compaction
-             :unfinished-work unfinished-work)
-            (conversation-append-summary
-             conversation summary :compaction compaction
-             :unfinished-work                 unfinished-work)))
+          (if native-window
+              (conversation-append-native-compaction
+               conversation native-window
+               :family          (provider-family provider)
+               :summary         summary
+               :compaction      compaction
+               :unfinished-work unfinished-work
+               :validate-projection
+               (lambda (candidate)
+                 (agent--validate-compaction-projection
+                  agent candidate
+                  :goal-context goal-context
+                  :tool-restriction-p tool-restriction-p
+                  :tool-allowlist tool-allowlist)))
+              (conversation-append-summary
+               conversation summary :compaction compaction
+               :unfinished-work unfinished-work
+               :validate-projection
+               (lambda (candidate)
+                 (agent--validate-compaction-projection
+                  agent candidate
+                  :goal-context goal-context
+                  :tool-restriction-p tool-restriction-p
+                  :tool-allowlist tool-allowlist))))
      (agent-observer-status
       observer
       :compaction-completed
       (list :summary-characters (length summary)
              :native-p          (not (null native-window))
-            :provider-requests  issued)))
-      issued)))
+               :provider-requests  issued))
+        issued))))
 
 (-> agent--run-provider-loop
     (agent agent-observer &key (:goal-context (option string))
@@ -1771,13 +1823,14 @@ loop, so compaction ahead of the user message shares the turn's budget."
                :conversation-id
                (conversation-identifier (agent-conversation agent))
                :request-number request-number))
-      (when (agent-should-compact-p agent)
-        (incf request-number
-              (agent-compact-conversation
-               agent observer
-               :tool-allowlist     tool-allowlist
-               :tool-restriction-p tool-restriction-p
-               :request-number     request-number)))
+        (when (agent-should-compact-p agent)
+          (incf request-number
+                (agent-compact-conversation
+                 agent observer
+                 :tool-allowlist     tool-allowlist
+                 :tool-restriction-p tool-restriction-p
+                 :goal-context       goal-context
+                 :request-number     request-number)))
       (when (and tools-p (not tool-restriction-p))
         (mcp-tool-registry-refresh
          (agent-tool-registry agent)
