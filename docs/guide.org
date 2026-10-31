@@ -479,7 +479,10 @@ launch without changing the saved preference.
 Pass =nil= to =preferences-set-fullscreen= to return future launches to inline mode.
 Because the viewport owns the mouse, hold =Shift= while dragging to select text
 with the terminal emulator. Fullscreen history lives in the application rather
-than the terminal emulator's native scrollback.
+than the terminal emulator's native scrollback. The viewport keeps about four
+million characters of recent output; older output leaves memory, and the legend
+shows =(history)= at the oldest kept row. Run =(history)= to load the newest
+page of the output that left.
 
 For input with matching saved memories, a dim =@ N relevant memories exist= line
 appears below your message. Its count is the number offered to the model for that
@@ -490,7 +493,9 @@ Input recall includes every user message, command, and Lisp submission in the
 conversation. Automatic messages and assistant output are excluded. On first use,
 the complete input-only sidecar is built from the conversation records; later
 submissions are appended to it. Resuming reads this sidecar instead of replaying
-archived transcript chunks.
+archived transcript chunks. The editor keeps the newest 500 inputs, up to a
+million characters, in memory. Moving past the oldest of them loads the
+next older page from the sidecar, and leaving history recall releases it again.
 
 Clicking a web address in the fullscreen transcript opens it in the default
 browser, and every fenced code block ends with a =⧉ copy= label that copies the
