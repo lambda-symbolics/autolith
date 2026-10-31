@@ -589,9 +589,12 @@ in one of the user's own inputs to this conversation."
     (:user
      (let ((conversation (tool-context-conversation context))
            (quote        (getf (rest request) :quote)))
-       (unless (some (lambda (input)
-                       (memory-source-quote-found-p quote input))
-                     (conversation-input-history conversation))
+       (unless (block found
+                 (conversation-map-input-history conversation
+                                                 (lambda (input)
+                                                   (when (memory-source-quote-found-p quote input)
+                                                     (return-from found t))))
+                 nil)
          (memory-resource--fail "The quote does not occur in the user's messages in this conversation. Quote the user's words exactly."))
        (list :user
              :quote quote

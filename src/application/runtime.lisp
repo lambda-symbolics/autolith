@@ -1861,8 +1861,7 @@ runtimes, which the replacement must retain while retiring the old registry."
 (defun application--conversation-input-history
     (conversation &key (limit *terminal-history-limit*))
   "Return the newest LIMIT editable inputs from CONVERSATION's complete sidecar."
-  (let ((history (conversation-input-history conversation)))
-    (nthcdr (max 0 (- (length history) limit)) history)))
+  (conversation-input-history-newest conversation limit))
 
 (-> application--install-owned-conversation
     (application conversation &key (:conversation-lease conversation-lease))

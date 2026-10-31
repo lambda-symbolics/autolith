@@ -54,7 +54,7 @@
            (identity       (conversation-pathname conversation))
            (sidecar        (conversation-input-history-pathname identity))
            (original-map   (symbol-function 'conversation--map-storage-records))
-           (original-write (symbol-function 'sexp-store:log-write))
+           (original-write (symbol-function 'log-write-streaming))
            (scans          0)
            (publications   0))
       (conversation-append-user-message conversation "retired")
@@ -67,7 +67,7 @@
               (lambda (&rest arguments)
                 (incf scans)
                 (apply original-map arguments)))
-        (list 'sexp-store:log-write
+        (list 'log-write-streaming
               (lambda (pathname &rest arguments)
                 (when (equal pathname sidecar) (incf publications))
                 (apply original-write pathname arguments))))
@@ -84,6 +84,54 @@
             "the rebuilt sidecar supports later appends and reloads"))))
       (test-assert (and (= scans 1) (= publications 1))
                    "only the initial rebuild scans storage and publishes a complete file")))
+  nil)
+
+(-> test-conversation-input-history-streaming () null)
+(defun test-conversation-input-history-streaming ()
+  "Test recall, search and rebuild stream the sidecar instead of holding every input."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration))
+           (identity     (conversation-pathname conversation))
+           (sidecar      (conversation-input-history-pathname identity))
+           (inputs       (loop for index below 40
+                               collect (format nil "(progn ~D ~A)" index
+                                               (make-string 4096 :initial-element #\x)))))
+      (dolist (input inputs)
+        (conversation-append-user-message conversation input))
+      (conversation-append-user-message conversation (first inputs))
+      (flet ((refuse (pathname)
+               (lambda (&rest arguments)
+                 (declare (ignore arguments))
+                 (error "~A must stream instead of materializing." pathname))))
+        (test-call-with-function-replacements
+         (list (list 'log-read (refuse "Input recall"))
+               (list 'log-write (refuse "Input rebuild")))
+         (lambda ()
+           (test-assert (equal (conversation-input-history-newest conversation 3)
+                               (list (nth 38 inputs) (nth 39 inputs) (first inputs)))
+                        "the newest page keeps order, duplicates and exact Lisp input")
+           (test-assert (null (conversation-input-history-newest conversation 0))
+                        "an empty page reads nothing")
+           (let ((visited 0))
+             (test-assert (block found
+                            (conversation-map-input-history
+                             conversation
+                             (lambda (input)
+                               (incf visited)
+                               (when (search "(progn 1 " input)
+                                 (return-from found t))))
+                            nil)
+                          "a search finds an old input")
+             (test-assert (= visited 2) "a search stops at its first match"))
+           (delete-file sidecar)
+           (let ((loaded (conversation-load identity)))
+             (test-assert (equal (conversation-input-history-newest loaded 2)
+                                 (list (nth 39 inputs) (first inputs)))
+                          "a missing sidecar rebuilds by streaming durable records")
+             (test-assert (= 41 (length (conversation-input-history loaded)))
+                          "complete recall stays available"))))
+        (test-assert (not (slot-exists-p conversation 'input-history))
+                     "a conversation keeps no resident copy of its inputs"))))
   nil)
 
 (-> test-conversation-input-history-append-failures () null)

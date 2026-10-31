@@ -1233,6 +1233,7 @@
                 #:log-map
                 #:log-read
                 #:log-write
+                #:log-write-streaming
                 #:make-record
                 #:plist-schema-problem
                 #:plist-schema-p
