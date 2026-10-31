@@ -3198,12 +3198,26 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
           (1+ (application-rendered-sequence application))))
   nil)
 
+(-> application--history-floor-after-eviction (application integer) integer)
+(defun application--history-floor-after-eviction (application floor)
+  "Return the paging floor, raised above the records the transcript evicted since FLOOR was set.
+
+A fullscreen transcript evicts its oldest output; those records page in again."
+  (let* ((ui      (application-ui application))
+         (evicted (and ui
+                       (terminal-ui-take-evicted-sequence
+                        ui (conversation-identifier (application-conversation application))))))
+    (if (and evicted (> (1+ evicted) floor))
+        (setf (application-history-floor-sequence application) (1+ evicted))
+        floor)))
+
 (-> application-render-history (application) null)
 (defun application-render-history (application)
   "Append one bounded page of explicitly requested older transcript history."
   (with-recursive-lock-held ((application-render-lock application))
     (let* ((limit (application--history-page-size))
-           (floor (application--history-floor-ensure application limit)))
+           (floor (application--history-floor-after-eviction
+                   application (application--history-floor-ensure application limit))))
       (multiple-value-bind (records candidate-count)
           (application--history-page-records
            application floor limit)

@@ -296,6 +296,7 @@
   test-configuration-source-platform-reading)
 
 (define-test-suite fullscreen
+  test-fullscreen-transcript-residency
   test-terminal-compact-success-groups
   test-terminal-compact-success-stream-and-retry
   test-terminal-compact-call-groups
@@ -1403,6 +1404,7 @@
   test-chunked-transcript-replay
   test-hidden-reasoning-does-not-crowd-replay
   test-paged-transcript-history
+  test-paged-history-after-eviction
   test-provider-protocol-failure-is-recoverable
   test-compaction-presentation-lifecycle
   test-streaming-presentation

@@ -3939,6 +3939,46 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-paged-history-after-eviction () null)
+(defun test-paged-history-after-eviction ()
+  "Test (history) pages in the records a bounded fullscreen transcript evicted."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (conversation  (conversation-create configuration :identifier "evicted-history"))
+         (terminal      (make-instance 'recording-terminal :columns 80 :rows 24))
+         (application   nil))
+    (unwind-protect
+         (let ((*application-history-page-size*         2)
+               (*fullscreen-transcript-character-limit* 1500))
+           (setf application
+                 (make-instance 'application
+                                :configuration configuration
+                                :conversation  conversation
+                                :ui            (terminal-ui-create :terminal     terminal
+                                                                   :fullscreen-p t)))
+           (flet ((numbers ()
+                    (let ((viewport (fullscreen-terminal-ui-viewport (application-ui application))))
+                      (loop for index below (clinedi:transcript-viewport-chunk-count viewport)
+                            for text = (clinedi:transcript-viewport-chunk-text viewport index)
+                            append (loop for start = (search "message-" text)
+                                           then (search "message-" text :start2 (1+ start))
+                                         while start
+                                         collect (parse-integer text :start        (+ start 8)
+                                                                     :junk-allowed t))))))
+             (loop for index from 1 to 40
+                   do (conversation-append-user-message
+                       conversation (format nil "message-~D ~A" index
+                                            (make-string 30 :initial-element #\x)))
+                      (application-render-records application))
+             (let ((oldest (reduce #'min (numbers))))
+               (test-assert (> oldest 2) "the bounded transcript evicted the oldest messages")
+               (application-render-history application)
+               (let ((loaded (last (numbers) 2)))
+                 (test-assert (equal loaded (list (- oldest 2) (- oldest 1)))
+                              "history pages in the newest evicted messages")))))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-paged-transcript-history () null)
 (defun test-paged-transcript-history ()
   "Test /history appends bounded older pages without replaying live output."

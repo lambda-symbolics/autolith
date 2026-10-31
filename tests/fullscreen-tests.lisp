@@ -75,6 +75,47 @@
                   (terminal-ui-deferred-live-appended-regions ui) nil))))))
   nil)
 
+(-> test-fullscreen-transcript-residency () null)
+(defun test-fullscreen-transcript-residency ()
+  "Bound transcript and finalized identifiers while evicted records stay presentable again."
+  (let ((*fullscreen-transcript-character-limit*  4000)
+        (*terminal-ui-finalized-identifier-limit* 64))
+    (dolist (fullscreen-p '(t nil))
+      (let* ((terminal (make-instance 'recording-terminal :columns 60 :rows 12))
+             (ui       (terminal-ui-create :terminal terminal :fullscreen-p fullscreen-p))
+             (peak     0))
+        (loop for sequence from 1 to 300
+              do (terminal-ui-append-finalized
+                  ui (list :conversation "c" sequence)
+                  (format nil "message ~D ~A" sequence (make-string 40 :initial-element #\x)))
+                 (when fullscreen-p
+                   (setf peak (max peak (clinedi:transcript-viewport-resident-characters
+                                         (fullscreen-terminal-ui-viewport ui))))))
+        (test-assert (and (<= (hash-table-count (terminal-ui-finalized-identifiers ui)) 64)
+                          (= 64 (deque-count (terminal-ui-finalized-order ui)))
+                          (terminal-ui--finalized-p ui (list :conversation "c" 300))
+                          (not (terminal-ui--finalized-p ui (list :conversation "c" 1))))
+                     "only recent finalized identifiers stay remembered")
+        (if fullscreen-p
+            (let ((evicted (terminal-ui-take-evicted-sequence ui "c")))
+              (test-assert (and (<= peak 4000)
+                                (plusp (clinedi:transcript-viewport-evicted-count
+                                        (fullscreen-terminal-ui-viewport ui))))
+                           "resident transcript characters plateau at the limit")
+              (test-assert (and (integerp evicted)
+                                (< evicted 300)
+                                (not (terminal-ui--finalized-p
+                                      ui (list :conversation "c" evicted))))
+                           "eviction forgets its records and reports the newest one")
+              (test-assert (null (terminal-ui-take-evicted-sequence ui "c"))
+                           "taking the evicted sequence clears it")
+              (test-assert (terminal-ui-append-finalized ui (list :conversation "c" evicted)
+                                                         "presented again")
+                           "an evicted record can be presented again"))
+            (test-assert (null (terminal-ui-take-evicted-sequence ui "c"))
+                         "native scrollback evicts nothing")))))
+  nil)
+
 (-> test-terminal-compact-success-stream-and-retry () null)
 (defun test-terminal-compact-success-stream-and-retry ()
   "Separate live/streamed output and restore compact grouping after failed appends."

@@ -2909,14 +2909,58 @@ logical theme installed and the physical frame invalid for the next repaint."
                 ,@body))
        (terminal-ui-stop ,variable))))
 
+(defmethod terminal-ui--note-finalized-output ((ui terminal-ui) identifiers)
+  "Native scrollback is never evicted, so nothing is associated."
+  (declare (ignore identifiers))
+  nil)
+
+(defmethod terminal-ui-take-evicted-sequence ((ui terminal-ui) owner)
+  "Native scrollback never evicts records."
+  (declare (ignore owner))
+  nil)
+
+(-> terminal-ui--finalized-p (terminal-ui t) boolean)
+(defun terminal-ui--finalized-p (ui identifier)
+  "Return true when UI recently emitted finalized IDENTIFIER."
+  (nth-value 1 (gethash identifier (terminal-ui-finalized-identifiers ui))))
+
+(-> terminal-ui--remember-finalized (terminal-ui list) null)
+(defun terminal-ui--remember-finalized (ui identifiers)
+  "Remember finalized IDENTIFIERS as just emitted, forgetting the oldest beyond the bound."
+  (let ((table (terminal-ui-finalized-identifiers ui))
+        (order (terminal-ui-finalized-order ui)))
+    (dolist (identifier identifiers)
+      (let ((stamp (incf (terminal-ui-finalized-stamp ui))))
+        (setf (gethash identifier table) stamp)
+        (loop for (old . old-stamp) across (or (nth-value 1 (deque-push-back order (cons identifier stamp)))
+                                               #())
+              ;; A later emission of the same identifier keeps it remembered.
+              when (eql (gethash old table) old-stamp)
+                do (remhash old table))))
+    (terminal-ui--note-finalized-output ui identifiers))
+  nil)
+
+(-> terminal-ui--forget-finalized (terminal-ui t) null)
+(defun terminal-ui--forget-finalized (ui identifier)
+  "Forget finalized IDENTIFIER so UI may present it again."
+  (remhash identifier (terminal-ui-finalized-identifiers ui))
+  nil)
+
+(-> terminal-ui--clear-finalized (terminal-ui) null)
+(defun terminal-ui--clear-finalized (ui)
+  "Forget every finalized identifier UI remembers."
+  (clrhash (terminal-ui-finalized-identifiers ui))
+  (deque-clear (terminal-ui-finalized-order ui))
+  nil)
+
 (-> terminal-ui-mark-finalized (terminal-ui t) boolean)
 (defun terminal-ui-mark-finalized (ui identifier)
   "Remember finalized IDENTIFIER and return true only on its first occurrence."
   (with-terminal-ui-locked (ui)
     (block nil
-      (when (gethash identifier (terminal-ui-finalized-identifiers ui))
+      (when (terminal-ui--finalized-p ui identifier)
         (return nil))
-      (setf (gethash identifier (terminal-ui-finalized-identifiers ui)) t)
+      (terminal-ui--remember-finalized ui (list identifier))
       t)))
 
 (defmethod terminal-ui--append-output :around
@@ -2987,7 +3031,7 @@ REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
   "Append finalized transcript ENTRY once for IDENTIFIER and return true when emitted."
   (with-terminal-ui-locked (ui)
     (block nil
-      (when (gethash identifier (terminal-ui-finalized-identifiers ui))
+      (when (terminal-ui--finalized-p ui identifier)
         (return nil))
       (handler-case
           (multiple-value-bind (text display regions)
@@ -2996,11 +3040,9 @@ REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
               (terminal-ui--append-output
                ui text display :regions regions
                :compact-first-group group :compact-last-group group))
-            (setf (gethash identifier
-                          (terminal-ui-finalized-identifiers ui))
-                  t))
+            (terminal-ui--remember-finalized ui (list identifier)))
         (error (condition)
-          (remhash identifier (terminal-ui-finalized-identifiers ui))
+          (terminal-ui--forget-finalized ui identifier)
           (error condition)))
       t)))
 
@@ -3013,8 +3055,7 @@ REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
           (previous-group nil))
       (dolist (pair entries)
         (destructuring-bind (identifier entry) pair
-          (unless (or (gethash identifier
-                               (terminal-ui-finalized-identifiers ui))
+          (unless (or (terminal-ui--finalized-p ui identifier)
                       (gethash identifier seen))
             (multiple-value-bind (text display regions)
                 (terminal-ui--finalized-content ui entry)
@@ -3055,15 +3096,10 @@ REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
                    ui text display :regions regions
                    :compact-first-group     (fifth (first pending))
                    :compact-last-group      (fifth (first (last pending))))
-                  (dolist (entry pending)
-                    (setf (gethash
-                           (first entry)
-                           (terminal-ui-finalized-identifiers ui))
-                          t)))
+                  (terminal-ui--remember-finalized ui (mapcar #'first pending)))
               (error (condition)
                 (dolist (entry pending)
-                  (remhash (first entry)
-                           (terminal-ui-finalized-identifiers ui)))
+                  (terminal-ui--forget-finalized ui (first entry)))
                 (error condition))))))
       (length pending))))
 
