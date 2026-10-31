@@ -1845,6 +1845,17 @@ compaction use the longer window. OpenRouter requests carry the conversation's
 cache key as their session identifier, which keeps a conversation on one
 upstream provider from its first request.
 
+=/status= shows what this process's model requests cost. A request is priced
+by the charge its provider reports, as OpenRouter does, else by a price
+snapshot for its model: the built-in Anthropic API list prices, or
+=(settings :model-prices "{\"model\": {\"input\": 2, \"cache_read\": 0.2, \"output\": 10}}")=
+in US dollars per million tokens, keyed by the model name =/model= shows. A
+missing cache_write rate charges cache writes as input. Requests without a
+price, such as subscription routes, are counted as unpriced, not free.
+=(settings :cost-limit 5)= refuses new model requests, compaction and
+inference frames included, once reported and estimated spending reaches five
+dollars; zero disables the limit. Unpriced requests do not count toward it.
+
 Cache retention depends on the provider, model, routing and account policy.
 The [[https://developers.openai.com/api/docs/guides/prompt-caching][OpenAI API cache documentation]] describes a thirty-minute default for
 GPT-5.6 and later; it does not establish a retention contract for the ChatGPT

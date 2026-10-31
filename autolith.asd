@@ -187,6 +187,7 @@
                                           (:file "agent/resume-context")
                                           (:file "self/review")
                                           (:file "provider/client")
+                                          (:file "provider/cost")
                                           (:file "provider/usage-export")
                                           (:file "provider/wire-protocol")
                                           (:file "provider/grok/client")

@@ -468,6 +468,16 @@
                 #:rlm-budget-remaining-tokens
                 #:rlm-budget-settle-output
                 #:rlm-usage-billable-tokens
+                #:cost-ledger-check-limit
+                #:cost-ledger-record
+                #:cost-ledger-summary
+                #:cost-ledger-total
+                #:cost-limit-reached
+                #:make-cost-ledger
+                #:make-model-price
+                #:model-price
+                #:model-price-cache-write
+                #:model-price-input
                 #:rlm-context-object
                 #:rlm-context-object-characters
                 #:rlm-context-object-digest
@@ -1160,6 +1170,7 @@
                 #:store-read-values
                 #:store-write-value
                 #:string-setting
+                #:number-setting
                 #:with-configuration)
   (:import-from #:argo
                 #:json-array

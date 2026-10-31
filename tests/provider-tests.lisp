@@ -351,6 +351,66 @@
                        "Chat keeps the shared marker beside one-response exchanges")))))
   nil)
 
+(defclass cost-test-provider (subscription-provider)
+  ((usage
+    :initarg       :usage
+    :reader        cost-test-provider-usage
+    :documentation "The usage every response reports."))
+  (:documentation "A configured provider answering every request with fixed usage."))
+
+(defmethod provider-stream-turn
+    ((provider cost-test-provider) (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Answer with the provider's fixed usage."
+  (declare (ignore tool-namespaces event-callback goal-context compaction-p))
+  (agent-test-result (make-identifier) (list (agent-test-message "priced"))
+                     :usage (cost-test-provider-usage provider)))
+
+(-> test-provider-cost () null)
+(defun test-provider-cost ()
+  "Price requests from settings or list prices, count unpriced ones, and enforce the limit."
+  (with-test-configuration (configuration)
+    (setf (configuration-validation-deferred-p configuration) t)
+    (let* ((*provider-cost-ledger* (make-cost-ledger))
+           (conversation           (conversation-create configuration :identifier "cost"))
+           (provider
+             (make-instance 'cost-test-provider
+                            :configuration configuration
+                            :usage         (json-object "input_tokens"        1000000
+                                                        "cached_input_tokens" 500000
+                                                        "output_tokens"       100000))))
+      (flet ((list-price ()
+               "Return the direct Anthropic route's price for the configured model."
+               (provider-model-price (anthropic-provider-create configuration) configuration)))
+        (setf (config :model configuration) "claude-opus-5-5")
+        (test-assert (and (= (model-price-input (list-price)) 4)
+                          (= (model-price-cache-write (list-price)) 5))
+                     "Anthropic list prices charge five-minute cache writes at 1.25 times input")
+        (setf (config :prompt-cache-ttl configuration) "1h")
+        (test-assert (= (model-price-cache-write (list-price)) 8)
+                     "a one-hour cache lifetime doubles the write price"))
+      (setf (config :model configuration) "local-model")
+      (provider-stream-turn provider conversation)
+      (test-assert (equal (getf (cost-ledger-summary *provider-cost-ledger*) :counts)
+                          '(:reported 0 :estimated 0 :unpriced 1 :unknown 0))
+                   "a request without a price is counted as unpriced")
+      (setf (config :model-prices configuration)
+            "{\"local-model\": {\"input\": 2, \"cache_read\": 0.2, \"output\": 10}}")
+      (provider-stream-turn provider conversation)
+      (test-assert (= (cost-ledger-total *provider-cost-ledger*) 21/10)
+                   "configured prices estimate each token category")
+      (test-assert (search "$2.1000 this process, 1 request unpriced"
+                           (application--cost-description configuration))
+                   "status reports spending next to unpriced requests")
+      (setf (config :cost-limit configuration) 2)
+      (test-assert (handler-case (progn (provider-stream-turn provider conversation) nil)
+                     (cost-limit-reached ()
+                       t))
+                   "requests past the cost limit are refused")
+      (test-assert (= (cost-ledger-total *provider-cost-ledger*) 21/10)
+                   "a refused request records nothing")))
+  nil)
+
 (-> test-provider-request-tool-filtering () null)
 (defun test-provider-request-tool-filtering ()
   "Test local web schemas are sent only when the request can execute them."

@@ -39,6 +39,42 @@
                                       configuration)
                  :session-id         (make-identifier)))
 
+(defparameter *anthropic-model-prices*
+  '(("claude-fable-5-1"  10 1/4  50)
+    ("claude-fable-5"    10 1    50)
+    ("claude-opus-5-5"   4  1/5  20)
+    ("claude-opus-5"     5  1/2  25)
+    ("claude-opus-4-8"   5  1/2  25)
+    ("claude-opus-4-7"   5  1/2  25)
+    ("claude-opus-4-6"   5  1/2  25)
+    ("claude-sonnet-5-5" 2  1/5  10)
+    ("claude-sonnet-5"   2  1/5  10)
+    ("claude-sonnet-4-6" 3  3/10 15)
+    ("claude-haiku-4-5"  1  1/10 5))
+  "Anthropic API list prices as (MODEL INPUT CACHE-READ OUTPUT), US dollars per million tokens.
+
+Taken from Anthropic's published prices as of 2026-10-06. Models priced by
+prompt length, such as Claude Haiku 5.5, are left to the model prices setting.")
+
+(defmethod provider-model-price
+    ((provider anthropic-api-key-provider) (configuration configuration))
+  "Use configured prices, else Anthropic's list prices for the requested cache lifetime.
+
+A cache write costs 1.25 times input for five minutes and twice input for one hour."
+  (or (call-next-method)
+      (let ((entry (assoc (config :model configuration) *anthropic-model-prices*
+                          :test #'string=)))
+        (when entry
+          (destructuring-bind (model input cache-read output) entry
+            (declare (ignore model))
+            (make-model-price :input       input
+                              :cache-read  cache-read
+                              :cache-write (* input (if (provider-prompt-cache-ttl configuration)
+                                                        2
+                                                        5/4))
+                              :output      output
+                              :source      "Anthropic list prices, 2026-10-06"))))))
+
 (defmethod provider-authenticate ((provider anthropic-api-key-provider)
                                   &key stream open-browser-p)
   "Prompt for, validate, and save the Anthropic API key."
