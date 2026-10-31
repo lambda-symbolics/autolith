@@ -15,34 +15,46 @@ Each entry is a plist (:digest ... :configuration ... :worker ...).
 Reuse requires the same context digest and the same configuration
 identity, so tests and forked setups never share a worker.")
 
+(defparameter *rlm-environment-retirement-limit* 16
+  "The most retired environments whose loss a later run is still told about.")
+
+(defvar *rlm-environment-retired* nil
+  "(DIGEST CONFIGURATION) of environments the pool retired, newest first and bounded.
+
+A later run over the same context learns that the state it may expect is gone.")
+
 (defvar *rlm-environment-pool-lock*
   (make-lock "Autolith inference environment pool")
   "The lock guarding the environment reuse pool.")
 
 (-> rlm--environment-pool-claim
     (rlm-context-object configuration)
-    (values t boolean))
+    (values t (member nil :ended :retired)))
 (defun rlm--environment-pool-claim (object configuration)
   "Claim a pooled live worker for OBJECT under CONFIGURATION.
 
-Returns the claimed worker or NIL, plus true when a pooled environment
-existed but its process had died, so the caller can tell the root model
-its earlier state is gone. A claimed entry leaves the pool, so
-concurrent runs over one context each drive their own environment."
-  (let ((entry
-          (with-lock-held (*rlm-environment-pool-lock*)
-            (let ((match
-                    (find-if
-                     (lambda (entry)
-                       (and (string= (getf entry ':digest)
-                                     (rlm-context-object-digest object))
-                            (eq (getf entry ':configuration) configuration)))
-                     *rlm-environment-pool*)))
-              (when match
-                (setf *rlm-environment-pool*
-                      (remove match *rlm-environment-pool*))
-                match)))))
+Returns the claimed worker or NIL, plus why an earlier environment's state is
+gone: :ENDED when a pooled environment's process had died, :RETIRED when the
+pool retired it to stay within its bound, or NIL. The caller tells the root
+model. A claimed entry leaves the pool, so concurrent runs over one context
+each drive their own environment."
+  (let ((key       (list (rlm-context-object-digest object) configuration))
+        (entry     nil)
+        (retired-p nil))
+    (with-lock-held (*rlm-environment-pool-lock*)
+      (setf entry (find-if (lambda (entry)
+                             (and (string= (getf entry ':digest) (first key))
+                                  (eq (getf entry ':configuration) configuration)))
+                           *rlm-environment-pool*))
+      (if entry
+          (setf *rlm-environment-pool* (remove entry *rlm-environment-pool*))
+          (let ((retired (find key *rlm-environment-retired* :test #'rlm--environment-key=)))
+            (when retired
+              (setf retired-p t
+                    *rlm-environment-retired* (remove retired *rlm-environment-retired*))))))
     (cond
+      (retired-p
+       (values nil ':retired))
       ((null entry)
        (values nil nil))
       ((lisp-worker-running-p (getf entry ':worker))
@@ -50,7 +62,13 @@ concurrent runs over one context each drive their own environment."
       (t
        ; mallet:suppress no-ignore-errors -- stopping a discarded worker is best-effort cleanup
        (ignore-errors (lisp-worker-stop (getf entry ':worker)))
-       (values nil t)))))
+       (values nil ':ended)))))
+
+(-> rlm--environment-key= (list list) boolean)
+(defun rlm--environment-key= (left right)
+  "Return true when environment keys LEFT and RIGHT name one context and configuration."
+  (and (string= (first left) (first right))
+       (eq (second left) (second right))))
 
 (-> rlm--environment-pool-park (rlm-context-object configuration t) null)
 (defun rlm--environment-pool-park (object configuration worker)
@@ -63,7 +81,13 @@ concurrent runs over one context each drive their own environment."
             *rlm-environment-pool*)
       (when (> (length *rlm-environment-pool*) *rlm-environment-pool-size*)
         (setf evicted (first (last *rlm-environment-pool*))
-              *rlm-environment-pool* (butlast *rlm-environment-pool*))))
+              *rlm-environment-pool* (butlast *rlm-environment-pool*))
+        (push (list (getf evicted ':digest) (getf evicted ':configuration))
+              *rlm-environment-retired*)
+        (setf *rlm-environment-retired*
+              (subseq *rlm-environment-retired*
+                      0 (min (length *rlm-environment-retired*)
+                             *rlm-environment-retirement-limit*)))))
     (when evicted
       ; mallet:suppress no-ignore-errors -- stopping a discarded worker is best-effort cleanup
       (ignore-errors (lisp-worker-stop (getf evicted ':worker)))))
@@ -73,6 +97,7 @@ concurrent runs over one context each drive their own environment."
 (defun rlm-environment-pool-flush ()
   "Stop and forget every idle pooled environment worker."
   (let ((entries (with-lock-held (*rlm-environment-pool-lock*)
+                   (setf *rlm-environment-retired* nil)
                    (shiftf *rlm-environment-pool* nil))))
     (dolist (entry entries)
       ; mallet:suppress no-ignore-errors -- stopping a discarded worker is best-effort cleanup
@@ -320,14 +345,15 @@ Decompose the task programmatically: slice or partition the context, fan sub-inf
     (string rlm-context-object
      &key (:reused-p boolean)
           (:persisted-names list)
-          (:previous-lost-p boolean))
+          (:previous-loss (member nil :ended :retired)))
     string)
 (defun rlm--root-request
-    (task object &key reused-p persisted-names previous-lost-p)
+    (task object &key reused-p persisted-names previous-loss)
   "Compose the root user message from TASK and OBJECT's metadata.
 
 REUSED-P notes a persisting environment and its PERSISTED-NAMES;
-PREVIOUS-LOST-P notes that an earlier environment's state is gone."
+PREVIOUS-LOSS notes that an earlier environment's state is gone, because it
+:ENDED or the pool :RETIRED it."
   (format nil
           "Task: ~A~%~%External context object bound as *context*:~%  label ~S~%  characters ~D~%  sha256 ~A~%  recommended maximum context per subcall: ~D characters~@[~%~%~A~]"
           task
@@ -342,8 +368,10 @@ PREVIOUS-LOST-P notes that an earlier environment's state is gone."
                      (and persisted-names
                           (subseq persisted-names
                                   0 (min 40 (length persisted-names))))))
-            (previous-lost-p
+            ((eq previous-loss ':ended)
              "An earlier environment over this context ended unexpectedly; its variables are gone and anything needed must be recreated.")
+            ((eq previous-loss ':retired)
+             "An earlier environment over this context was retired to keep memory bounded; its variables are gone and anything needed must be recreated.")
             (t
              nil))))
 
@@ -380,35 +408,35 @@ configuration before per-call model routing, so routing copies share its pool."
       (rlm--resolve-environment :model model :effort effort
                                 :provider      provider
                                 :configuration configuration)
-    (let* ((object          (rlm-context-designator-object configuration context))
-           (budget          (or budget
-                                (rlm-budget-create
-                                 :calls  *rlm-complete-call-budget*
-                                 :tokens *rlm-complete-token-budget*
-                                 :depth  *rlm-complete-depth-budget*)))
-           (conversation    (rlm--frame-conversation configuration :task task))
-           (endpoint        (rlm-endpoint-start
-                             :provider          provider
-                             :configuration     configuration
-                             :budget            budget
-                             ;; Metadata records are replay-safe, so the root trace
-                             ;; itself carries the run's invocation tree.
-                             :ledger
-                             (lambda (record)
-                               (conversation-append-provider-metadata
-                                conversation
-                                (list :rlm-call record)))
-                             :activity-callback activity-callback))
-           (worker          nil)
-           (reused-p        nil)
-           (previous-lost-p nil)
-           (parked-p        nil))
+    (let* ((object        (rlm-context-designator-object configuration context))
+           (budget        (or budget
+                              (rlm-budget-create
+                               :calls  *rlm-complete-call-budget*
+                               :tokens *rlm-complete-token-budget*
+                               :depth  *rlm-complete-depth-budget*)))
+           (conversation  (rlm--frame-conversation configuration :task task))
+           (endpoint      (rlm-endpoint-start
+                           :provider          provider
+                           :configuration     configuration
+                           :budget            budget
+                           ;; Metadata records are replay-safe, so the root trace
+                           ;; itself carries the run's invocation tree.
+                           :ledger
+                           (lambda (record)
+                             (conversation-append-provider-metadata
+                              conversation
+                              (list :rlm-call record)))
+                           :activity-callback activity-callback))
+           (worker        nil)
+           (reused-p      nil)
+           (previous-loss nil)
+           (parked-p      nil))
       (unwind-protect
            (progn
              (rlm--note-activity activity-callback "starting environment")
-             (multiple-value-bind (pooled lost-p)
+             (multiple-value-bind (pooled loss)
                  (rlm--environment-pool-claim object environment-owner)
-               (setf previous-lost-p lost-p)
+               (setf previous-loss loss)
                (when pooled
                  (setf worker pooled
                        reused-p t)))
@@ -444,7 +472,7 @@ configuration before per-call model routing, so routing copies share its pool."
                        (ignore-errors (lisp-worker-stop worker))
                        (setf worker nil
                              reused-p nil
-                             previous-lost-p t)
+                             previous-loss ':ended)
                        (start-fresh)))
                    (start-fresh)))
              (multiple-value-bind (status-callback flush-tranche)
@@ -464,12 +492,12 @@ configuration before per-call model routing, so routing copies share its pool."
                                        :status-callback status-callback))
                       (request                  (rlm--root-request
                                                  task object
-                                                 :reused-p        reused-p
+                                                 :reused-p      reused-p
                                                  :persisted-names
                                                  (and reused-p
                                                       (rlm--environment-persisted-names
                                                        worker))
-                                                 :previous-lost-p previous-lost-p))
+                                                 :previous-loss previous-loss))
                       (*system-prompt-override* *rlm-root-system-prompt*))
                  (tool-registry-register registry
                                          (rlm-environment-tool-create worker))
