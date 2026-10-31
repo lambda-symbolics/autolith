@@ -197,6 +197,60 @@
             (test-assert (and (= 4 (length expected))
                               (equal expected (mapcar #'action-trace-input (action-traces configuration))))
                          "an evicted conversation is read again with the same result"))))))
+  (with-test-configuration (configuration)
+    (let* ((conversation         (conversation-create configuration))
+           (pathname             (conversation-pathname conversation))
+           (*action-trace-cache* (make-hash-table :test #'equal))
+           (*action-trace-limit* 1))
+      (flet ((record-run (size version &key arguments)
+               (let ((procedure (copy-tree (learning-tests--procedure)))
+                     (call-id   (format nil "procedure-call-~D" version)))
+                 (setf (getf (rest procedure) :description)
+                       (make-string size :initial-element #\x))
+                 (when arguments
+                   (setf (getf (first (getf (rest procedure) :steps)) :arguments) arguments))
+                 (test-assert (procedure-p procedure) "the recorded procedure definition is valid")
+                 (conversation-append-user-message conversation "Run the report.")
+                 (learning-tests--call conversation
+                                       :call-id   call-id
+                                       :tool      "procedure.run"
+                                       :arguments (json-object "id" "make-sales-report")
+                                       :output    (json-object "status" "ok"))
+                 (conversation-append-record
+                  conversation
+                  (list :procedure-run :call-id call-id :id "make-sales-report"
+                        :procedure-version version :procedure procedure))
+                 (learning-tests--request conversation (format nil "procedure-response-~D" version) 100)
+                 (learning-tests--answer conversation "Done.")
+                 procedure)))
+        (loop for (size arguments) in
+              (list (list (1+ *action-trace-weight-limit*) nil)
+                    (list 0 (list :object
+                                  (list "items" (cons :array (make-list 10000 :initial-element '(:array)))))))
+              for version from 1
+              do (record-run size version :arguments arguments)
+                 (let ((current (action-trace-history-current (action-trace--read pathname))))
+                   (test-assert (and (action-trace-released-p current)
+                                     (null (action-trace-calls current)))
+                                "oversized procedure provenance releases the turn's payload")))
+        (let ((procedure (record-run 5120 3)))
+          (let ((current (action-trace-history-current (action-trace--read pathname))))
+            (test-assert (and (action-trace-accepted-p current)
+                              (>= (action-trace-weight current) 5120))
+                         "an accepted trace charges the complete procedure definition"))
+          (learning-tests--report-turn conversation "q1")
+          (learning-tests--report-turn conversation "q2")
+          (let ((*action-trace-cache-weight-limit* 4096))
+            (test-assert (equal (action-trace-procedure-measurements
+                                 configuration "make-sales-report" :version 3 :procedure procedure)
+                                '((1 100)))
+                         "measured runs outlive their evicted learning trace")
+            (test-assert (zerop (hash-table-count *action-trace-cache*))
+                         "retained procedure definitions count toward cache eviction")
+            (test-assert (equal (action-trace-procedure-measurements
+                                 configuration "make-sales-report" :version 3 :procedure procedure)
+                                '((1 100)))
+                         "evicted measured runs remain readable from the conversation log"))))))
   nil)
 
 (-> learning-tests--procedure () list)

@@ -26,7 +26,7 @@
   "The longest call result a trace keeps; longer results are dropped.")
 
 (defparameter *action-trace-weight-limit* 65536
-  "The most characters of input, arguments and results a trace may hold to be learned from.")
+  "The most characters of input, arguments, results and procedure provenance a trace may hold.")
 
 (defparameter *action-trace-cache-weight-limit* 4194304
   "The most characters of trace payload the cache keeps across conversations.")
@@ -94,7 +94,7 @@ the only results later calls can take values from.")
     :initform      0
     :accessor      action-trace-weight
     :type          (integer 0)
-    :documentation "Characters of input, arguments and results the trace holds.")
+    :documentation "Characters of retained payload, including complete procedure definitions.")
    (released-p
     :initarg       :released-p
     :initform      nil
@@ -298,12 +298,21 @@ of them, until FUNCTION returns true. The cache is then trimmed to its budget."
         (cons current (action-trace-history-finished history))
         (action-trace-history-finished history))))
 
+(-> action-trace--procedure-weight (list) (integer 0))
+(defun action-trace--procedure-weight (procedure)
+  "Return the printed-character cost of the complete PROCEDURE definition, or zero for none."
+  (if procedure
+      (with-standard-io-syntax
+        (length (prin1-to-string procedure)))
+      0))
+
 (-> action-trace--history-weight (action-trace-history) (integer 0))
 (defun action-trace--history-weight (history)
-  "Return the characters of payload HISTORY holds, counting each recorded run as a fixed cost."
+  "Return HISTORY's retained payload weight, including complete procedure definitions."
   (+ (reduce #'+ (action-trace--history-traces history) :key #'action-trace-weight)
-     (* 256 (loop for runs being the hash-values of (action-trace-history-runs history)
-                  sum (length runs)))))
+     (loop for runs being the hash-values of (action-trace-history-runs history)
+           sum (loop for run in runs
+                     sum (+ 256 (action-trace--procedure-weight (getf run :procedure)))))))
 
 (-> action-trace--trim-cache (list) null)
 (defun action-trace--trim-cache (visited)
@@ -490,8 +499,13 @@ be learned from releases its payload as soon as that is known."
                               :key (lambda (call) (getf call :call-id)) :test #'equal))))
          (when (and call (equal (getf call :tool) "procedure.run")
                     (equal (json-get (getf call :arguments) "id") (getf properties :id)))
+           (decf (action-trace-weight current)
+                 (action-trace--procedure-weight (getf call :procedure)))
            (setf (getf call :procedure-version) (getf properties :procedure-version)
-                 (getf call :procedure) (getf properties :procedure)))))
+                 (getf call :procedure) (getf properties :procedure))
+           (incf (action-trace-weight current)
+                 (action-trace--procedure-weight (getf call :procedure)))
+           (action-trace--check-weight current))))
       (:turn-aborted
        (when current
          (setf (action-trace-aborted-p current) t)
