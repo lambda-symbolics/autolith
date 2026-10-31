@@ -121,10 +121,13 @@ supported; a derived fact names its rule version."
 
 (-> knowledge--explain-support (knowledge-view list) list)
 (defun knowledge--explain-support (view support)
-  "Return the explanation of one evaluated SUPPORT plist."
-  (let ((evidence (and (getf support :evidence)
-                       (knowledge-base-evidence-record (knowledge-view-base view)
-                                                       (getf support :evidence)))))
+  "Return the explanation of one evaluated SUPPORT plist.
+
+An archived support carries its evidence as :EVIDENCE-RECORD, read from the log."
+  (let ((evidence (or (getf support :evidence-record)
+                      (and (getf support :evidence)
+                           (knowledge-base-evidence-record (knowledge-view-base view)
+                                                           (getf support :evidence))))))
     (list :support     (getf support :id)
           :basis       (getf support :basis)
           :state       (getf support :state)
@@ -132,6 +135,42 @@ supported; a derived fact names its rule version."
           :evidence    (and evidence (getf evidence :id))
           :text        (if evidence (knowledge-evidence-text evidence) "assumed")
           :observed-at (and evidence (getf evidence :observed-at)))))
+
+(-> knowledge--archived-node (knowledge-view string) (option knowledge-node))
+(defun knowledge--archived-node (view identifier)
+  "Return a transient node for archived claim IDENTIFIER, rebuilt from the log, or NIL.
+
+The node is not added to VIEW. Its supports are the archived ones, each
+retracted and carrying its logged evidence, so an explanation says why the
+claim stopped holding instead of calling it unknown."
+  (let* ((base    (knowledge-view-base view))
+         (history (and (null (knowledge-base-claim base identifier))
+                       (knowledge-base-claim-history base identifier))))
+    (when (and history
+               (knowledge-visible-p (getf history :scope) (getf history :workspace)
+                                    (knowledge-view-workspace view)))
+      (let* ((proposition (getf history :proposition))
+             (node        (make-instance 'knowledge-node
+                                         :identifier  identifier
+                                         :proposition proposition
+                                         :scope       (getf history :scope)
+                                         :workspace   (getf history :workspace)
+                                         :schema      (knowledge-base-schema
+                                                       base
+                                                       (knowledge-proposition-predicate proposition)
+                                                       :workspace (knowledge-view-workspace view)))))
+        (setf (knowledge-node-supports node)
+              (loop for support in (getf history :supports)
+                    when (getf support :retracted-at)
+                      collect (list :id              (getf support :support)
+                                    :state           ':retracted
+                                    :reason          nil
+                                    :basis           (getf support :basis)
+                                    :evidence        (getf support :evidence)
+                                    :evidence-record (and (getf support :evidence)
+                                                          (gethash (getf support :evidence)
+                                                                   (getf history :evidence))))))
+        node))))
 
 (-> knowledge-explain
     (knowledge-view (or string list) &key (:limit integer))
@@ -141,7 +180,9 @@ supported; a derived fact names its rule version."
 
 IDENTIFIERS is one claim identifier or a cursor returned earlier. Claims are
 expanded breadth first, at most LIMIT per page; a premise left unexpanded is
-marked :MORE and its identifier joins the returned cursor."
+marked :MORE and its identifier joins the returned cursor. :ARCHIVED-SUPPORTS
+counts a claim's retracted supports kept only in the log; an archived claim is
+explained from the log."
   (let ((queue    (if (stringp identifiers) (list identifiers) (copy-list identifiers)))
         (trees    (make-hash-table :test #'equal))
         (roots    (if (stringp identifiers) (list identifiers) (copy-list identifiers)))
@@ -149,7 +190,8 @@ marked :MORE and its identifier joins the returned cursor."
         (cursor   nil))
     (loop while queue
           do (let* ((identifier (pop queue))
-                    (node       (knowledge-view-node view identifier)))
+                    (node       (or (knowledge-view-node view identifier)
+                                    (knowledge--archived-node view identifier))))
                (cond
                  ((gethash identifier trees))
                  ((null node)
@@ -178,6 +220,10 @@ marked :MORE and its identifier joins the returned cursor."
                                               :bindings (getf justification :bindings)
                                               :premises (getf justification :premises)))
                                       (knowledge-node-justifications node))))
+                  (let ((archived (getf (knowledge-base-claim (knowledge-view-base view) identifier)
+                                        :archived-supports 0)))
+                    (when (plusp archived)
+                      (setf (getf (gethash identifier trees) :archived-supports) archived)))
                   (dolist (justification (knowledge-node-justifications node))
                     (setf queue (append queue (getf justification :premises))))))))
     (labels ((tree (identifier seen)
@@ -222,7 +268,8 @@ a derived claim's first derivation, so a later withdrawal can name its cause."
 (-> knowledge--withdrawal-causes (knowledge-view list) list)
 (defun knowledge--withdrawal-causes (view entry)
   "Return sentences explaining why snapshot ENTRY's claim is no longer supported."
-  (let ((node (knowledge-view-node view (getf entry :claim))))
+  (let ((node (or (knowledge-view-node view (getf entry :claim))
+                  (knowledge--archived-node view (getf entry :claim)))))
     (cond
       ((and node (knowledge-node-supports node) (null (getf entry :premises)))
        (loop for support in (knowledge-node-supports node)
