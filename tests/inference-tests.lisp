@@ -1634,6 +1634,149 @@ A frame sends its shared views and its task as consecutive user messages."
     (loop repeat 3000
           do (sleep 0.01))))
 
+(-> test-rlm-child-route-authority () null)
+(defun test-rlm-child-route-authority ()
+  "Refuse cross-provider models and incompatible inherited effort before execution."
+  (let ((snapshot      (provider--registry-snapshot))
+        (configuration (test-configuration)))
+    (unwind-protect
+         (progn
+           (register-provider "child-a" :family ':codex
+                              :factory          #'provider-selection-tests--factory
+                              :models           '((:name "child-root" :reasoning-efforts ("low" "high"))
+                                                  (:name "child-low" :reasoning-efforts ("low"))))
+           (register-provider "child-b" :family ':codex
+                              :factory          #'provider-selection-tests--factory
+                              :models           '((:name "child-other" :reasoning-efforts ("low" "high"))))
+           (setf (configuration-validation-deferred-p configuration) t
+                 (config :model configuration) "child-root"
+                 (config :model-provider configuration) ""
+                 (config :reasoning-effort configuration) "high")
+           (let ((endpoint (rlm-endpoint-start
+                            :provider      (make-instance 'rlm-map-test-provider)
+                            :configuration configuration
+                            :budget        (rlm-budget-create :calls 8 :tokens 100000 :depth 2))))
+             (unwind-protect
+                  (test-call-with-function-replacements
+                   (list (list 'infer (lambda (&rest arguments)
+                                        (declare (ignore arguments))
+                                        (values "answer" "trace" 0))))
+                   (lambda ()
+                     (dolist (model '("child-other" "child-low"))
+                       (let ((response
+                               (rest (rlm-endpoint-test-call
+                                      endpoint
+                                      (list :rlm-request :token (rlm-endpoint-token endpoint)
+                                            :operation   ':infer
+                                            :arguments   (list :task "refuse" :model model))))))
+                         (test-assert (eq (getf response :status) ':error)
+                                      "the endpoint refuses an invalid effective child route")))))
+               (rlm-endpoint-stop endpoint)))
+           (let ((calls nil))
+             (test-call-with-function-replacements
+              (list (list 'infer (lambda (&rest arguments)
+                                   (push arguments calls)
+                                   (values "answer" "trace" 0))))
+              (lambda ()
+                (dolist (spec '(("child-other" nil) ("child-low" nil)
+                                ("child-low" "high")))
+                  (let ((result (rlm-map--run-item
+                                 (list :task "refuse" :model (first spec) :effort (second spec))
+                                 :provider (make-instance 'rlm-map-test-provider)
+                                 :configuration configuration :contract ':text
+                                 :budget   (rlm-budget-create))))
+                    (test-assert (getf result :error)
+                                 "local children refuse cross-provider and unsupported effective effort")))
+                (test-assert (null calls) "invalid child routes never enter inference")
+                (let ((result (rlm-map--run-item
+                               '(:task "accept" :model "child-low" :effort "low")
+                               :provider (make-instance 'rlm-map-test-provider)
+                               :configuration configuration :contract ':text
+                               :budget   (rlm-budget-create))))
+                  (test-assert (equal (getf result :value) "answer")
+                               "a same-provider model may lower the inherited effort"))))))
+      (provider--registry-restore snapshot)))
+  nil)
+
+(-> test-rlm-frame-set-queued-cancellation () null)
+(defun test-rlm-frame-set-queued-cancellation ()
+  "Publish queued cancellation once without reclaiming another frame's reservation."
+  (let* ((configuration (test-configuration))
+         (budget        (rlm-budget-create :calls 10 :tokens 100000 :depth 2))
+         (records       nil)
+         (record-lock   (make-lock "Queued cancellation records"))
+         (frames        (rlm-frame-set-create
+                         :provider (make-instance 'rlm-frame-set-test-provider)
+                         :configuration configuration :budget budget :concurrency 1
+                         :completion-function
+                         (lambda (handle result)
+                           (with-lock-held (record-lock)
+                             (push (list* :handle handle (rlm-endpoint--child-record result)) records))))))
+    (unwind-protect
+         (let* ((handles (rlm-frame-set-submit frames '("slow blocker" "queued")))
+                (queued  (list (second handles))))
+           (loop repeat 500
+                 until (and (eq (getf (first (rlm-frame-set-status frames handles)) :state) ':running)
+                            (< (rlm-budget-remaining-tokens budget) 100000))
+                 do (sleep 0.01))
+           (test-assert (eq (getf (second (rlm-frame-set-status frames handles)) :state) ':queued)
+                        "concurrency one leaves the second frame queued")
+           (let ((remaining (rlm-budget-remaining-tokens budget)))
+             (rlm-frame-set-cancel frames queued)
+             (rlm-frame-set-cancel frames queued)
+             (test-assert (getf (first (rlm-frame-set-collect frames queued :timeout-seconds 10)) :error)
+                          "a queued cancellation is collectable")
+             (test-assert (= remaining (rlm-budget-remaining-tokens budget))
+                          "queued cancellation does not reclaim reserved tokens"))
+           (with-lock-held (record-lock)
+             (test-assert (= 1 (count (second handles) records
+                                     :key (lambda (record) (getf record :handle)) :test #'equal))
+                          "a queued cancellation publishes exactly one ledger record")
+             (test-assert (eq (getf (first records) :status) ':cancelled)
+                          "the queued frame's ledger outcome is cancelled"))
+           (rlm-frame-set-cancel frames (list (first handles)))
+           (rlm-frame-set-collect frames (list (first handles)) :timeout-seconds 10)
+           (with-lock-held (record-lock)
+             (test-assert (= 2 (length records))
+                          "running and queued cancellation each publish once")))
+      (rlm-frame-set-close frames)))
+  nil)
+
+(-> test-rlm-frame-set-start-cancellation () null)
+(defun test-rlm-frame-set-start-cancellation ()
+  "Cancel during worker startup and publish only the resolved terminal outcome."
+  (let* ((outcomes     nil)
+         (outcome-lock (make-lock "Frame startup outcomes"))
+         (frames       (rlm-frame-set-create
+                        :provider (make-instance 'rlm-frame-set-test-provider)
+                        :configuration (test-configuration) :concurrency 1
+                        :budget   (rlm-budget-create :calls 64 :tokens 1000000 :depth 2)
+                        :completion-function
+                        (lambda (handle result)
+                          (with-lock-held (outcome-lock)
+                            (push (cons handle result) outcomes))))))
+    (unwind-protect
+         (loop for handles = (rlm-frame-set-submit frames '("fast race" "slow race"))
+               repeat 16
+               do (rlm-frame-set-cancel frames handles)
+                  (rlm-frame-set-cancel frames handles)
+                  (dolist (handle handles)
+                    (rlm-frame-set-collect frames (list handle) :timeout-seconds 10)
+                    (let ((state (getf (first (rlm-frame-set-status frames (list handle))) :state)))
+                      (with-lock-held (outcome-lock)
+                        (let ((records (remove handle outcomes :key #'first :test-not #'equal)))
+                          (test-assert (= 1 (length records))
+                                       "startup cancellation invokes the completion function exactly once")
+                          (test-assert
+                           (case state
+                             (:aborted
+                              (eq (getf (rest (first records)) :status) ':cancelled))
+                             (:completed
+                              (getf (rest (first records)) :value)))
+                           "the callback agrees with the job's resolved terminal state"))))))
+      (rlm-frame-set-close frames)))
+  nil)
+
 (-> test-rlm-frame-set () null)
 (defun test-rlm-frame-set ()
   "Collect background frames as they finish and charge cancelled requests."

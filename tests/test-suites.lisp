@@ -1139,6 +1139,9 @@
   test-rlm-endpoint-frames
   test-rlm-endpoint-child-routing
   test-rlm-frame-set
+  test-rlm-child-route-authority
+  test-rlm-frame-set-queued-cancellation
+  test-rlm-frame-set-start-cancellation
   test-rlm-environment-reuse
   test-rlm-litmus-completion
   test-rlm-boundary-litmus

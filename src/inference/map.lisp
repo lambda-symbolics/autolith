@@ -45,19 +45,21 @@
                            (1+ index) total activity))))))
     (handler-case
         (multiple-value-bind (value trace-identifier tokens-spent)
-            (infer task
-                   :model             (getf item ':model)
-                   :effort            (getf item ':effort)
-                   :context           (append (rlm--context-designators context)
-                                              (rlm--context-designators
-                                               (getf item ':context)))
-                   :contract          contract
-                   :budget            budget
-                   :capabilities      capabilities
-                   :provider          provider
-                   :configuration     configuration
-                   :source-registry   source-registry
-                   :activity-callback item-activity-callback)
+            (multiple-value-bind (model effort routed-configuration)
+                (rlm--child-route configuration (getf item ':model) (getf item ':effort))
+              (infer task
+                     :model             model
+                     :effort            effort
+                     :context           (append (rlm--context-designators context)
+                                                (rlm--context-designators
+                                                 (getf item ':context)))
+                     :contract          contract
+                     :budget            budget
+                     :capabilities      capabilities
+                     :provider          provider
+                     :configuration     routed-configuration
+                     :source-registry   source-registry
+                     :activity-callback item-activity-callback))
           (list ':task task ':value value ':trace trace-identifier
                 ':tokens tokens-spent))
       (rlm-partial-result (condition)

@@ -185,40 +185,12 @@ to the run."
              (list :child-trace (getf result ':trace)
                    :tokens      (getf result ':tokens))))))
 
-(-> rlm-endpoint--child-route (rlm-endpoint t t) (values (option string) (option string)))
+(-> rlm-endpoint--child-route
+    (rlm-endpoint t t)
+    (values (option string) (option string) configuration))
 (defun rlm-endpoint--child-route (endpoint model effort)
-  "Validate a child frame's MODEL and EFFORT against ENDPOINT's root route.
-
-A child may use any model the root's provider offers, at no more than the
-root's reasoning effort, and only at an effort its model supports. NIL keeps
-the root's choice. Return the model and effort."
-  (let* ((configuration (rlm-endpoint--configuration endpoint))
-         (efforts       *supported-reasoning-efforts*))
-    (flet ((refuse (control &rest arguments)
-             "Signal an inference error describing the refused route."
-             (error 'rlm-inference-error
-                    :message (apply #'format nil control arguments))))
-      (when model
-        (unless (non-empty-string-p model)
-          (refuse "A child model must be a model name, not ~S." model))
-        (let ((problem (configuration--model-problem model configuration)))
-          (when problem
-            (refuse "~A" problem))))
-      (when effort
-        (let ((root (config :reasoning-effort configuration)))
-          (unless (and (stringp effort) (member effort efforts :test #'string=))
-            (refuse "A child effort must be one of ~{~A~^, ~}, not ~S." efforts effort))
-          (when (> (position effort efforts :test #'string=)
-                   (or (position root efforts :test #'string=) (length efforts)))
-            (refuse "A child frame's effort ~A may not exceed the root's ~A." effort root))
-          (unless (member effort
-                          (configuration--reasoning-efforts-for
-                           (or model (config :model configuration))
-                           (config :model-provider configuration))
-                          :test #'string=)
-            (refuse "The model ~A does not support the effort ~A."
-                    (or model (config :model configuration)) effort))))
-      (values model effort))))
+  "Return a validated child model, effort and provider-pinned configuration."
+  (rlm--child-route (rlm-endpoint--configuration endpoint) model effort))
 
 (-> rlm-endpoint--routed-tasks (rlm-endpoint t list) list)
 (defun rlm-endpoint--routed-tasks (endpoint tasks arguments)
@@ -300,7 +272,7 @@ A task's own :MODEL and :EFFORT win over the call's in ARGUMENTS."
                        (format nil "No decomposition policy is named ~S."
                                policy)))
               (multiple-value-bind (value trace-identifier tokens-spent)
-                  (multiple-value-bind (model effort)
+                  (multiple-value-bind (model effort routed-configuration)
                       (rlm-endpoint--child-route endpoint
                                                  (getf arguments ':model)
                                                  (getf arguments ':effort))
@@ -313,7 +285,7 @@ A task's own :MODEL and :EFFORT win over the call's in ARGUMENTS."
                             :contract          (or (getf arguments ':contract) ':text)
                             :budget            run-budget
                             :provider          provider
-                            :configuration     configuration
+                            :configuration     routed-configuration
                             :activity-callback activity-callback
                             :concurrency
                             (let ((requested (getf arguments ':concurrency)))
@@ -335,7 +307,7 @@ A task's own :MODEL and :EFFORT win over the call's in ARGUMENTS."
               (error 'rlm-inference-error
                      :message "An environment infer call requires task text."))
             (multiple-value-bind (value trace-identifier tokens-spent)
-                (multiple-value-bind (model effort)
+                (multiple-value-bind (model effort routed-configuration)
                     (rlm-endpoint--child-route endpoint
                                                (getf arguments ':model)
                                                (getf arguments ':effort))
@@ -346,7 +318,7 @@ A task's own :MODEL and :EFFORT win over the call's in ARGUMENTS."
                         :contract          (or (getf arguments ':contract) ':text)
                         :budget            (rlm-budget-descend budget :task task)
                         :provider          provider
-                        :configuration     configuration
+                        :configuration     routed-configuration
                         :activity-callback activity-callback))
               (rlm-endpoint--record endpoint
                                     (list :operation   :infer

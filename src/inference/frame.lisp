@@ -146,6 +146,45 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
              :message "No active application supplies a frame tool registry; pass :source-registry."))
     (application-tool-registry application)))
 
+(-> rlm--child-route
+    (configuration t t)
+    (values (option string) (option string) configuration))
+(defun rlm--child-route (configuration model effort)
+  "Validate a child override and return its model, effort and pinned configuration.
+
+An omitted effort inherits the root's effort. Resolve both models within the
+root's effective registration, even when its provider setting is empty."
+  (if (not (or model effort))
+      (values nil nil configuration)
+      (flet ((refuse (control &rest arguments)
+               "Signal an inference failure for the requested route."
+               (error 'rlm-inference-error
+                      :message (apply #'format nil control arguments))))
+        (unless (or (null model) (non-empty-string-p model))
+          (refuse "A child model must be a model name, not ~S." model))
+        (let* ((provider         (configuration-model-provider-name configuration))
+               (root             (config :reasoning-effort configuration))
+               (effective-model  (or model (config :model configuration)))
+               (effective-effort (or effort root))
+               (efforts          *supported-reasoning-efforts*))
+          (handler-case
+              (unless (nth-value 1 (provider-resolve-model effective-model :provider provider))
+                (refuse "Unsupported model ~S in the root provider ~A." effective-model provider))
+            (model-selection-error ()
+              (refuse "Unsupported model ~S in the root provider ~A." effective-model provider)))
+          (unless (and (stringp effective-effort)
+                       (member effective-effort efforts :test #'string=))
+            (refuse "A child effort must be one of ~{~A~^, ~}, not ~S." efforts effective-effort))
+          (when (> (position effective-effort efforts :test #'string=)
+                   (or (position root efforts :test #'string=) (length efforts)))
+            (refuse "A child frame's effort ~A may not exceed the root's ~A." effective-effort root))
+          (unless (member effective-effort
+                          (configuration--reasoning-efforts-for effective-model provider)
+                          :test #'string=)
+            (refuse "The model ~A does not support the effort ~A." effective-model effective-effort))
+          (values model effort
+                  (configuration-copy configuration :model-provider (or provider "")))))))
+
 (-> rlm--resolve-environment
     (&key (:model (option string))
           (:effort (option string))

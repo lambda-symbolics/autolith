@@ -63,8 +63,8 @@
   "Create an empty frame set whose frames share CONTEXT, BUDGET and a provider.
 
 The arguments mean what they mean for RLM-MAP. COMPLETION-FUNCTION receives
-each frame's handle and outcome on the frame's worker thread as it ends,
-including cancelled frames. Close the set with RLM-FRAME-SET-CLOSE."
+each frame's handle and outcome once before terminal publication, including
+queued cancellations on the cancelling thread. Close with RLM-FRAME-SET-CLOSE."
   (multiple-value-bind (provider configuration)
       (rlm--resolve-environment :model model :effort effort
                                 :provider provider :configuration configuration)
@@ -195,11 +195,29 @@ since the provider may already bill it. A running frame can still show
 (defun rlm-frame-set--admission (set item handle &key index total contract)
   "Return the job admission entry running ITEM as frame HANDLE.
 
-A cancellation unwinding the frame marks its unreported request as spent and
-reports a :CANCELLED outcome to the completion function."
+The terminal hook reports the resolved outcome exactly once, including queued
+cancellation and cancellation racing with completion. The worker's abort handler
+keeps in-flight provider reservations charged while the frame unwinds."
   (let ((arguments           (rlm-frame-set--arguments set))
         (completion-function (rlm-frame-set--completion-function set)))
     (list :name (format nil "Inference ~A" handle)
+          :terminal-result-function
+          (lambda (job state result report)
+            (declare (ignore job))
+            (when completion-function
+              (handler-case
+                  (funcall completion-function handle
+                           (case state
+                             (:completed
+                              result)
+                             (:aborted
+                              (list :task (getf item :task) :status ':cancelled))
+                             (otherwise
+                              (list :task (getf item :task) :error report))))
+                (error (condition)
+                  (format *error-output* "~&The inference completion function failed: ~A~%"
+                          condition))))
+            (values result report state))
           :function
           (lambda (job)
             (declare (ignore job))
@@ -208,16 +226,9 @@ reports a :CANCELLED outcome to the completion function."
                   ((job-aborted
                      (lambda (condition)
                        (declare (ignore condition))
-                       (unless *rlm-frame-cancelled-p*
-                         (setf *rlm-frame-cancelled-p* t)
-                         (when completion-function
-                           (funcall completion-function handle
-                                    (list :task (getf item :task) :status ':cancelled)))))))
-                (let ((result (apply #'rlm-map--run-item item
-                                     :index    index
-                                     :total    total
-                                     :contract (or contract (getf arguments :contract))
-                                     arguments)))
-                  (when completion-function
-                    (funcall completion-function handle result))
-                  result)))))))
+                       (setf *rlm-frame-cancelled-p* t))))
+                (apply #'rlm-map--run-item item
+                       :index    index
+                       :total    total
+                       :contract (or contract (getf arguments :contract))
+                       arguments)))))))
