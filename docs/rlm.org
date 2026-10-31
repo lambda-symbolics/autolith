@@ -132,7 +132,8 @@ The root model drives the environment through the =env.eval= tool,
 one form per call, observing only bounded printed values and output.
 Inside the environment, =(context-length)=, =(context-slice start
 end)=, and =(context-search pattern)= inspect the external object;
-=(infer ...)=, =(rlm-map ...)=, and =(rlm-run ...)= proxy
+=(infer ...)=, =(rlm-map ...)=, =(rlm-run ...)= and the background
+frame calls proxy
 sub-inferences back to the host over an authenticated loopback
 endpoint, where budgets, contracts, and traces are enforced host-side
 because environment code is model-authored and untrusted; the run
@@ -183,6 +184,22 @@ Results keep task order. Finished frames retain their validated values;
 budget-exhausted frames carry =:status :incomplete= with their own evidence and
 trace identifiers. Other failures carry =:error=. The model reaches the same
 fan-out through the =rlm.map= tool.
+
+* Background frames
+
+=rlm-map= waits for every frame. A root run that can stop once it has
+enough evidence submits frames instead. =(rlm-submit tasks)= starts
+them in the background and returns handles such as ="frame-1"=.
+=(rlm-collect handles :timeout seconds)= waits until one of them
+finishes, or the timeout passes, and returns the results of every
+finished one with a leading =:handle=. =(rlm-status handles)= reports
+states, and =(rlm-cancel handles)= stops frames whose answers are no
+longer needed. A cancelled frame keeps the tokens it reserved for its
+request in flight, because the provider may already bill it. Each frame
+records its outcome in the run's ledger as it ends, collected or not,
+and =finish= cancels frames still running. The host side is
+=rlm-frame-set-create= with =-submit=, =-status=, =-collect=,
+=-cancel= and =-close=, built on cl-jobpond's =job-await-any=.
 
 * Policies
 

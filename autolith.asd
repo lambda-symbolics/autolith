@@ -256,6 +256,7 @@
                                           (:file "inference/tools")
                                           (:file "inference/frame")
                                           (:file "inference/map")
+                                          (:file "inference/frame-set")
                                           (:file "inference/policy")
                                           (:file "inference/resource")
                                           (:file "inference/permission")

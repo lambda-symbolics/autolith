@@ -212,6 +212,18 @@ value from the text through the library's answer reader."
             (values nil nil "The response contained no answer text.")))
       (cl-llm-provider-api:output-text-answer text contract)))
 
+(defparameter *rlm-frame-cancelled-p* nil
+  "True while a cancelled frame unwinds, so its unreported request counts as spent.")
+
+(-> rlm--settle-unreported (rlm-budget (integer 0)) null)
+(defun rlm--settle-unreported (budget tranche)
+  "Settle a request TRANCHE that ended without reported usage.
+
+An unreported request is refunded, unless its frame was cancelled: the
+provider may already bill a cancelled request, so it keeps its reservation."
+  (rlm-budget-settle-output budget tranche (and *rlm-frame-cancelled-p* tranche))
+  nil)
+
 (-> rlm--frame-request (string list string) (values (option string) string))
 (defun rlm--frame-request (task views instructions)
   "Compose the frame's user messages from TASK, VIEWS, and INSTRUCTIONS.
@@ -356,7 +368,7 @@ With no activity CALLBACK, return a no-op provider callback."
                                  (rlm--repair-request problem))
                                 (values nil nil)))))
                    (unless settled-p
-                     (rlm-budget-settle-output budget tranche nil)))
+                     (rlm--settle-unreported budget tranche)))
                (when done-p
                  (return (values value
                                  (conversation-identifier conversation)
@@ -421,7 +433,7 @@ returns the billable tokens settled so far."
               (rlm--note-activity activity-callback activity))))))
      (lambda ()
        (when tranche
-         (rlm-budget-settle-output budget (shiftf tranche nil) nil))
+         (rlm--settle-unreported budget (shiftf tranche nil)))
        nil)
      (lambda ()
        tokens-spent))))

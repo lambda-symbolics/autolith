@@ -1099,6 +1099,8 @@
   test-rlm-distill-tool
   test-rlm-trace-resource
   test-rlm-endpoint
+  test-rlm-endpoint-frames
+  test-rlm-frame-set
   test-rlm-environment-reuse
   test-rlm-litmus-completion
   test-rlm-boundary-litmus
