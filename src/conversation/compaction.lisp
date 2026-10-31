@@ -190,9 +190,9 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
     list)
 (defun conversation-append-native-compaction
     (conversation window &key family summary compaction unfinished-work)
+  "Persist native WINDOW, portable SUMMARY, and carry-forward state atomically."
   (when (json-object-p window)
     (setf window (list window)))
-  "Persist native WINDOW, portable SUMMARY, and carry-forward state atomically."
   (dolist (item window)
     (native-compaction-item-canonicalize item))
   (unless (and (keywordp family) (listp window) (not (null window))

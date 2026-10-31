@@ -927,6 +927,14 @@ each attempt must stream through."
     :reader native-compaction-completed-event-response-id))
   (:documentation "A usage-only completion notification for native compaction."))
 
+(-> provider--native-compaction-window-valid-p (list) boolean)
+(defun provider--native-compaction-window-valid-p (items)
+  "Return true when ITEMS is a complete, correlatable transcript window."
+  (handler-case
+      (let ((reconciliation (clinker-transcript:reconcile-items items)))
+        (null (clinker-transcript:reconciliation-repairs reconciliation)))
+    (clinker-transcript:projection-error () nil)))
+
 (-> provider--decode-native-compaction-response
     (codex-subscription-provider t &key (:status integer) (:headers t)
                                      (:event-callback (option function)))
@@ -935,8 +943,9 @@ each attempt must stream through."
     (provider body &key status headers event-callback)
   "Decode BODY and return its complete normalized compacted output window.
 
-  A usage-only completion event is emitted before structural validation, so
-  paid malformed responses are accounted for without exposing response data."
+A usage-only completion event is emitted as soon as the response envelope is
+available, before validating or normalizing the returned output. Paid malformed
+responses are therefore accounted for without exposing response data."
   (let ((source (provider--error-body-text body)))
     (unless (non-empty-string-p source)
       (provider--signal-invalid-native-compaction provider status headers))
@@ -946,34 +955,40 @@ each attempt must stream through."
               (error ()
                 (provider--signal-invalid-native-compaction
                  provider status headers)))))
-      (let ((output (and (json-object-p response)
-                         (json-get response "output"))))
+      (unless (json-object-p response)
+        (provider--signal-invalid-native-compaction provider status headers))
+      (let* ((usage      (json-get response "usage"))
+             (response-id (or (json-get response "id")
+                              (json-get response "response_id")))
+             (output     (json-get response "output")))
+        ;; Account usage before validating or normalizing any returned item.
+        (when (and (functionp event-callback) (json-object-p usage))
+          (funcall event-callback
+                   (make-instance 'native-compaction-completed-event
+                                  :usage usage :response-id response-id)))
         (unless (and (vectorp output)
                      (every #'json-object-p output))
           (provider--signal-invalid-native-compaction provider status headers))
-          (let ((items
-                  (map 'list
-                       (lambda (item)
-                         (let ((normalized (provider-normalize-output-item provider item)))
-                           (when (native-compaction-item-p normalized)
-                             (native-compaction-item-canonicalize normalized))
-                           normalized))
-                       output))
-                (usage (json-get response "usage"))
-                (response-id (or (json-get response "id")
-                                 (json-get response "response_id"))))
-            (when (and (functionp event-callback) (json-object-p usage))
-              (funcall event-callback
-                       (make-instance 'native-compaction-completed-event
-                                      :usage usage :response-id response-id)))
-            (unless (every (lambda (item)
-                            (and (json-object-p item)
-                                 (non-empty-string-p (json-get item "type"))))
-                          output)
-              (provider--signal-invalid-native-compaction provider status headers))
-            (values (and (some #'native-compaction-item-p items) items)
-                    (and (json-object-p usage) usage))))))
-)
+        (handler-case
+            (let ((items
+                    (map 'list
+                         (lambda (item)
+                           (let ((normalized
+                                   (provider-normalize-output-item provider item)))
+                             (when (native-compaction-item-p normalized)
+                               (native-compaction-item-canonicalize normalized))
+                             normalized))
+                         output)))
+              (unless (and (every (lambda (item)
+                                    (and (json-object-p item)
+                                         (non-empty-string-p (json-get item "type"))))
+                                  items)
+                           (some #'native-compaction-item-p items)
+                           (provider--native-compaction-window-valid-p items))
+                (provider--signal-invalid-native-compaction provider status headers))
+              (values items (and (json-object-p usage) usage)))
+          (error ()
+            (provider--signal-invalid-native-compaction provider status headers)))))))
 
 (defgeneric provider-attempt-native-compaction
     (provider conversation &key tool-namespaces force-refresh event-callback)
