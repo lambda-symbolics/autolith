@@ -2,63 +2,101 @@
 
 ;;;; -- Portable Compaction Tail --
 
-(defun compaction-tail-tests--item (role content &key call-id)
-  (let ((item (json-object "role" role "content" content)))
-    (when call-id
-      (setf (gethash "tool_call_id" item) call-id))
-    item))
+(-> compaction-tail-tests--call (string) json-object)
+(defun compaction-tail-tests--call (call-id)
+  "Return a valid function call for the tail protocol fixtures."
+  (json-object "type" "function_call" "call_id" call-id
+               "name" "inspect" "namespace" "test" "arguments" "{}"))
 
-(defun compaction-tail-tests--capture (items)
-  (let* ((configuration (test-configuration))
-         (conversation (conversation-create configuration :identifier "tail-test"))
-         (view (conversation-compaction-summary-view conversation items))
-         (projection (conversation-projection view))
-         (plan (clinker-transcript:make-compaction-plan projection :cutoff 0)))
-    (make-instance 'conversation-compaction
-                   :conversation conversation :view view :source-items items
-                   :plan plan :cutoff-sequence 0)))
+(-> compaction-tail-tests--output (string string) json-object)
+(defun compaction-tail-tests--output (call-id output)
+  "Return the completed output correlated with CALL-ID."
+  (json-object "type" "function_call_output" "call_id" call-id
+               "output" output))
 
-(defun test-compaction-tail-preserves-latest-user-and-groups ()
-  (let* ((user (compaction-tail-tests--item "user" "latest"))
-         (call (json-object "type" "function_call" "id" "call-1" "name" "tool"))
-         (output (json-object "type" "function_call_output" "call_id" "call-1" "output" "result"))
-         (reasoning (json-object "type" "reasoning" "summary" "private"))
-         (capture (compaction-tail-tests--capture
-                   (list (compaction-tail-tests--item "user" (make-string 40000 :initial-element #\x))
-                         user call output reasoning)))
-         (tail (conversation-compaction-portable-capture capture))
-         (items (clinker-transcript:compaction-plan-items (conversation-compaction--plan tail))))
-    (test-assert (member user items :test #'eq) "latest user is retained verbatim")
-    (test-assert (and (member call items :test #'eq) (member output items :test #'eq))
-                 "call and output remain correlated")
-    (test-assert (member reasoning items :test #'eq) "reasoning remains with the tail")))
+(-> compaction-tail-tests--reasoning (string) json-object)
+(defun compaction-tail-tests--reasoning (text)
+  "Return private reasoning that belongs to the current provider turn."
+  (json-object "type" "reasoning" "summary" (json-array text)))
 
-(defun test-compaction-tail-preserves-arrival-identities ()
-  (let* ((items (list (compaction-tail-tests--item "user" "old")
-                      (compaction-tail-tests--item "user" "latest")))
-         (capture (compaction-tail-tests--capture items))
-         (tail (conversation-compaction-portable-capture capture)))
-    (test-assert (eq items (conversation-compaction--source-items tail))
-                 "portable capture keeps authoritative source identities")
-    (test-assert (= (conversation-compaction-cutoff-sequence tail)
-                    (conversation-compaction-cutoff-sequence capture))
-                 "portable capture keeps the durable cutoff")))
+(-> compaction-tail-tests--items (conversation) list)
+(defun compaction-tail-tests--items (conversation)
+  "Return the current durable input projection as a list."
+  (coerce (conversation-input-items conversation) 'list))
 
-(defun test-compaction-tail-does-not-promote-checkpoint-summary ()
-  (let* ((summary (conversation-summary-item "old handoff"))
-         (latest (compaction-tail-tests--item "user" "actual latest"))
-         (items (list summary latest))
-         (projection (conversation-projection
-                      (clinker-transcript:make-projection :items items))))
-    (setf (gethash summary
-                   (clinker-transcript:projection-metadata-table projection ':checkpoint-summary))
-          t)
-    (test-assert (conversation-compaction--checkpoint-summary-p projection summary)
-                 "checkpoint marker is metadata")
-    (test-assert (not (conversation-compaction--checkpoint-summary-p projection latest))
-                 "actual user is not marked as a checkpoint")))
+(-> test-compaction-tail-bounds-recent-user-and-expands-groups () null)
+(defun test-compaction-tail-bounds-recent-user-and-expands-groups ()
+  "Retain the latest user and expand a cut to complete protocol groups."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let ((conversation (conversation-create configuration :identifier "tail-bounds")))
+      (conversation-append-user-message conversation (make-string 40000 :initial-element #\x))
+      (conversation-append-user-message conversation "latest request")
+      (conversation-append-provider-item conversation (compaction-tail-tests--call "tail-call"))
+      (conversation-append-tool-result conversation "tail-call"
+                                       :tool-name "test.inspect"
+                                       :output "tail-output" :success-p t)
+      (conversation-append-provider-item conversation
+                                         (compaction-tail-tests--reasoning "private tail"))
+      (let* ((capture (conversation-compaction-capture conversation))
+             (tail (conversation-compaction-portable-capture capture))
+             (items (clinker-transcript:compaction-plan-items
+                     (conversation-compaction--plan tail))))
+        (test-assert (test-object-contains-string-p items "latest request")
+                     "the latest actual user message is retained")
+        (test-assert (test-object-contains-string-p items "tail-call")
+                     "the correlated function call is retained")
+        (test-assert (test-object-contains-string-p items "tail-output")
+                     "the correlated function output is retained")
+        (test-assert (test-object-contains-string-p items "private tail")
+                     "private reasoning is retained with the tail")
+        (test-assert (not (test-object-contains-string-p items "xxxxxxxx"))
+                     "the ordinary tail omits the oversized old request")))))
+
+(-> test-compaction-tail-carries-arrivals-through-reload () null)
+(defun test-compaction-tail-carries-arrivals-through-reload ()
+  "Publish a captured tail with arrivals and verify the durable replay."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let ((conversation (conversation-create configuration :identifier "tail-arrivals")))
+      (conversation-append-user-message conversation "captured request")
+      (let ((capture (conversation-compaction-portable-capture
+                      (conversation-compaction-capture conversation))))
+        (conversation-append-provider-item conversation (compaction-tail-tests--call "late-call"))
+        (conversation-append-tool-result conversation "late-call"
+                                         :tool-name "test.inspect"
+                                         :output "late output" :success-p t)
+        (conversation-append-user-message conversation "late steering")
+        (conversation-append-summary conversation "portable checkpoint" :compaction capture)
+        (dolist (projection (list conversation
+                                  (conversation-load (conversation-pathname conversation))))
+          (let ((items (compaction-tail-tests--items projection)))
+            (test-assert (test-object-contains-string-p items "late output")
+                         "late correlated output is carried into publication and replay")
+            (test-assert (test-object-contains-string-p items "late steering")
+                         "late user arrivals are carried into publication and replay")
+            (test-assert (test-object-contains-string-p items "portable checkpoint")
+                         "the portable checkpoint is present after replay")))))))
+
+(-> test-compaction-tail-repeated-capture-does-not-accumulate-summaries () null)
+(defun test-compaction-tail-repeated-capture-does-not-accumulate-summaries ()
+  "Repeated checkpoints replace older summary state rather than nesting it."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let ((conversation (conversation-create configuration :identifier "tail-repeat")))
+      (conversation-append-user-message conversation "first request")
+      (conversation-append-summary conversation "first checkpoint")
+      (conversation-append-user-message conversation "second request")
+      (conversation-append-summary conversation "second checkpoint")
+      (let ((items (compaction-tail-tests--items conversation)))
+        (test-assert (= 1 (length items))
+                     "repeated compactions retain one projected handoff")
+        (test-assert (test-object-contains-string-p items "second checkpoint")
+                     "the latest portable summary is authoritative")
+        (test-assert (not (test-object-contains-string-p items "first checkpoint"))
+                     "a prior portable summary is not accumulated")))))
 
 (define-test-suite compaction-tail
-  test-compaction-tail-preserves-latest-user-and-groups
-  test-compaction-tail-preserves-arrival-identities
-  test-compaction-tail-does-not-promote-checkpoint-summary)
+  test-compaction-tail-bounds-recent-user-and-expands-groups
+  test-compaction-tail-carries-arrivals-through-reload
+  test-compaction-tail-repeated-capture-does-not-accumulate-summaries)
