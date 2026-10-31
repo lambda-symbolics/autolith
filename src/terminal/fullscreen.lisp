@@ -2,10 +2,18 @@
 
 ;;;; -- Fullscreen Viewport --
 
+(defparameter *fullscreen-transcript-character-limit* 4194304
+  "The most characters of transcript text, display and rows the fullscreen viewport keeps.
+
+Older output is evicted past it and stays loadable with (history).")
+
 (defclass fullscreen-terminal-ui (terminal-ui)
-  ((viewport :initform      (clinedi:make-transcript-viewport)
+  ((viewport :initform      nil
              :accessor      fullscreen-terminal-ui-viewport
              :documentation "The reflowing transcript, its scroll position and its last layout.")
+   (evicted-sequences :initform      (make-hash-table :test #'equal)
+                      :reader        fullscreen-terminal-ui-evicted-sequences
+                      :documentation "The newest evicted durable sequence by conversation identifier.")
    (active-p :initform nil :accessor fullscreen-terminal-ui-active-p :type boolean
              :documentation "Whether this UI has entered the alternate buffer.")
    (platform-token :initform nil :accessor fullscreen-terminal-ui-platform-token
@@ -22,9 +30,54 @@
              :documentation "Rendered text written to the normal screen once the alternate buffer is left."))
   (:documentation "An alternate-screen transcript viewport and bottom-pinned composer."))
 
+(defmethod shared-initialize :after ((ui fullscreen-terminal-ui) slot-names &key)
+  "Give UI its bounded transcript viewport, also when another UI changes class into it."
+  (declare (ignore slot-names))
+  (unless (fullscreen-terminal-ui-viewport ui)
+    (setf (fullscreen-terminal-ui-viewport ui) (terminal-ui-fullscreen--make-viewport ui 80))))
+
 (defmethod terminal-ui-fullscreen-p ((ui fullscreen-terminal-ui))
   "Use application-owned transcript scrolling for this UI."
   t)
+
+(-> terminal-ui-fullscreen--make-viewport (fullscreen-terminal-ui (integer 1)) clinedi:transcript-viewport)
+(defun terminal-ui-fullscreen--make-viewport (ui width)
+  "Return an empty viewport WIDTH columns wide that forgets the records it evicts."
+  (clinedi:make-transcript-viewport
+   :width           width
+   :character-limit *fullscreen-transcript-character-limit*
+   :evict-function  (lambda (identifiers)
+                      (terminal-ui-fullscreen--forget-evicted ui identifiers))))
+
+(-> terminal-ui-fullscreen--forget-evicted (fullscreen-terminal-ui list) null)
+(defun terminal-ui-fullscreen--forget-evicted (ui identifiers)
+  "Forget the finalized IDENTIFIERS of evicted output and note their newest sequences.
+
+History paging can then present those records again."
+  (dolist (identifier identifiers)
+    (terminal-ui--forget-finalized ui identifier)
+    (when (and (consp identifier)
+               (eq (first identifier) ':conversation)
+               (integerp (third identifier)))
+      (let ((owner (second identifier)))
+        (setf (gethash owner (fullscreen-terminal-ui-evicted-sequences ui))
+              (max (third identifier)
+                   (gethash owner (fullscreen-terminal-ui-evicted-sequences ui) 0))))))
+  nil)
+
+(defmethod terminal-ui--note-finalized-output ((ui fullscreen-terminal-ui) identifiers)
+  "Tag the newest transcript chunk with IDENTIFIERS so its eviction forgets them."
+  (let ((viewport (fullscreen-terminal-ui-viewport ui)))
+    (setf (clinedi:transcript-viewport-last-tag viewport)
+          (append identifiers (clinedi:transcript-viewport-last-tag viewport))))
+  nil)
+
+(defmethod terminal-ui-take-evicted-sequence ((ui fullscreen-terminal-ui) owner)
+  "Return and clear the newest evicted sequence of conversation OWNER."
+  (with-terminal-ui-locked (ui)
+    (let ((sequence (gethash owner (fullscreen-terminal-ui-evicted-sequences ui))))
+      (remhash owner (fullscreen-terminal-ui-evicted-sequences ui))
+      sequence)))
 
 (-> terminal-ui-fullscreen-invalidate (fullscreen-terminal-ui) null)
 (defun terminal-ui-fullscreen-invalidate (ui)
@@ -36,8 +89,8 @@
   "Replace the fullscreen transcript and repaint a fresh, tail-following view."
   (with-terminal-ui-locked (ui)
     (setf (fullscreen-terminal-ui-viewport ui)
-          (clinedi:make-transcript-viewport
-           :width (max 1 (terminal-columns (terminal-ui-terminal ui))))
+          (terminal-ui-fullscreen--make-viewport
+           ui (max 1 (terminal-columns (terminal-ui-terminal ui))))
           (terminal-ui-deferred-live-appended-text ui) ""
           (terminal-ui-deferred-live-appended-display ui) ""
           (terminal-ui-deferred-live-appended-regions ui) nil
@@ -47,7 +100,8 @@
           (terminal-ui-notice ui) nil
           (terminal-ui-notice-deadline ui) nil
           (terminal-ui-fullscreen-welcome-p ui) nil)
-    (clrhash (terminal-ui-finalized-identifiers ui))
+    (terminal-ui--clear-finalized ui)
+    (clrhash (fullscreen-terminal-ui-evicted-sequences ui))
     (terminal-ui-fullscreen-invalidate ui)
     (when (terminal-ui-started-p ui)
       (terminal-ui--paint-live ui)))
@@ -161,16 +215,20 @@ sequence, so it lands in the normal screen where it stays readable."
                            (max 0 (- (length lines) count)))))
           (values (subseq lines start (+ start count)) (- row start) column))))))
 
-(-> terminal-ui-fullscreen--legend-items (boolean) list)
-(defun terminal-ui-fullscreen--legend-items (following-p)
-  "Return (KEY DESCRIPTION) pairs for the legend, for a tail-following or scrolled view."
+(-> terminal-ui-fullscreen--legend-items (boolean &key (:evicted-p boolean)) list)
+(defun terminal-ui-fullscreen--legend-items (following-p &key evicted-p)
+  "Return (KEY DESCRIPTION) pairs for the legend, for a tail-following or scrolled view.
+
+EVICTED-P adds how to load output older than the viewport keeps."
   (append
    '(("PgUp/PgDn" "scroll")
      ("Ctrl-PgUp/PgDn" "messages"))
    (if following-p
        '(("Ctrl-Home/End" "ends")
          ("Shift+mouse" "to select text"))
-       '(("Ctrl-End" "to follow")))))
+       '(("Ctrl-End" "to follow")))
+   (when evicted-p
+     '(("(history)" "earlier output")))))
 
 (-> terminal-ui-fullscreen--legend-row
     (fullscreen-terminal-ui &key (:top integer) (:total integer) (:space integer)
@@ -183,8 +241,11 @@ The position block wears the legend accent, keys the plain legend style, and
 their descriptions the dim legend style. These share the modeline's
 foregrounds without its background, so the legend stays distinct from the
 composer's dim placeholder without reading as a second modeline."
-  (let* ((following-p (clinedi:transcript-viewport-following-p
-                       (fullscreen-terminal-ui-viewport ui)))
+  (let* ((viewport    (fullscreen-terminal-ui-viewport ui))
+         (following-p (clinedi:transcript-viewport-following-p viewport))
+         (evicted-p   (and (not following-p)
+                           (zerop top)
+                           (plusp (clinedi:transcript-viewport-evicted-count viewport))))
          (position    (if following-p
                           " LIVE "
                           (format nil " ~D-~D / ~D "
@@ -192,7 +253,8 @@ composer's dim placeholder without reading as a second modeline."
          (spans
            (append
             (list (terminal-span ':legend-accent position))
-            (loop for (key description) in (terminal-ui-fullscreen--legend-items following-p)
+            (loop for (key description) in (terminal-ui-fullscreen--legend-items
+                                             following-p :evicted-p evicted-p)
                   for first-p = t then nil
                   append (list (terminal-span ':legend-dim (if first-p "  " " · "))
                                (terminal-span ':legend-plain key)
