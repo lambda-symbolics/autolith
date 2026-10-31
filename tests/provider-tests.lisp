@@ -295,7 +295,11 @@
                                    (mapcar (lambda (control) (json-get control "ttl"))
                                            (controls (request route model ttl)))
                                    :test #'equal))
-                           (format nil "~A ~A markers request lifetime ~A" route model ttl))))))))
+                           (format nil "~A ~A markers request lifetime ~A" route model ttl))))
+          (test-assert (equal (conversation-prompt-cache-key conversation)
+                              (json-get (request ':openrouter "anthropic/claude-haiku-4.5" "5m")
+                                        "session_id"))
+                       "OpenRouter requests carry the conversation's session identifier")))))
   nil)
 
 (-> test-provider-request-tool-filtering () null)
