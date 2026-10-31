@@ -1495,45 +1495,75 @@ to usage accounting instead of hiding behind the compaction record."
     (agent-observer-status observer :compaction-request-completed details))
   nil)
 
-(-> agent--compaction-summary-structured-p (string) boolean)
-(defun agent--compaction-summary-structured-p (text)
-  "Require six ordered, nonempty handoff sections within the character bound."
-  (let* ((labels    '("[progress]" "[decisions]" "[context]"
+(defparameter *agent-compaction-summary-labels*
+  '("[Progress]" "[Decisions]" "[Context]" "[Constraints]" "[Next steps]" "[References]")
+  "The labels that open a portable handoff's sections, in their required order.")
 
-                      "[constraints]" "[next steps]" "[references]"))
+(-> agent--compaction-summary-structure-problem (string) (option string))
+(defun agent--compaction-summary-structure-problem (text)
+  "Return why trimmed TEXT is not a structured handoff, or NIL when it is one.
+
+A handoff holds every label once, in order, each followed by content, within
+the character bound. Only Markdown heading or emphasis marks may precede the
+first label."
+  (let* ((labels    *agent-compaction-summary-labels*)
          (lower     (string-downcase text))
-         (positions (mapcar (lambda (label) (search label lower)) labels)))
-    (and (<= (length text) 12000)
-         (every #'integerp positions)
-         (every #'< positions (rest positions))
-         (zerop (length (string-trim '(#\Space #\Tab #\Newline #\Return)
-                                    (subseq text 0 (first positions)))))
-         (loop for label in labels
-               for position in positions
-               for end in (append (rest positions) (list (length text)))
-               for start = (+ position (length label))
-               always (and (not (search label lower :start2 start))
-                           (some #'alphanumericp (subseq text start end)))))))
+         (positions (mapcar (lambda (label) (search (string-downcase label) lower)) labels))
+         (missing   (loop for label in labels
+                          for position in positions
+                          unless position
+                            collect label)))
+    (cond
+      ((> (length text) *compaction-summary-maximum-characters*)
+       (format nil "it has ~:D characters, more than the ~:D allowed"
+               (length text) *compaction-summary-maximum-characters*))
+      (missing
+       (format nil "it lacks ~{~A~^, ~}" missing))
+      ((notevery #'< positions (rest positions))
+       "its labels are out of order")
+      ((notevery (lambda (character) (find character '(#\Space #\Tab #\Newline #\Return #\# #\* #\_ #\>)))
+                 (subseq text 0 (first positions)))
+       (format nil "text precedes ~A" (first labels)))
+      (t
+       (loop for label in labels
+             for position in positions
+             for end in (append (rest positions) (list (length text)))
+             for start = (+ position (length label))
+             when (search (string-downcase label) lower :start2 start)
+               return (format nil "~A appears more than once" label)
+             unless (some #'alphanumericp (subseq text start end))
+               return (format nil "~A has no content" label))))))
 
-(-> agent--compaction-summary-usable-p (provider-result) boolean)
-(defun agent--compaction-summary-usable-p (result)
-  "Return true when RESULT is a completed, structured, tool-free handoff."
+(-> agent--compaction-summary-problem (provider-result) (option string))
+(defun agent--compaction-summary-problem (result)
+  "Return why RESULT is not a completed, structured, tool-free handoff, or NIL."
   (let* ((text    (provider-result-assistant-text result))
          (trimmed (and (stringp text)
                        (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
          (items   (provider-result-output-items result)))
-    (and (eq (provider-result-turn-completion result) ':end)
-         (null (provider-result-tool-calls result))
-         (every #'json-object-p items)
-         (not (some (lambda (item)
-                      (member (json-get item "type")
-                              '("function_call" "function_call_output" "tool_use" "tool_result")
-                              :test #'equal))
-                    items))
-         (not (some #'provider--native-compaction-refusal-p items))
-         (non-empty-string-p trimmed)
-         (>= (length trimmed) 24)
-         (agent--compaction-summary-structured-p trimmed))))
+    (cond
+      ((not (eq (provider-result-turn-completion result) ':end))
+       "the response did not finish")
+      ((notevery #'json-object-p items)
+       "the response holds a malformed item")
+      ((or (provider-result-tool-calls result)
+           (some (lambda (item)
+                   (member (json-get item "type")
+                           '("function_call" "function_call_output" "tool_use" "tool_result")
+                           :test #'equal))
+                 items))
+       "the response calls tools")
+      ((some #'provider--native-compaction-refusal-p items)
+       "the response refuses")
+      ((not (non-empty-string-p trimmed))
+       "the response has no visible text")
+      (t
+       (agent--compaction-summary-structure-problem trimmed)))))
+
+(-> agent--compaction-summary-usable-p (provider-result) boolean)
+(defun agent--compaction-summary-usable-p (result)
+  "Return true when RESULT is a completed, structured, tool-free handoff."
+  (null (agent--compaction-summary-problem result)))
 
 (-> agent--native-compaction-window (t) list)
 (defun agent--native-compaction-window (value)
@@ -1556,15 +1586,29 @@ to usage accounting instead of hiding behind the compaction record."
 
 (-> agent--compaction-follow-up-p (provider-result) boolean)
 (defun agent--compaction-follow-up-p (result)
-  "Return true when RESULT can continue toward visible compaction text."
-  (or (not (null (provider-result-tool-calls result)))
-      (eq (provider-result-turn-completion result) ':continue)))
+  "Return true when another request can still turn RESULT into a handoff.
+
+Tool calls and output the provider will continue earn a follow-up, and so
+does a finished, refusal-free answer whose visible text misses the handoff
+shape. Empty, cut off and refused answers end compaction."
+  (let ((text (provider-result-assistant-text result)))
+    (or (not (null (provider-result-tool-calls result)))
+        (eq (provider-result-turn-completion result) ':continue)
+        (and (eq (provider-result-turn-completion result) ':end)
+             (stringp text)
+             (some #'alphanumericp text)
+             (notany #'provider--native-compaction-refusal-p
+                     (provider-result-output-items result))))))
 
 (-> agent--advance-compaction-summary-view
-    (conversation provider-result)
+    (conversation provider-result string)
     null)
-(defun agent--advance-compaction-summary-view (conversation result)
-  "Add RESULT to transient CONVERSATION and reject its unavailable tool calls."
+(defun agent--advance-compaction-summary-view (conversation result problem)
+  "Add RESULT to transient CONVERSATION and say how to correct PROBLEM.
+
+Unavailable tool calls get a mechanics result. A finished answer that is not a
+usable handoff gets a user message naming PROBLEM. Unfinished output simply
+continues."
   (dolist (item (provider-result-output-items result))
     (unless (json-object-p item)
       (error 'provider-protocol-error
@@ -1590,6 +1634,13 @@ to usage accounting instead of hiding behind the compaction record."
        (function-call-output-item
         call-id
         "Tools are unavailable during compaction. Return only the requested handoff summary as visible assistant text."))))
+  (when (and (null (provider-result-tool-calls result))
+             (not (eq (provider-result-turn-completion result) ':continue)))
+    (conversation--append-input-item
+     conversation
+     (user-message-item
+      (format nil "That handoff is not usable: ~A. Return the complete handoff again as visible text: the labels ~{~A~^, ~} in this order, each once at the start of its own line, followed by its content, in under ~:D characters."
+              problem *agent-compaction-summary-labels* *compaction-summary-maximum-characters*))))
   nil)
 
 (-> agent--result-reasoning-context (provider-result) (option string))
@@ -1764,20 +1815,22 @@ publication. Return issued request count and optional next-request details."
                 :kind           ':summary
                 :usage          (provider-result-usage result)
                 :response-id    (provider-result-response-id result))
-               (when (agent--compaction-summary-usable-p result)
-                 (setf summary (provider-result-assistant-text result))
-                 (return))
-               (unless (and (< attempt *agent-compaction-maximum-summary-requests*)
-                            (agent--compaction-follow-up-p result))
-                 (error 'provider-protocol-error
-                        :message     "Compaction produced no usable summary handoff."
-                        :status      nil
-                        :code        nil
-                        :request-id  nil
-                        :response-id (provider-result-response-id result)
-                        :response    nil))
-               (agent--advance-compaction-summary-view
-                summary-conversation result))
+               (let ((problem (agent--compaction-summary-problem result)))
+                 (unless problem
+                   (setf summary (provider-result-assistant-text result))
+                   (return))
+                 (unless (and (< attempt *agent-compaction-maximum-summary-requests*)
+                              (agent--compaction-follow-up-p result))
+                   (error 'provider-protocol-error
+                          :message     (format nil "Compaction produced no usable summary handoff: ~A."
+                                               problem)
+                          :status      nil
+                          :code        nil
+                          :request-id  nil
+                          :response-id (provider-result-response-id result)
+                          :response    nil))
+                 (agent--advance-compaction-summary-view
+                  summary-conversation result problem)))
       (let* ((next-output-tokens
                (if next-request-status-details
                    (let ((value

@@ -1791,6 +1791,9 @@ including rejected summaries and native responses that require portable fallback
 A native checkpoint includes the full returned item window, in provider order.
 A summary must complete normally and contain bounded, nonempty progress, decisions,
 context, constraints, next-steps and reference sections before checkpoint publication.
+Markdown heading marks may decorate the labels. When a finished summary misses this
+shape, Autolith asks again and names the problem, up to four summary requests in all.
+An empty, cut-off or refused summary fails at once.
 
 Before either request, Autolith captures a fixed history cutoff. The checkpoint
 includes unresolved calls with correlated actual or interrupted/unknown outputs,

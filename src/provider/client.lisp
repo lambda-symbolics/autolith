@@ -385,10 +385,14 @@ credentials and model metadata independently of their cached wire routes."
   (:documentation
    "POST REQUEST to PROVIDER's native compaction endpoint and return its body."))
 
+(defparameter *compaction-summary-maximum-characters* 12000
+  "The most characters a portable compaction handoff may contain.")
+
 ;; Modeled on the Codex context checkpoint compaction instructions at
 ;; reference commit 6219b7c40f, restated for Autolith.
 (defparameter *compaction-instructions*
-  "You are performing a context checkpoint compaction. Return only visible assistant text with exactly these labeled sections: [Progress], [Decisions], [Context], [Constraints], [Next steps], and [References]. Put useful content in every section. Include current progress and key decisions, important context, constraints and user preferences, clear next steps, and critical data or references needed for continuation. Reference completed rlm.infer and rlm.map frames by their trace identifiers as inference:<trace-id> resources instead of restating frame content; the traces stay readable through resource.read. Do not call tools, wait for jobs, or perform additional work. Be concise, structured, and complete enough that no earlier context is required."
+  (format nil "You are performing a context checkpoint compaction. Return only visible assistant text with exactly these labeled sections, in this order: [Progress], [Decisions], [Context], [Constraints], [Next steps], and [References]. Begin with [Progress] and write each label once, at the start of its own line. Put useful content in every section. Include current progress and key decisions, important context, constraints and user preferences, clear next steps, and critical data or references needed for continuation. Reference completed rlm.infer and rlm.map frames by their trace identifiers as inference:<trace-id> resources instead of restating frame content; the traces stay readable through resource.read. Do not call tools, wait for jobs, or perform additional work. Keep the whole handoff under ~:D characters. Be concise, structured, and complete enough that no earlier context is required."
+          *compaction-summary-maximum-characters*)
   "The developer instructions driving one compaction request.")
 
 (defparameter *provider-hosted-tools-enabled-p* t

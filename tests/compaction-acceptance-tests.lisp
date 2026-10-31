@@ -64,6 +64,10 @@
                        (list nil ':end nil)
                        (list (list (agent-test-message "unstructured text")) ':end nil)
                        (list (list (agent-test-message
+                                    (format nil "## [Progress]~%Work is recorded.~2%**[Decisions]** Continue.~2%## [Context]~%State is durable.~2%## [Constraints]~%Follow the user.~2%## [Next steps]~%Resume.~2%## [References]~%The archive."))) ':end t)
+                       (list (list (agent-test-message
+                                    (format nil "Here is the handoff.~%~A" text))) ':end nil)
+                       (list (list (agent-test-message
                                     (concatenate 'string text " [Progress] Duplicate."))) ':end nil)
                        (list (list (agent-test-message
                                     (concatenate 'string text (make-string 12000 :initial-element #\x)))) ':end nil)

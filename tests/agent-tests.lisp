@@ -2375,7 +2375,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
              (test-assert
               (and failure
                    (string= (autolith-error-message failure)
-                           "Compaction produced no usable summary handoff.")
+                           "Compaction produced no usable summary handoff: the response has no visible text.")
                    (string= (provider-error-response-id failure)
                             "compact-empty")
                  (null (provider-error-status failure))
@@ -2463,6 +2463,43 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
             "both successful compaction requests remain visible to accounting"))
       (platform-delete-directory-tree
        *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-agent-compaction-corrects-rejected-handoff () null)
+(defun test-agent-compaction-corrects-rejected-handoff ()
+  "Test a finished but malformed handoff earns a follow-up naming its problem."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration))
+           (summary      (agent-test-compaction-message))
+           (long         (agent-test-message
+                          (format nil "~A ~A"
+                                  (provider-result-assistant-text
+                                   (agent-test-result "valid" (list summary) :turn-completion ':end))
+                                  (make-string *compaction-summary-maximum-characters*
+                                               :initial-element #\x))))
+           (provider     (make-instance
+                          'scripted-provider
+                          :configuration configuration
+                          :results       (list (agent-test-result "compact-long" (list long)
+                                                                  :turn-completion ':end)
+                                               (agent-test-result "compact-summary" (list summary)
+                                                                  :turn-completion ':end))))
+           (agent        (agent-create :configuration configuration
+                                       :provider      provider
+                                       :conversation  conversation
+                                       :tool-registry (agent-test-registry)
+                                       :worker        nil)))
+      (conversation-append-user-message conversation "earlier context")
+      (test-assert (= 2 (agent-compact-conversation agent (make-instance 'agent-observer)))
+                   "a rejected handoff consumes one bounded follow-up")
+      (let* ((follow-up  (second (reverse (scripted-provider-input-snapshots provider))))
+             (correction (first (last follow-up))))
+        (test-assert (and (json-string= (json-get correction "role") "user")
+                          (search "not usable: it has 12,"
+                                  (context--message-text correction)))
+                     "the follow-up names the rejected handoff's problem"))
+      (test-assert (equal '((1 :summary) (2 :summary)) (agent-tests--request-numbers conversation))
+                   "both summary requests are accounted")))
   nil)
 
 (-> test-agent-compaction () null)
