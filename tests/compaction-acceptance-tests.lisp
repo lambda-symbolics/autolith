@@ -54,27 +54,30 @@
 
 (-> test-compaction-summary-acceptance () null)
 (defun test-compaction-summary-acceptance ()
-  "Reject malformed, refused and incomplete paid summaries without replacing history."
+  "Validate paid summaries and publish the last text answer even when misshapen.
+
+Each case lists its output items, turn completion, whether the handoff passes
+the strict shape, and whether the only allowed request publishes it."
   (let* ((valid (agent-test-compaction-message))
          (text  (provider-result-assistant-text
                  (agent-test-result "text" (list valid) :turn-completion ':end))))
-    (dolist (case (list (list (list valid) ':end t)
-                       (list (list valid) ':continue nil)
-                       (list (list valid) ':unspecified nil)
-                       (list nil ':end nil)
-                       (list (list (agent-test-message "unstructured text")) ':end nil)
+    (dolist (case (list (list (list valid) ':end t t)
+                       (list (list valid) ':continue nil nil)
+                       (list (list valid) ':unspecified t t)
+                       (list nil ':end nil nil)
+                       (list (list (agent-test-message "unstructured text")) ':end nil t)
                        (list (list (agent-test-message
-                                    (format nil "## [Progress]~%Work is recorded.~2%**[Decisions]** Continue.~2%## [Context]~%State is durable.~2%## [Constraints]~%Follow the user.~2%## [Next steps]~%Resume.~2%## [References]~%The archive."))) ':end t)
+                                    (format nil "## [Progress]~%Work is recorded.~2%**[Decisions]** Continue.~2%## [Context]~%State is durable.~2%## [Constraints]~%Follow the user.~2%## [Next steps]~%Resume.~2%## [References]~%The archive."))) ':end t t)
                        (list (list (agent-test-message
-                                    (format nil "Here is the handoff.~%~A" text))) ':end nil)
+                                    (format nil "Here is the handoff.~%~A" text))) ':end nil t)
                        (list (list (agent-test-message
-                                    (concatenate 'string text " [Progress] Duplicate."))) ':end nil)
+                                    (concatenate 'string text " [Progress] Duplicate."))) ':end nil t)
                        (list (list (agent-test-message
-                                    (concatenate 'string text (make-string 12000 :initial-element #\x)))) ':end nil)
-                       (list (list valid (json-object "type" "refusal" "refusal" "No.")) ':end nil)
+                                    (concatenate 'string text (make-string 12000 :initial-element #\x)))) ':end nil t)
+                       (list (list valid (json-object "type" "refusal" "refusal" "No.")) ':end nil nil)
                        (list (list valid (json-object "type" "message" "role" "assistant"
-                                                     "refusal" "No." "content" #())) ':end nil)))
-      (destructuring-bind (items completion accepted-p) case
+                                                     "refusal" "No." "content" #())) ':end nil nil)))
+      (destructuring-bind (items completion usable-p published-p) case
         (with-test-configuration (configuration)
           (let* ((conversation (conversation-create configuration))
                  (result       (agent-test-result "paid-summary" items :turn-completion completion))
@@ -84,16 +87,17 @@
             (conversation-append-user-message conversation "retain exact source evidence")
             (let ((before                                      (mapcar #'json-encode (conversation-input-items conversation)))
                   (*agent-compaction-maximum-summary-requests* 1))
-              (test-assert (eq accepted-p (not (null (agent--compaction-summary-usable-p result))))
-                           "only a completed structured refusal-free handoff is usable")
-              (let ((accepted
+              (test-assert (eq usable-p (agent--compaction-summary-usable-p result))
+                           "only a finished structured refusal-free handoff is usable")
+              (let ((published
                       (handler-case
                           (progn (agent-compact-conversation agent (make-instance 'agent-observer)) t)
                         (provider-protocol-error () nil))))
-                (test-assert (eq accepted-p accepted) "publication follows summary validation"))
+                (test-assert (eq published-p published)
+                             "the last request publishes any text answer and nothing else"))
               (test-assert (equal '((1 :summary)) (agent-tests--request-numbers conversation))
                            "every completed summary attempt is charged once")
-              (unless accepted-p
+              (unless published-p
                 (test-assert (equal before (mapcar #'json-encode (conversation-input-items conversation)))
                              "rejection preserves the source projection")
                 (test-assert (equal before

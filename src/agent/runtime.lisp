@@ -1536,13 +1536,16 @@ first label."
 
 (-> agent--compaction-summary-problem (provider-result) (option string))
 (defun agent--compaction-summary-problem (result)
-  "Return why RESULT is not a completed, structured, tool-free handoff, or NIL."
+  "Return why RESULT is not a completed, structured, tool-free handoff, or NIL.
+
+Only ':CONTINUE marks unfinished output. Responses routes omit end_turn on
+many completed responses, and truncated output signals its own error."
   (let* ((text    (provider-result-assistant-text result))
          (trimmed (and (stringp text)
                        (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
          (items   (provider-result-output-items result)))
     (cond
-      ((not (eq (provider-result-turn-completion result) ':end))
+      ((eq (provider-result-turn-completion result) ':continue)
        "the response did not finish")
       ((notevery #'json-object-p items)
        "the response holds a malformed item")
@@ -1584,21 +1587,28 @@ first label."
             :response-id nil
             :response    nil))))
 
+(-> agent--compaction-text-answer-p (provider-result) boolean)
+(defun agent--compaction-text-answer-p (result)
+  "Return true when RESULT is a finished, tool-free, refusal-free answer with visible text."
+  (let ((text  (provider-result-assistant-text result))
+        (items (provider-result-output-items result)))
+    (and (not (eq (provider-result-turn-completion result) ':continue))
+         (null (provider-result-tool-calls result))
+         (every #'json-object-p items)
+         (stringp text)
+         (some #'alphanumericp text)
+         (notany #'provider--native-compaction-refusal-p items))))
+
 (-> agent--compaction-follow-up-p (provider-result) boolean)
 (defun agent--compaction-follow-up-p (result)
   "Return true when another request can still turn RESULT into a handoff.
 
 Tool calls and output the provider will continue earn a follow-up, and so
-does a finished, refusal-free answer whose visible text misses the handoff
-shape. Empty, cut off and refused answers end compaction."
-  (let ((text (provider-result-assistant-text result)))
-    (or (not (null (provider-result-tool-calls result)))
-        (eq (provider-result-turn-completion result) ':continue)
-        (and (eq (provider-result-turn-completion result) ':end)
-             (stringp text)
-             (some #'alphanumericp text)
-             (notany #'provider--native-compaction-refusal-p
-                     (provider-result-output-items result))))))
+does a text answer that misses the handoff shape. Empty and refused answers
+end compaction."
+  (or (not (null (provider-result-tool-calls result)))
+      (eq (provider-result-turn-completion result) ':continue)
+      (agent--compaction-text-answer-p result)))
 
 (-> agent--advance-compaction-summary-view
     (conversation provider-result string)
@@ -1816,7 +1826,11 @@ publication. Return issued request count and optional next-request details."
                 :usage          (provider-result-usage result)
                 :response-id    (provider-result-response-id result))
                (let ((problem (agent--compaction-summary-problem result)))
-                 (unless problem
+                 ;; The last request publishes any text answer: a loosely
+                 ;; shaped handoff beats an agent that cannot continue.
+                 (when (or (null problem)
+                           (and (= attempt *agent-compaction-maximum-summary-requests*)
+                                (agent--compaction-text-answer-p result)))
                    (setf summary (provider-result-assistant-text result))
                    (return))
                  (unless (and (< attempt *agent-compaction-maximum-summary-requests*)
