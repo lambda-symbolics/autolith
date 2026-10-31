@@ -36,20 +36,17 @@
                (compaction-tests-provider-arrival provider))
       (funcall (compaction-tests-provider-arrival provider)))))
 
-(-> compaction-tests--provider (&key (:native-p boolean) (:stage keyword)
+(-> compaction-tests--provider (&key (:configuration configuration) (:native-p boolean) (:stage keyword)
                                     (:arrival (option function))) compaction-tests-provider)
-(defun compaction-tests--provider (&key native-p (stage ':summary) arrival)
+(defun compaction-tests--provider (&key configuration native-p (stage ':summary) arrival)
   "Return one native/portable compaction followed by a usable portable summary."
   (make-instance
-   'compaction-tests-provider :stage stage :arrival arrival
+   'compaction-tests-provider :configuration configuration :stage stage :arrival arrival
    :native-items (list (when native-p
-                        (json-object "type" "compaction" "encrypted_content" "private-checkpoint")))
+                         (json-object "type" "compaction" "encrypted_content" "private-checkpoint")))
    :results      (list (agent-test-result
                         "unfinished-summary"
-                        (list (json-object "type" "message" "role" "assistant"
-                                           "content" (json-array
-                                                      (json-object "type" "output_text"
-                                                                   "text" "Portable unfinished-work handoff."))))
+                        (list (agent-test-compaction-message))
                         :turn-completion ':end))))
 
 (-> compaction-tests--call (string) json-object)
@@ -100,9 +97,9 @@
                        "arrivals do not mutate the provider snapshot")
           (let ((commit-sequence (conversation-next-sequence conversation)))
             (if native-p
-                (conversation-append-native-compaction
-                 conversation (json-object "type" "compaction" "encrypted_content" "private-checkpoint")
-                 :family ':codex :summary "Portable handoff." :compaction capture)
+                  (conversation-append-native-compaction
+                   conversation (list (json-object "type" "compaction" "encrypted_content" "private-checkpoint"))
+                   :family ':codex :summary "Portable handoff." :compaction capture)
                 (conversation-append-summary conversation "Portable handoff." :compaction capture))
             (let ((record (compaction-tests--checkpoint conversation)))
               (test-assert (= cutoff (getf (rest record) :cutoff-seq)) "checkpoint records the request cutoff")
@@ -163,12 +160,13 @@
       (declare (ignore root))
       (let* ((conversation (conversation-create configuration))
              (provider     (compaction-tests--provider
+                              :configuration configuration
                             :native-p (first case) :stage (second case)
-                            :arrival (lambda ()
-                                       (conversation-append-tool-result
-                                        conversation "during-request" :tool-name "test.effect"
-                                        :output "result during provider request" :success-p t)
-                                       (conversation-append-user-message conversation "steering during provider request"))))
+                            :arrival         (lambda ()
+                                               (conversation-append-tool-result
+                                                conversation "during-request" :tool-name "test.effect"
+                                                :output "result during provider request" :success-p t)
+                                               (conversation-append-user-message conversation "steering during provider request"))))
              (agent        (agent-create :configuration configuration :conversation conversation
                                          :provider provider :tool-registry (agent-test-registry) :worker nil)))
         (conversation-append-user-message conversation "before provider request")
@@ -296,7 +294,9 @@
                 (task-completion-watch shell parent)
                 (let* ((identifiers    (mapcar #'session-job-execution-identifier (list child shell)))
                        (child-requests (task-test-provider-request-count child-provider)))
-                  (setf (agent-provider parent) (compaction-tests--provider :native-p native-p))
+                    (setf (agent-provider parent)
+                          (compaction-tests--provider :configuration configuration
+                                                      :native-p      native-p))
                   (agent-compact-conversation parent (make-instance 'agent-observer))
                   (let ((snapshot (getf (rest (compaction-tests--checkpoint conversation)) :unfinished-work)))
                     (test-assert (= 2 (getf snapshot :total)) "checkpoint contains authoritative outstanding-job identities")
@@ -424,15 +424,16 @@
                 (test-assert (not (job-terminal-p job)) "the actual shell job is outstanding at capture")
                 (setf (agent-provider parent)
                       (compaction-tests--provider
+                       :configuration configuration
                        :native-p (first case) :stage (second case)
-                       :arrival (lambda ()
-                                  (with-open-file (stream release :direction ':output :if-exists ':supersede)
-                                    (write-line "complete inside provider request" stream))
-                                  (multiple-value-bind (snapshot terminal-p) (session-job-await job 10)
-                                    (declare (ignore snapshot))
-                                    (test-assert terminal-p "shell finishes before compaction provider returns"))
-                                  (cl-jobpond:completion-subscription-refresh
-                                   (task-completion-service-subscription (task-completion--service parent))))))
+                         :arrival     (lambda ()
+                                       (with-open-file (stream release :direction ':output :if-exists ':supersede)
+                                         (write-line "complete inside provider request" stream))
+                                       (multiple-value-bind (snapshot terminal-p) (session-job-await job 10)
+                                         (declare (ignore snapshot))
+                                         (test-assert terminal-p "shell finishes before compaction provider returns"))
+                                       (cl-jobpond:completion-subscription-refresh
+                                        (task-completion-service-subscription (task-completion--service parent))))))
                 (agent-compact-conversation parent (make-instance 'agent-observer))
                 (let* ((work (getf (rest (compaction-tests--checkpoint conversation)) :unfinished-work))
                        (row  (find identifier (getf work :jobs)
@@ -471,7 +472,8 @@
     (declare (ignore root))
     (let* ((conversation (conversation-create configuration))
            (agent        (agent-create :configuration configuration :conversation conversation
-                                       :provider (compaction-tests--provider)
+                                       :provider (compaction-tests--provider
+                                                  :configuration configuration)
                                        :tool-registry (agent-test-registry) :worker nil))
            (events       nil)
            (snapshot     (symbol-function 'task-unfinished-work-snapshot)))

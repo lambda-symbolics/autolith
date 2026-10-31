@@ -4,13 +4,17 @@
 
 (-> idle-compaction-tests--fixture (function &key (:results list)) null)
 (defun idle-compaction-tests--fixture
-    (function &key (results (list (mission-test--result "A useful handoff summary."))))
+    (function &key (results (list (agent-test-result
+                                   "idle-summary" (list (agent-test-compaction-message))
+                                   :turn-completion ':end))))
   "Run FUNCTION with a real recorded application, controller, and scripted provider."
   (with-test-configuration (configuration)
     (let* ((application (mission-test--application configuration :results results))
+           (provider    (application-provider application))
            (controller  (make-instance 'application-input-controller
                                        :application application :main-thread (current-thread))))
-      (setf (application-input-controller application) controller
+      (setf (slot-value provider 'configuration) configuration
+            (application-input-controller application) controller
             (config :prompt-cache-retention-seconds configuration) 300)
       (change-class (terminal-ui-terminal (application-ui application)) 'waiting-recording-terminal)
       (conversation-append-user-message

@@ -88,13 +88,13 @@ may use provider token counts when available; the default is not a tokenizer."))
           (window  (config :context-window (provider-configuration provider))))
       (when (> (+ input reserve) window)
         (error 'provider-context-budget-error
-               :message (format nil
-                                "The next request needs approximately ~D input tokens plus ~D output tokens; the model context window is ~D. Compact the conversation or reduce request context before retrying."
-                                input reserve window)
+               :message                (format nil
+                                               "The next request needs approximately ~D input tokens plus ~D output tokens; the model context window is ~D. Compact the conversation or reduce request context before retrying."
+                                               input reserve window)
                :estimated-input-tokens input
-               :output-reserve        reserve
-               :context-window        window
-               :non-text-estimate-p   non-text-p))))
+               :output-reserve         reserve
+               :context-window         window
+               :non-text-estimate-p    non-text-p))))
   nil)
 
 (defmethod provider-open-response-stream :before

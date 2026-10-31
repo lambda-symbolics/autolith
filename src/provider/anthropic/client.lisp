@@ -12,6 +12,20 @@
   ()
   (:documentation "A static API key client for the Anthropic Messages API."))
 
+(defmethod provider-prompt-cache-retention-estimate
+    ((provider anthropic-api-key-provider))
+  "Estimate Anthropic cache lifetime from the requested TTL only."
+  (let ((ttl (config :prompt-cache-ttl (provider-configuration provider))))
+    (if (stringp ttl)
+        (cond
+          ((string= ttl "5m")
+           300)
+          ((string= ttl "1h")
+           3600)
+          (t
+           nil))
+        nil)))
+
 (defmethod provider-account-label ((provider anthropic-api-key-provider))
   "Name the Anthropic account service in user-visible failures."
   (declare (ignore provider))

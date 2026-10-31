@@ -16,9 +16,9 @@ even when larger. Request admission checks the resulting projection before I/O."
 (defun conversation-compaction--checkpoint-summary-p (projection item)
   "Identify checkpoint handoffs by projection metadata rather than their prose."
   (not (null (or (gethash item (clinker-transcript:projection-metadata-table
-                               projection ':checkpoint-summary))
+                                projection ':checkpoint-summary))
                  (nth-value 1 (gethash item (clinker-transcript:projection-metadata-table
-                                            projection ':handoff-family)))))))
+                                             projection ':handoff-family)))))))
 
 (-> conversation-compaction--tail-start (clinker-transcript:projection list) (integer 0))
 (defun conversation-compaction--tail-start (projection items)
@@ -55,26 +55,20 @@ are unchanged; this operation neither publishes nor executes anything."
          (projection   (conversation-projection raw-view))
          (suffix-plan  (clinker-transcript:make-compaction-plan
                         projection
-                        :cutoff (conversation-compaction--tail-start projection source)
+                        :cutoff            (conversation-compaction--tail-start projection source)
                         :repaired-output-p #'conversation-compaction--repaired-output-p))
-        (suffix       (clinker-transcript:compaction-plan-items suffix-plan))
-        (start        (- (length source) (length suffix)))
-        (latest-user
-          (find-if (lambda (item)
-                     (and (json-string= (json-get item "role") "user")
-                          (not (conversation-compaction--checkpoint-summary-p projection item))))
-                   source :from-end t))
-        (latest-user-index (and latest-user (position latest-user source :test #'eq :from-end t)))
-        (tail         (if (and latest-user (not (member latest-user suffix :test #'eq)))
-                          (cons latest-user suffix)
-                          suffix))
-        (effective-start (if (and latest-user-index
-                                  (not (member latest-user suffix :test #'eq)))
-                             (min start latest-user-index)
-                             start))
-        (tail-view    (conversation-compaction-summary-view view tail))
-        (summary-view (conversation-compaction-summary-view
-                       view (subseq source 0 effective-start))))
+         (suffix       (clinker-transcript:compaction-plan-items suffix-plan))
+         (latest-user
+           (find-if (lambda (item)
+                      (and (json-string= (json-get item "role") "user")
+                           (not (conversation-compaction--checkpoint-summary-p projection item))))
+                    source :from-end t))
+         (tail         (if (and latest-user (not (member latest-user suffix :test #'eq)))
+                           (cons latest-user suffix)
+                           suffix))
+         (tail-view    (conversation-compaction-summary-view view tail))
+         (summary-view (conversation-compaction-summary-view
+                        view (remove-if (lambda (item) (member item tail :test #'eq)) source))))
     (conversation-compaction--copy-metadata projection (conversation-projection tail-view) tail)
     (make-instance
      'conversation-compaction
@@ -83,5 +77,5 @@ are unchanged; this operation neither publishes nor executes anything."
      :source-items    source
      :plan            (clinker-transcript:make-compaction-plan
                        (conversation-projection tail-view) :cutoff 0
-                       :repaired-output-p #'conversation-compaction--repaired-output-p)
+                       :repaired-output-p                          #'conversation-compaction--repaired-output-p)
      :cutoff-sequence (conversation-compaction-cutoff-sequence capture))))

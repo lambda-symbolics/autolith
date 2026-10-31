@@ -292,7 +292,8 @@
                                          :native-items  (list (json-object "type" "compaction"
                                                                           "encrypted_content" "fixture"))
                                          :results       (list (agent-test-result
-                                                               "summary" (list (agent-test-message "Portable summary."))))))
+                                                               "summary" (list (agent-test-compaction-message))
+                                                               :turn-completion ':end))))
             (agent        (agent-create :configuration configuration :conversation conversation
                                         :provider provider :tool-registry (agent-test-registry) :worker nil)))
        (conversation-append-user-message conversation "Fixture summary context")

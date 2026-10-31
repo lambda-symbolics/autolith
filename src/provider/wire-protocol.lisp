@@ -47,17 +47,42 @@ local retention estimate, which only schedules pruning and idle compaction."
 (defparameter *provider-cache-wire-sequence-fields* '("messages" "input" "contents")
   "Request fields that hold the ordered conversation, in the order they are looked for.")
 
+(defparameter *provider-cache-request-prefix* nil
+  "Request-local fingerprints captured before final provider encoding.")
+
+(-> provider-cache-prefix-observe (json-object) null)
+(defun provider-cache-prefix-observe (request)
+  "Report the final transport REQUEST alongside its reusable prefix fingerprints."
+  (when (and *provider-cache-prefix-function* *provider-cache-request-prefix*)
+    (funcall *provider-cache-prefix-function*
+             (append *provider-cache-request-prefix*
+                     (list :wire (provider-cache-wire-plan request)))))
+  nil)
+
+(defmethod provider-stream-turn :around
+    ((provider model-provider) (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Confine cache fingerprints to one provider operation, including its retries."
+  (let ((*provider-cache-request-prefix* nil))
+    (call-next-method)))
+
 (defmethod provider-request-object :around
     ((provider model-provider) (projection cl-llm-provider-api:wire-request)
      (tool-namespaces vector) &key goal-context compaction-p)
-  "Observe the projected prefix and the final request without retaining prompt text."
+  "Capture reusable fingerprints before encoding; observe wire fields at transport."
   (declare (ignore goal-context))
-  (let ((values (multiple-value-list (call-next-method))))
-    (when (and *provider-cache-prefix-function* (not compaction-p))
-      (funcall *provider-cache-prefix-function*
-               (append (provider-cache-prefix-create projection tool-namespaces)
-                       (list :wire (provider-cache-wire-plan (first values))))))
-    (values-list values)))
+  (unless compaction-p
+    (when *provider-cache-prefix-function*
+      (setf *provider-cache-request-prefix*
+            (provider-cache-prefix-create projection tool-namespaces))))
+  (call-next-method))
+
+(defmethod provider-open-response-stream :around
+    ((provider model-provider) (request hash-table) &key credentials conversation)
+  "Observe the complete encoded request immediately before transport."
+  (declare (ignore credentials conversation))
+  (provider-cache-prefix-observe request)
+  (call-next-method))
 
 (-> provider-shared-items-split (list list) (values list list))
 (defun provider-shared-items-split (items durable-items)

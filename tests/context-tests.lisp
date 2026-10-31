@@ -518,8 +518,8 @@
            (checkpoint   (json-object "type" "context_compaction"
                                       "encrypted_content"
                                       (make-string 4000 :initial-element #\c))))
-      (conversation-append-native-compaction
-       conversation checkpoint :family ':codex :summary "Portable handoff.")
+        (conversation-append-native-compaction
+         conversation (list checkpoint) :family ':codex :summary "Portable handoff.")
       (test-call-with-function-replacements
        (list (list 'system-prompt
                    (lambda (configuration)

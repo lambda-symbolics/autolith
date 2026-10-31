@@ -21,7 +21,7 @@
 (defun test-context-admission-boundary ()
   "Reserve explicit output allowances and stop rejected requests before transport."
   (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
-                         ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
     (with-test-configuration (configuration)
       (let* ((provider (make-instance 'context-admission-test-provider
                                      :configuration configuration))
@@ -99,7 +99,7 @@
 (defun test-context-admission-final-request ()
   "Measure newly projected instructions, tools and temporary context without rewriting history."
   (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
-                         ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
     (with-test-configuration (configuration)
       (let* ((provider     (make-instance 'context-admission-test-provider
                                          :configuration configuration))
@@ -149,4 +149,57 @@
                                                 (make-string 100000 :initial-element #\a))))
           (test-assert (and encoded-uncertain-p (= short encoded))
                        "base64 wire size is not interpreted as text tokens")))))
+  nil)
+
+(-> test-context-admission-checkpoint-transaction () null)
+(defun test-context-admission-checkpoint-transaction ()
+  "Reject oversized final checkpoints before changing durable or projected history."
+  (dolist (native-p '(nil t))
+    (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
+                            ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+      (with-test-configuration (configuration)
+        (let* ((conversation (conversation-create configuration))
+               (provider     (make-instance 'context-admission-test-provider
+                                            :configuration configuration))
+               (window       (list (json-object "type" "compaction"
+                                                "encrypted_content" "private-checkpoint"))))
+          (conversation-append-user-message conversation "Original exact request.")
+          (let ((capture (conversation-compaction-capture conversation)))
+            (conversation-append-user-message conversation
+                                              (make-string 20000 :initial-element #\a))
+            (let ((before    (copy-list (conversation-input-items conversation)))
+                  (sequence  (conversation-next-sequence conversation))
+                  (checked-p nil))
+              (flet ((validate (candidate)
+                       "Admit the full candidate, including arrivals, before publication."
+                       (setf checked-p t)
+                       (test-assert (find (second before)
+                                          (conversation-input-items candidate) :test #'eq)
+                                    "the validator sees the exact chronological arrival")
+                       (provider-check-request-context
+                        provider (json-object "input"
+                                              (coerce (conversation-input-items candidate) 'vector)))))
+                (test-assert
+                 (handler-case
+                     (progn
+                       (if native-p
+                           (conversation-append-native-compaction
+                            conversation window :family ':responses :summary "Small handoff."
+                            :compaction capture :validate-projection #'validate)
+                           (conversation-append-summary
+                            conversation "Small handoff." :compaction capture
+                            :validate-projection                      #'validate))
+                       nil)
+                   (provider-context-budget-error () t))
+                 "oversized candidate admission aborts publication"))
+              (test-assert checked-p "publication invoked the admission callback")
+              (test-assert (and (= sequence (conversation-next-sequence conversation))
+                                (equal before (conversation-input-items conversation)))
+                           "rejection preserves the full projection and durable sequence")
+              (let ((loaded (conversation-load-by-id
+                             configuration (conversation-identifier conversation))))
+                (test-assert
+                 (equal (mapcar #'json-encode before)
+                        (mapcar #'json-encode (conversation-input-items loaded)))
+                 "reload sees no rejected checkpoint"))))))))
   nil)

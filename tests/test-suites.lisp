@@ -8,7 +8,34 @@
   test-context-admission-boundary
   test-context-admission-fresh-projection
   test-context-admission-final-request
-  test-context-admission-images)
+  test-context-admission-images
+  test-context-admission-checkpoint-transaction)
+
+(define-test-suite cache-review
+  test-cache-review-retention
+  test-cache-review-final-wire)
+
+(define-test-suite compaction-acceptance
+  test-compaction-summary-acceptance
+  test-compaction-native-paid-rejection
+  test-compaction-next-request-admission
+  test-compaction-repeated-continuation-accounting)
+
+(define-test-suite native-compaction-window
+  test-native-compaction-window-validation
+  test-native-compaction-window-replay)
+
+(define-test-suite compaction-tail
+  test-compaction-tail-bounds-recent-user-and-expands-groups
+  test-compaction-tail-carries-arrivals-through-reload
+  test-compaction-tail-repeated-capture-does-not-accumulate-summaries
+  test-compaction-tail-summarizes-displaced-evidence)
+
+(define-test-suite plan-context
+  test-plan-state-context-projects-current-plan
+  test-plan-state-context-rebuilds-after-plan-update
+  test-plan-state-context-omits-missing-plan
+  test-plan-state-context-rebuilds-requirements-and-receipts)
 
 (define-test-suite telemetry-hooks
   ;; telemetry-hook-model-tests.lisp
@@ -657,10 +684,12 @@
   test-conversation-identifier-migration-resumption)
 
 (define-test-suite precompaction
-  test-precompaction-drops-failed-exchanges
+  test-precompaction-retains-failed-exchanges
   test-precompaction-retention-policy
   test-precompaction-cold-requests
-  test-precompaction-survives-resume)
+  test-precompaction-survives-resume
+  test-precompaction-bounds-repeated-failures
+  test-precompaction-bounds-oversized-output)
 
 (define-test-suite conversation
   test-conversation-image-input

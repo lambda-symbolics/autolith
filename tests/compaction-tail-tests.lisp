@@ -39,9 +39,9 @@
       (conversation-append-provider-item conversation
                                          (compaction-tail-tests--reasoning "private tail"))
       (let* ((capture (conversation-compaction-capture conversation))
-             (tail (conversation-compaction-portable-capture capture))
-             (items (clinker-transcript:compaction-plan-items
-                     (conversation-compaction--plan tail))))
+             (tail    (conversation-compaction-portable-capture capture))
+             (items   (clinker-transcript:compaction-plan-items
+                       (conversation-compaction--plan tail))))
         (test-assert (test-object-contains-string-p items "latest request")
                      "the latest actual user message is retained")
         (test-assert (test-object-contains-string-p items "tail-call")
@@ -96,7 +96,22 @@
         (test-assert (not (test-object-contains-string-p items "first checkpoint"))
                      "a prior portable summary is not accumulated")))))
 
-(define-test-suite compaction-tail
-  test-compaction-tail-bounds-recent-user-and-expands-groups
-  test-compaction-tail-carries-arrivals-through-reload
-  test-compaction-tail-repeated-capture-does-not-accumulate-summaries)
+(-> test-compaction-tail-summarizes-displaced-evidence () null)
+(defun test-compaction-tail-summarizes-displaced-evidence ()
+  "Send current-turn evidence outside the bounded tail to the summarizer."
+  (with-test-configuration (configuration)
+    (let ((conversation (conversation-create configuration)))
+      (conversation-append-user-message conversation "latest exact request")
+      (conversation-append-provider-item conversation (compaction-tail-tests--call "large-call"))
+      (conversation-append-tool-result
+       conversation "large-call" :tool-name "test.inspect" :success-p nil
+       :output (concatenate 'string "failed-effect-evidence" (make-string 40000 :initial-element #\x)))
+      (let* ((capture (conversation-compaction-portable-capture
+                       (conversation-compaction-capture conversation)))
+             (summary (conversation-input-items (conversation-compaction-view capture)))
+             (tail    (clinker-transcript:compaction-plan-items (conversation-compaction--plan capture))))
+        (test-assert (test-object-contains-string-p tail "latest exact request")
+                     "the latest user request is carried verbatim")
+        (test-assert (test-object-contains-string-p (append summary tail) "failed-effect-evidence")
+                     "displaced tool evidence is summarized or retained, never omitted"))))
+  nil)

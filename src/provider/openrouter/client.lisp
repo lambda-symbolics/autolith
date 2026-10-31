@@ -88,6 +88,24 @@
   (:documentation
    "A static API key client for OpenRouter's Chat Completions API."))
 
+(defmethod provider-prompt-cache-retention-estimate
+    ((provider openrouter-chat-completions-provider))
+  "Estimate OpenRouter Claude cache lifetime from the requested TTL only."
+  (let ((configuration (provider-configuration provider))
+        (model         (config :model (provider-configuration provider))))
+    (when (and (stringp model)
+               (uiop:string-prefix-p "openrouter/anthropic/claude" model))
+        (let ((ttl (config :prompt-cache-ttl configuration)))
+          (if (stringp ttl)
+              (cond
+                ((string= ttl "5m")
+                 300)
+                ((string= ttl "1h")
+                 3600)
+                (t
+                 nil))
+              nil)))))
+
 (defmethod openai-compatible-provider-output-ceiling-field
     ((provider openrouter-chat-completions-provider))
   "Use the output limit field accepted across OpenRouter upstream providers."
@@ -201,8 +219,8 @@ routes every request of the conversation to one provider from the first."
               (openrouter--provider-preferences
                wire-model (provider-configuration provider))))
         (when preferences
-          (setf (gethash "provider" request) preferences))))
-    (values request delivery)))
+          (setf (gethash "provider" request) preferences)))
+      (values request delivery))))
 
 (defmethod provider-authenticate
     ((provider openrouter-chat-completions-provider)

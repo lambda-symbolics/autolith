@@ -222,7 +222,8 @@
                       (let* ((prefix nil)
                              (*provider-cache-prefix-function*
                                (lambda (value) (setf prefix value))))
-                        (provider-request-object provider conversation #() :goal-context tail)
+                        (provider-cache-prefix-observe
+                         (provider-request-object provider conversation #() :goal-context tail))
                         prefix))
 
                     (exchange (number)
@@ -325,8 +326,9 @@
               (lambda (provider conversation &key tool-namespaces event-callback
                                                   goal-context compaction-p)
                 (declare (ignore event-callback))
-                (provider-request-object provider conversation tool-namespaces
-                                         :goal-context goal-context :compaction-p compaction-p)
+                (provider-cache-prefix-observe
+                 (provider-request-object provider conversation tool-namespaces
+                                          :goal-context goal-context :compaction-p compaction-p))
                 (make-instance 'provider-result
                                :response-id     "cache-observation"
                                :output-items nil :tool-calls nil

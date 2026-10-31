@@ -1785,9 +1785,12 @@ regardless of the meter. It uses the same provider-native checkpoint and portabl
 summary path as automatic compaction. During an active turn, the command waits
 in the idle queue. An empty conversation needs no provider request. Compaction
 adds a durable checkpoint without adding a user message or starting a model turn.
-The native checkpoint and the portable summary are two provider requests. Each
-is recorded with its usage as a numbered request of the turn, so the request
-count and the persisted usage cover compaction work instead of hiding it.
+The native checkpoint and its portable handoff normally require two provider
+requests. Completed requests are recorded with their usage before output validation,
+including rejected summaries and native responses that require portable fallback.
+A native checkpoint includes the full returned item window, in provider order.
+A summary must complete normally and contain bounded, nonempty progress, decisions,
+context, constraints, next-steps and reference sections before checkpoint publication.
 
 Before either request, Autolith captures a fixed history cutoff. The checkpoint
 includes unresolved calls with correlated actual or interrupted/unknown outputs,
@@ -1798,6 +1801,21 @@ count; inspect =job.continuity=, =job.*= and their resources for full details.
 Provider-family changes use the portable handoff and exclude foreign private
 context.
 
+Portable compaction summarizes older history and retains a verbatim recent tail,
+normally at most two user turns and 32,768 characters. The latest actual user
+request and protocol-required tool/reasoning groups can exceed that bound. Current
+mission policy and the authoritative active plan are rebuilt from their stores
+for each ordinary request, independently of the summary.
+
+Automatic compaction compares freshly projected input with the soft threshold.
+Before transport, admission checks the encoded request, including current tools
+and temporary context, with output headroom. Set
+=(settings :context-output-reserve 8192)= to reserve at least 8,192 tokens, or use
+=AUTOLITH_CONTEXT_OUTPUT_RESERVE=. A larger explicit generation cap takes precedence.
+The local count is an estimate, with separate image allowances, rather than a
+provider tokenizer or paid usage. Candidate checkpoints are admitted with arrivals
+before publication; a rejected candidate leaves the previous projection intact.
+
 Set =ANALYTICS_EVENTS_FILE= to export completed streaming calls as UTF-8 JSONL
 usage events. =ANALYTICS_ACTOR= overrides the operating-system username. Each
 schema-v1 =llm-usage= event contains the UTC timestamp, actor, model, request
@@ -1806,19 +1824,17 @@ Unknown token counts are omitted. Export is disabled without a destination.
 Appends are synchronous and serialized across processes; export errors do not
 abort a completed provider call.
 
-Mechanical precompaction removes failed tool exchanges from earlier turns
-before a request after a provider/model change or estimated prompt-cache
-expiry. Calls, correlated outputs and reasoning used only for those calls are
-removed together. Successful exchanges and failures in the latest user turn
-are retained. Pruning changes provider context, with every record available in
-the durable transcript. The transcript records each pruning, and resuming
-replays it, so a resumed session sends the context its provider last saw. The
-first request after resume prunes only when the latest completed response used
-another provider or model, is older than the retention estimate, or no
-estimate exists. Conversations last answered before 0.67.15 prune once on
-resume, as before. Pruning runs before ordinary requests and native or
-portable compaction. Idle pruning uses the same retention estimate described
-below.
+Mechanical precompaction bounds oversized old tool output before a request after
+estimated cache expiry or a provider/model change. Excerpts include the head and
+tail, known failure status, uncertainty about external effects, and a retrievable
+conversation/call reference. Calls, reasoning, and distinct or repeated failed
+attempts are retained. Full outputs are available in the durable transcript;
+the latest user turn is untouched. Each precompaction is recorded and replayed
+on resume. The first request after resume bounds old output only when the latest
+completed response used another provider or model, is older than the retention
+estimate, or no estimate exists. Conversations last answered before 0.67.15
+prepare once on resume. Precompaction runs before ordinary requests and native
+or portable compaction, using the retention estimate described below.
 
 Idle cache compaction is enabled by default. After a completed request with at
 least 32,768 prompt tokens and 131,072 characters of summarizable history, an
@@ -1829,8 +1845,9 @@ once, including after failure. Resumed sessions need a new completed request
 before scheduling one.
 
 Use =(settings :idle-compaction-p nil)= to disable it. The ChatGPT subscription
-route uses a conservative five-minute inactivity estimate. Other providers need
-an explicit estimate, for example
+route uses a conservative five-minute inactivity estimate. For Anthropic and
+OpenRouter Claude, the requested cache lifetime supplies the estimate. Other
+providers need an explicit estimate, for example
 =(settings :prompt-cache-retention-seconds 1800)= for thirty minutes. Set it to
 zero to use the provider estimate. Both settings persist across restarts.
 
@@ -1838,12 +1855,11 @@ zero to use the provider estimate. Both settings persist across restarts.
 Claude models to keep cache entries for one hour instead of five minutes. A
 one-hour cache write costs twice the base input price, against 1.25 times for
 five minutes, so it pays when a conversation often pauses for between five
-minutes and an hour. Other routes ignore the setting. It does not change the
-retention estimate: with a one-hour lifetime, also set
-=(settings :prompt-cache-retention-seconds 3600)= so precompaction and idle
-compaction use the longer window. OpenRouter requests carry the conversation's
-cache key as their session identifier, which keeps a conversation on one
-upstream provider from its first request.
+minutes and an hour. Other routes ignore the setting. The requested lifetime also
+supplies the local estimate for precompaction and idle compaction; an explicit
+=:prompt-cache-retention-seconds= setting takes precedence. OpenRouter requests
+carry the conversation's cache key as their session identifier for upstream
+routing affinity from the first request.
 
 Cache retention depends on the provider, model, routing and account policy.
 The [[https://developers.openai.com/api/docs/guides/prompt-caching][OpenAI API cache documentation]] describes a thirty-minute default for

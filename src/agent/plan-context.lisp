@@ -13,20 +13,21 @@
          (plan          (plan-load configuration)))
     (when plan
       (make-context-contribution
-       :identifier "active-plan"
+       :identifier        "active-plan"
        :instruction
        (format nil
                "<active_plan_state resource=~S revision=~D>~%~S~%</active_plan_state>"
                (namestring (plan--pathname configuration))
                (workspace-plan-updated-at plan)
                (plan->form plan))
-       :priority 1000
-       :lifetime ':while-relevant
-       :class ':mandatory
+       :priority          1000
+       :lifetime          ':while-relevant
+       :class             ':mandatory
        :deduplication-key "active-plan"))))
 
 (eval-when (:load-toplevel :execute)
   (register-context-contributor "active-plan" 'plan-state-context :source ':built-in))
+
 
 ;;;; -- Plan Change Advice --
 

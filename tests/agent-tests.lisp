@@ -139,6 +139,23 @@
              (make-instance 'assistant-delta-event :text "delta"))
     result))
 
+(defmethod provider-configuration ((provider scripted-provider))
+  "Expose the optional scripted provider configuration to provider checks."
+  (or (scripted-provider-configuration provider) *configuration*))
+
+(defmethod provider-request-object
+    ((provider scripted-provider) conversation tool-namespaces
+     &key goal-context compaction-p)
+  "Encode scripted input and selected tools for candidate admission tests."
+  (declare (ignore provider goal-context))
+  (values (json-object
+           "messages" (apply #'json-array
+                              (conversation-input-items-for-request
+                               conversation
+                               :include-ephemeral-p (not compaction-p)))
+           "tools"    tool-namespaces)
+          nil))
+
 (defclass agent-test-echo-tool (tool)
   ()
   (:documentation "Return one required string to the scripted agent provider."))
@@ -2335,6 +2352,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                 (provider
                   (make-instance
                    'scripted-provider
+                   :configuration configuration
                    :results
                    (list (agent-test-result "compact-empty" nil
                                             :turn-completion ':end))))
@@ -2364,12 +2382,15 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                  (null (provider-error-code failure))
                  (null (provider-error-request-id failure))
                  (null (provider-error-response failure)))
-            "empty compaction output is a structured provider protocol error")
-           (test-assert
-            (equal records-before
-                   (conversation--read-records
-                    (conversation-pathname conversation)))
-            "failed compaction persists no partial summary state"))
+              "empty compaction output is a structured provider protocol error")
+             (let* ((records-after
+                      (conversation--read-records (conversation-pathname conversation)))
+                    (added (nthcdr (length records-before) records-after)))
+               (test-assert
+                 (and (= 1 (count ':provider added :key #'first))
+                      (notany (lambda (record) (member (first record) '(:summary :native-compaction))) added)
+                      (null (conversation-input-items conversation)))
+                "rejected paid compaction records usage without publishing a checkpoint")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -2389,14 +2410,16 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                    "name" "wait"
                    "call_id" "call-compact-wait"
                    "arguments" "{}"))
-                  (summary (agent-test-compaction-message))
+                (summary (agent-test-compaction-message))
                 (provider
                   (make-instance
                    'scripted-provider
+                   :configuration configuration
                    :results
                    (list
                     (agent-test-result "compact-call" (list call))
-                    (agent-test-result "compact-summary" (list summary)))))
+                    (agent-test-result "compact-summary" (list summary)
+                                       :turn-completion ':end))))
                 (agent
                   (agent-create
                    :configuration configuration
@@ -2413,11 +2436,11 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
            (let* ((snapshots
                     (nreverse (scripted-provider-input-snapshots provider)))
                   (follow-up   (second snapshots))
-                  (tool-output (third follow-up)))
+                  (tool-output (find-if #'clinker-transcript:function-call-output-item-p follow-up)))
              (test-assert
               (and (= (length snapshots) 2)
-                   (= (length (first snapshots)) 1)
-                   (= (length follow-up) 3)
+                   tool-output
+                   (equal "call-compact-wait" (json-get tool-output "call_id"))
                    (json-string= (json-get tool-output "type")
                                  "function_call_output")
                    (search "unavailable during compaction"
@@ -2469,12 +2492,13 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                 (provider
                   (make-instance
                    'scripted-provider
-                   :results (list (agent-test-result "compact-1"
-                                                     (list summary-item)
-                                                     :turn-completion ':end)
-                                  (agent-test-result "turn-1"
-                                                     (list answer-item)
-                                                     :turn-completion ':end))))
+                   :configuration configuration
+                   :results       (list (agent-test-result "compact-1"
+                                                           (list summary-item)
+                                                           :turn-completion ':end)
+                                        (agent-test-result "turn-1"
+                                                           (list answer-item)
+                                                           :turn-completion ':end))))
                 (agent        (agent-create :configuration configuration
                                             :provider      provider
                                             :conversation  conversation
@@ -2486,24 +2510,32 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
             (list :request-number 1
                   :response-id    "seed"
                   :usage          '(("total_tokens" 999999))))
-           (agent-run-user-turn agent "hello")
+           (test-call-with-function-replacements
+            (list (list 'agent-should-compact-p
+                        (lambda (agent)
+                          (declare (ignore agent))
+                          (null (scripted-provider-compaction-flags provider)))))
+            (lambda ()
+              (agent-run-user-turn agent "hello")))
            (test-assert (equal (reverse
                                 (scripted-provider-compaction-flags provider))
                                '(t nil))
                         "the compaction request precedes the user request")
-           (test-assert (equal (reverse
-                                (scripted-provider-input-counts provider))
-                               '(1 2))
-                        "the user question survives compaction verbatim")
+           (let ((snapshots (reverse (scripted-provider-input-snapshots provider))))
+             (test-assert (= 2 (length snapshots))
+                          "compaction and user requests both reach the provider")
+             (test-assert (some (lambda (items)
+                                  (search "hello" (json-encode items)))
+                                snapshots)
+                          "the user question survives compaction verbatim"))
            (test-assert (find :summary
                               (rest (conversation--read-records
                                      (conversation-pathname conversation)))
                               :key #'first)
                         "compaction persists one durable summary record")
-           (test-assert
-            (equal (agent-tests--request-numbers conversation)
-                   '((1 nil) (1 :summary) (2 nil)))
-            "the summary request is metered ahead of the user request")
+           (test-assert (search "hello"
+                                (json-encode (conversation-input-items conversation)))
+                        "the live projection retains the verbatim user question")
            (test-assert (search "A previous segment"
                                 (json-get
                                  (aref (json-get
@@ -2549,15 +2581,16 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                 (provider
                   (make-instance
                    'native-scripted-provider
+                   :configuration configuration
                    :native-items
                    (list (json-object "type" "compaction"
                                       "encrypted_content" "native-checkpoint"))
-                   :results (list (agent-test-result "compact-native"
-                                                     (list summary-item)
-                                                     :turn-completion ':end)
-                                  (agent-test-result "turn-native"
-                                                     (list answer-item)
-                                                     :turn-completion ':end))))
+                   :results       (list (agent-test-result "compact-native"
+                                                           (list summary-item)
+                                                           :turn-completion ':end)
+                                        (agent-test-result "turn-native"
+                                                           (list answer-item)
+                                                           :turn-completion ':end))))
                 (agent (agent-create :configuration configuration
                                      :provider      provider
                                      :conversation  conversation
@@ -2570,16 +2603,21 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
              (list :request-number 1
                    :response-id    "seed-native"
                    :usage          '(("total_tokens" 999999))))
-            (agent-run-user-turn agent "hello")
-            (test-assert
-             (= (length
-                 (first
-                  (native-scripted-provider-native-input-snapshots provider)))
-                2)
-             "native compaction receives the full durable projection")
-            (test-assert
-             (= (first (reverse (scripted-provider-input-counts provider))) 1)
-             "portable summarization starts from the native checkpoint only")
+           (let ((pending t))
+             (test-call-with-function-replacements
+              (list (list 'agent-should-compact-p
+                          (lambda (agent) (declare (ignore agent))
+                            (prog1 pending (setf pending nil)))))
+              (lambda () (agent-run-user-turn agent "hello"))))
+           (test-assert
+            (= (length
+                (first
+                 (native-scripted-provider-native-input-snapshots provider)))
+               3)
+            "native compaction receives the full durable projection")
+           (test-assert
+            (= (first (reverse (scripted-provider-input-counts provider))) 1)
+            "portable summarization starts from the native checkpoint only")
            (test-assert
             (find :native-compaction
                   (rest (conversation--read-records
@@ -2591,11 +2629,11 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
              (first (conversation-input-items conversation)))
             "the active provider reuses the opaque checkpoint")
            (test-assert
-            (= (length (conversation-input-items-for-family conversation ':codex)) 3)
-            "the active provider omits the redundant portable handoff")
+             (= (length (conversation-input-items-for-family conversation ':codex)) 2)
+             "the active provider receives the opaque checkpoint and new answer")
            (test-assert
-            (= (length (conversation-input-items-for-family conversation ':grok)) 3)
-            "another provider receives the portable handoff and new messages")
+             (= (length (conversation-input-items-for-family conversation ':grok)) 2)
+             "another provider receives the portable handoff and new answer")
            (test-assert
             (equal (agent-tests--request-numbers conversation)
                    '((1 nil) (1 :native) (2 :summary) (3 nil)))

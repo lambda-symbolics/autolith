@@ -363,7 +363,7 @@
                   :response-id    "before-native-compact"
                   :usage          '(("total_tokens" 4321))))
            (conversation-append-native-compaction
-            conversation item :family ':codex :summary "Portable handoff.")
+            conversation (list item) :family ':codex :summary "Portable handoff.")
            (test-assert
             (and (= (length (conversation-input-items conversation)) 2)
                  (native-compaction-item-p

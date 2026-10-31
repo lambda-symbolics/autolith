@@ -927,19 +927,84 @@ each attempt must stream through."
 
 (defclass native-compaction-completed-event (provider-event)
   ((usage
-    :initarg :usage
-    :reader native-compaction-completed-event-usage)
+    :initarg       :usage
+    :reader        native-compaction-completed-event-usage
+    :documentation "Reported paid usage, or NIL when the provider omitted it.")
    (response-id
-    :initarg :response-id
-    :reader native-compaction-completed-event-response-id))
-  (:documentation "A usage-only completion notification for native compaction."))
+    :initarg       :response-id
+    :reader        native-compaction-completed-event-response-id
+    :documentation "The response identifier when one was reported."))
+  (:documentation "A completion notification emitted before native output validation."))
+
+(-> provider--native-compaction-refusal-p (t) boolean)
+(defun provider--native-compaction-refusal-p (value)
+  "Recognize refusal items, including refusals nested inside message content."
+  (typecase value
+    (hash-table
+     (or (equal (json-get value "type") "refusal")
+         (non-empty-string-p (json-get value "refusal"))
+         (loop for child being the hash-values of value
+               thereis (provider--native-compaction-refusal-p child))))
+    (string
+     nil)
+    (vector
+     (some #'provider--native-compaction-refusal-p value))
+    (t
+     nil)))
+
+(-> provider--native-compaction-item-valid-p (json-object) boolean)
+(defun provider--native-compaction-item-valid-p (item)
+  "Check standard item fields while preserving unfamiliar typed protocol extensions."
+  (let ((type   (json-get item "type"))
+        (status (json-get item "status")))
+    (and (non-empty-string-p type)
+         (or (null status) (equal status "completed"))
+         (not (provider--native-compaction-refusal-p item))
+         (cond
+           ((equal type "message")
+            (and (member (json-get item "role") '("system" "developer" "user" "assistant")
+                         :test #'equal)
+                 (let ((content (json-get item "content")))
+                   (and (vectorp content) (not (stringp content))
+                        (every (lambda (part)
+                                 (and (json-object-p part)
+                                      (non-empty-string-p (json-get part "type"))
+                                      (or (not (member (json-get part "type")
+                                                       '("input_text" "output_text" "text")
+                                                       :test #'equal))
+                                          (stringp (json-get part "text")))))
+                               content)))
+                 t))
+           ((equal type "function_call")
+            (and (non-empty-string-p (json-get item "call_id"))
+                 (non-empty-string-p (json-get item "name"))
+                 (stringp (json-get item "arguments"))))
+           ((equal type "function_call_output")
+            (and (non-empty-string-p (json-get item "call_id"))
+                 (nth-value 1 (gethash "output" item))))
+           ((equal type "reasoning")
+            (let ((summary (json-get item "summary")))
+              (or (null summary) (and (vectorp summary) (not (stringp summary))))))
+           ((native-compaction-item-p item)
+            (non-empty-string-p (json-get item "encrypted_content")))
+           (t
+            t)))))
 
 (-> provider--native-compaction-window-valid-p (list) boolean)
 (defun provider--native-compaction-window-valid-p (items)
-  "Return true when ITEMS is a complete, correlatable transcript window."
+  "Reject malformed items, orphan results, duplicate correlations and missing results."
   (handler-case
-      (let ((reconciliation (clinker-transcript:reconcile-items items)))
-        (null (clinker-transcript:reconciliation-repairs reconciliation)))
+      (and (every #'provider--native-compaction-item-valid-p items)
+           (every (lambda (item)
+                    (or (not (clinker-transcript:function-call-output-item-p item))
+                        (find-if (lambda (call)
+                                   (and (clinker-transcript:function-call-item-p call)
+                                        (equal (json-get call "call_id")
+                                               (json-get item "call_id"))))
+                                 items)))
+                  items)
+           (null (clinker-transcript:reconciliation-repairs
+                  (clinker-transcript:reconcile-items items))))
     (clinker-transcript:projection-error () nil)))
 
 (-> provider--decode-native-compaction-response
@@ -950,52 +1015,47 @@ each attempt must stream through."
     (provider body &key status headers event-callback)
   "Decode BODY and return its complete normalized compacted output window.
 
-A usage-only completion event is emitted as soon as the response envelope is
-available, before validating or normalizing the returned output. Paid malformed
-responses are therefore accounted for without exposing response data."
-  (let ((source (provider--error-body-text body)))
-    (unless (non-empty-string-p source)
+Emit one completion event before response validation, including when the HTTP
+success body cannot be decoded. Unknown usage and response IDs remain NIL."
+  (let* ((source (provider--error-body-text body))
+         (response
+           (and (non-empty-string-p source)
+                (handler-case (json-decode source)
+                  (error () nil))))
+         (usage  (and (json-object-p response) (json-get response "usage")))
+         (response-id
+           (and (json-object-p response)
+                (or (json-get response "id") (json-get response "response_id")))))
+    (when (functionp event-callback)
+      (funcall event-callback
+               (make-instance 'native-compaction-completed-event
+                              :usage       (and (json-object-p usage) usage)
+                              :response-id (and (stringp response-id) response-id))))
+    (unless (json-object-p response)
       (provider--signal-invalid-native-compaction provider status headers))
-    (let ((response
-            (handler-case
-                (json-decode source)
-              (error ()
-                (provider--signal-invalid-native-compaction
-                 provider status headers)))))
-      (unless (json-object-p response)
+    (let ((output (json-get response "output")))
+      (unless (and (vectorp output) (every #'json-object-p output))
         (provider--signal-invalid-native-compaction provider status headers))
-      (let* ((usage      (json-get response "usage"))
-             (response-id (or (json-get response "id")
-                              (json-get response "response_id")))
-             (output     (json-get response "output")))
-        ;; Account usage before validating or normalizing any returned item.
-        (when (and (functionp event-callback) (json-object-p usage))
-          (funcall event-callback
-                   (make-instance 'native-compaction-completed-event
-                                  :usage usage :response-id response-id)))
-        (unless (and (vectorp output)
-                     (every #'json-object-p output))
-          (provider--signal-invalid-native-compaction provider status headers))
-        (handler-case
-            (let ((items
-                    (map 'list
-                         (lambda (item)
-                           (let ((normalized
-                                   (provider-normalize-output-item provider item)))
-                             (when (native-compaction-item-p normalized)
-                               (native-compaction-item-canonicalize normalized))
-                             normalized))
-                         output)))
-              (unless (and (every (lambda (item)
-                                    (and (json-object-p item)
-                                         (non-empty-string-p (json-get item "type"))))
-                                  items)
-                           (some #'native-compaction-item-p items)
-                           (provider--native-compaction-window-valid-p items))
-                (provider--signal-invalid-native-compaction provider status headers))
-              (values items (and (json-object-p usage) usage)))
-          (error ()
-            (provider--signal-invalid-native-compaction provider status headers)))))))
+      (handler-case
+          (let ((items
+                  (map 'list
+                       (lambda (item)
+                         (let ((normalized
+                                 (provider-normalize-output-item provider item)))
+                           (when (native-compaction-item-p normalized)
+                             (native-compaction-item-canonicalize normalized))
+                           normalized))
+                       output)))
+            (unless (and (every (lambda (item)
+                                  (and (json-object-p item)
+                                       (non-empty-string-p (json-get item "type"))))
+                                items)
+                         (provider--native-compaction-window-valid-p items))
+              (provider--signal-invalid-native-compaction provider status headers))
+            (values (and (some #'native-compaction-item-p items) items)
+                    (and (json-object-p usage) usage)))
+        (error ()
+          (provider--signal-invalid-native-compaction provider status headers))))))
 
 (defgeneric provider-attempt-native-compaction
     (provider conversation &key tool-namespaces force-refresh event-callback)
@@ -1033,9 +1093,9 @@ responses are therefore accounted for without exposing response data."
                 (unless (= status 200)
                   (provider--codex-signal-status-failure
                    provider status :headers headers :raw-body body))
-                  (provider--decode-native-compaction-response
-                   provider body :status status :headers headers
-                   :event-callback event-callback))))
+                (provider--decode-native-compaction-response
+                 provider body :status status :headers headers
+                 :event-callback event-callback))))
         (dexador.error:http-request-unauthorized (condition)
           (provider-signal-http-failure provider condition))
         (http-request-failed (condition)

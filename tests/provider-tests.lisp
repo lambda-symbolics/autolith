@@ -1100,17 +1100,17 @@
                        provider conversation
                        :tool-namespaces schemas
                        :event-callback  #'identity))))
-              (test-assert
-               (and (listp result)
-                    (= (length result) 3)
-                    (string= (json-get (first result) "role") "user")
-                    (native-compaction-item-p (second result))
-                    (string= (json-get (third result) "role") "assistant"))
-               "native compaction returns the complete ordered output window")
-              (multiple-value-bind (value present-p) (gethash "id" (second result))
-                (declare (ignore value))
-                (test-assert (not present-p)
-                             "native compaction drops transient server item identifiers")))
+             (test-assert
+              (and (listp result)
+                   (= (length result) 3)
+                   (string= (json-get (first result) "role") "user")
+                   (native-compaction-item-p (second result))
+                   (string= (json-get (third result) "role") "assistant"))
+              "native compaction returns the complete ordered output window")
+             (multiple-value-bind (value present-p) (gethash "id" (second result))
+               (declare (ignore value))
+               (test-assert (not present-p)
+                            "native compaction drops transient server item identifiers")))
            (let ((result
                    (provider--decode-native-compaction-response
                     provider

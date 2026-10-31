@@ -43,12 +43,12 @@
 (defun conversation-compaction--copy-metadata (source target items)
   "Copy family and portable-handoff metadata for ITEMS from SOURCE to TARGET."
     (dolist (key '(:family :handoff-family :checkpoint-summary))
-    (let ((from (clinker-transcript:projection-metadata-table source key))
-          (to   (clinker-transcript:projection-metadata-table target key)))
-      (dolist (item items)
-        (multiple-value-bind (value present-p) (gethash item from)
-          (when present-p
-            (setf (gethash item to) value))))))
+     (let ((from (clinker-transcript:projection-metadata-table source key))
+           (to   (clinker-transcript:projection-metadata-table target key)))
+       (dolist (item items)
+         (multiple-value-bind (value present-p) (gethash item from)
+           (when present-p
+             (setf (gethash item to) value))))))
   nil)
 
 (-> conversation-compaction-capture (conversation) conversation-compaction)
@@ -108,10 +108,10 @@ original calls so actual arrivals take precedence when publishing."
 (-> conversation-compaction--publish
     (conversation &key (:compaction conversation-compaction)
                        (:replacement-items list) (:record list)
-                       (:unfinished-work list))
+                       (:unfinished-work list) (:validate-projection (option function)))
     list)
 (defun conversation-compaction--publish
-    (conversation &key compaction replacement-items record unfinished-work)
+    (conversation &key compaction replacement-items record unfinished-work validate-projection)
   "Validate carry-forward state, publish one checkpoint, then install it.
 
 The cutoff describes the provider snapshot. THROUGH-SEQ covers the commit
@@ -139,18 +139,17 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
         (conversation-compaction--copy-metadata
          (conversation-projection conversation) projection items)
         (when (eq (first record) :native-compaction)
-          (let ((family (getf (rest record) :family))
-                (handoff (car (last replacement-items))))
+          (let ((family  (getf (rest record) :family))
+                (handoff (first (last replacement-items))))
             (dolist (item replacement-items)
-              (when (native-compaction-item-p item)
-                (setf (gethash item
-                               (clinker-transcript:projection-metadata-table projection ':family))
-                      family)))
+              (setf (gethash item
+                             (clinker-transcript:projection-metadata-table projection ':family))
+                    family))
             (setf (gethash handoff
                            (clinker-transcript:projection-metadata-table projection ':handoff-family))
                   family)))
         (when replacement-items
-          (setf (gethash (car (last replacement-items))
+          (setf (gethash (first (last replacement-items))
                          (clinker-transcript:projection-metadata-table projection ':checkpoint-summary))
                 t))
         (setf (getf (rest record) :through-seq)
@@ -167,6 +166,10 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
          projection (append items ephemeral-items))
         (conversation-compaction--copy-metadata
          (conversation-projection conversation) projection ephemeral-items)
+      (when validate-projection
+        (let ((candidate (conversation-compaction-summary-view conversation nil)))
+          (setf (slot-value candidate 'projection) projection)
+          (funcall validate-projection candidate)))
       (sb-sys:without-interrupts
         (let ((published (conversation-append-record conversation record)))
           (setf (slot-value conversation 'projection) projection
@@ -176,24 +179,26 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
 
 (-> conversation-append-summary
     (conversation string &key (:compaction (option conversation-compaction))
-                              (:unfinished-work list))
+                              (:unfinished-work list) (:validate-projection (option function)))
     list)
-(defun conversation-append-summary (conversation content &key compaction unfinished-work)
+(defun conversation-append-summary
+    (conversation content &key compaction unfinished-work validate-projection)
   "Persist CONTENT with captured protocol context and arrivals as one checkpoint."
   (conversation-compaction--publish
    conversation
-   :compaction        (or compaction (conversation-compaction-capture conversation))
-   :replacement-items (list (conversation-summary-item content))
-   :record            (list :summary :content content)
-   :unfinished-work   unfinished-work))
+   :compaction          (or compaction (conversation-compaction-capture conversation))
+   :replacement-items   (list (conversation-summary-item content))
+   :record              (list :summary :content content)
+   :unfinished-work     unfinished-work
+   :validate-projection validate-projection))
 
 (-> conversation-append-native-compaction
-    (conversation list &key (:family keyword) (:summary string)
+    (conversation (or list json-object) &key (:family keyword) (:summary string)
                              (:compaction (option conversation-compaction))
-                             (:unfinished-work list))
+                             (:unfinished-work list) (:validate-projection (option function)))
     list)
 (defun conversation-append-native-compaction
-    (conversation window &key family summary compaction unfinished-work)
+    (conversation window &key family summary compaction unfinished-work validate-projection)
   "Persist native WINDOW, portable SUMMARY, and carry-forward state atomically."
   (when (json-object-p window)
     (setf window (list window)))
@@ -209,12 +214,13 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
            :sequence (conversation-next-sequence conversation)))
   (conversation-compaction--publish
    conversation
-   :compaction        (or compaction (conversation-compaction-capture conversation))
-   :replacement-items (append window (list (conversation-summary-item summary)))
-   :record            (list :native-compaction :family family
-                            :wire-json (json-encode (coerce window 'vector))
-                            :summary summary)
-   :unfinished-work   unfinished-work))
+   :compaction          (or compaction (conversation-compaction-capture conversation))
+   :replacement-items   (append window (list (conversation-summary-item summary)))
+   :record              (list :native-compaction :family family
+                              :wire-json         (json-encode (coerce window 'vector))
+                              :summary           summary)
+   :unfinished-work     unfinished-work
+   :validate-projection validate-projection))
 
 
 ;;;; -- Checkpoint Replay --
@@ -257,14 +263,14 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
             conversation properties "A compaction carry-forward item is not an object."))
          (native-compaction-item-canonicalize item)
          (clinker-transcript:projection-append projection item)
-          (dolist (key '(:family :handoff-family :checkpoint-summary))
-           (when (member key row)
-              (unless (or (eq key ':checkpoint-summary) (null (getf row key)) (keywordp (getf row key)))
-                (conversation--record-error
-                 conversation properties "A carry-forward family is invalid."))
-            (setf (gethash item
-                             (clinker-transcript:projection-metadata-table projection key))
-                    (getf row key))))))
+         (dolist (key '(:family :handoff-family :checkpoint-summary))
+          (when (member key row)
+             (unless (or (eq key ':checkpoint-summary) (null (getf row key)) (keywordp (getf row key)))
+               (conversation--record-error
+                conversation properties "A carry-forward family is invalid."))
+           (setf (gethash item
+                            (clinker-transcript:projection-metadata-table projection key))
+                 (getf row key))))))
     (conversation-error (condition)
       (error condition))
     (error ()
@@ -321,17 +327,16 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
           (conversation--record-error
            conversation properties "A persisted native compaction window is unsupported."))
         (let* ((summary-item (conversation-summary-item summary))
-               (projection (clinker-transcript:make-projection
-                            :items (append window (list summary-item)))))
+               (projection   (clinker-transcript:make-projection
+                              :items (append window (list summary-item)))))
           (dolist (item window)
-            (when (native-compaction-item-p item)
-              (setf (gethash item
-                             (clinker-transcript:projection-metadata-table projection ':family))
-                    family)))
-            (setf (gethash summary-item
-                           (clinker-transcript:projection-metadata-table projection ':handoff-family))
-                  family
-                  (gethash summary-item
-                           (clinker-transcript:projection-metadata-table projection ':checkpoint-summary))
-                  t)
+            (setf (gethash item
+                           (clinker-transcript:projection-metadata-table projection ':family))
+                  family))
+          (setf (gethash summary-item
+                         (clinker-transcript:projection-metadata-table projection ':handoff-family))
+                family
+                (gethash summary-item
+                         (clinker-transcript:projection-metadata-table projection ':checkpoint-summary))
+                t)
           (conversation-compaction--restore conversation properties projection))))))
