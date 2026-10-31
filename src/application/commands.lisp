@@ -562,6 +562,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
                   (list "prompt cache"
                         (application--prompt-cache-description usage)))
              (list "cost" (application--cost-description configuration))
+             (list "memory" (application--retention-description application))
              (list "context"
                    (multiple-value-bind (used estimated-p)
                        (application-context-usage application)
