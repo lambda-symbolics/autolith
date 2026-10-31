@@ -185,6 +185,56 @@ to the run."
              (list :child-trace (getf result ':trace)
                    :tokens      (getf result ':tokens))))))
 
+(-> rlm-endpoint--child-route (rlm-endpoint t t) (values (option string) (option string)))
+(defun rlm-endpoint--child-route (endpoint model effort)
+  "Validate a child frame's MODEL and EFFORT against ENDPOINT's root route.
+
+A child may use any model the root's provider offers, at no more than the
+root's reasoning effort, and only at an effort its model supports. NIL keeps
+the root's choice. Return the model and effort."
+  (let* ((configuration (rlm-endpoint--configuration endpoint))
+         (efforts       *supported-reasoning-efforts*))
+    (flet ((refuse (control &rest arguments)
+             "Signal an inference error describing the refused route."
+             (error 'rlm-inference-error
+                    :message (apply #'format nil control arguments))))
+      (when model
+        (unless (non-empty-string-p model)
+          (refuse "A child model must be a model name, not ~S." model))
+        (let ((problem (configuration--model-problem model configuration)))
+          (when problem
+            (refuse "~A" problem))))
+      (when effort
+        (let ((root (config :reasoning-effort configuration)))
+          (unless (and (stringp effort) (member effort efforts :test #'string=))
+            (refuse "A child effort must be one of ~{~A~^, ~}, not ~S." efforts effort))
+          (when (> (position effort efforts :test #'string=)
+                   (or (position root efforts :test #'string=) (length efforts)))
+            (refuse "A child frame's effort ~A may not exceed the root's ~A." effort root))
+          (unless (member effort
+                          (configuration--reasoning-efforts-for
+                           (or model (config :model configuration))
+                           (config :model-provider configuration))
+                          :test #'string=)
+            (refuse "The model ~A does not support the effort ~A."
+                    (or model (config :model configuration)) effort))))
+      (values model effort))))
+
+(-> rlm-endpoint--routed-tasks (rlm-endpoint t list) list)
+(defun rlm-endpoint--routed-tasks (endpoint tasks arguments)
+  "Return TASKS as plists carrying validated models and efforts.
+
+A task's own :MODEL and :EFFORT win over the call's in ARGUMENTS."
+  (mapcar (lambda (task)
+            (let ((item (rlm-map--normalize-task task)))
+              (multiple-value-bind (model effort)
+                  (rlm-endpoint--child-route
+                   endpoint
+                   (or (getf item ':model) (getf arguments ':model))
+                   (or (getf item ':effort) (getf arguments ':effort)))
+                (list* :model model :effort effort item))))
+          tasks))
+
 (-> rlm-endpoint--handles (list) list)
 (defun rlm-endpoint--handles (arguments)
   "Return the handle list in proxied ARGUMENTS, accepting one handle string."
@@ -250,20 +300,26 @@ to the run."
                        (format nil "No decomposition policy is named ~S."
                                policy)))
               (multiple-value-bind (value trace-identifier tokens-spent)
-                  (rlm-run task
-                           :policy            policy
-                           :context           (rlm--context-designators
-                                               (getf arguments ':context))
-                           :contract          (or (getf arguments ':contract) ':text)
-                           :budget            run-budget
-                           :provider          provider
-                           :configuration     configuration
-                           :activity-callback activity-callback
-                           :concurrency
-                           (let ((requested (getf arguments ':concurrency)))
-                             (if (and (integerp requested) (plusp requested))
-                                 requested
-                                 *rlm-map-default-concurrency*)))
+                  (multiple-value-bind (model effort)
+                      (rlm-endpoint--child-route endpoint
+                                                 (getf arguments ':model)
+                                                 (getf arguments ':effort))
+                   (rlm-run task
+                            :model             model
+                            :effort            effort
+                            :policy            policy
+                            :context           (rlm--context-designators
+                                                (getf arguments ':context))
+                            :contract          (or (getf arguments ':contract) ':text)
+                            :budget            run-budget
+                            :provider          provider
+                            :configuration     configuration
+                            :activity-callback activity-callback
+                            :concurrency
+                            (let ((requested (getf arguments ':concurrency)))
+                              (if (and (integerp requested) (plusp requested))
+                                  requested
+                                  *rlm-map-default-concurrency*))))
                 (rlm-endpoint--record endpoint
                                       (list :operation   :run
                                             :task        task
@@ -279,13 +335,19 @@ to the run."
               (error 'rlm-inference-error
                      :message "An environment infer call requires task text."))
             (multiple-value-bind (value trace-identifier tokens-spent)
-                (infer task
-                       :context           (getf arguments ':context)
-                       :contract          (or (getf arguments ':contract) ':text)
-                       :budget            (rlm-budget-descend budget :task task)
-                       :provider          provider
-                       :configuration     configuration
-                       :activity-callback activity-callback)
+                (multiple-value-bind (model effort)
+                    (rlm-endpoint--child-route endpoint
+                                               (getf arguments ':model)
+                                               (getf arguments ':effort))
+                 (infer task
+                        :model             model
+                        :effort            effort
+                        :context           (getf arguments ':context)
+                        :contract          (or (getf arguments ':contract) ':text)
+                        :budget            (rlm-budget-descend budget :task task)
+                        :provider          provider
+                        :configuration     configuration
+                        :activity-callback activity-callback))
               (rlm-endpoint--record endpoint
                                     (list :operation   :infer
                                           :task        task
@@ -304,7 +366,7 @@ to the run."
                      (format nil "An environment map call fans out 1 to ~D tasks."
                              *rlm-endpoint-map-maximum-tasks*)))
             (let ((results
-                    (rlm-map tasks
+                    (rlm-map (rlm-endpoint--routed-tasks endpoint tasks arguments)
                              :contract          (or (getf arguments ':contract) ':text)
                              :budget            (rlm-budget-descend budget :task "rlm-map")
                              :provider          provider
@@ -340,7 +402,7 @@ to the run."
                              *rlm-endpoint-map-maximum-tasks*)))
             (let ((handles (rlm-frame-set-submit
                             (rlm-endpoint--frame-set endpoint :create-p t)
-                            tasks
+                            (rlm-endpoint--routed-tasks endpoint tasks arguments)
                             :contract (getf arguments ':contract))))
               (rlm-endpoint--record endpoint (list :operation :submit :handles handles))
               (list :rlm-response :status :ok :value handles))))
