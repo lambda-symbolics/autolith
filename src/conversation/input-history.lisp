@@ -27,26 +27,47 @@ a nonlocal exit."
                   (conversation-input-history-pathname (conversation-pathname conversation)))))))
   nil)
 
-(-> conversation-input-history-newest (conversation (integer 0)) list)
-(defun conversation-input-history-newest (conversation limit)
-  "Return CONVERSATION's newest LIMIT editable inputs in chronological order.
+(-> conversation-input-history-page
+    (conversation &key (:skip (integer 0)) (:limit (integer 0)))
+    list)
+(defun conversation-input-history-page (conversation &key (skip 0) limit)
+  "Return up to LIMIT editable inputs just older than the newest SKIP, oldest first.
 
-Only LIMIT inputs are ever held while the sidecar streams."
-  (let ((inputs (make-deque :maximum-count (max 1 limit))))
-    (unless (zerop limit)
-      (conversation-map-input-history conversation
-                                      (lambda (input)
-                                        (deque-push-back inputs input))))
-    (if (zerop limit)
-        nil
-        (deque->list inputs))))
+Consecutive repeats count once, as a line editor records them, so SKIP can be
+the number of entries an editor already holds. The sidecar streams twice,
+once to count and once to collect, so only the page is ever held."
+  (flet ((map-recalled (function)
+           (let ((previous nil))
+             (conversation-map-input-history
+              conversation
+              (lambda (input)
+                (unless (and previous (string= input previous))
+                  (funcall function input))
+                (setf previous input))))))
+    (let ((total 0)
+          (index 0)
+          (page  nil))
+      (map-recalled (lambda (input)
+                      (declare (ignore input))
+                      (incf total)))
+      (let ((end   (- total skip))
+            (start (max 0 (- total skip limit))))
+        (when (plusp end)
+          (block collect
+            (map-recalled (lambda (input)
+                            (when (>= index end)
+                              (return-from collect))
+                            (when (>= index start)
+                              (push input page))
+                            (incf index))))))
+      (nreverse page))))
 
 (-> conversation-input-history (conversation) list)
 (defun conversation-input-history (conversation)
   "Return all editable inputs of CONVERSATION in chronological order.
 
 The list is built for this call and not retained. Prefer
-CONVERSATION-INPUT-HISTORY-NEWEST or CONVERSATION-MAP-INPUT-HISTORY when only
+CONVERSATION-INPUT-HISTORY-PAGE or CONVERSATION-MAP-INPUT-HISTORY when only
 part of a long history is needed."
   (let ((inputs nil))
     (conversation-map-input-history conversation (lambda (input) (push input inputs)))

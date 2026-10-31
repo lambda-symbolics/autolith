@@ -197,8 +197,9 @@ jumps between as messages."
                    :terminal                terminal
                    :editor                  (or editor
                                                 (line-editor-create
-                                                 :history-limit *terminal-history-limit*
-                                                 :auto-pair-p   t))
+                                                 :history-limit           *terminal-history-limit*
+                                                 :history-character-limit *terminal-history-character-limit*
+                                                 :auto-pair-p             t))
                    :live-region             live-region
                    :clock-function          clock-function
                    :prompt                  prompt
@@ -222,12 +223,22 @@ jumps between as messages."
        (with-recursive-lock-held ((terminal-ui-lock ,locked-ui))
          ,@body))))
 
-(-> terminal-ui-load-history (terminal-ui list) terminal-ui)
-(defun terminal-ui-load-history (ui entries)
-  "Replace editor history with sanitized application input entries."
+(-> terminal-ui-load-history (terminal-ui list &key (:older-function (option function)))
+    terminal-ui)
+(defun terminal-ui-load-history (ui entries &key older-function)
+  "Replace editor history with sanitized application input ENTRIES.
+
+OLDER-FUNCTION, when given, receives the resident entry count once history
+traversal passes the oldest entry and returns the inputs just older than
+them, oldest first, so the complete history stays recallable without staying
+resident."
   (with-terminal-ui-locked (ui)
-    (clinedi:line-editor-replace-history (terminal-ui-editor ui)
-                                         (mapcar #'sanitize-text entries)))
+    (let ((editor (terminal-ui-editor ui)))
+      (clinedi:line-editor-replace-history editor (mapcar #'sanitize-text entries))
+      (setf (clinedi:line-editor-history-older-function editor)
+            (and older-function
+                 (lambda (depth)
+                   (mapcar #'sanitize-text (funcall older-function depth)))))))
   ui)
 
 (-> terminal-ui--call-with-lock-if-available
