@@ -13,8 +13,8 @@ The plist holds :TRANSCRIPT-CHUNKS, :TRANSCRIPT-CHARACTERS and
 :TRANSCRIPT-EVICTED, all NIL without a fullscreen transcript;
 :FINALIZED-IDENTIFIERS; :INPUT-RECALL-ENTRIES and :INPUT-RECALL-CHARACTERS;
 :TRACE-CONVERSATIONS and :TRACE-CHARACTERS; :KNOWLEDGE-CLAIMS,
-:KNOWLEDGE-SUPPORTS and :KNOWLEDGE-EVIDENCE, NIL when the knowledge log cannot
-be read; and :HEAP-BYTES, the dynamic space in use."
+:KNOWLEDGE-SUPPORTS, :KNOWLEDGE-EVIDENCE and :KNOWLEDGE-ARCHIVED, the retracted
+supports kept only in the log, all NIL when the knowledge log cannot be read; and :HEAP-BYTES, the dynamic space in use."
   (let* ((ui       (application-ui application))
          (viewport (and (typep ui 'fullscreen-terminal-ui)
                         (fullscreen-terminal-ui-viewport ui)))
@@ -35,6 +35,7 @@ be read; and :HEAP-BYTES, the dynamic space in use."
           :knowledge-claims        (and base (hash-table-count (knowledge-base-claims base)))
           :knowledge-supports      (and base (hash-table-count (knowledge-base-supports base)))
           :knowledge-evidence      (and base (hash-table-count (knowledge-base-evidence base)))
+          :knowledge-archived      (and base (knowledge-base-archived-supports base))
           :heap-bytes              (sb-kernel:dynamic-usage))))
 
 (-> application--retention-description (application) string)
