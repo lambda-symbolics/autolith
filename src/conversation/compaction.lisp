@@ -42,7 +42,7 @@
     (clinker-transcript:projection clinker-transcript:projection list) null)
 (defun conversation-compaction--copy-metadata (source target items)
   "Copy family and portable-handoff metadata for ITEMS from SOURCE to TARGET."
-  (dolist (key '(:family :handoff-family))
+    (dolist (key '(:family :handoff-family :checkpoint-summary))
     (let ((from (clinker-transcript:projection-metadata-table source key))
           (to   (clinker-transcript:projection-metadata-table target key)))
       (dolist (item items)
@@ -98,7 +98,7 @@ original calls so actual arrivals take precedence when publishing."
 (defun conversation-compaction--serialize-item (projection item)
   "Encode ITEM and its family metadata as one portable carry-forward row."
   (let ((row (list :wire-json (json-encode item))))
-    (dolist (key '(:family :handoff-family))
+    (dolist (key '(:family :handoff-family :checkpoint-summary))
       (multiple-value-bind (value present-p)
           (gethash item (clinker-transcript:projection-metadata-table projection key))
         (when present-p
@@ -136,22 +136,8 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
            (ephemeral-items
              (mapcar (lambda (entry) (getf entry :item))
                      (conversation-ephemeral-input-entries conversation))))
-      (conversation-compaction--copy-metadata
-       (conversation-projection conversation) projection items)
-      (setf (getf (rest record) :through-seq)
-            (1- (conversation-next-sequence conversation))
-            (getf (rest record) :cutoff-seq)
-            (conversation-compaction-cutoff-sequence compaction)
-            (getf (rest record) :carry-forward)
-            (mapcar (lambda (item)
-                      (conversation-compaction--serialize-item projection item))
-                    (nthcdr (length replacement-items) items))
-            (getf (rest record) :unfinished-work) unfinished-work)
-      ;; Prepare all state before durable publication, including transient items.
-      (clinker-transcript:projection-replace
-       projection (append items ephemeral-items))
-      (conversation-compaction--copy-metadata
-       (conversation-projection conversation) projection ephemeral-items)
+        (conversation-compaction--copy-metadata
+         (conversation-projection conversation) projection items)
         (when (eq (first record) :native-compaction)
           (let ((family (getf (rest record) :family))
                 (handoff (car (last replacement-items))))
@@ -163,6 +149,24 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
             (setf (gethash handoff
                            (clinker-transcript:projection-metadata-table projection ':handoff-family))
                   family)))
+        (when replacement-items
+          (setf (gethash (car (last replacement-items))
+                         (clinker-transcript:projection-metadata-table projection ':checkpoint-summary))
+                t))
+        (setf (getf (rest record) :through-seq)
+              (1- (conversation-next-sequence conversation))
+              (getf (rest record) :cutoff-seq)
+              (conversation-compaction-cutoff-sequence compaction)
+              (getf (rest record) :carry-forward)
+              (mapcar (lambda (item)
+                        (conversation-compaction--serialize-item projection item))
+                      (nthcdr (length replacement-items) items))
+              (getf (rest record) :unfinished-work) unfinished-work)
+        ;; Prepare all state before durable publication, including transient items.
+        (clinker-transcript:projection-replace
+         projection (append items ephemeral-items))
+        (conversation-compaction--copy-metadata
+         (conversation-projection conversation) projection ephemeral-items)
       (sb-sys:without-interrupts
         (let ((published (conversation-append-record conversation record)))
           (setf (slot-value conversation 'projection) projection
@@ -244,7 +248,7 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
                     (let ((keys (plist-keys row)))
                       (and (= (length keys) (length (remove-duplicates keys)))
                            (every (lambda (key)
-                                    (member key '(:wire-json :family :handoff-family))) keys))))
+                                      (member key '(:wire-json :family :handoff-family :checkpoint-summary))) keys))))
            (conversation--record-error
             conversation properties "A compaction carry-forward row is invalid."))
        (let ((item (json-decode (getf row :wire-json))))
@@ -253,14 +257,14 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
             conversation properties "A compaction carry-forward item is not an object."))
          (native-compaction-item-canonicalize item)
          (clinker-transcript:projection-append projection item)
-         (dolist (key '(:family :handoff-family))
+          (dolist (key '(:family :handoff-family :checkpoint-summary))
            (when (member key row)
-            (unless (or (null (getf row key)) (keywordp (getf row key)))
+              (unless (or (eq key ':checkpoint-summary) (null (getf row key)) (keywordp (getf row key)))
                 (conversation--record-error
                  conversation properties "A carry-forward family is invalid."))
             (setf (gethash item
-                           (clinker-transcript:projection-metadata-table projection key))
-                  (getf row key))))))
+                             (clinker-transcript:projection-metadata-table projection key))
+                    (getf row key))))))
     (conversation-error (condition)
       (error condition))
     (error ()
@@ -324,7 +328,10 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
               (setf (gethash item
                              (clinker-transcript:projection-metadata-table projection ':family))
                     family)))
-          (setf (gethash summary-item
-                         (clinker-transcript:projection-metadata-table projection ':handoff-family))
-                family)
+            (setf (gethash summary-item
+                           (clinker-transcript:projection-metadata-table projection ':handoff-family))
+                  family
+                  (gethash summary-item
+                           (clinker-transcript:projection-metadata-table projection ':checkpoint-summary))
+                  t)
           (conversation-compaction--restore conversation properties projection))))))
