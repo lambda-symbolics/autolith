@@ -357,6 +357,36 @@ gpt-6.1-terra is assumed to, like gpt-5.6-terra, until upstream lists it.")
       (format nil "Unsupported reasoning effort ~S for model ~A. The choices are ~{~A~^, ~}."
               effort model efforts))))
 
+(-> configuration--model-prices-problem (t t) (option string))
+(defun configuration--model-prices-problem (value configuration)
+  "Return why VALUE is not a JSON map of model names to token price objects."
+  (declare (ignore configuration))
+  (flet ((rate-p (rates name &key optional-p)
+           "Return true when RATES holds a valid NAME rate."
+           (let ((rate (json-get rates name)))
+             (or (and optional-p (null rate))
+                 (and (realp rate) (>= rate 0))))))
+    (cond
+      ((and (stringp value) (zerop (length value)))
+       nil)
+      ((not (stringp value))
+       "Model prices must be a JSON string.")
+      (t
+       (handler-case
+           (let ((prices (json-decode value)))
+             (if (json-object-p prices)
+                 (loop for model being the hash-keys of prices using (hash-value rates)
+                       unless (and (non-empty-string-p model)
+                                   (json-object-p rates)
+                                   (rate-p rates "input")
+                                   (rate-p rates "output")
+                                   (rate-p rates "cache_read" :optional-p t)
+                                   (rate-p rates "cache_write" :optional-p t))
+                         return (format nil "Model price entry ~S needs nonnegative input and output rates." model))
+                 "Model prices must be a JSON object keyed by model name."))
+         (json-error ()
+           "Model prices must be valid JSON."))))))
+
 (-> configuration--openrouter-provider-routing-problem (t t) (option string))
 (defun configuration--openrouter-provider-routing-problem (value configuration)
   "Return why VALUE is not a JSON map of wire models to provider preference objects."

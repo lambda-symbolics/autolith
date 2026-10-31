@@ -799,6 +799,7 @@
   test-provider-tool-choice
   test-provider-prompt-cache-ttl
   test-provider-shared-items-breakpoint
+  test-provider-cost
   test-provider-native-compaction
   test-provider-rate-limits
   test-provider-context-presentation
