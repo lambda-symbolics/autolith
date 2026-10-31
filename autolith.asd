@@ -317,6 +317,7 @@
                                           (:file "application/recovery")
                                           (:file "application/task-inspector")
                                           (:file "application/context-presentation")
+                                          (:file "application/retention")
                                           (:file "application/commands")
                                           (:file "application/memory-commands")
                                           (:file "application/knowledge-commands")

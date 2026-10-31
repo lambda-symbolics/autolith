@@ -3972,6 +3972,13 @@
                       (application-render-records application))
              (let ((oldest (reduce #'min (numbers))))
                (test-assert (> oldest 2) "the bounded transcript evicted the oldest messages")
+               (let ((retention (application-retention application)))
+                 (test-assert (and (<= (getf retention :transcript-characters) 1500)
+                                   (plusp (getf retention :transcript-evicted))
+                                   (plusp (getf retention :heap-bytes))
+                                   (search "chunks evicted"
+                                           (application--retention-description application)))
+                              "the retention report shows the bounded transcript"))
                (application-render-history application)
                (let ((loaded (last (numbers) 2)))
                  (test-assert (equal loaded (list (- oldest 2) (- oldest 1)))

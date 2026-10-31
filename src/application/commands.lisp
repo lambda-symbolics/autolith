@@ -548,6 +548,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
              (and (getf usage :cache-seen-p)
                   (list "prompt cache"
                         (application--prompt-cache-description usage)))
+             (list "memory" (application--retention-description application))
              (list "context"
                    (multiple-value-bind (used estimated-p)
                        (application-context-usage application)
