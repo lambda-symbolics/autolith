@@ -493,6 +493,7 @@
 
 (define-test-suite learning
   test-action-traces
+  test-action-trace-residency
   test-procedure-templates
   test-procedure-lifecycle
   test-procedure-mining
