@@ -252,16 +252,14 @@ version and definition provenance or complete usage measurements do not count."
   (let* ((entry   (knowledge-base-procedure (knowledge-base-read configuration)
                                             (knowledge--workspace configuration) identifier))
          (version (and entry (procedure-entry-runnable-version entry)))
-         (traces  (and version
-                       (action-traces configuration
-                                      :predicate (lambda (trace)
-                                                   (procedure--ran-p trace identifier version))))))
-    (and traces
-         (list :turns    (length traces)
-               :requests (round (reduce #'+ traces :key #'action-trace-requests)
-                                (length traces))
-               :tokens   (round (reduce #'+ traces :key #'action-trace-tokens)
-                                (length traces))))))
+         (runs    (and version
+                       (action-trace-procedure-measurements
+                        configuration identifier :version   (getf version :version)
+                                                 :procedure (getf version :procedure)))))
+    (and runs
+         (list :turns    (length runs)
+               :requests (round (reduce #'+ runs :key #'first) (length runs))
+               :tokens   (round (reduce #'+ runs :key #'second) (length runs))))))
 
 (-> procedure-automatic-offer (configuration string) (option list))
 (defun procedure-automatic-offer (configuration text)
@@ -440,22 +438,6 @@ are checked again against actual results by the ordinary call dispatch."
          (< (getf savings :requests) (getf baseline :requests))
          (< (getf savings :tokens) (getf baseline :tokens))
          t)))
-
-(-> procedure--ran-p (action-trace string list) boolean)
-(defun procedure--ran-p (trace identifier version)
-  "Return true when TRACE completed a measured model run of IDENTIFIER's exact VERSION."
-  (and (action-trace-accepted-p trace)
-       (plusp (action-trace-requests trace))
-       (action-trace-usage-known-p trace)
-       (find-if (lambda (call)
-                  (and (equal (getf call :tool) "procedure.run")
-                       (eq (getf call :status) ':ok)
-                       (json-object-p (getf call :arguments))
-                       (equal (json-get (getf call :arguments) "id") identifier)
-                       (eql (getf call :procedure-version) (getf version :version))
-                       (equal (getf call :procedure) (getf version :procedure))))
-                (action-trace-calls trace))
-       t))
 
 (-> procedure--coerce (list t) t)
 (defun procedure--coerce (parameter value)
