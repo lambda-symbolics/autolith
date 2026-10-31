@@ -257,7 +257,8 @@ previous reads or prefix fingerprints, do not infer a loss from full input."
 :LOST-TOKENS is measured lost cache reads for :SHRUNK, NIL for :STALLED.
 :HISTORY-GROWTH-CHARACTERS measures newly shared history behind a stalled cache,
 not uncached tokens. :CAUSE is a local observation, not a proven cache cause.
-Requests without comparable counters or sufficient evidence return NIL."
+Requests without comparable counters or sufficient evidence return NIL.
+:WIRE-CHANGE compares the final requests as sent, separately from usage."
   (block nil
     (unless baseline
       (return nil))
@@ -294,4 +295,8 @@ Requests without comparable counters or sufficient evidence return NIL."
                 :instructions-uncached
                 (prompt-cache--attribution-uncached usage "instructions")
                 :tools-uncached
-                (prompt-cache--attribution-uncached usage "tools")))))))
+                (prompt-cache--attribution-uncached usage "tools")
+                :wire-change
+                (provider-cache-wire-change
+                 (getf (prompt-cache-baseline-prefix baseline) :wire)
+                 (getf prefix :wire))))))))

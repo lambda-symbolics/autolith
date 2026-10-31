@@ -337,7 +337,60 @@
       (test-assert
        (and completed (= (length (getf completed :items)) 1)
             (plusp (provider-cache-prefix-characters completed)))
-       "agent completion carries the fingerprinted user history, excluding temporary context")))
+       "agent completion carries the fingerprinted user history, excluding temporary context")
+      (test-assert (and (getf (getf completed :wire) :items)
+                        (assoc "model" (getf (getf completed :wire) :fields) :test #'string=))
+                   "agent completion carries the plan of the final request")))
+  nil)
+
+(-> prompt-cache-tests--wire-request (&key (:tools string) (:texts list) (:ttl (option string)))
+    json-object)
+(defun prompt-cache-tests--wire-request (&key (tools "read") (texts '("a" "b" "c")) ttl)
+  "Return a Messages-shaped request with TOOLS, one message per text and a marker on the last."
+  (let ((messages (mapcar (lambda (text)
+                            (json-object "role" "user"
+                                         "content" (json-array
+                                                    (json-object "type" "text" "text" text))))
+                          texts)))
+    (setf (gethash "cache_control"
+                   (aref (json-get (first (last messages)) "content") 0))
+          (if ttl
+              (json-object "type" "ephemeral" "ttl" ttl)
+              (json-object "type" "ephemeral")))
+    (json-object "model"    "claude-test"
+                 "tools"    (json-array (json-object "name" tools))
+                 "messages" (coerce messages 'vector))))
+
+(-> test-prompt-cache-wire-plan () null)
+(defun test-prompt-cache-wire-plan ()
+  "Name the final-request fields, first changed item and markers that differ."
+  (let* ((base (provider-cache-wire-plan (prompt-cache-tests--wire-request)))
+         (code-assist
+           (provider-cache-wire-plan
+            (json-object "project" "p" "request" (prompt-cache-tests--wire-request)))))
+    (test-assert (and (equal (mapcar #'first (getf base :fields)) '("model" "tools"))
+                      (= (length (getf base :items)) 3)
+                      (equal (getf base :breakpoints) '((("messages" 2 "content" 0) nil))))
+                 "a plan fingerprints fields, items and cache markers")
+    (test-assert (equal base code-assist)
+                 "a Code Assist envelope is measured through its inner request")
+    (dolist (case '((()                              nil         nil nil "repeated requests")
+                    ((:texts ("a" "b" "c" "d"))      nil         2   t   "appended items behind a moved marker")
+                    ((:texts ("a" "x" "c"))          nil         1   nil "an edited item")
+                    ((:texts ("a" "b"))              nil         1   t   "removed items")
+                    ((:tools "write")                ("tools")   nil nil "changed tools")
+                    ((:ttl "1h")                     nil         2   t   "a new marker lifetime")))
+      (destructuring-bind (arguments fields first-changed moved-p description) case
+        (let ((change (provider-cache-wire-change
+                       base
+                       (provider-cache-wire-plan
+                        (apply #'prompt-cache-tests--wire-request arguments)))))
+          (test-assert (and (equal (getf change :fields) fields)
+                            (eql (getf change :first-changed-item) first-changed)
+                            (eq (getf change :breakpoints-moved-p) moved-p))
+                       (format nil "the change describes ~A" description)))))
+    (test-assert (null (provider-cache-wire-change nil base))
+                 "a request without a previous plan reports no change"))
   nil)
 
 (-> test-prompt-cache-miss-notices () null)
@@ -415,6 +468,15 @@
                (test-assert (equal (mapcar #'terminal-span-text counts)
                                    (mapcar #'application--token-count-description '(32000 0 33000)))
                             "the renderer reports lost reuse, cache reads and input"))
+             (test-assert
+              (equal (terminal-span-text
+                      (first (last (application--prompt-cache-miss-notice
+                                    '(:kind :shrunk :lost-tokens 32000 :cached-tokens 0
+                                      :prompt-tokens 33000
+                                      :wire-change (:fields ("tools") :first-changed-item 4
+                                                    :items 9 :breakpoints-moved-p t))))))
+                     " · request tools changed, item 5 of 9 changed, cache markers moved")
+              "the notice names what changed in the request as sent")
              (setf (application-prompt-cache-baseline application)
                    (make-instance 'prompt-cache-baseline
                                   :prompt-tokens 72000
