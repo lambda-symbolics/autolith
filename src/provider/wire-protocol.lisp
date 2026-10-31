@@ -59,13 +59,6 @@ local retention estimate, which only schedules pruning and idle compaction."
                      (list :wire (provider-cache-wire-plan request)))))
   nil)
 
-(defmethod provider-stream-turn :around
-    ((provider model-provider) (conversation conversation)
-     &key tool-namespaces event-callback goal-context compaction-p)
-  "Confine cache fingerprints to one provider operation, including its retries."
-  (let ((*provider-cache-request-prefix* nil))
-    (call-next-method)))
-
 (defmethod provider-request-object :around
     ((provider model-provider) (projection cl-llm-provider-api:wire-request)
      (tool-namespaces vector) &key goal-context compaction-p)

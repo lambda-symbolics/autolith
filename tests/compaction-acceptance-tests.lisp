@@ -56,8 +56,8 @@
 (defun test-compaction-summary-acceptance ()
   "Reject malformed, refused and incomplete paid summaries without replacing history."
   (let* ((valid (agent-test-compaction-message))
-         (text (provider-result-assistant-text
-                (agent-test-result "text" (list valid) :turn-completion ':end))))
+         (text  (provider-result-assistant-text
+                 (agent-test-result "text" (list valid) :turn-completion ':end))))
     (dolist (case (list (list (list valid) ':end t)
                        (list (list valid) ':continue nil)
                        (list (list valid) ':unspecified nil)
@@ -73,12 +73,12 @@
       (destructuring-bind (items completion accepted-p) case
         (with-test-configuration (configuration)
           (let* ((conversation (conversation-create configuration))
-                 (result (agent-test-result "paid-summary" items :turn-completion completion))
-                 (provider (make-instance 'scripted-provider :configuration configuration :results (list result)))
-                 (agent (agent-create :configuration configuration :conversation conversation
-                                      :provider provider :tool-registry (agent-test-registry) :worker nil)))
+                 (result       (agent-test-result "paid-summary" items :turn-completion completion))
+                 (provider     (make-instance 'scripted-provider :configuration configuration :results (list result)))
+                 (agent        (agent-create :configuration configuration :conversation conversation
+                                             :provider provider :tool-registry (agent-test-registry) :worker nil)))
             (conversation-append-user-message conversation "retain exact source evidence")
-            (let ((before (mapcar #'json-encode (conversation-input-items conversation)))
+            (let ((before                                      (mapcar #'json-encode (conversation-input-items conversation)))
                   (*agent-compaction-maximum-summary-requests* 1))
               (test-assert (eq accepted-p (not (null (agent--compaction-summary-usable-p result))))
                            "only a completed structured refusal-free handoff is usable")
@@ -105,12 +105,12 @@
   (dolist (invalid-p '(nil t))
     (with-test-configuration (configuration)
       (let* ((conversation (conversation-create configuration))
-             (provider (make-instance 'scripted-provider :configuration configuration
-                                      :results (list (agent-test-result "summary"
-                                                                       (list (agent-test-compaction-message))
-                                                                       :turn-completion ':end))))
-             (agent (agent-create :configuration configuration :conversation conversation
-                                  :provider provider :tool-registry (agent-test-registry) :worker nil)))
+             (provider     (make-instance 'scripted-provider :configuration configuration
+                                          :results                          (list (agent-test-result "summary"
+                                                                                                    (list (agent-test-compaction-message))
+                                                                                                    :turn-completion ':end))))
+             (agent        (agent-create :configuration configuration :conversation conversation
+                                         :provider provider :tool-registry (agent-test-registry) :worker nil)))
         (conversation-append-user-message conversation "native source")
         (test-call-with-function-replacements
          (list (list 'provider-native-compact-conversation
@@ -139,15 +139,15 @@
     (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "50000"))
       (with-test-configuration (configuration)
         (let* ((conversation (conversation-create configuration))
-               (provider (make-instance 'compaction-admission-test-provider
-                                        :configuration configuration
-                                        :results (list (agent-test-result "summary"
-                                                                         (list (agent-test-compaction-message))
-                                                                         :turn-completion ':end))))
-               (observer (make-instance 'compaction-admission-test-observer
-                                        :cap (if large-mcp-p 1000 50000)))
-               (agent (agent-create :configuration configuration :conversation conversation
-                                    :provider provider :tool-registry (agent-test-registry) :worker nil)))
+               (provider     (make-instance 'compaction-admission-test-provider
+                                            :configuration configuration
+                                            :results       (list (agent-test-result "summary"
+                                                                                   (list (agent-test-compaction-message))
+                                                                                   :turn-completion ':end))))
+               (observer     (make-instance 'compaction-admission-test-observer
+                                            :cap (if large-mcp-p 1000 50000)))
+               (agent        (agent-create :configuration configuration :conversation conversation
+                                           :provider provider :tool-registry (agent-test-registry) :worker nil)))
           (conversation-append-user-message conversation "original source")
           (let ((before (mapcar #'json-encode (conversation-input-items conversation))))
             (test-call-with-function-replacements
@@ -155,11 +155,11 @@
                          (lambda (registry)
                            (declare (ignore registry))
                            (when large-mcp-p
-                           (loop for index below 2
-                                 collect (make-context-contribution
-                                          :identifier (format nil "large-mcp-~D" index)
-                                          :priority 1000 :class ':mandatory
-                                          :instruction (make-string 120000 :initial-element #\x)))))))
+                            (loop for index below 2
+                                  collect (make-context-contribution
+                                           :identifier  (format nil "large-mcp-~D" index)
+                                           :priority 1000 :class ':mandatory
+                                           :instruction (make-string 120000 :initial-element #\x)))))))
              (lambda ()
                (test-assert
                 (handler-case
@@ -179,17 +179,17 @@
 (defun test-compaction-repeated-continuation-accounting ()
   "Continue through repeated checkpoints and reloads with exact request accounting."
   (with-test-configuration (configuration)
-    (let* ((conversation (conversation-create configuration))
-           (provider (make-instance 'compaction-admission-test-provider
-                                    :configuration configuration
-                                    :results (loop repeat 3 append
-                                               (list (agent-test-result "summary"
-                                                                        (list (agent-test-compaction-message))
-                                                                        :turn-completion ':end)
-                                                     (agent-test-result "answer" (list (agent-test-message "verified"))
-                                                                        :turn-completion ':end)))))
-           (observer (make-instance 'compaction-admission-test-observer :cap 1000))
-           (pending nil)
+    (let* ((conversation                           (conversation-create configuration))
+           (provider                               (make-instance 'compaction-admission-test-provider
+                                                                  :configuration configuration
+                                                                  :results       (loop repeat 3 append
+                                                                                   (list (agent-test-result "summary"
+                                                                                                            (list (agent-test-compaction-message))
+                                                                                                            :turn-completion ':end)
+                                                                                         (agent-test-result "answer" (list (agent-test-message "verified"))
+                                                                                                            :turn-completion ':end)))))
+           (observer                               (make-instance 'compaction-admission-test-observer :cap 1000))
+           (pending                                nil)
            (*agent-restricted-maximum-tool-rounds* 0))
       (test-call-with-function-replacements
        (list (list 'agent-should-compact-p

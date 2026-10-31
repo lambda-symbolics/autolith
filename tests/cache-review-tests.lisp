@@ -28,24 +28,24 @@
               (setf (config :prompt-cache-ttl configuration) ttl)
               (test-assert (= seconds (provider-prompt-cache-retention-seconds provider configuration))
                            "the local estimate follows the requested wire lifetime")
-              (let* ((identity (list (provider-family provider) model))
+              (let* ((identity     (list (provider-family provider) model))
                      (conversation (conversation-create configuration)))
                 (conversation-append-user-message conversation "start")
                 (conversation-append-provider-metadata conversation
                                                       (list :request-number 1 :request-identity identity))
                 (conversation-append-provider-item conversation (precompaction-tests--call "large"))
                 (conversation-append-tool-result conversation "large" :tool-name "shell.run"
-                                                 :output (make-string 10000 :initial-element #\x)
-                                                 :success-p nil)
+                                                 :output                         (make-string 10000 :initial-element #\x)
+                                                 :success-p                      nil)
                 (conversation-append-user-message conversation "next")
                 (let ((loaded (conversation-load (conversation-pathname conversation))))
                   (test-assert (zerop (conversation-prepare-provider-request
-                                      loaded :identity identity :idle-seconds seconds))
+                                       loaded :identity identity :idle-seconds seconds))
                                "a prompt Claude resume preserves its warm prefix"))
                 (let ((loaded (conversation-load (conversation-pathname conversation))))
                   (test-assert (= 1 (conversation-prepare-provider-request
-                                    loaded :identity identity :idle-seconds seconds
-                                    :now (+ (get-universal-time) seconds 1)))
+                                     loaded :identity identity :idle-seconds seconds
+                                     :now (+ (get-universal-time) seconds 1)))
                                "a cold Claude resume records bounded output")))))
           (setf (config :prompt-cache-retention-seconds configuration) 1234)
           (test-assert (= 1234 (provider-prompt-cache-retention-seconds provider configuration))
@@ -54,7 +54,7 @@
     (setf (config :model configuration) "openrouter/openai/gpt-test")
     (test-assert (null (provider-prompt-cache-retention-estimate
                         (make-instance 'openrouter-chat-completions-provider :configuration configuration
-                                                                            :family ':openrouter)))
+                                                                            :family         ':openrouter)))
                  "unrelated OpenRouter routes have no implicit Claude lifetime"))
   nil)
 
@@ -64,11 +64,11 @@
   (with-test-configuration (configuration)
     (setf (configuration-validation-deferred-p configuration) t)
     (setf (config :model configuration) "openrouter/anthropic/claude-sonnet-4.5")
-    (let* ((provider (make-instance 'cache-review-test-provider :configuration configuration
-                                                             :family ':openrouter))
-           (conversation (conversation-create configuration))
-           (observed nil)
-           (*provider-cache-request-prefix* nil)
+    (let* ((provider                         (make-instance 'cache-review-test-provider :configuration configuration
+                                                                                     :family           ':openrouter))
+           (conversation                     (conversation-create configuration))
+           (observed                         nil)
+           (*provider-cache-request-prefix*  nil)
            (*provider-cache-prefix-function* (lambda (prefix) (setf observed prefix))))
       (conversation-append-user-message conversation "durable prefix")
       (flet ((request ()
@@ -90,7 +90,7 @@
                          "routing-only changes are named in the final-request difference")
             (conversation-append-user-message conversation "appended durable item")
             (let* ((extended (request))
-                   (change (provider-cache-wire-change (getf routed :wire) (getf extended :wire))))
+                   (change   (provider-cache-wire-change (getf routed :wire) (getf extended :wire))))
               (test-assert (getf change :breakpoints-moved-p)
                            "the observed difference includes final history cache marker movement")))))))
   nil)

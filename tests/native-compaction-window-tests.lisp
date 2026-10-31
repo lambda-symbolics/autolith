@@ -12,16 +12,16 @@
   "Preserve complete windows and account successful envelopes before rejecting bad items."
   (with-test-configuration (configuration)
     (let* ((provider (provider-create configuration))
-           (usage (json-object "input_tokens" 100 "output_tokens" 10))
-           (message (json-object "type" "message" "role" "user" "content"
-                                 (json-array (json-object "type" "input_text" "text" "exact request"))))
-           (call (json-object "type" "function_call" "call_id" "native-call"
-                              "name" "probe" "arguments" "{}"))
-           (output (function-call-output-item "native-call" "verified result"))
-           (opaque (native-compaction-tests--opaque "opaque-one"))
-           (window (list message opaque call output
-                         (native-compaction-tests--opaque "opaque-two")))
-           (events nil))
+           (usage    (json-object "input_tokens" 100 "output_tokens" 10))
+           (message  (json-object "type" "message" "role" "user" "content"
+                                  (json-array (json-object "type" "input_text" "text" "exact request"))))
+           (call     (json-object "type" "function_call" "call_id" "native-call"
+                                  "name" "probe" "arguments" "{}"))
+           (output   (function-call-output-item "native-call" "verified result"))
+           (opaque   (native-compaction-tests--opaque "opaque-one"))
+           (window   (list message opaque call output
+                           (native-compaction-tests--opaque "opaque-two")))
+           (events   nil))
       (flet ((decode (items)
                "Decode ITEMS and capture each completed usage notification."
                (provider--decode-native-compaction-response
@@ -76,17 +76,17 @@
   "Replay full native windows and project portable handoffs across provider families."
   (with-test-configuration (configuration)
     (let* ((conversation (conversation-create configuration))
-           (window (list (native-compaction-tests--opaque "first")
-                         (json-object "type" "reasoning" "summary" (json-array)
-                                      "encrypted_content" "retained-reasoning")
-                         (native-compaction-tests--opaque "last"))))
+           (window       (list (native-compaction-tests--opaque "first")
+                               (json-object "type" "reasoning" "summary" (json-array)
+                                            "encrypted_content" "retained-reasoning")
+                               (native-compaction-tests--opaque "last"))))
       (conversation-append-user-message conversation "original")
       (conversation-append-native-compaction conversation window
                                              :family ':responses :summary "portable handoff")
       (let ((loaded (conversation-load-by-id configuration (conversation-identifier conversation))))
         (dolist (family '(:responses :messages))
           (let ((before (conversation-input-items-for-family conversation family))
-                (after (conversation-input-items-for-family loaded family)))
+                (after  (conversation-input-items-for-family loaded family)))
             (test-assert (equal (mapcar #'json-encode before) (mapcar #'json-encode after))
                          "reload reproduces the exact family projection")
             (test-assert
@@ -101,9 +101,9 @@
       (let ((legacy (conversation-create configuration)))
         (conversation-append-record
          legacy (list :native-compaction :family ':responses
-                      :through-seq (1- (conversation-next-sequence legacy))
-                      :wire-json (json-encode (native-compaction-tests--opaque "legacy"))
-                      :summary "legacy handoff"))
+                      :through-seq       (1- (conversation-next-sequence legacy))
+                      :wire-json         (json-encode (native-compaction-tests--opaque "legacy"))
+                      :summary           "legacy handoff"))
         (let ((loaded (conversation-load-by-id configuration (conversation-identifier legacy))))
           (test-assert (= 1 (count-if #'native-compaction-item-p
                                       (conversation-input-items-for-family loaded ':responses)))

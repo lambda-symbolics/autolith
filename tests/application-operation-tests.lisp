@@ -994,9 +994,11 @@
            (provider
              (apply #'make-instance
                     (if native-p 'native-scripted-provider 'scripted-provider)
-                    :results (list (agent-test-result
-                                    "manual-summary"
-                                    (list (agent-test-message "A portable handoff."))))
+                    :configuration (test-configuration)
+                    :results       (list (agent-test-result
+                                          "manual-summary"
+                                          (list (agent-test-compaction-message))
+                                          :turn-completion ':end))
                     (when native-p (list :native-items (list native-item))))))
       (application-operation-tests--call-with-compaction-provider
        provider
@@ -1154,37 +1156,37 @@
                                   :message "The compaction request failed."
                                   :status 503 :code nil :request-id nil
                                   :response-id nil :response nil)))
-    (let ((provider
-            (make-instance
-             'native-scripted-provider
-             :native-items (list (json-object "type" "context_compaction"
-                                             "encrypted_content" "uncommitted-checkpoint"))
-             :results      (list result))))
-      (application-operation-tests--call-with-compaction-provider
-       provider
-       (lambda (application)
-         (let ((conversation (application-conversation application)))
-           (conversation-append-user-message conversation "Context to preserve.")
-           (let* ((records-before (conversation--read-records
-                                   (conversation-pathname conversation)))
-                  (input-before   (json-encode
-                                   (coerce (conversation-input-items conversation) 'vector)))
-                  (failure
-                    (handler-case
-                        (progn (application-command application "/compact") nil)
-                      (provider-protocol-error (condition)
-                        condition))))
-             (test-assert failure "compaction failures use the existing typed provider boundary")
-             (test-assert
-              (and (equal records-before
-                          (conversation--read-records (conversation-pathname conversation)))
-                   (string= input-before
-                            (json-encode (coerce (conversation-input-items conversation) 'vector))))
-              "a failed summary does not publish even a successful native checkpoint")
-             (test-assert
-              (and (not (terminal-ui-compacting-p (application-ui application)))
-                   (null (terminal-ui-status (application-ui application))))
-              "failed compaction clears its progress indicators")))))))
+      (let ((provider
+              (make-instance
+               'native-scripted-provider
+               :configuration (test-configuration)
+               :native-items  (list (json-object "type" "context_compaction"
+                                                "encrypted_content" "uncommitted-checkpoint"))
+               :results       (list result))))
+       (application-operation-tests--call-with-compaction-provider
+        provider
+        (lambda (application)
+          (let ((conversation (application-conversation application)))
+            (conversation-append-user-message conversation "Context to preserve.")
+            (let* ((input-before   (json-encode
+                                    (coerce (conversation-input-items conversation) 'vector)))
+                   (failure
+                     (handler-case
+                         (progn (application-command application "/compact") nil)
+                       (provider-protocol-error (condition)
+                         condition))))
+              (test-assert failure "compaction failures use the existing typed provider boundary")
+              (test-assert
+               (and (string= input-before
+                            (json-encode (coerce (conversation-input-items conversation) 'vector)))
+                    (notany (lambda (record)
+                              (member (first record) '(:summary :native-compaction)))
+                            (conversation--read-records (conversation-pathname conversation))))
+               "a failed summary preserves its projection and publishes no checkpoint")
+              (test-assert
+               (and (not (terminal-ui-compacting-p (application-ui application)))
+                    (null (terminal-ui-status (application-ui application))))
+               "failed compaction clears its progress indicators")))))))
   nil)
 
 

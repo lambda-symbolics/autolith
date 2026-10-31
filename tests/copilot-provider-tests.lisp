@@ -162,7 +162,7 @@
                          (declare (ignore arguments))
                          (test-assert (equal url "https://api.individual.githubcopilot.com/models") "discovery uses the token host")
                          (values
-                          "{\"data\":[{\"id\":\"chat-test\",\"model_picker_enabled\":true,\"policy\":{\"state\":\"enabled\"},\"supported_endpoints\":[\"/chat/completions\"],\"capabilities\":{\"limits\":{\"max_prompt_tokens\":8192}}},{\"id\":\"claude-test\",\"model_picker_enabled\":true,\"supported_endpoints\":[\"/v1/messages\"]},{\"id\":\"gpt-test\",\"model_picker_enabled\":true,\"supported_endpoints\":[\"/responses\"]},{\"id\":\"disabled\",\"model_picker_enabled\":true,\"policy\":{\"state\":\"disabled\"}},{\"id\":\"no-tools\",\"model_picker_enabled\":true,\"capabilities\":{\"supports\":{\"tool_calls\":false}}}]}"
+                          "{\"data\":[{\"id\":\"chat-test\",\"model_picker_enabled\":true,\"policy\":{\"state\":\"enabled\"},\"supported_endpoints\":[\"/chat/completions\"],\"capabilities\":{\"limits\":{\"max_prompt_tokens\":32768}}},{\"id\":\"claude-test\",\"model_picker_enabled\":true,\"supported_endpoints\":[\"/v1/messages\"]},{\"id\":\"gpt-test\",\"model_picker_enabled\":true,\"supported_endpoints\":[\"/responses\"]},{\"id\":\"disabled\",\"model_picker_enabled\":true,\"policy\":{\"state\":\"disabled\"}},{\"id\":\"no-tools\",\"model_picker_enabled\":true,\"capabilities\":{\"supports\":{\"tool_calls\":false}}}]}"
                           200 nil)))
                  (list 'provider-post-event-stream
                        (lambda (url body &key headers)

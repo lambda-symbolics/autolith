@@ -1930,6 +1930,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
                           (*provider-tool-choice*
                              (agent--request-tool-choice tools-p tool-restriction-p tool-rounds))
                           (*provider-maximum-output-tokens* maximum-output-tokens)
+                          (*provider-cache-request-prefix*  nil)
                           (*provider-cache-prefix-function*
                             (lambda (prefix) (setf cache-prefix prefix)))
                           (*request-context-hurry-up-p*

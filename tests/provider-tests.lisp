@@ -1445,8 +1445,9 @@
             (test-assert
              (and (= (test-transport-provider-attempt-count provider) 2)
                   (if native-p
-                      (and (native-compaction-item-p result)
-                           (string= (json-get result "encrypted_content") "tls-checkpoint"))
+                      (and (= 1 (length result))
+                           (native-compaction-item-p (first result))
+                           (string= (json-get (first result) "encrypted_content") "tls-checkpoint"))
                       (string= (provider-result-response-id result) "tls-reconnected")))
              "each TLS EOF boundary reconnects and returns the next successful response"))
           (let ((failures
