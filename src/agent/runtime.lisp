@@ -1501,6 +1501,45 @@ to usage accounting instead of hiding behind the compaction record."
     (agent-observer-status observer :compaction-request-completed details))
   nil)
 
+(-> agent--compaction-summary-usable-p (provider-result) boolean)
+(defun agent--compaction-summary-usable-p (result)
+  "Return true when RESULT is a completed, tool-free, meaningful handoff."
+  (let* ((text    (provider-result-assistant-text result))
+         (trimmed (and (stringp text)
+                       (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
+         (items   (provider-result-output-items result)))
+    (and (eq (provider-result-turn-completion result) ':end)
+         (null (provider-result-tool-calls result))
+         (not (some (lambda (item)
+                      (and (json-object-p item)
+                           (equal (json-get item "type") "refusal")))
+                    items))
+         (non-empty-string-p trimmed)
+         ;; Require a nontrivial handoff, without depending on headings or
+         ;; provider-specific prose formatting.
+         (>= (length trimmed) 24)
+         (<= (length trimmed) 12000))))
+
+(-> agent--native-compaction-window (t) list)
+(defun agent--native-compaction-window (value)
+  "Normalize a native checkpoint VALUE to its complete ordered output window."
+  (cond
+    ((null value)
+     nil)
+    ((json-object-p value)
+     (list value))
+    ((listp value)
+     value)
+    (t
+     (error 'provider-protocol-error
+            :message     "Native compaction returned a malformed window."
+            :status      nil
+            :code        nil
+            :request-id  nil
+            :response-id nil
+            :response    nil))))
+
+
 (-> agent--compaction-follow-up-p (provider-result) boolean)
 (defun agent--compaction-follow-up-p (result)
   "Return true when RESULT can continue toward visible compaction text."
@@ -1574,13 +1613,14 @@ once the summary is known to be usable. Capture the durable cutoff before
 native or portable requests and retain arrivals at checkpoint publication.
 Return the number of requests issued so the turn's request count covers them."
   (agent--prepare-provider-request agent)
-  (let* ((conversation                 (agent-conversation agent))
-         (compaction                   (conversation-compaction-capture conversation))
-         (captured-view                (conversation-compaction-view compaction))
-         (unfinished-work              nil)
-         (*request-context-hurry-up-p* (agent-hurry-up-p agent))
-         (issued                       0)
-         (native-usage                 nil))
+    (let* ((conversation                 (agent-conversation agent))
+           (compaction                   (conversation-compaction-capture conversation))
+           (captured-view                (conversation-compaction-view compaction))
+           (unfinished-work              nil)
+           (*request-context-hurry-up-p* (agent-hurry-up-p agent))
+           (issued                       0)
+           (native-usage                 nil)
+           (native-request-accounted-p  nil))
     ;; Announce compaction before reading job storage, which can take a while.
     (agent-observer-status
      observer
@@ -1589,8 +1629,8 @@ Return the number of requests issued so the turn's request count covers them."
     (setf unfinished-work (task-unfinished-work-snapshot agent))
     (let* ((*provider-hosted-tools-enabled-p* (not tool-restriction-p))
            (provider                          (agent-provider agent))
-           (native-item
-             (multiple-value-bind (item usage)
+           (native-window
+             (multiple-value-bind (window usage)
                  (provider-native-compact-conversation
                   provider
                   captured-view
@@ -1601,24 +1641,47 @@ Return the number of requests issued so the turn's request count covers them."
                        :canonical-names tool-allowlist)
                       (tool-registry-provider-schemas
                        (agent-tool-registry agent)))
-                  :event-callback
-                  (lambda (event)
-                    (declare (ignore event))
-                    (agent-observer-status observer :provider-progress nil)))
-               (when item
-                 (setf native-usage usage))
-               item))
+                    :event-callback
+                    (lambda (event)
+                      (if (typep event
+                                'cl-llm-provider-api::native-compaction-completed-event)
+                          (progn
+                            (setf native-request-accounted-p t
+                                  native-usage
+                                  (cl-llm-provider-api::native-compaction-completed-event-usage
+                                   event))
+                            (incf issued)
+                            (agent--note-compaction-request
+                             agent observer
+                             :request-number (+ request-number issued)
+                             :kind           ':native
+                             :usage          native-usage
+                             :response-id
+                             (cl-llm-provider-api::native-compaction-completed-event-response-id
+                              event)))
+                          (agent-observer-status observer :provider-progress nil)))
+                 (unless native-request-accounted-p
+                   (setf native-usage usage))
+                 (agent--native-compaction-window window)))
            (family                            (provider-family provider))
            (summary-conversation
              (conversation-compaction-summary-view
               captured-view
-              (if native-item
-                  (list native-item)
+              (or native-window
                   (conversation-input-items-for-family
                    captured-view family :include-ephemeral-p nil))
               family))
            (summary-results                   nil)
            (summary                           nil))
+        ;; Native providers that cannot emit the completion event still return
+        ;; usage as their second value.  Account that fallback exactly once.
+        (unless native-request-accounted-p
+          (incf issued)
+          (agent--note-compaction-request
+           agent observer
+           :request-number (+ request-number issued)
+           :kind           ':native
+           :usage          native-usage))
       (loop for attempt from 1 to *agent-compaction-maximum-summary-requests*
             for result =
               (let ((*telemetry-request-role* ':compaction))
@@ -1631,14 +1694,23 @@ Return the number of requests issued so the turn's request count covers them."
                    (declare (ignore event))
                    (agent-observer-status observer :provider-progress nil))
                  :compaction-p    t))
-            do (push result summary-results)
-               (setf summary (provider-result-assistant-text result))
-               (when (non-empty-string-p summary)
+            do (incf issued)
+               (push result summary-results)
+               ;; Every completed paid request is accounted for before its
+               ;; response is interpreted or a later retry is attempted.
+               (agent--note-compaction-request
+                agent observer
+                :request-number (+ request-number issued)
+                :kind           ':summary
+                :usage          (provider-result-usage result)
+                :response-id    (provider-result-response-id result))
+               (when (agent--compaction-summary-usable-p result)
+                 (setf summary (provider-result-assistant-text result))
                  (return))
                (unless (and (< attempt *agent-compaction-maximum-summary-requests*)
                             (agent--compaction-follow-up-p result))
                  (error 'provider-protocol-error
-                        :message     "Compaction produced no summary text."
+                        :message     "Compaction produced no usable summary handoff."
                         :status      nil
                         :code        nil
                         :request-id  nil
@@ -1646,26 +1718,11 @@ Return the number of requests issued so the turn's request count covers them."
                         :response    nil))
                (agent--advance-compaction-summary-view
                 summary-conversation result))
-      (when native-item
-        (incf issued)
-        (agent--note-compaction-request
-         agent observer
-         :request-number (+ request-number issued)
-         :kind           ':native
-         :usage          native-usage))
-      (dolist (result (nreverse summary-results))
-        (incf issued)
-        (agent--note-compaction-request
-         agent observer
-         :request-number (+ request-number issued)
-         :kind           ':summary
-         :usage          (provider-result-usage result)
-         :response-id    (provider-result-response-id result)))
       (with-recursive-lock-held ((conversation-append-lock conversation))
         (setf unfinished-work (task-unfinished-work-snapshot agent))
-        (if native-item
+        (if native-window
             (conversation-append-native-compaction
-             conversation native-item
+             conversation native-window
              :family          (provider-family provider)
              :summary         summary
              :compaction      compaction
@@ -1673,13 +1730,13 @@ Return the number of requests issued so the turn's request count covers them."
             (conversation-append-summary
              conversation summary :compaction compaction
              :unfinished-work                 unfinished-work)))
-      (agent-observer-status
-       observer
-       :compaction-completed
-       (list :summary-characters (length summary)
-             :native-p           (not (null native-item))
-             :provider-requests  issued)))
-    issued))
+     (agent-observer-status
+      observer
+      :compaction-completed
+      (list :summary-characters (length summary)
+             :native-p          (not (null native-window))
+            :provider-requests  issued)))
+      issued)))
 
 (-> agent--run-provider-loop
     (agent agent-observer &key (:goal-context (option string))
