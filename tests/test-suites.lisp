@@ -658,7 +658,8 @@
 (define-test-suite precompaction
   test-precompaction-drops-failed-exchanges
   test-precompaction-retention-policy
-  test-precompaction-cold-requests)
+  test-precompaction-cold-requests
+  test-precompaction-survives-resume)
 
 (define-test-suite conversation
   test-conversation-image-input

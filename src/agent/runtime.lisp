@@ -721,11 +721,12 @@ commit 6f51c65958."
              ':durable))))
     (conversation-append-provider-metadata
      conversation
-     (append (list :request-number request-number
-                   :response-id    (provider-result-response-id result)
-                   :usage          (agent--portable-value
-                                    (provider-usage-normalize
-                                     (provider-result-usage result))))
+     (append (list :request-number   request-number
+                   :response-id      (provider-result-response-id result)
+                   :usage            (agent--portable-value
+                                      (provider-usage-normalize
+                                       (provider-result-usage result)))
+                   :request-identity (conversation-request-identity conversation))
              ;; The service's effective retention mode, when it reports one.
              (let ((context (agent--result-reasoning-context result)))
                (and context (list :reasoning-context context))))))
