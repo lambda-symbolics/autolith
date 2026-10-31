@@ -212,16 +212,19 @@ value from the text through the library's answer reader."
             (values nil nil "The response contained no answer text.")))
       (cl-llm-provider-api:output-text-answer text contract)))
 
-(-> rlm--frame-request (string list string) string)
+(-> rlm--frame-request (string list string) (values (option string) string))
 (defun rlm--frame-request (task views instructions)
-  "Compose the single frame user message from TASK, VIEWS, and INSTRUCTIONS.
+  "Compose the frame's user messages from TASK, VIEWS, and INSTRUCTIONS.
 
-The views and answer shape come first and the task last, so frames asking
-different questions of the same views share their request prefix."
-  (format nil "~@[Read-only context views:~%~%~A~%~]~A~%~%Task: ~A"
-          (rlm-views-render views)
-          instructions
-          task))
+Return the shared message and the task message. With VIEWS, the shared message
+holds them and the answer shape, so frames asking different questions of the
+same views share it and its cache marker; the task message follows. Without
+VIEWS there is nothing to share, and one message holds everything."
+  (let ((rendered (rlm-views-render views)))
+    (if (non-empty-string-p rendered)
+        (values (format nil "Read-only context views:~%~%~A~%~A" rendered instructions)
+                (format nil "Task: ~A" task))
+        (values nil (format nil "~A~%~%Task: ~A" instructions task)))))
 
 (-> rlm--frame-conversation (configuration &key (:task string)) conversation)
 (defun rlm--frame-conversation (configuration &key task)
@@ -510,35 +513,39 @@ with bounded public outputs and a durable trace, never an unvalidated answer."
       (rlm--resolve-environment :model model :effort effort
                                 :provider      provider
                                 :configuration configuration)
-    (let* ((views                    (rlm-views-materialize
-                                      (rlm--context-designators context)))
-           (contract                 (rlm-contract-normalize contract))
-           (budget                   (or budget (rlm-budget-create)))
-           (conversation             (rlm--frame-conversation configuration :task task))
-           (request                  (rlm--frame-request
-                                      task views (rlm--contract-instructions contract)))
-           (*system-prompt-override* (rlm--frame-prompt capabilities))
-           (*telemetry-request-role* (if (eq *telemetry-request-role* ':permission-classifier)
-                                         ':permission-classifier ':inference)))
-      (handler-case
-          (if (eq capabilities ':read)
-              (rlm--run-framed-inference
-               task
-               :request           request
-               :contract          contract
-               :budget            budget
-               :provider          provider
-               :configuration     configuration
-               :conversation      conversation
-               :source-registry   (or source-registry (rlm--environment-registry))
-               :activity-callback activity-callback)
-              (rlm--run-direct-inference
-               task
-               :request           request
-               :contract          contract
-               :budget            budget
-               :provider          provider
-               :conversation      conversation
-               :activity-callback activity-callback))
-        (rlm-budget-exhausted (condition)
-          (rlm--signal-partial condition conversation budget))))))
+    (let* ((views        (rlm-views-materialize (rlm--context-designators context)))
+           (contract     (rlm-contract-normalize contract))
+           (budget       (or budget (rlm-budget-create)))
+           (conversation (rlm--frame-conversation configuration :task task)))
+      (multiple-value-bind (shared request)
+          (rlm--frame-request task views (rlm--contract-instructions contract))
+        (let ((*system-prompt-override*     (rlm--frame-prompt capabilities))
+              (*telemetry-request-role*     (if (eq *telemetry-request-role*
+                                                    ':permission-classifier)
+                                                ':permission-classifier
+                                                ':inference))
+              (*provider-shared-item-count* (if shared 1 0)))
+          (when shared
+            (conversation-append-user-message conversation shared))
+          (handler-case
+              (if (eq capabilities ':read)
+                  (rlm--run-framed-inference
+                   task
+                   :request           request
+                   :contract          contract
+                   :budget            budget
+                   :provider          provider
+                   :configuration     configuration
+                   :conversation      conversation
+                   :source-registry   (or source-registry (rlm--environment-registry))
+                   :activity-callback activity-callback)
+                  (rlm--run-direct-inference
+                   task
+                   :request           request
+                   :contract          contract
+                   :budget            budget
+                   :provider          provider
+                   :conversation      conversation
+                   :activity-callback activity-callback))
+            (rlm-budget-exhausted (condition)
+              (rlm--signal-partial condition conversation budget))))))))
