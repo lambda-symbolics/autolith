@@ -2587,7 +2587,30 @@ A frame sends its shared views and its task as consecutive user messages."
                           "a dead pooled environment starts fresh")
              (let ((trace (rlm--trace-content configuration trace-identifier)))
                (test-assert (search "ended unexpectedly" trace)
-                            "the fresh run notes the lost environment state"))))
+                            "the fresh run notes the lost environment state")))
+           (let ((*rlm-environment-pool-size* 0))
+             (rlm-complete
+              "Define again."
+              :context       context
+              :budget        (rlm-budget-create :calls 2 :tokens 50000 :depth 1)
+              :provider      (rlm-environment-reuse--provider
+                              "(progn (defvar *reuse-state* 7) (finish 7))")
+              :configuration configuration)
+             (test-assert (null *rlm-environment-pool*)
+                          "a pool past its bound retires the environment"))
+           (multiple-value-bind (value trace-identifier)
+               (rlm-complete
+                "Recall after retirement."
+                :context       context
+                :budget        (rlm-budget-create :calls 2 :tokens 50000 :depth 1)
+                :provider      (rlm-environment-reuse--provider
+                                "(finish (boundp (quote *reuse-state*)))")
+                :configuration configuration)
+             (test-assert (null value)
+                          "a retired environment's state is gone")
+             (test-assert (search "retired to keep memory bounded"
+                                  (rlm--trace-content configuration trace-identifier))
+                          "the next run is told the environment was retired")))
       (rlm-environment-pool-flush)))
   nil)
 
