@@ -145,14 +145,25 @@
 Claude caches nothing without them. OpenRouter turns the same breakpoint into
 OpenAI's explicit cache boundary, which otherwise lands on the trailing context.")
 
+(defparameter *openrouter-cache-lifetime-prefixes* '("anthropic/" "~anthropic/")
+  "OpenRouter model prefixes whose cache breakpoints accept a requested lifetime.")
+
 (defmethod openai-compatible-provider-cache-breakpoint-fields
     ((provider openrouter-chat-completions-provider) (configuration configuration))
-  "Request ephemeral cache breakpoints for models that need explicit ones."
+  "Request ephemeral cache breakpoints for models that need explicit ones.
+
+Claude breakpoints carry the configured cache lifetime when it is not the default."
   (declare (ignore provider))
-  (let ((wire-model (openrouter--wire-model-name (config :model configuration))))
-    (when (some (lambda (prefix) (uiop:string-prefix-p prefix wire-model))
-                *openrouter-cache-breakpoint-prefixes*)
-      (list "cache_control" (json-object "type" "ephemeral")))))
+  (flet ((matches-p (prefixes wire-model)
+           "Return true when WIRE-MODEL starts with one of PREFIXES."
+           (some (lambda (prefix) (uiop:string-prefix-p prefix wire-model)) prefixes)))
+    (let ((wire-model (openrouter--wire-model-name (config :model configuration)))
+          (ttl        (provider-prompt-cache-ttl configuration)))
+      (when (matches-p *openrouter-cache-breakpoint-prefixes* wire-model)
+        (list "cache_control"
+              (if (and ttl (matches-p *openrouter-cache-lifetime-prefixes* wire-model))
+                  (json-object "type" "ephemeral" "ttl" ttl)
+                  (json-object "type" "ephemeral")))))))
 
 (defmethod openai-compatible-provider-anchored-context-p
     ((provider openrouter-chat-completions-provider))

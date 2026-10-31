@@ -27,6 +27,17 @@ The public OpenAI API retention contract does not establish this route's TTL."
         override
         (provider-prompt-cache-retention-estimate provider))))
 
+(-> provider-prompt-cache-ttl (configuration) (option string))
+(defun provider-prompt-cache-ttl (configuration)
+  "Return CONFIGURATION's requested wire cache lifetime, or NIL for the service default.
+
+The lifetime asks the provider to keep cache entries; it is separate from the
+local retention estimate, which only schedules pruning and idle compaction."
+  (let ((ttl (config :prompt-cache-ttl configuration)))
+    (if (string= ttl "5m")
+        nil
+        ttl)))
+
 
 ;;;; -- Reusable Request Prefixes --
 
