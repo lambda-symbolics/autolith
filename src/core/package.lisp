@@ -89,6 +89,7 @@
                 #:job-aborted-message
                 #:job-aborted-reason
                 #:job-await
+                #:job-await-any
                 #:job-cancel
                 #:job-cancellation-reason
                 #:job-cancellation-requested-p

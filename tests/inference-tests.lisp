@@ -1620,6 +1620,124 @@ A frame sends its shared views and its task as consecutive user messages."
            (daemon-read-packet stream))
       (ignore-errors (close stream)))))
 
+(defclass rlm-frame-set-test-provider (rlm-map-test-provider)
+  ()
+  (:documentation "A map test provider holding requests for slow tasks until cancelled."))
+
+(defmethod provider-stream-turn :before
+    ((provider rlm-frame-set-test-provider)
+     (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Hold a slow task's request for thirty seconds, so only cancellation ends it early."
+  (declare (ignore tool-namespaces event-callback goal-context compaction-p))
+  (when (search "slow" (or (rlm-map-test--last-user-text conversation) ""))
+    (loop repeat 3000
+          do (sleep 0.01))))
+
+(-> test-rlm-frame-set () null)
+(defun test-rlm-frame-set ()
+  "Collect background frames as they finish and charge cancelled requests."
+  (let* ((configuration (test-configuration))
+         (budget        (rlm-budget-create :calls 10 :tokens 100000 :depth 2))
+         (outcomes      nil)
+         (outcome-lock  (make-lock "Autolith frame set test outcomes"))
+         (frames
+           (rlm-frame-set-create
+            :budget              budget
+            :provider            (make-instance 'rlm-frame-set-test-provider)
+            :configuration       configuration
+            :concurrency         3
+            :completion-function (lambda (handle result)
+                                   (with-lock-held (outcome-lock)
+                                     (push (cons handle result) outcomes))))))
+    (unwind-protect
+         (let* ((handles   (rlm-frame-set-submit frames
+                                                 (list "fast first" "slow second" "fast third")))
+                (fast      (list (first handles) (third handles)))
+                (slow      (list (second handles)))
+                (collected nil))
+           (test-assert (equal handles '("frame-1" "frame-2" "frame-3"))
+                        "submission returns ordered handles")
+           (loop while (< (length collected) 2)
+                 do (setf collected (rlm-frame-set-collect frames fast :timeout-seconds 30)))
+           (test-assert (and (equal (mapcar (lambda (result) (getf result :handle)) collected)
+                                    fast)
+                             (search "fast third" (getf (second collected) :value)))
+                        "collection returns finished frames in handle order with their values")
+           (test-assert (eq (getf (first (rlm-frame-set-status frames slow)) :state) ':running)
+                        "a slow frame keeps running while others finish")
+           (test-assert (null (rlm-frame-set-collect frames slow :timeout-seconds 0.05))
+                        "a bounded collect over running frames times out")
+           (rlm-frame-set-cancel frames slow)
+           (test-assert (getf (first (rlm-frame-set-collect frames slow :timeout-seconds 30)) :error)
+                        "a cancelled frame collects as an error")
+           (test-assert (< (rlm-budget-remaining-tokens budget) (- 100000 20))
+                        "a cancelled request keeps its reserved tokens")
+           (test-assert (find ':cancelled outcomes :key (lambda (outcome)
+                                                          (getf (rest outcome) :status)))
+                        "the completion function hears of the cancellation")
+           (test-assert (handler-case (progn (rlm-frame-set-status frames (list "frame-9")) nil)
+                          (rlm-inference-error ()
+                            t))
+                        "unknown handles are refused"))
+      (rlm-frame-set-close frames)))
+  nil)
+
+(-> test-rlm-endpoint-frames () null)
+(defun test-rlm-endpoint-frames ()
+  "Proxy background frame submission, collection and cancellation for the environment."
+  (let* ((records  nil)
+         (endpoint (rlm-endpoint-start
+                    :provider      (make-instance 'rlm-frame-set-test-provider)
+                    :configuration (test-configuration)
+                    :budget        (rlm-budget-create :calls 6 :tokens 100000 :depth 2)
+                    :ledger        (lambda (record) (push record records)))))
+    (flet ((call (operation &rest arguments)
+             "Send OPERATION with ARGUMENTS and return the response fields."
+             (rest (rlm-endpoint-test-call
+                    endpoint
+                    (list :rlm-request
+                          :token     (rlm-endpoint-token endpoint)
+                          :operation operation
+                          :arguments arguments)))))
+      (unwind-protect
+           (progn
+             (test-assert (eq (getf (call ':collect :handles "frame-1") :status) ':error)
+                          "collecting before any submission is refused")
+             (let ((handles (getf (call ':submit :tasks (list "fast alpha" "slow beta")) :value)))
+               (test-assert (equal handles '("frame-1" "frame-2"))
+                            "submission returns frame handles")
+               (test-assert (search "fast alpha"
+                                    (getf (first (getf (call ':collect :handles "frame-1"
+                                                                       :timeout 30)
+                                                       :value))
+                                          :value))
+                            "a single handle collects its finished frame")
+               (test-assert (equal (mapcar (lambda (status) (getf status :state))
+                                           (getf (call ':status :handles handles) :value))
+                                   '(:completed :running))
+                            "status reports each frame's state")
+               (call ':cancel :handles "frame-2")
+               (test-assert (getf (first (getf (call ':collect :handles "frame-2" :timeout 30)
+                                               :value))
+                                  :error)
+                            "a cancelled frame collects as an error"))
+             (test-assert (and (find ':submit records :key (lambda (record)
+                                                             (getf record :operation)))
+                               (find-if (lambda (record)
+                                          (and (eq (getf record :operation) ':frame)
+                                               (getf record :child-trace)))
+                                        records)
+                               (find-if (lambda (record)
+                                          (and (eq (getf record :operation) ':frame)
+                                               (eq (getf record :status) ':cancelled)))
+                                        records))
+                          "the ledger links submitted, finished and cancelled frames")
+             (test-assert (eq (getf (call ':status :handles (list 1)) :status) ':error)
+                          "malformed handles are refused"))
+        (rlm-endpoint-stop endpoint))))
+  nil)
+
 (-> test-rlm-endpoint () null)
 (defun test-rlm-endpoint ()
   "Test the loopback endpoint proxies inference under the shared budget."

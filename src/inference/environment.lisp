@@ -155,6 +155,14 @@ concurrent runs over one context each drive their own environment."
                   (list :tasks tasks
                         :contract contract
                         :concurrency concurrency)))
+     (defun rlm-submit (tasks &key contract)
+       (rlm--call :submit (list :tasks tasks :contract contract)))
+     (defun rlm-status (handles)
+       (rlm--call :status (list :handles handles)))
+     (defun rlm-collect (handles &key timeout)
+       (rlm--call :collect (list :handles handles :timeout timeout)))
+     (defun rlm-cancel (handles)
+       (rlm--call :cancel (list :handles handles)))
      (defun rlm-run (task &key policy context contract concurrency)
        (rlm--call :run
                   (list :task task
@@ -309,6 +317,7 @@ Environment functions:
 - (context-length), (context-slice start end), and (context-search pattern &key start) inspect the external context.
 - (infer task &key context contract) runs one bounded sub-inference over explicit context strings and returns its value; further values are its trace identifier and its settled token spend, so cost-aware decomposition can adapt slice sizes.
 - (rlm-map tasks &key contract concurrency) fans tasks out concurrently; each task is a string or a (:task ... :context ...) plist.
+- (rlm-submit tasks &key contract) starts tasks like rlm-map's as background frames and returns their handles. (rlm-collect handles &key timeout) waits until one of them finishes, or TIMEOUT seconds pass, and returns the results of every finished one, each with its :handle. (rlm-status handles) reports their states. (rlm-cancel handles) stops frames whose answers are no longer needed; what they spent stays spent. Use these to stop early once the evidence suffices.
 - (rlm-run task &key policy context contract concurrency) runs one task under a named decomposition policy keyword; installed distilled policies decompose it before inference, and the default :direct policy runs it as one frame.
 - (environment-names) lists user-defined names persisting from earlier runs over this context.
 - (finish value) records the final answer and ends the run. Call it exactly once.
