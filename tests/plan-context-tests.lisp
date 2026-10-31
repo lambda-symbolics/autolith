@@ -57,3 +57,51 @@
                                (context-contribution-instruction second))
                                "the rebuilt projection contains the latest explanation")))))
   nil)
+
+(-> test-plan-state-context-omits-missing-plan () null)
+(defun test-plan-state-context-omits-missing-plan ()
+  "Avoid contributing redundant context when no durable plan exists."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration :identifier "plan-absent"))
+           (request (make-instance 'request-context
+                                   :configuration configuration
+                                   :conversation conversation
+                                   :tool-namespaces #())))
+      (test-assert (null (plan-state-context request))
+                   "no active-plan contribution is emitted without a plan")))
+  nil)
+
+(-> test-plan-state-context-rebuilds-requirements-and-receipts () null)
+(defun test-plan-state-context-rebuilds-requirements-and-receipts ()
+  "Rebuild all authoritative plan details after a durable replacement."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration :identifier "plan-evidence"))
+           (request (make-instance 'request-context
+                                   :configuration configuration
+                                   :conversation conversation
+                                   :tool-namespaces #())))
+      (plan-update configuration
+                    (list (list :text "old step" :status "doing"
+                                :requires '((queue :open))
+                                :verify '((queue :claimed))
+                                :receipt '(:worker "old-worker"))))
+      (let ((old (context-contribution-instruction (plan-state-context request))))
+        (plan-update configuration
+                      (list (list :text "new step" :status "pending"
+                                  :requires '((queue :closed))
+                                  :verify '((queue :released))
+                                  :receipt '(:worker "new-worker")))
+                      :explanation "Current evidence")
+        (let ((new (context-contribution-instruction (plan-state-context request))))
+          (test-assert (not (equal old new))
+                       "a replacement plan produces a new projection")
+          (test-assert (and (search "new step" new)
+                            (search "queue" new)
+                            (search "CLOSED" new)
+                            (search "RELEASED" new)
+                            (search "NEW-WORKER" new)
+                            (search "CURRENT EVIDENCE" new))
+                       "the projection contains current requirements and evidence")
+          (test-assert (not (search "OLD-WORKER" new))
+                       "the projection does not retain the summarized old plan")))))
+  nil)
