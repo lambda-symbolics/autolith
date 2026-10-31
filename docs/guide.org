@@ -1807,14 +1807,18 @@ Appends are synchronous and serialized across processes; export errors do not
 abort a completed provider call.
 
 Mechanical precompaction removes failed tool exchanges from earlier turns
-before the first request after resume, a provider/model change, or estimated
-prompt-cache expiry. Calls, correlated outputs and reasoning used only for
-those calls are removed together. Successful exchanges and failures in the
-latest user turn are retained. Pruning changes provider context, with every
-record available in the durable transcript. It runs before ordinary requests
-and native or portable compaction. Idle pruning uses the same retention
-estimate described below; providers without an estimate prune only on resume
-or provider/model changes.
+before a request after a provider/model change or estimated prompt-cache
+expiry. Calls, correlated outputs and reasoning used only for those calls are
+removed together. Successful exchanges and failures in the latest user turn
+are retained. Pruning changes provider context, with every record available in
+the durable transcript. The transcript records each pruning, and resuming
+replays it, so a resumed session sends the context its provider last saw. The
+first request after resume prunes only when the latest completed response used
+another provider or model, is older than the retention estimate, or no
+estimate exists. Conversations last answered before 0.67.15 prune once on
+resume, as before. Pruning runs before ordinary requests and native or
+portable compaction. Idle pruning uses the same retention estimate described
+below.
 
 Idle cache compaction is enabled by default. After a completed request with at
 least 32,768 prompt tokens and 131,072 characters of summarizable history, an
