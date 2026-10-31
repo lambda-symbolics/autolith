@@ -288,18 +288,17 @@
                          :configuration configuration))
            (let ((requests
                    (mapcar (lambda (snapshot)
-                             (let ((item (first (last snapshot))))
-                               (json-get (aref (json-get item "content") 0) "text")))
+                             (mapcar (lambda (item)
+                                       (json-get (aref (json-get item "content") 0) "text"))
+                                     snapshot))
                            (reverse (rlm-inference-test-provider-input-snapshots provider)))))
              (test-assert
-              (let ((boundary (search "Task: " (first requests))))
-                (and boundary
-                     (string= (subseq (first requests) 0 boundary)
-                              (subseq (second requests) 0 boundary))
-                     (< (search evidence (first requests)) boundary)
-                     (search "Count the second kind." (second requests)
-                             :start2 boundary)))
-              "frames over the same views differ only in their trailing task"))
+              (and (every (lambda (request) (= (length request) 2)) requests)
+                   (string= (first (first requests)) (first (second requests)))
+                   (search evidence (first (first requests)))
+                   (equal (mapcar #'second requests)
+                          '("Task: Count the first kind." "Task: Count the second kind.")))
+              "frames over the same views share their first message and differ in the task"))
            (let ((index (rlm--trace-index-render configuration)))
              (test-assert
               (and (search "Count the first kind" index)
@@ -993,20 +992,21 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
     :documentation "The lock serializing concurrent request counting."))
   (:documentation "A thread-safe provider answering from the request itself."))
 
+(-> rlm-map-test--trailing-user-text (list) (option string))
+(defun rlm-map-test--trailing-user-text (items)
+  "Return the text of the user messages ending ITEMS, joined by blank lines.
+
+A frame sends its shared views and its task as consecutive user messages."
+  (let ((texts (loop for item in (reverse items)
+                     while (and (json-object-p item)
+                                (json-string= (json-get item "role") "user"))
+                     collect (context--message-text item))))
+    (and texts (format nil "~{~A~^~%~%~}" (reverse texts)))))
+
 (-> rlm-map-test--last-user-text (conversation) (option string))
 (defun rlm-map-test--last-user-text (conversation)
-  "Return the newest user message text in CONVERSATION's request items."
-  (loop for item in (reverse (conversation-input-items-for-request
-                              conversation))
-        when (and (json-object-p item)
-                  (json-string= (json-get item "role") "user"))
-          do (let ((content (json-get item "content")))
-               (return
-                 (loop for part across content
-                       when (and (json-object-p part)
-                                 (json-string= (json-get part "type")
-                                               "input_text"))
-                         do (return (json-get part "text")))))))
+  "Return the newest user request text in CONVERSATION's request items."
+  (rlm-map-test--trailing-user-text (conversation-input-items-for-request conversation)))
 
 (defmethod provider-stream-turn
     ((provider rlm-map-test-provider)
@@ -1485,11 +1485,7 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
         (let* ((snapshot
                  (first
                   (rlm-inference-test-provider-input-snapshots provider)))
-               (request-text
-                 (loop for item in (reverse snapshot)
-                       when (and (json-object-p item)
-                                 (string= (or (json-get item "role") "") "user"))
-                         do (return (context--message-text item)))))
+               (request-text (rlm-map-test--trailing-user-text snapshot)))
           (test-assert
            (search "current user instructions" request-text)
            "classification includes a labeled user-instruction view")
@@ -1623,6 +1619,185 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
            (daemon-write-packet stream request)
            (daemon-read-packet stream))
       (ignore-errors (close stream)))))
+
+(defclass rlm-frame-set-test-provider (rlm-map-test-provider)
+  ()
+  (:documentation "A map test provider holding requests for slow tasks until cancelled."))
+
+(defmethod provider-stream-turn :before
+    ((provider rlm-frame-set-test-provider)
+     (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Hold a slow task's request for thirty seconds, so only cancellation ends it early."
+  (declare (ignore tool-namespaces event-callback goal-context compaction-p))
+  (when (search "slow" (or (rlm-map-test--last-user-text conversation) ""))
+    (loop repeat 3000
+          do (sleep 0.01))))
+
+(-> test-rlm-frame-set () null)
+(defun test-rlm-frame-set ()
+  "Collect background frames as they finish and charge cancelled requests."
+  (let* ((configuration (test-configuration))
+         (budget        (rlm-budget-create :calls 10 :tokens 100000 :depth 2))
+         (outcomes      nil)
+         (outcome-lock  (make-lock "Autolith frame set test outcomes"))
+         (frames
+           (rlm-frame-set-create
+            :budget              budget
+            :provider            (make-instance 'rlm-frame-set-test-provider)
+            :configuration       configuration
+            :concurrency         3
+            :completion-function (lambda (handle result)
+                                   (with-lock-held (outcome-lock)
+                                     (push (cons handle result) outcomes))))))
+    (unwind-protect
+         (let* ((handles   (rlm-frame-set-submit frames
+                                                 (list "fast first" "slow second" "fast third")))
+                (fast      (list (first handles) (third handles)))
+                (slow      (list (second handles)))
+                (collected nil))
+           (test-assert (equal handles '("frame-1" "frame-2" "frame-3"))
+                        "submission returns ordered handles")
+           (loop while (< (length collected) 2)
+                 do (setf collected (rlm-frame-set-collect frames fast :timeout-seconds 30)))
+           (test-assert (and (equal (mapcar (lambda (result) (getf result :handle)) collected)
+                                    fast)
+                             (search "fast third" (getf (second collected) :value)))
+                        "collection returns finished frames in handle order with their values")
+           (test-assert (eq (getf (first (rlm-frame-set-status frames slow)) :state) ':running)
+                        "a slow frame keeps running while others finish")
+           (test-assert (null (rlm-frame-set-collect frames slow :timeout-seconds 0.05))
+                        "a bounded collect over running frames times out")
+           (rlm-frame-set-cancel frames slow)
+           (test-assert (getf (first (rlm-frame-set-collect frames slow :timeout-seconds 30)) :error)
+                        "a cancelled frame collects as an error")
+           (test-assert (< (rlm-budget-remaining-tokens budget) (- 100000 20))
+                        "a cancelled request keeps its reserved tokens")
+           (test-assert (find ':cancelled outcomes :key (lambda (outcome)
+                                                          (getf (rest outcome) :status)))
+                        "the completion function hears of the cancellation")
+           (test-assert (handler-case (progn (rlm-frame-set-status frames (list "frame-9")) nil)
+                          (rlm-inference-error ()
+                            t))
+                        "unknown handles are refused"))
+      (rlm-frame-set-close frames)))
+  nil)
+
+(-> test-rlm-endpoint-frames () null)
+(defun test-rlm-endpoint-frames ()
+  "Proxy background frame submission, collection and cancellation for the environment."
+  (let* ((records  nil)
+         (endpoint (rlm-endpoint-start
+                    :provider      (make-instance 'rlm-frame-set-test-provider)
+                    :configuration (test-configuration)
+                    :budget        (rlm-budget-create :calls 6 :tokens 100000 :depth 2)
+                    :ledger        (lambda (record) (push record records)))))
+    (flet ((call (operation &rest arguments)
+             "Send OPERATION with ARGUMENTS and return the response fields."
+             (rest (rlm-endpoint-test-call
+                    endpoint
+                    (list :rlm-request
+                          :token     (rlm-endpoint-token endpoint)
+                          :operation operation
+                          :arguments arguments)))))
+      (unwind-protect
+           (progn
+             (test-assert (eq (getf (call ':collect :handles "frame-1") :status) ':error)
+                          "collecting before any submission is refused")
+             (let ((handles (getf (call ':submit :tasks (list "fast alpha" "slow beta")) :value)))
+               (test-assert (equal handles '("frame-1" "frame-2"))
+                            "submission returns frame handles")
+               (test-assert (search "fast alpha"
+                                    (getf (first (getf (call ':collect :handles "frame-1"
+                                                                       :timeout 30)
+                                                       :value))
+                                          :value))
+                            "a single handle collects its finished frame")
+               (test-assert (equal (mapcar (lambda (status) (getf status :state))
+                                           (getf (call ':status :handles handles) :value))
+                                   '(:completed :running))
+                            "status reports each frame's state")
+               (call ':cancel :handles "frame-2")
+               (test-assert (getf (first (getf (call ':collect :handles "frame-2" :timeout 30)
+                                               :value))
+                                  :error)
+                            "a cancelled frame collects as an error"))
+             (test-assert (and (find ':submit records :key (lambda (record)
+                                                             (getf record :operation)))
+                               (find-if (lambda (record)
+                                          (and (eq (getf record :operation) ':frame)
+                                               (getf record :child-trace)))
+                                        records)
+                               (find-if (lambda (record)
+                                          (and (eq (getf record :operation) ':frame)
+                                               (eq (getf record :status) ':cancelled)))
+                                        records))
+                          "the ledger links submitted, finished and cancelled frames")
+             (test-assert (eq (getf (call ':status :handles (list 1)) :status) ':error)
+                          "malformed handles are refused"))
+        (rlm-endpoint-stop endpoint))))
+  nil)
+
+(-> test-rlm-endpoint-child-routing () null)
+(defun test-rlm-endpoint-child-routing ()
+  "Route child frames to the root provider's models at no more than the root's effort."
+  (let* ((configuration (test-configuration))
+         (model         (config :model configuration))
+         (efforts       (configuration--reasoning-efforts-for
+                         model (config :model-provider configuration)))
+         (lowest        (first efforts))
+         (highest       (first (last efforts)))
+         (calls         nil)
+         (calls-lock    (make-lock "Autolith child routing test calls")))
+    (setf (configuration-validation-deferred-p configuration) t
+          (config :reasoning-effort configuration) lowest)
+    (let ((endpoint (rlm-endpoint-start
+                     :provider      (make-instance 'rlm-map-test-provider)
+                     :configuration configuration
+                     :budget        (rlm-budget-create :calls 6 :tokens 100000 :depth 2))))
+      (flet ((call (operation &rest arguments)
+               "Send OPERATION with ARGUMENTS and return the response fields."
+               (rest (rlm-endpoint-test-call
+                      endpoint
+                      (list :rlm-request
+                            :token     (rlm-endpoint-token endpoint)
+                            :operation operation
+                            :arguments arguments)))))
+        (unwind-protect
+             (test-call-with-function-replacements
+              (list (list 'infer
+                          (lambda (task &rest arguments)
+                            (with-lock-held (calls-lock)
+                              (push (list task (getf arguments :model) (getf arguments :effort))
+                                    calls))
+                            (values "routed" "routed-trace" 0))))
+              (lambda ()
+                (test-assert (eq (getf (call ':infer :task "cheap" :model model :effort lowest)
+                                       :status)
+                                 ':ok)
+                             "a child may name the root provider's model at the root's effort")
+                (test-assert (equal (first calls) (list "cheap" model lowest))
+                             "the child's model and effort reach its frame")
+                (test-assert (and (< 1 (length efforts))
+                                  (search "may not exceed"
+                                          (getf (call ':infer :task "eager" :effort highest)
+                                                :message)))
+                             "a child may not raise effort above the root's")
+                (test-assert (search "Unsupported model"
+                                     (getf (call ':infer :task "elsewhere" :model "no-such-model")
+                                           :message))
+                             "a child may not name a model the provider does not offer")
+                (let ((handles (getf (call ':submit
+                                           :tasks (list (list :task "own" :effort lowest) "plain")
+                                           :model model)
+                                     :value)))
+                  (dolist (handle handles)
+                    (call ':collect :handles handle :timeout 30)))
+                (test-assert (and (member (list "own" model lowest) calls :test #'equal)
+                                  (member (list "plain" model nil) calls :test #'equal))
+                             "submitted tasks take the call's model and their own effort")))
+          (rlm-endpoint-stop endpoint)))))
+  nil)
 
 (-> test-rlm-endpoint () null)
 (defun test-rlm-endpoint ()

@@ -281,6 +281,12 @@
     :type     (option integer)
     :documentation
     "When a provider last processed this conversation's prompt in this process, as universal time.")
+   (last-response
+    :initform nil
+    :accessor conversation-last-response
+    :type     list
+    :documentation
+    "The request identity and universal time of the latest durable completed response.")
    (image-artifact-names
     :initform      (make-hash-table :test #'equal)
     :reader        conversation-image-artifact-names
@@ -2253,9 +2259,11 @@ transcript show automatic INPUT as a short notice."
   (let ((total (conversation--usage-total (getf metadata :usage))))
     (when total
       (setf (conversation-last-total-tokens conversation) total)))
-  (conversation-append-record
-   conversation
-   (list :provider :metadata metadata)))
+  (let ((record (conversation-append-record
+                 conversation
+                 (list :provider :metadata metadata))))
+    (conversation-note-response-record conversation (rest record))
+    record))
 
 (-> conversation--model-selection-p (t t) boolean)
 (defun conversation--model-selection-p (model reasoning-effort)
@@ -2816,11 +2824,12 @@ later picker searches read it without scanning the log."
 
 (defmethod conversation--project-record
     ((kind (eql :provider)) conversation properties)
-  "Remember the latest provider usage total for context accounting."
+  "Remember the latest provider usage total and completed response."
   (let ((total (conversation--usage-total
                 (getf (getf properties :metadata) :usage))))
     (when total
-      (setf (conversation-last-total-tokens conversation) total))))
+      (setf (conversation-last-total-tokens conversation) total)))
+  (conversation-note-response-record conversation properties))
 
 (defmethod conversation--project-record
     ((kind (eql :configuration)) conversation properties)

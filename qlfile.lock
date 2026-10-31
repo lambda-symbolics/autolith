@@ -88,8 +88,8 @@
   :version "git-7a4497aff7514134dd69ab28b7d07c06335b7852"))
 ("cl-jobpond" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-jobpond.git" :ref "148649aa6f1e998db5bbe807dc934d6b6e2762a1")
-  :version "git-148649aa6f1e998db5bbe807dc934d6b6e2762a1"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-jobpond.git" :ref "26940f414741addba4703a9c12e3220da64191c0")
+  :version "git-26940f414741addba4703a9c12e3220da64191c0"))
 ("clinker-transcript" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/clinker-transcript.git" :ref "1a2af5d4c7441fe756ead213c96a7f332ea8ce25")
@@ -104,8 +104,8 @@
   :version "git-38d5b6ae81a24031ad6c95b4f42ba99f2cf0a6c3"))
 ("cl-llm-provider-api" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-llm-provider-api.git" :ref "a5d99da86aa5713aa7dd0ff212f1bacc8670cff8")
-  :version "git-a5d99da86aa5713aa7dd0ff212f1bacc8670cff8"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-llm-provider-api.git" :ref "593c33568c2fb30f918562affbb9c3a68a2765f4")
+  :version "git-593c33568c2fb30f918562affbb9c3a68a2765f4"))
 ("cl-lsp" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-lsp.git" :ref "71327540754e7d77f90f76205c206985859b04c6")

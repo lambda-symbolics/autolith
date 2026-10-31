@@ -53,6 +53,11 @@
     :accessor      rlm-endpoint--final-p
     :type          boolean
     :documentation "True once the environment recorded a final value.")
+   (frame-set
+    :initform      nil
+    :accessor      rlm-endpoint--frames
+    :type          (option rlm-frame-set)
+    :documentation "The background frames the environment submitted, once it has.")
    (active-operations
     :initform      0
     :accessor      rlm-endpoint--active-operations
@@ -138,6 +143,118 @@ leaves a machine-readable invocation tree instead of orphaned frames."
                   "~&The inference run ledger failed: ~A~%" condition)))))
   nil)
 
+(-> rlm-endpoint--frame-set (rlm-endpoint &key (:create-p boolean)) rlm-frame-set)
+(defun rlm-endpoint--frame-set (endpoint &key create-p)
+  "Return ENDPOINT's background frames, creating them first when CREATE-P.
+
+Every frame descends one level of the root budget and records its outcome in
+the ledger as it ends, so frames the environment never collects stay linked
+to the run."
+  (with-lock-held ((rlm-endpoint--lock endpoint))
+    (or (rlm-endpoint--frames endpoint)
+        (if create-p
+            (setf (rlm-endpoint--frames endpoint)
+                  (rlm-frame-set-create
+                   :contract            ':text
+                   :budget              (rlm-budget-descend (rlm-endpoint--budget endpoint)
+                                                            :task "rlm-submit")
+                   :provider            (rlm-endpoint--provider endpoint)
+                   :configuration       (rlm-endpoint--configuration endpoint)
+                   :activity-callback   (rlm-endpoint--operation-activity-callback
+                                         endpoint ':submit)
+                   :completion-function (lambda (handle result)
+                                          (rlm-endpoint--record
+                                           endpoint
+                                           (list* :operation :frame
+                                                  :handle    handle
+                                                  (rlm-endpoint--child-record result))))))
+            (error 'rlm-inference-error
+                   :message "No inference frames were submitted.")))))
+
+(-> rlm-endpoint--child-record (list) list)
+(defun rlm-endpoint--child-record (result)
+  "Return the ledger fields describing one frame RESULT."
+  (append (list :task (getf result ':task))
+          (cond
+            ((getf result ':error)
+             (list :error (getf result ':error)))
+            ((getf result ':status)
+             (list :status      (getf result ':status)
+                   :child-trace (getf result ':trace)))
+            (t
+             (list :child-trace (getf result ':trace)
+                   :tokens      (getf result ':tokens))))))
+
+(-> rlm-endpoint--child-route (rlm-endpoint t t) (values (option string) (option string)))
+(defun rlm-endpoint--child-route (endpoint model effort)
+  "Validate a child frame's MODEL and EFFORT against ENDPOINT's root route.
+
+A child may use any model the root's provider offers, at no more than the
+root's reasoning effort, and only at an effort its model supports. NIL keeps
+the root's choice. Return the model and effort."
+  (let* ((configuration (rlm-endpoint--configuration endpoint))
+         (efforts       *supported-reasoning-efforts*))
+    (flet ((refuse (control &rest arguments)
+             "Signal an inference error describing the refused route."
+             (error 'rlm-inference-error
+                    :message (apply #'format nil control arguments))))
+      (when model
+        (unless (non-empty-string-p model)
+          (refuse "A child model must be a model name, not ~S." model))
+        (let ((problem (configuration--model-problem model configuration)))
+          (when problem
+            (refuse "~A" problem))))
+      (when effort
+        (let ((root (config :reasoning-effort configuration)))
+          (unless (and (stringp effort) (member effort efforts :test #'string=))
+            (refuse "A child effort must be one of ~{~A~^, ~}, not ~S." efforts effort))
+          (when (> (position effort efforts :test #'string=)
+                   (or (position root efforts :test #'string=) (length efforts)))
+            (refuse "A child frame's effort ~A may not exceed the root's ~A." effort root))
+          (unless (member effort
+                          (configuration--reasoning-efforts-for
+                           (or model (config :model configuration))
+                           (config :model-provider configuration))
+                          :test #'string=)
+            (refuse "The model ~A does not support the effort ~A."
+                    (or model (config :model configuration)) effort))))
+      (values model effort))))
+
+(-> rlm-endpoint--routed-tasks (rlm-endpoint t list) list)
+(defun rlm-endpoint--routed-tasks (endpoint tasks arguments)
+  "Return TASKS as plists carrying validated models and efforts.
+
+A task's own :MODEL and :EFFORT win over the call's in ARGUMENTS."
+  (mapcar (lambda (task)
+            (let ((item (rlm-map--normalize-task task)))
+              (multiple-value-bind (model effort)
+                  (rlm-endpoint--child-route
+                   endpoint
+                   (or (getf item ':model) (getf arguments ':model))
+                   (or (getf item ':effort) (getf arguments ':effort)))
+                (list* :model model :effort effort item))))
+          tasks))
+
+(-> rlm-endpoint--handles (list) list)
+(defun rlm-endpoint--handles (arguments)
+  "Return the handle list in proxied ARGUMENTS, accepting one handle string."
+  (let ((handles (getf arguments ':handles)))
+    (when (stringp handles)
+      (setf handles (list handles)))
+    (unless (and (listp handles) handles (every #'stringp handles))
+      (error 'rlm-inference-error
+             :message "Frame calls take one handle or a list of handles."))
+    handles))
+
+(-> rlm-endpoint--close-frames (rlm-endpoint) null)
+(defun rlm-endpoint--close-frames (endpoint)
+  "Cancel and stop ENDPOINT's background frames, if any."
+  (let ((frames (with-lock-held ((rlm-endpoint--lock endpoint))
+                  (rlm-endpoint--frames endpoint))))
+    (when frames
+      (rlm-frame-set-close frames)))
+  nil)
+
 (-> rlm-endpoint--operation-activity-callback
     (rlm-endpoint keyword)
     (option function))
@@ -162,7 +279,7 @@ leaves a machine-readable invocation tree instead of orphaned frames."
           (rlm-endpoint--operation-activity-callback endpoint operation)))
     (rlm-endpoint--call-admitted
      endpoint
-     (member operation '(:infer :map :run))
+     (member operation '(:infer :map :run :submit))
      (lambda ()
        (ecase operation
          (:run
@@ -183,20 +300,26 @@ leaves a machine-readable invocation tree instead of orphaned frames."
                        (format nil "No decomposition policy is named ~S."
                                policy)))
               (multiple-value-bind (value trace-identifier tokens-spent)
-                  (rlm-run task
-                           :policy            policy
-                           :context           (rlm--context-designators
-                                               (getf arguments ':context))
-                           :contract          (or (getf arguments ':contract) ':text)
-                           :budget            run-budget
-                           :provider          provider
-                           :configuration     configuration
-                           :activity-callback activity-callback
-                           :concurrency
-                           (let ((requested (getf arguments ':concurrency)))
-                             (if (and (integerp requested) (plusp requested))
-                                 requested
-                                 *rlm-map-default-concurrency*)))
+                  (multiple-value-bind (model effort)
+                      (rlm-endpoint--child-route endpoint
+                                                 (getf arguments ':model)
+                                                 (getf arguments ':effort))
+                   (rlm-run task
+                            :model             model
+                            :effort            effort
+                            :policy            policy
+                            :context           (rlm--context-designators
+                                                (getf arguments ':context))
+                            :contract          (or (getf arguments ':contract) ':text)
+                            :budget            run-budget
+                            :provider          provider
+                            :configuration     configuration
+                            :activity-callback activity-callback
+                            :concurrency
+                            (let ((requested (getf arguments ':concurrency)))
+                              (if (and (integerp requested) (plusp requested))
+                                  requested
+                                  *rlm-map-default-concurrency*))))
                 (rlm-endpoint--record endpoint
                                       (list :operation   :run
                                             :task        task
@@ -212,13 +335,19 @@ leaves a machine-readable invocation tree instead of orphaned frames."
               (error 'rlm-inference-error
                      :message "An environment infer call requires task text."))
             (multiple-value-bind (value trace-identifier tokens-spent)
-                (infer task
-                       :context           (getf arguments ':context)
-                       :contract          (or (getf arguments ':contract) ':text)
-                       :budget            (rlm-budget-descend budget :task task)
-                       :provider          provider
-                       :configuration     configuration
-                       :activity-callback activity-callback)
+                (multiple-value-bind (model effort)
+                    (rlm-endpoint--child-route endpoint
+                                               (getf arguments ':model)
+                                               (getf arguments ':effort))
+                 (infer task
+                        :model             model
+                        :effort            effort
+                        :context           (getf arguments ':context)
+                        :contract          (or (getf arguments ':contract) ':text)
+                        :budget            (rlm-budget-descend budget :task task)
+                        :provider          provider
+                        :configuration     configuration
+                        :activity-callback activity-callback))
               (rlm-endpoint--record endpoint
                                     (list :operation   :infer
                                           :task        task
@@ -237,7 +366,7 @@ leaves a machine-readable invocation tree instead of orphaned frames."
                      (format nil "An environment map call fans out 1 to ~D tasks."
                              *rlm-endpoint-map-maximum-tasks*)))
             (let ((results
-                    (rlm-map tasks
+                    (rlm-map (rlm-endpoint--routed-tasks endpoint tasks arguments)
                              :contract          (or (getf arguments ':contract) ':text)
                              :budget            (rlm-budget-descend budget :task "rlm-map")
                              :provider          provider
@@ -262,6 +391,38 @@ leaves a machine-readable invocation tree instead of orphaned frames."
                                               :tokens
                                               (getf result ':tokens)))))))
               (list :rlm-response :status :ok :value results))))
+         (:submit
+          (let ((tasks (getf arguments ':tasks)))
+            (unless (and (listp tasks)
+                         (plusp (length tasks))
+                         (<= (length tasks) *rlm-endpoint-map-maximum-tasks*))
+              (error 'rlm-inference-error
+                     :message
+                     (format nil "An environment submit call starts 1 to ~D tasks."
+                             *rlm-endpoint-map-maximum-tasks*)))
+            (let ((handles (rlm-frame-set-submit
+                            (rlm-endpoint--frame-set endpoint :create-p t)
+                            (rlm-endpoint--routed-tasks endpoint tasks arguments)
+                            :contract (getf arguments ':contract))))
+              (rlm-endpoint--record endpoint (list :operation :submit :handles handles))
+              (list :rlm-response :status :ok :value handles))))
+         (:status
+          (list :rlm-response :status :ok
+                :value (rlm-frame-set-status (rlm-endpoint--frame-set endpoint)
+                                             (rlm-endpoint--handles arguments))))
+         (:collect
+          (let ((timeout (getf arguments ':timeout)))
+            (unless (typep timeout '(or null (real 0)))
+              (error 'rlm-inference-error
+                     :message "A collect timeout is a nonnegative number of seconds."))
+            (list :rlm-response :status :ok
+                  :value (rlm-frame-set-collect (rlm-endpoint--frame-set endpoint)
+                                                (rlm-endpoint--handles arguments)
+                                                :timeout-seconds timeout))))
+         (:cancel
+          (list :rlm-response :status :ok
+                :value (rlm-frame-set-cancel (rlm-endpoint--frame-set endpoint)
+                                             (rlm-endpoint--handles arguments))))
          (:finish
           (with-lock-held ((rlm-endpoint--lock endpoint))
             ;; The first finish wins, atomically with the admission check, so
@@ -272,6 +433,8 @@ leaves a machine-readable invocation tree instead of orphaned frames."
             (setf (rlm-endpoint--final-value endpoint) (getf arguments ':value)
                   (rlm-endpoint--final-p endpoint) t))
           (rlm-endpoint--record endpoint (list :operation :finish))
+          ;; Frames still running cannot change the recorded answer.
+          (rlm-endpoint--close-frames endpoint)
           (list :rlm-response :status :ok :value ':finished)))))))
 
 (defmethod image-daemon:daemon-runtime-request-valid-p
@@ -337,7 +500,8 @@ leaves a machine-readable invocation tree instead of orphaned frames."
 
 (-> rlm-endpoint-stop (rlm-endpoint) null)
 (defun rlm-endpoint-stop (endpoint)
-  "Revoke activity publication, then stop ENDPOINT's supervised runtime."
+  "Stop background frames, revoke activity publication, then stop ENDPOINT's runtime."
+  (rlm-endpoint--close-frames endpoint)
   (with-lock-held ((rlm-endpoint--activity-lock endpoint))
     (setf (rlm-endpoint--activity-enabled-p endpoint) nil))
   (image-daemon:daemon-runtime-stop endpoint)

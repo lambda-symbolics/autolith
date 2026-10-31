@@ -62,14 +62,15 @@
 
 (defmethod provider-stream-turn :around
     ((provider t) (conversation conversation) &key &allow-other-keys)
-  "Export one event after a successful streaming call when configured."
-  (let ((destination (llm-usage--destination)))
-    (if destination
-        (let* ((started (get-internal-real-time))
-               (results (multiple-value-list (call-next-method))))
-          (llm-usage--export
-           conversation (first results) :destination destination
-           :wall-seconds                             (max 0 (/ (- (get-internal-real-time) started)
-                                                              (float internal-time-units-per-second 1d0))))
-          (values-list results))
-        (call-next-method))))
+  "Refuse a request past the cost limit, then record and optionally export a successful call."
+  (provider-cost-check provider)
+  (let* ((destination (llm-usage--destination))
+         (started     (get-internal-real-time))
+         (results     (multiple-value-list (call-next-method))))
+    (provider-cost-record provider (first results))
+    (when destination
+      (llm-usage--export
+       conversation (first results) :destination destination
+       :wall-seconds                             (max 0 (/ (- (get-internal-real-time) started)
+                                                          (float internal-time-units-per-second 1d0)))))
+    (values-list results)))

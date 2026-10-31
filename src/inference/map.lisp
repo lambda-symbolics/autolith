@@ -46,6 +46,8 @@
     (handler-case
         (multiple-value-bind (value trace-identifier tokens-spent)
             (infer task
+                   :model             (getf item ':model)
+                   :effort            (getf item ':effort)
                    :context           (append (rlm--context-designators context)
                                               (rlm--context-designators
                                                (getf item ':context)))
@@ -110,8 +112,9 @@
                 activity-callback)
   "Fan TASKS out as inference frames sharing one budget subtree.
 
-TASKS elements are task strings or (:task ... :context ...) plists whose views
-are appended to the shared CONTEXT. ACTIVITY-CALLBACK receives compact live
+TASKS elements are task strings or (:task ... :context ... :model ... :effort ...)
+plists whose views are appended to the shared CONTEXT; a task's own model and
+effort override the map's. ACTIVITY-CALLBACK receives compact live
 frame and request descriptions. Results keep TASKS' order; each is
 (:task ... :value ... :trace ... :tokens ...) for a completed frame, with
 :tokens carrying the frame's settled billable spend. Budget exhaustion returns

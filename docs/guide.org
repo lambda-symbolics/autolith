@@ -1807,14 +1807,18 @@ Appends are synchronous and serialized across processes; export errors do not
 abort a completed provider call.
 
 Mechanical precompaction removes failed tool exchanges from earlier turns
-before the first request after resume, a provider/model change, or estimated
-prompt-cache expiry. Calls, correlated outputs and reasoning used only for
-those calls are removed together. Successful exchanges and failures in the
-latest user turn are retained. Pruning changes provider context, with every
-record available in the durable transcript. It runs before ordinary requests
-and native or portable compaction. Idle pruning uses the same retention
-estimate described below; providers without an estimate prune only on resume
-or provider/model changes.
+before a request after a provider/model change or estimated prompt-cache
+expiry. Calls, correlated outputs and reasoning used only for those calls are
+removed together. Successful exchanges and failures in the latest user turn
+are retained. Pruning changes provider context, with every record available in
+the durable transcript. The transcript records each pruning, and resuming
+replays it, so a resumed session sends the context its provider last saw. The
+first request after resume prunes only when the latest completed response used
+another provider or model, is older than the retention estimate, or no
+estimate exists. Conversations last answered before 0.67.15 prune once on
+resume, as before. Pruning runs before ordinary requests and native or
+portable compaction. Idle pruning uses the same retention estimate described
+below.
 
 Idle cache compaction is enabled by default. After a completed request with at
 least 32,768 prompt tokens and 131,072 characters of summarizable history, an
@@ -1829,6 +1833,28 @@ route uses a conservative five-minute inactivity estimate. Other providers need
 an explicit estimate, for example
 =(settings :prompt-cache-retention-seconds 1800)= for thirty minutes. Set it to
 zero to use the provider estimate. Both settings persist across restarts.
+
+=(settings :prompt-cache-ttl "1h")= asks the Anthropic API and OpenRouter
+Claude models to keep cache entries for one hour instead of five minutes. A
+one-hour cache write costs twice the base input price, against 1.25 times for
+five minutes, so it pays when a conversation often pauses for between five
+minutes and an hour. Other routes ignore the setting. It does not change the
+retention estimate: with a one-hour lifetime, also set
+=(settings :prompt-cache-retention-seconds 3600)= so precompaction and idle
+compaction use the longer window. OpenRouter requests carry the conversation's
+cache key as their session identifier, which keeps a conversation on one
+upstream provider from its first request.
+
+=/status= shows what this process's model requests cost. A request is priced
+by the charge its provider reports, as OpenRouter does, else by a price
+snapshot for its model: the built-in Anthropic API list prices, or
+=(settings :model-prices "{\"model\": {\"input\": 2, \"cache_read\": 0.2, \"output\": 10}}")=
+in US dollars per million tokens, keyed by the model name =/model= shows. A
+missing cache_write rate charges cache writes as input. Requests without a
+price, such as subscription routes, are counted as unpriced, not free.
+=(settings :cost-limit 5)= refuses new model requests, compaction and
+inference frames included, once reported and estimated spending reaches five
+dollars; zero disables the limit. Unpriced requests do not count toward it.
 
 Cache retention depends on the provider, model, routing and account policy.
 The [[https://developers.openai.com/api/docs/guides/prompt-caching][OpenAI API cache documentation]] describes a thirty-minute default for
@@ -1845,6 +1871,10 @@ A cache miss reports measured lost reads; a stall reports shared-history growth
 in characters because its token count is unknown. Both show cached and total
 input tokens. Notices start with a red =!=. Model changes, idle intervals and
 smaller prompts are local observations, not proof of eviction or routing failure.
+A notice also names what changed in the request as sent, compared with the
+previous one: top-level fields such as =tools= or =system=, the first changed
+message or input item, and moved cache markers. These come from digests of the
+final request, not from provider counters, and keep no prompt text.
 The first request after resuming or compacting establishes a fresh baseline.
 Without comparable read counters or prefix measurements, no loss is inferred
 from total input. The setting is off by default and persists across restarts.

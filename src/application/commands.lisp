@@ -266,6 +266,19 @@ transcript renderer, including in fullscreen."
     (t
      (format nil "~,2FM" (/ count 1000000)))))
 
+(-> application--cost-description (configuration) string)
+(defun application--cost-description (configuration)
+  "Describe this process's recorded request cost, its limit and unpriced requests."
+  (let* ((summary  (cost-ledger-summary *provider-cost-ledger*))
+         (counts   (getf summary :counts))
+         (dollars  (or (second (assoc "USD" (getf summary :totals) :test #'string=)) 0))
+         (limit    (config :cost-limit configuration))
+         (unpriced (+ (getf counts :unpriced) (getf counts :unknown))))
+    (format nil "$~,4F this process~@[ of a $~,2F limit~]~[~:;, ~:*~D request~:P unpriced~]"
+            (float dollars 1d0)
+            (and (plusp limit) (float limit 1d0))
+            unpriced)))
+
 (-> application--prompt-cache-description (list) string)
 (defun application--prompt-cache-description (usage)
   "Return a compact prompt-cache summary for aggregate USAGE."
@@ -317,7 +330,25 @@ transcript renderer, including in fullscreen."
                           (:resumed
                            " · resumed session")
                           (otherwise
-                           ""))))))
+                           ""))))
+   (let ((description (application--wire-change-description (getf miss :wire-change))))
+     (when description
+       (list (terminal-span ':dim (format nil " · request ~A" description)))))))
+
+(-> application--wire-change-description (list) (option string))
+(defun application--wire-change-description (change)
+  "Describe the final-request CHANGE behind a cache notice, or NIL when nothing changed."
+  (let ((parts
+          (remove nil
+                  (list (and (getf change :fields)
+                             (format nil "~{~A~^, ~} changed" (getf change :fields)))
+                        (and (getf change :first-changed-item)
+                             (format nil "item ~D of ~D changed"
+                                     (1+ (getf change :first-changed-item))
+                                     (getf change :items)))
+                        (and (getf change :breakpoints-moved-p)
+                             "cache markers moved")))))
+    (and parts (format nil "~{~A~^, ~}" parts))))
 
 (-> application-note-prompt-cache-request-started (application) null)
 (defun application-note-prompt-cache-request-started (application)
@@ -530,6 +561,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
              (and (getf usage :cache-seen-p)
                   (list "prompt cache"
                         (application--prompt-cache-description usage)))
+             (list "cost" (application--cost-description configuration))
              (list "context"
                    (multiple-value-bind (used estimated-p)
                        (application-context-usage application)
