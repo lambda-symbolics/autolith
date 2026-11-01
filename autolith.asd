@@ -378,6 +378,7 @@
                                           (:file "acp/extension-resources")
                                           (:file "acp/completions")
                                           (:file "telemetry/hooks")
+                                          (:file "startup/session-cli")
                                           (:file "startup/main")
                                           (:file "startup/active-image"))))
   :in-order-to             ((asdf:test-op (asdf:test-op #:autolith/tests))))
@@ -534,6 +535,7 @@
                                           (:file "localgroup-tests")
                                           (:file "localgroup-handoff-tests")
                                           (:file "localgroup-handoff-boundary-tests")
+                                          (:file "session-cli-tests")
                                           (:file "windows-lifecycle-tests")
 
                                           (:file "release-script-tests" :if-feature (:not :win32))

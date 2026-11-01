@@ -815,7 +815,10 @@ state, including an empty list after successful or pristine startup."
                   authentication-selection authentication-method)
   "Start one interactive Autolith session from COMMAND's parsed options."
   (main--register-local-source-trees)
-  (let* ((pristine-p               (not (null (getopt* command ':pristine))))
+  (main--validate-detached-options command :resume-requested-p resume-requested-p
+                                          :resume-id           resume-id)
+  (let* ((detached-p               (not (null (getopt* command ':detached))))
+         (pristine-p               (not (null (getopt* command ':pristine))))
          (immutable-p              (or pristine-p
                                        (not (null (getopt* command ':immutable)))))
          (explicit-permission-mode (getopt* command ':permissions))
@@ -852,11 +855,13 @@ state, including an empty list after successful or pristine startup."
          (effective-resume-requested-p
            (and (null handoff-record) resume-requested-p))
          (effective-resume-id
-           (if handoff-record
-               (getf (rest handoff-record) :conversation-id)
-               resume-id))
+           (cond
+             (handoff-record
+              (getf (rest handoff-record) :conversation-id))
+             (resume-id
+              (main-resolve-conversation configuration resume-id))))
          (recovery-state
-           (if handoff-record
+           (if (or handoff-record detached-p)
                (list nil nil)
                (multiple-value-list
                 (application-recovery-state configuration))))
@@ -864,7 +869,8 @@ state, including an empty list after successful or pristine startup."
          (recovery-diagnosis
            (if handoff-record
                (getf (rest handoff-record) :recovery-diagnosis)
-               (and (null effective-resume-id)
+               (and (not detached-p)
+                    (null effective-resume-id)
                     (application-recovery-diagnosis-prompt configuration))))
          (resume-command-p
            (or (and handoff-record
@@ -889,6 +895,24 @@ state, including an empty list after successful or pristine startup."
     (when handoff-record
       (localgroup-handoff-begin-startup handoff-record)
       (application--clear-recovery-environment))
+    (unless handoff-record
+      (let ((record (and effective-resume-id
+                         (main--live-conversation-record configuration effective-resume-id))))
+        (when record
+          (main--validate-live-options command)
+          (if detached-p
+              (main--print-detached-receipt record)
+              (localgroup-relay-exit configuration
+                                     (localgroup-attach-record configuration record ':control)
+                                     ':control))
+          (return-from main--start-session nil))))
+    (when detached-p
+      (main--start-detached configuration
+                            :permission-mode permission-mode
+                            :immutable-p     immutable-p
+                            :pristine-p      pristine-p
+                            :conversation-id effective-resume-id)
+      (return-from main--start-session nil))
     (when (and (string-equal (software-type) "Linux")
                (not (application--command-sandbox-available-p)))
       (format *error-output* "~&Autolith: ~A~%"
@@ -1039,6 +1063,11 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
 (defun main--session-options ()
   "Return the persistent session options shared with every sub-command."
   (list
+   (make-option ':flag
+                :long-name   "detached"
+                :key         ':detached
+                :persistent  t
+                :description "start without attaching; print conversation ID and session PID")
    (make-option ':string
                 :long-name   "model"
                 :key         ':model
@@ -1127,14 +1156,15 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
   (make-command
    :name        "resume"
    :description "resume a saved conversation, or pick one interactively"
-   :usage       "[ID]"
+   :usage       "[PREFIX] [--detached]"
    :handler
    (lambda (command)
      (main--start-session
       command
       :resume-requested-p t
-      :resume-id          (main--single-selection command
-                                                  "conversation identifier")))))
+       :resume-id         (progn
+                            (main--single-selection command "conversation ID prefix")
+                            (first (command-arguments command)))))))
 
 (-> main--replay-command () clingon:command)
 (defun main--replay-command ()
@@ -1469,6 +1499,11 @@ autolith uninstall removes the installation and keeps user data."
                (error (condition)
                  (format *error-output* "~&~A~%" condition)
                  (uiop:quit 64)))))
+       (when (and (getopt* command ':detached)
+                  (not (member (command-name command) '("autolith" "resume")
+                               :test #'string=)))
+         (error 'configuration-error
+                :message "--detached is supported only for a new session or resume PREFIX."))
        (funcall (command-handler command) command))))
   nil)
 

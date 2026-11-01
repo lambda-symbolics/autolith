@@ -507,7 +507,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
 
 (-> application-status-entry (application) list)
 (defun application-status-entry (application)
-  "Return the styled /status summary of APPLICATION's session and rate limits."
+  "Return the styled (status) summary of APPLICATION's session and rate limits."
   (let* ((configuration   (application-configuration application))
          (provider        (application-provider application))
          (snapshot        (and provider (provider-rate-limits provider)))

@@ -1359,6 +1359,27 @@ autolith lg status --sexp
 
 =idle= means that the process is at input with no active work of any kind.
 
+Start an unattended session, or resume one by conversation ID prefix:
+
+#+BEGIN_SRC sh
+autolith --detached
+autolith resume b-6 --detached
+autolith resume b-6
+autolith resume
+#+END_SRC
+
+With =--detached=, Autolith prints the full conversation ID and session PID,
+then exits without attaching. This works with closed stdin and with
+=AUTOLITH_SESSION_STYLE=direct=. Detached resume requires a prefix. Without
+=--detached=, omit the prefix to open the conversation picker. Exact canonical
+and displayed IDs take priority; ambiguous prefixes report every matching ID
+with its available title, workspace, time, and preview. Running conversations,
+including empty new sessions, are selectable. Resuming a running conversation
+attaches to it; detached resume prints its existing PID without disturbing its
+clients. Launch-only overrides such as =--model= and =--permissions= are rejected
+when reusing a running conversation. =--image= and =--simulate-crash= cannot be
+combined with =--detached=.
+
 Control a session with the following commands:
 
 #+BEGIN_SRC sh
@@ -1384,11 +1405,9 @@ case-sensitive. Legacy hexadecimal IDs accept either case.
 =pause= cancels active work and holds queued primary work.
 =kill= requests graceful shutdown.
 
-Detaching hands a session to a supervised process group that outlives the
-terminal. Windows has no process groups or detached sessions, so sessions
-there always run directly in the terminal that started them: =(detach)= and
-client-first starts report that the handoff is withheld, while the loopback
-endpoint and the =localgroup= commands work as elsewhere.
+On POSIX hosts, detaching hands a session to a supervised process group that
+outlives the terminal. On Windows, the supervisor uses a Job Object for the
+session process tree. Both support unattended starts and later attachment.
 
 Autolith stores configuration, durable data, process state, and replaceable
 caches below =${XDG_CONFIG_HOME:-~/.config}/autolith/=,

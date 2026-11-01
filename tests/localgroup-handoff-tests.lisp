@@ -63,7 +63,8 @@
                        (localgroup-handoff--arguments
                         configuration handoff-pathname
                         :permission-argument "auto"
-                        :immutable-p         enabled-p)))
+                        :immutable-p         enabled-p
+                        :pristine-p          enabled-p)))
                  (test-assert
                   (equal arguments
                          (append
@@ -71,7 +72,7 @@
                              *platform* (config :source-root configuration))
                           (list "--permissions" "auto")
                           (when enabled-p
-                            (list "--immutable" "--fullscreen"))
+                            (list "--immutable" "--pristine" "--fullscreen"))
                           (list "--site-config-root"
                                 (namestring
                                    (config :site-config-root configuration))
@@ -518,10 +519,10 @@
          (progn
            (configuration-ensure-directories configuration)
            (let* ((*localgroup-fresh-launch-function*
-                    (lambda (launch-configuration session-id pathname
-                             permission-argument immutable-p)
-                      (declare (ignore launch-configuration))
-                      (push (list session-id pathname permission-argument
+                    (lambda (launch-configuration &key session-id handoff-pathname
+                                                       permission-argument immutable-p pristine-p)
+                      (declare (ignore launch-configuration pristine-p))
+                      (push (list session-id handoff-pathname permission-argument
                                   immutable-p)
                             launches)))
                   (*localgroup-fresh-wait-function*
@@ -554,7 +555,15 @@
                        (typep (getf (rest record) :styled-p) 'boolean)
                        (null (getf (rest record) :session-id))
                        (string= (getf (rest record) :launch-id) launched-id))
-                  "a fresh spawn records terminal presentation and session state"))))
+                  "a fresh spawn records terminal presentation and session state")))
+             (localgroup-handoff-spawn-fresh configuration
+                                             :conversation-id   "resume-id"
+                                             :attach-expected-p nil)
+             (let ((record (localgroup-handoff--read
+                            configuration (second (first launches)))))
+               (test-assert
+                (null (getf (rest record) :attach-expected-p))
+                "an explicit detached spawn disables the first-attach watchdog")))
            (let* ((*localgroup-startup-record*
                     '(:localgroup-handoff
                       :rows 41 :columns 93 :styled-p t))
@@ -583,7 +592,7 @@
                           (merge-pathnames
                            "*.sexp"
                            (localgroup-handoff-directory configuration))))
-                 1)
+                 2)
               "a failed fresh spawn removes its own pending record")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

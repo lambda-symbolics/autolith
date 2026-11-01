@@ -6014,6 +6014,10 @@
     (unwind-protect
          (test-call-with-function-replacements
           (list
+           (list 'main-resolve-conversation
+                 (lambda (configuration prefix)
+                   (declare (ignore configuration))
+                   prefix))
            (list
             'application-reconnect
             (lambda (application

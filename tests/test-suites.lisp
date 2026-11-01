@@ -1331,6 +1331,11 @@
   test-localgroup-handoff-cancellation
   test-localgroup-fresh-startup-selection)
 
+(define-test-suite session-cli
+  test-cli-resume-prefixes
+  test-cli-detached-dispatch
+  test-cli-detached-process)
+
 ;;; The release scripts and the release server that drives them deploy to
 ;;; POSIX hosts, so their suites exist only where the POSIX shell does.
 (when (test-fixture-available-p *platform* ':posix-shell)

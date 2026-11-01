@@ -34,13 +34,14 @@
   "The session-detachment boundary used during replacement startup.")
 
 (defparameter *localgroup-fresh-launch-function*
-  (lambda (configuration session-id handoff-pathname permission-argument
-           immutable-p)
+  (lambda (configuration &key session-id handoff-pathname permission-argument
+                             immutable-p pristine-p)
     (localgroup-handoff--launch-for
      configuration session-id
      :handoff-pathname    handoff-pathname
      :permission-argument permission-argument
-     :immutable-p         immutable-p))
+     :immutable-p         immutable-p
+     :pristine-p          pristine-p))
   "The detached launch boundary used by client-first session starts.")
 
 (defparameter *localgroup-fresh-wait-function*
@@ -322,10 +323,11 @@ before any shell is involved."
                                     :ticket    handoff-pathname))
 
 (-> localgroup-handoff--arguments
-    (configuration pathname &key (:permission-argument string) (:immutable-p boolean))
+    (configuration pathname &key (:permission-argument string) (:immutable-p boolean)
+                                 (:pristine-p boolean))
     list)
 (defun localgroup-handoff--arguments
-    (configuration handoff-pathname &key (permission-argument "ask") immutable-p)
+    (configuration handoff-pathname &key (permission-argument "ask") immutable-p pristine-p)
   "Return the platform launch command and handoff arguments for CONFIGURATION."
   (append
    (platform-session-launch-command
@@ -337,6 +339,8 @@ before any shell is involved."
                (list "--provider" (config :model-provider configuration)))))
    (when immutable-p
      (list "--immutable"))
+   (when pristine-p
+     (list "--pristine"))
    (when (config :fullscreen-p configuration)
      (list "--fullscreen"))
    (when (eq (config :terminal-theme configuration) ':almighty)
@@ -360,16 +364,17 @@ before any shell is involved."
 
 (-> localgroup-handoff--launch-for
     (configuration string &key (:handoff-pathname pathname) (:permission-argument string)
-                               (:immutable-p boolean))
+                               (:immutable-p boolean) (:pristine-p boolean))
     t)
 (defun localgroup-handoff--launch-for
-    (configuration session-id &key handoff-pathname permission-argument immutable-p)
+    (configuration session-id &key handoff-pathname permission-argument immutable-p pristine-p)
   "Launch one detached session process from HANDOFF-PATHNAME."
   (let ((arguments
           (localgroup-handoff--arguments
            configuration handoff-pathname
            :permission-argument permission-argument
-           :immutable-p         immutable-p))
+            :immutable-p        immutable-p
+            :pristine-p         pristine-p))
         (log-pathname
           (localgroup-handoff-log-pathname configuration session-id)))
     (ensure-directories-exist log-pathname)
@@ -389,19 +394,21 @@ before any shell is involved."
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:conversation-id (option string))
                         (:resume-command-p boolean)
-                        (:recovery-diagnosis t))
+                        (:recovery-diagnosis t)
+                        (:attach-expected-p boolean)
+                        (:pristine-p boolean))
     string)
 (defun localgroup-handoff-spawn-fresh
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        resume-command-p recovery-diagnosis)
+                        resume-command-p recovery-diagnosis pristine-p
+                        (attach-expected-p t))
   "Launch a detached session and return its ready identifier.
 
 CONVERSATION-ID resumes that conversation instead of starting a fresh
 one, RESUME-COMMAND-P lets the session pick one itself through the
 attached terminal, and RECOVERY-DIAGNOSIS preserves crash diagnosis
-across the client-first launch. The session process starts shell-independent
-from the outset, so the calling terminal can attach as a thin relay whose
-detach is immediate and never interrupts session work."
+across the client-first launch. When ATTACH-EXPECTED-P is false, the
+session is explicitly detached and its first-attach watchdog is disabled."
   (multiple-value-bind (rows columns)
       (terminal-current-size)
     (let* ((created-at  (get-universal-time))
@@ -416,7 +423,7 @@ detach is immediate and never interrupts session work."
                    :created-at           created-at
                    :mode                 ':detach
                    :state                ':pending
-                   :attach-expected-p    t
+                   :attach-expected-p    (not (null attach-expected-p))
                    :fresh-conversation-p (and (null conversation-id)
                                               (not resume-command-p))
                    :resume-command-p     (not (null resume-command-p))
@@ -435,10 +442,13 @@ detach is immediate and never interrupts session work."
       (unwind-protect
            (progn
              (setf process
-                   (funcall *localgroup-fresh-launch-function*
-                           configuration launch-id pathname
-                            (localgroup-handoff-permission-string permission-mode)
-                            immutable-p))
+                    (funcall *localgroup-fresh-launch-function*
+                             configuration
+                             :session-id          launch-id
+                             :handoff-pathname    pathname
+                             :permission-argument (localgroup-handoff-permission-string permission-mode)
+                             :immutable-p         immutable-p
+                             :pristine-p          pristine-p))
              (setf session-id
                    (funcall *localgroup-fresh-wait-function*
                             configuration token (current-process-id)))
