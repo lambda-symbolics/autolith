@@ -145,6 +145,18 @@
           (test-assert (and (tool-result-success-p read)
                             (search "read as workspace:notes.txt" (tool-result-content read)))
                        "a relative path without a scheme reads the workspace file")
+          (let* ((first    (call "edit" "uri" "workspace:notes.txt" "base-revision" revision
+                                 "operations" (vector (workspace-resource-tests--operation
+                                                       "replace-lines" "start-line" 2 "end-line" 2
+                                                       "content" (format nil "LINE 2~%LINE 2B")))))
+                 (revision (workspace-resource-tests--field (tool-result-content first) "Revision: "))
+                 (second   (call "edit" "uri" "workspace:notes.txt" "base-revision" revision
+                                 "operations" (vector (workspace-resource-tests--operation
+                                                       "replace-lines" "start-line" 190 "end-line" 190
+                                                       "content" "LINE 189")))))
+            (test-assert (tool-result-success-p first) "the first edit applies")
+            (test-assert (tool-result-success-p second)
+                         "lines read before the model's own edit stay editable in the new revision"))
           (let ((past (call "read" "uri" "workspace:notes.txt" "start-line" 400 "line-count" 3)))
             (test-assert (and (tool-result-success-p past)
                               (search "showing lines 199-201" (tool-result-content past))
