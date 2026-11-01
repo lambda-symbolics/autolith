@@ -85,6 +85,19 @@
       (funcall callback)))
   (or (pop (scripted-terminal-events terminal)) :end-of-input))
 
+(defclass shared-output-terminal (scripted-terminal)
+  ((output
+    :initarg       :output
+    :reader        shared-output-terminal-output
+    :type          stream
+    :documentation "Owned sink shared by renderer writes and explicitly bound diagnostics."))
+  (:documentation "A scripted terminal with a real shared character-output sink."))
+
+(defmethod terminal--write ((terminal shared-output-terminal) (text string))
+  "Mirror trusted renderer TEXT into TERMINAL's shared sink."
+  (write-string text (shared-output-terminal-output terminal))
+  (call-next-method))
+
 
 ;;;; -- Test Helpers --
 
