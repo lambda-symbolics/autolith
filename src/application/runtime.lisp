@@ -122,10 +122,15 @@ Clicking the rendered call's header inserts it into the composer.")
     :type          (member :ask :auto :sandboxed :full-access)
     :documentation "The command approval behavior for this process session.")
    (command-classifications
-    :initform      (make-hash-table :test #'equal)
+    :initform      (make-hash-table :test #'equal :synchronized t)
     :reader        application-command-classifications
     :type          hash-table
-    :documentation "Session-cached model permission decisions per command and directory.")
+    :documentation "Cached model permission decisions per command and directory under the current instructions.")
+   (command-classification-instructions
+    :initform      nil
+    :accessor      application-command-classification-instructions
+    :type          (option string)
+    :documentation "The user instructions the cached permission decisions were made under.")
    (command-authorization-lock
     :initform      (make-lock "Autolith command authorization")
     :reader        application-command-authorization-lock

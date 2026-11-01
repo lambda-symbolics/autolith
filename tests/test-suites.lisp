@@ -584,6 +584,7 @@
     test-command-permission-write-failure
     test-external-permission-persistence
     test-external-tool-permission-modes
+    test-command-classification-cache-bounds
     test-external-tool-permission-keys
     test-external-tool-permission-failures)
 

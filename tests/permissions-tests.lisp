@@ -282,6 +282,45 @@
                       "local sandbox mode requires separate external approval")))))
   nil)
 
+(-> test-command-classification-cache-bounds () null)
+(defun test-command-classification-cache-bounds ()
+  "Reuse decisions under one instruction and drop them when the instruction changes."
+  (with-test-configuration (configuration root)
+    (let ((application    (make-instance 'application :configuration configuration
+                                         :permission-state           (permissions-load configuration)
+                                         :provider                   (make-instance 'rlm-inference-test-provider
+                                                                                    :results nil)))
+          (instructions   "Build the project.")
+          (classify-count 0))
+      (test-call-with-function-replacements
+       (list (list 'application--current-user-instructions
+                   (lambda (application) (declare (ignore application)) instructions))
+             (list 'permissions-model-classify-command
+                   (lambda (command directory &key provider configuration
+                                                   sandbox-available-p user-instructions)
+                     (declare (ignore command directory provider configuration
+                                      sandbox-available-p user-instructions))
+                     (incf classify-count)
+                     (values ':sandboxed "test policy"))))
+       (lambda ()
+         (flet ((classify (command)
+                  (application--model-command-permission application command root
+                                                         :sandbox-available-p t)))
+           (classify "make")
+           (classify "make")
+           (test-assert (= 1 classify-count) "one instruction reuses a command's decision")
+           (setf instructions "Run the tests.")
+           (classify "make")
+           (test-assert (= 2 classify-count) "a new instruction asks again")
+           (test-assert (= 1 (hash-table-count (application-command-classifications application)))
+                        "decisions made under earlier instructions leave the cache")
+           (let ((*application-command-classification-limit* 4))
+             (dotimes (index 10)
+               (classify (format nil "command-~D" index)))
+             (test-assert (<= (hash-table-count (application-command-classifications application)) 4)
+                          "one instruction cannot grow the cache past its limit")))))))
+  nil)
+
 (-> test-external-tool-permission-keys () null)
 (defun test-external-tool-permission-keys ()
   "Verify exact typed identity and order-independent JSON object keys."

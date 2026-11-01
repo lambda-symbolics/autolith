@@ -3127,12 +3127,31 @@ sandbox grant is revalidated at this final authorization boundary."
 (defun application--current-user-instructions (application)
   "Return the latest durable user instructions available to APPLICATION."
   (when (slot-boundp application 'conversation)
-    (loop for item in (reverse
-                       (conversation-input-items
-                        (application-conversation application)))
-          when (and (json-object-p item)
-                    (string= (or (json-get item "role") "") "user"))
-            do (return (context--message-text item)))))
+    (let ((item (find-if (lambda (item)
+                           (and (json-object-p item)
+                                (string= (or (json-get item "role") "") "user")))
+                         (conversation-input-items (application-conversation application))
+                         :from-end t)))
+      (and item (context--message-text item)))))
+
+(defparameter *application-command-classification-limit* 256
+  "Maximum cached permission decisions under one set of user instructions.")
+
+(-> application--command-classification-cache (application (option string)) hash-table)
+(defun application--command-classification-cache (application instructions)
+  "Return APPLICATION's permission cache for INSTRUCTIONS, emptied when they changed.
+
+Decisions depend on the latest user instructions, so a new instruction makes
+every earlier decision unreachable; dropping them keeps the cache bounded by
+the commands of one instruction rather than the whole session."
+  (let ((cache (application-command-classifications application)))
+    (unless (equal instructions (application-command-classification-instructions application))
+      (clrhash cache)
+      (setf (application-command-classification-instructions application)
+            (and instructions (copy-seq instructions))))
+    (when (>= (hash-table-count cache) *application-command-classification-limit*)
+      (clrhash cache))
+    cache))
 
 (-> application--automatic-command-decision (t) keyword)
 (defun application--automatic-command-decision (decision)
@@ -3154,11 +3173,10 @@ sandbox grant is revalidated at this final authorization boundary."
       (values ':deny "no provider is available to classify operations")))
   (let* ((user-instructions
            (application--current-user-instructions application))
-         (cache  (application-command-classifications application))
+         (cache  (application--command-classification-cache application user-instructions))
          (key
-           (format nil "sandbox=~:[unavailable~;available~]~%instructions=~A~%~A~%~A"
+           (format nil "sandbox=~:[unavailable~;available~]~%~A~%~A"
                    sandbox-available-p
-                   (or user-instructions "<unavailable>")
                    command
                    (namestring directory)))
          (cached (gethash key cache)))
