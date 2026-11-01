@@ -498,8 +498,15 @@
          (handler-case
              (progn (resource-resolver-resolve (make-instance 'shell-log-resolver :scheme "shell-log")
                                                identifier owner) nil)
-           (resource-access-denied () t))
+           ((or resource-access-denied tool-error) () t))
          "URI identifiers cannot introduce traversal"))
+      (test-assert
+       (handler-case
+           (progn (resource-resolver-resolve (make-instance 'shell-log-resolver :scheme "shell-log")
+                                             "shell-authority/x/terminal.sexp" owner) nil)
+         (tool-error (condition)
+           (and (search "Malformed shell-log URI" (princ-to-string condition)) t)))
+       "a URI of the wrong shape is reported as malformed, with the shape to use")
       (with-test-fixture (':symbolic-links "shell capture substitution")
         (let* ((path   (merge-pathnames "output.bin" (shell-log-capture-directory artifact)))
                (secret (merge-pathnames "secret.bin" root)))
