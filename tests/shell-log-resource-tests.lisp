@@ -1336,8 +1336,8 @@
   "Give fixture result publications deterministic retention order without sleeps."
   (string< (namestring (first left)) (namestring (first right))))
 
-(-> shell-log-tests--owner-retention (function) null)
-(defun shell-log-tests--owner-retention (check)
+(-> shell-log-tests--owner-retention (function &key (:backfill-p boolean)) null)
+(defun shell-log-tests--owner-retention (check &key backfill-p)
   "Publish real child results until retention removes delivered and silent owners."
   (with-test-configuration (configuration)
     (let* ((*shell-log-active*              (make-hash-table :test #'equal))
@@ -1395,6 +1395,16 @@
                              "Both exact durable delivery paths authorize pruning before retention")
                 (test-assert (not (shell-log-tests--disk-prunable configuration (third captures)))
                              "Undelivered control has no authority before retention")
+                (when backfill-p
+                  (dolist (job jobs)
+                    (let* ((owner    (session-job-execution-identifier job))
+                           (identity (shell-log--owner-identity configuration "retention-root" owner))
+                           (receipts (merge-pathnames "shell-delivery/"
+                                      (conversation-storage-directory-pathname identity))))
+                      (platform-delete-directory-tree *platform* receipts
+                                                      :validate t :if-does-not-exist ':ignore)))
+                  (test-assert (not (shell-log-tests--disk-prunable configuration (first captures)))
+                               "Pre-index rotated child evidence needs backfill before retention"))
                 (dolist (job (reverse jobs))
                   (task--write-result-artifact job (list :status :success :output "done")))
                 (dotimes (index 3)
@@ -1836,4 +1846,171 @@
               (sb-thread:signal-semaphore resume)
               (dolist (thread threads)
                 (sb-thread:join-thread thread :timeout 12 :default :timed-out)))))))))
+  nil)
+
+
+;;;; -- Resumable Historical Delivery Evidence --
+
+(-> test-shell-log-delivery-backfill () null)
+(defun test-shell-log-delivery-backfill ()
+  "Recover pre-index rotated evidence in bounded, crash-safe batches."
+  (with-test-configuration (configuration)
+    (let* ((*shell-log-active*                      (make-hash-table :test #'equal))
+           (*shell-log-capture-byte-limit*          32)
+           (*shell-log-delivery-index-record-limit* 3)
+           (context                                 (shell-log-tests--context configuration "backfill"))
+           (conversation                            (tool-context-conversation context))
+           (identity                                (conversation-pathname conversation))
+           (artifact                                (shell-log-allocate context))
+           (metadata                                (shell-log-artifact-metadata artifact))
+           (receipts                                (merge-pathnames "shell-delivery/"
+                                                      (conversation-storage-directory-pathname identity)))
+           (cursor-path                             (merge-pathnames "index.sexp" receipts)))
+      (shell-log-tests--finish artifact #(65))
+      (setf metadata (shell-log-artifact-metadata artifact)
+            (getf metadata :completion-owner-conversation) "backfill"
+            (getf metadata :job-id) "old-job"
+            (getf metadata :parent-call-id) "old-call")
+      (shell-log--write-manifest artifact)
+      (dotimes (index 12)
+        (conversation-append-user-message conversation (format nil "Historical input ~D" index)))
+      (conversation-append-record conversation
+        (list :tool-result :call-id "old-call" :status ':ok
+              :details (list :shell-logs (list (shell-log--public-metadata metadata)))))
+      (conversation-append-summary conversation "Checkpoint before the receipt index existed")
+      (platform-delete-directory-tree *platform* receipts :validate t)
+      (setf conversation (conversation-load identity))
+      (test-assert (not (shell-log--sync-delivered-p configuration metadata))
+                   "Already-rotated legacy delivery lacks active evidence and receipts")
+      (let* ((segment (first (conversation-storage-pathnames identity)))
+             (forms   (conversation--read-records segment))
+             (wrong   (copy-tree forms)))
+        (setf (getf (rest (first wrong)) :id) "foreign-owner")
+        (unwind-protect
+             (progn
+               (conversation-identifier-migration--write-forms segment wrong)
+               (test-assert (handler-case (progn (shell-log-prune configuration) nil)
+                              (conversation-invariant-error () t))
+                            "Backfill refuses a historical segment with a foreign owner header")
+               (test-assert (not (probe-file cursor-path))
+                            "Rejected historical identity publishes no cursor"))
+          (conversation-identifier-migration--write-forms segment forms)))
+      (shell-log-prune configuration)
+      (let ((progress (task-continuity--read cursor-path)))
+        (test-assert (and (plusp (getf progress :position))
+                          (not (getf progress :complete-p))
+                          (not (shell-log--sync-delivered-p configuration metadata)))
+                     "A direct prune persists a bounded incomplete batch, not negative authority")
+        (let ((write-record (symbol-function 'task-continuity--write)))
+          (test-call-with-function-replacements
+           (list (list 'task-continuity--write
+                       (lambda (path record &key require-absent)
+                         (if (uiop:pathname-equal path cursor-path)
+                             (shell-log--fail "Injected cursor publication failure.")
+                             (funcall write-record path record :require-absent require-absent)))))
+           (lambda ()
+             (test-assert (handler-case (progn (shell-log-prune configuration) nil)
+                            (shell-log-error () t))
+                          "Failed cursor publication aborts this pass")))
+          (test-assert (equal progress (task-continuity--read cursor-path))
+                       "A failed batch leaves durable progress unchanged")))
+      (let ((write-record   (symbol-function 'task-continuity--write))
+            (index-segment  (symbol-function 'shell-log--index-segment))
+            (failed-p       nil)
+            (lock-checked-p nil))
+        (test-call-with-function-replacements
+         (list (list 'task-continuity--write
+                     (lambda (path record &key require-absent)
+                       (if (and (member "shell-delivery" (pathname-directory path) :test #'equal)
+                                (not (uiop:pathname-equal path cursor-path)))
+                           (shell-log--fail "Injected backfill receipt publication failure.")
+                           (funcall write-record path record :require-absent require-absent))))
+               (list 'shell-log--index-segment
+                     (lambda (source segment cursor)
+                       (unless lock-checked-p
+                         (let* ((done   (sb-thread:make-semaphore))
+                                (thread (make-thread
+                                         (lambda ()
+                                           (with-shell-log-lock (configuration)
+                                             (sb-thread:signal-semaphore done)))
+                                         :name "backfill lock probe")))
+                           (test-assert (sb-thread:wait-on-semaphore done :timeout 5)
+                                        "Historical indexing leaves the global shell-log lock available")
+                           (sb-thread:join-thread thread :timeout 5 :default nil)
+                           (setf lock-checked-p t)))
+                       (funcall index-segment source segment cursor))))
+         (lambda ()
+           (loop for before = (task-continuity--read cursor-path)
+                 repeat 20
+                 do (handler-case (shell-log-prune configuration)
+                      (shell-log-error ()
+                        (setf failed-p t)
+                        (test-assert (equal before (task-continuity--read cursor-path))
+                                     "A failed receipt never publishes progress past its batch")
+                        (return))))))
+        (test-assert failed-p "The fixture reaches and refuses receipt publication")
+        (test-assert (not (shell-log--sync-delivered-p configuration metadata))
+                     "Failed receipt publication cannot acknowledge historical delivery"))
+      (multiple-value-bind (values worker)
+          (test-conversation--worker-eval configuration
+            (format nil "(let ((configuration ~A) (*shell-log-delivery-index-record-limit* 3))
+                           (loop repeat 20
+                                 until (shell-log--backfill-owner-step configuration \"backfill\" \"backfill\"))
+                           (shell-log--sync-receipt-p configuration ~S '~S))"
+                    (test-conversation--child-configuration-form configuration) identity metadata))
+        (unwind-protect
+             (test-assert (equal values '("T"))
+                          "A fresh process resumes the persisted byte cursor and finds exact delivery")
+          (lisp-worker-stop worker)))
+      (test-assert (shell-log--sync-delivered-p configuration metadata)
+                   "Historical delivery becomes bounded positive receipt authority")
+      (dolist (field '(:execution-id :artifact-id :completion-owner-conversation :parent-call-id))
+        (let ((wrong (copy-list metadata)))
+          (setf (getf wrong field) "wrong-identity")
+          (test-assert (not (shell-log--sync-delivered-p configuration wrong))
+                       (format nil "Backfilled evidence refuses mismatched ~A" field))))
+      ;; A missing receipt keeps requesting backfill, without rereading indexed history.
+      (let* ((control          (shell-log-allocate context))
+             (control-metadata (shell-log-artifact-metadata control)))
+        (shell-log-tests--finish control #(66))
+        (setf control-metadata (shell-log-artifact-metadata control)
+              (getf control-metadata :completion-owner-conversation) "backfill"
+              (getf control-metadata :job-id) "future-job"
+              (getf control-metadata :parent-call-id) "future-call")
+        (shell-log--write-manifest control)
+        (test-call-with-function-replacements
+         (list (list 'shell-log--index-segment
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
+                       (error "Indexed historical segments were read again."))))
+         (lambda ()
+           (dotimes (index 3) (shell-log-prune configuration))
+           (test-assert (not (shell-log--sync-delivered-p configuration control-metadata))
+                        "Index completion does not acknowledge an unrecorded future call")
+           (conversation-append-record conversation
+             (list :tool-result :call-id "future-call" :status ':ok
+                   :details (list :shell-logs (list (shell-log--public-metadata control-metadata)))))
+           (test-assert (shell-log--sync-delivered-p configuration control-metadata)
+                        "Future active results remain visible after historical index completion"))))
+      (let ((*shell-log-retention-age* -1))
+        (shell-log-prune configuration))
+      (test-assert (eq ':pruned (getf (shell-log--read-manifest configuration
+                                       (shell-log-capture-directory artifact) :measure-p nil) :state))
+                   "Aged legacy captures are actually reclaimed after backfill")))
+  nil)
+
+(-> test-shell-log-delivery-backfill-retention () null)
+(defun test-shell-log-delivery-backfill-retention ()
+  "Recover already-rotated child evidence before real owner storage removal."
+  (let ((*shell-log-delivery-index-record-limit* 1))
+    (shell-log-tests--owner-retention
+     (lambda (configuration root captures)
+       (declare (ignore root))
+       (test-assert (shell-log-tests--marked-p configuration (first captures))
+                    "Retention stamps the exact historical synchronous capture before deletion")
+       (test-assert (shell-log-tests--disk-prunable configuration (first captures))
+                    "The positive manifest authority survives removal of its source owner")
+       (test-assert (not (shell-log-tests--disk-prunable configuration (third captures)))
+                    "An equally old silent owner never acquires delivery authority"))
+     :backfill-p t))
   nil)

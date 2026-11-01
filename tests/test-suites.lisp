@@ -186,6 +186,8 @@
   test-shell-log-export-boundary)
 
 (define-test-suite shell-log-resource
+  test-shell-log-delivery-backfill
+  test-shell-log-delivery-backfill-retention
   test-shell-log-sync-details-shapes
   test-shell-log-sync-details-identities
   test-shell-log-owner-delivery-restart
