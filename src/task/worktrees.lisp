@@ -306,14 +306,20 @@ a successful child is downgraded rather than claiming an absent artifact."
 (defun task-worktree--visible-metadata (tool context identifier)
   "Resolve terminal metadata through existing job visibility or durable task lookup."
   (let* ((viewer (tool-context-agent context))
-         (job    (find identifier
-                       (task-orchestrator-list-visible-jobs
-                        (task-orchestrator-tool-orchestrator tool) viewer)
-                       :key #'session-job-identifier :test #'equal))
+         (job    (task-orchestrator-visible-job-named
+                  (task-orchestrator-tool-orchestrator tool) viewer identifier))
          (result (if job (getf (session-job-snapshot job) :result)
                      (task--durable-job-result viewer identifier "task.worktree"))))
-    (unless (and result (getf result :worktree))
-      (task-worktree--error "No visible terminal isolated task has that identifier."))
+    (cond
+      ((and job (null result))
+       (task-worktree--error
+        (format nil "Task ~A is still running; inspect its worktree once job.wait reports it finished."
+                identifier)))
+      ((null result)
+       (task-worktree--error "No visible terminal isolated task has that identifier; use the job ID or execution ID task.run reported."))
+      ((null (getf result :worktree))
+       (task-worktree--error
+        (format nil "Task ~A did not run in an isolated worktree, so it has none to inspect." identifier))))
     (getf result :worktree)))
 
 (-> task-worktree--owned-discovery (cl-worktree:manager tool-context pathname) list)

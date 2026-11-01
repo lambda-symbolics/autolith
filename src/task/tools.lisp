@@ -1238,10 +1238,7 @@ poll a job whose completion will wake it."
                  (tool-argument arguments "id" :required t)
                  "job.get"))
               (job
-                (find identifier
-                      (task-orchestrator-list-visible-jobs orchestrator viewer)
-                      :key  #'session-job-identifier
-                      :test #'string=)))
+                (task-orchestrator-visible-job-named orchestrator viewer identifier)))
          (if job
              (let ((snapshot (session-job-snapshot job)))
                (multiple-value-bind (form content)
@@ -1255,7 +1252,7 @@ poll a job whose completion will wake it."
                  (task--durable-job-result viewer identifier "job.get")
                (unless result
                  (error 'task-error
-                        :message   (format nil "No visible job named ~A exists."
+                        :message   (format nil "No visible job named ~A exists. Jobs from before a restart, and jobs that ended without a result, are listed by job.continuity."
                                            identifier)
                         :tool-name "job.get"
                         :task-id   identifier))
