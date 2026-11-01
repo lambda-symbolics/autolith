@@ -55,6 +55,7 @@
   ;; telemetry-hook-run-tests.lisp
   test-telemetry-terminal-outcomes
   test-telemetry-run-owner-token
+  test-telemetry-late-report-presentation
   test-telemetry-borrower-outcomes
   test-telemetry-finish-freezes-counters
   test-telemetry-detached-run-lifetime

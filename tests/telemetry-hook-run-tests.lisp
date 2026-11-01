@@ -51,7 +51,112 @@
                                        (first (test-telemetry-hooks--kind (first bodies) "run"))
                                        "autolith.run.outcome"))
                     "Late reports do not rewrite the result.")
-       (test-assert (search "DEBUG" (get-output-stream-string diagnostics)) "Late reporting logs at debug level."))))
+       (test-assert (zerop (length (get-output-stream-string diagnostics)))
+                    "Ignored late reports do not publish unsolicited console output."))))
+  nil)
+
+(-> test-telemetry-hooks--contended-report
+    (terminal-ui stream function &key (:main-thread-p boolean)) null)
+(defun test-telemetry-hooks--contended-report (ui output report &key main-thread-p)
+  "Call REPORT while a different thread owns UI; all barriers have deadlines."
+  (let ((ready   (bt:make-semaphore))
+        (release (bt:make-semaphore))
+        (done    (bt:make-semaphore))
+        (thread  nil)
+        (failure nil))
+    (flet ((wait-for (semaphore)
+             (unless (bt:wait-on-semaphore semaphore :timeout 4)
+               (error "Timed out at telemetry presentation barrier."))))
+      (unwind-protect
+           (flet ((start-worker ()
+                    (setf thread
+                          (make-thread
+                           (lambda ()
+                             (let ((*error-output*    output)
+                                   (*standard-output* output)
+                                   (*trace-output*    output))
+                               (unwind-protect
+                                    (handler-case
+                                        (if main-thread-p
+                                            (with-terminal-ui-locked (ui)
+                                              (bt:signal-semaphore ready)
+                                              (wait-for release))
+                                            (funcall report))
+                                      (error (condition) (setf failure condition)))
+                                 (bt:signal-semaphore done))))
+                           :name "Telemetry presentation peer"))))
+             (if main-thread-p
+                 (progn
+                   (start-worker)
+                   (wait-for ready)
+                   (let ((*error-output* output)) (funcall report)))
+                 (with-terminal-ui-locked (ui)
+                   (start-worker)
+                   (wait-for done)
+                   (bt:signal-semaphore done))))
+        (bt:signal-semaphore release)
+        (when thread
+          (wait-for done)
+          (join-thread thread)))
+      (when failure (error failure))))
+  nil)
+
+(-> test-telemetry-late-report-presentation () null)
+(defun test-telemetry-late-report-presentation ()
+  "Ignored reports cannot bypass an active prompt, including a contended UI lock."
+  (dolist (fullscreen-p '(nil t))
+    (dolist (main-thread-p '(nil t))
+      (test-telemetry--call
+       (lambda (configuration)
+         (let* ((output   (make-string-output-stream))
+                (terminal (make-instance 'shared-output-terminal :output output :columns 80 :rows 24))
+                (ui       (terminal-ui-create :terminal terminal :fullscreen-p fullscreen-p)))
+           (unwind-protect
+                (let ((bodies
+                        (test-telemetry-hooks--capture
+                         configuration
+                         (lambda ()
+                           (terminal-ui-start ui)
+                           (terminal-ui-set-input ui "editable draft")
+                           (terminal-ui-open-prompt-block ui)
+                           (test-assert (if fullscreen-p
+                                            (fullscreen-terminal-ui-active-p ui)
+                                            (eq (terminal-ui-prompt-marker-state ui) ':input))
+                                        "The actual prompt is active before reporting.")
+                           (test-assert (plusp (length (get-output-stream-string output)))
+                                        "Actual renderer writes reach the shared sink.")
+                           (multiple-value-bind (run token) (telemetry--begin-run configuration)
+                             (let ((*error-output* output))
+                               (telemetry-report-terminal run '(:state :failed :error-type :provider)))
+                             (test-assert (equal '(:error :provider nil) (telemetry-run-borrower-outcome run))
+                                          "Live borrower reports update fallback.")
+                             (telemetry-finish-run run (list nil) '(:state :failed))
+                             (test-assert (telemetry-run-active run) "A borrower cannot finish the owner.")
+                             (telemetry-finish-run run token '(:state :completed))
+                             (test-telemetry-hooks--contended-report
+                              ui output
+                              (lambda ()
+                                (let ((*telemetry-run* run))
+                                  (telemetry-call-with-run
+                                   configuration
+                                   (lambda ()
+                                     (test-assert (eq *telemetry-run* run) "Late work borrows the same run.")
+                                     (telemetry-report-terminal *telemetry-run* '(:state :timed-out))))))
+                              :main-thread-p main-thread-p)
+                             (test-assert (zerop (length (get-output-stream-string output)))
+                                          "No direct writes bypass the active presentation owner.")
+                             (test-assert (equal '(:error :provider nil) (telemetry-run-borrower-outcome run))
+                                          "A stronger late failure is ignored.")
+                             (telemetry-finish-run run token '(:state :failed))
+                             (multiple-value-bind (action payload) (terminal-ui-process-event ui :submit)
+                               (test-assert (and (eq action ':submit) (equal payload "editable draft"))
+                                            "The editable draft submits through the real input boundary.")))))))
+                  (test-assert (= 1 (length bodies)) "The owner publishes one root despite repeated finish.")
+                  (test-assert (equal "success" (test-telemetry--attribute
+                                                 (first (test-telemetry-hooks--kind (first bodies) "run"))
+                                                 "autolith.run.outcome"))
+                               "Ignored late failures cannot rewrite owner success."))
+             (terminal-ui-stop ui)))))))
   nil)
 
 (-> test-telemetry-run-unwind () null)
