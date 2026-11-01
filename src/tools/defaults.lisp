@@ -354,8 +354,10 @@ retracting facts, and proposing rules."
        (operation-schema
         "memory-remember"
         (json-object
-         "title" (tool-string-property "Complete persistent-memory title.")
-         "content" (tool-string-property "Complete persistent-memory content.")
+         "title" (tool-string-property
+                  (format nil "Complete persistent-memory title, at most ~:D characters." *memory-title-limit*))
+         "content" (tool-string-property
+                    (format nil "Complete persistent-memory content, at most ~:D characters." *memory-content-limit*))
          "tags" (memory-tags-property)
          "sources" (memory-sources-property)
          "premises" (memory-premises-property))
@@ -363,8 +365,10 @@ retracting facts, and proposing rules."
        (operation-schema
         "memory-replace"
         (json-object
-         "title" (tool-string-property "Complete replacement memory title.")
-         "content" (tool-string-property "Complete replacement memory content.")
+         "title" (tool-string-property
+                  (format nil "Complete replacement memory title, at most ~:D characters." *memory-title-limit*))
+         "content" (tool-string-property
+                    (format nil "Complete replacement memory content, at most ~:D characters." *memory-content-limit*))
          "tags" (memory-tags-property)
          "scope" (memory-scope-property)
          "sources" (memory-sources-property)
@@ -381,8 +385,10 @@ retracting facts, and proposing rules."
                        '("broken_tool" "misleading_success" "authorization" "performance" "other")
                        "Explicit issue category; omit when unknown.")
          "tool" (tool-string-property "Affected builtin tool name; omit when unknown.")
-         "title" (tool-string-property "Complete bounded papercut title.")
-         "content" (tool-string-property "Complete bounded private local papercut report.")
+         "title" (tool-string-property
+                  (format nil "Complete papercut title, at most ~:D characters." *papercut-title-limit*))
+         "content" (tool-string-property
+                    (format nil "Complete private local papercut report, at most ~:D characters." *papercut-content-limit*))
          "diagnostic" (default-tools--diagnostic-property))
         '("title" "content"))
        (operation-schema
@@ -393,7 +399,8 @@ retracting facts, and proposing rules."
                     "description" "Latest effectiveness verdict."
                     "enum" (vector "improved" "worse" "unchanged" "too-early"))
          "note" (tool-string-property
-                 "Complete bounded private local assessment note.")
+                 (format nil "Complete private local assessment note, at most ~:D characters."
+                         *papercut-assessment-note-limit*))
          "diagnostic" (default-tools--diagnostic-property))
         '("verdict" "note"))
        (operation-schema
