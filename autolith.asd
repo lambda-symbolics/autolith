@@ -309,6 +309,7 @@
                                           (:file "application/mission-review-tools")
                                           (:file "application/clipboard")
                                           (:file "conversation/replay")
+                                          (:file "conversation/tool-failures")
                                           (:file "conversation/search")
                                           (:file "resource/conversation")
                                           (:file "management/repl")

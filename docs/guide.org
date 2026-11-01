@@ -1344,6 +1344,21 @@ and =sequence= jump to a location; =raw= shows the selected replay form; and
 =quit= exits. Replay reads complete persisted forms without acquiring the
 conversation lease or repairing, appending, or resuming the conversation.
 
+List the tool calls that failed recently, with the arguments the model sent,
+grouped by tool and error:
+
+#+BEGIN_SRC sh
+autolith tool-failures
+autolith tool-failures --days 3 --examples 5
+autolith tool-failures ID
+#+END_SRC
+
+Without IDs it reads every conversation and child task conversation, but only
+the segments written in the last =--days= days, seven by default. Groups ignore
+the numbers and quoted values in error text, so the same mistake with different
+arguments counts once per call in one group. Use it to find where a tool
+description or argument rule makes models fail.
+
 ** Local sessions
 
 Every running Autolith session publishes a private authenticated local endpoint.
