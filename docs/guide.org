@@ -1875,11 +1875,11 @@ supplies the local estimate for precompaction and idle compaction; an explicit
 carry the conversation's cache key as their session identifier for upstream
 routing affinity from the first request.
 
-=(status)= shows what this process's model requests cost. A request is priced
+Use =(status)= to inspect this process's model-request costs. A request is priced
 by the charge its provider reports, as OpenRouter does, else by a price
 snapshot for its model: the built-in Anthropic API list prices, or
 =(settings :model-prices "{\"model\": {\"input\": 2, \"cache_read\": 0.2, \"output\": 10}}")=
-in US dollars per million tokens, keyed by the model name =(model)= shows. A
+in US dollars per million tokens, keyed by the model name from =(model)=. A
 missing cache_write rate charges cache writes as input. Requests without a
 price, such as subscription routes, are counted as unpriced, not free.
 =(settings :cost-limit 5)= refuses new model requests, compaction and

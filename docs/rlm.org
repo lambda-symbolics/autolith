@@ -211,7 +211,7 @@ reasoning effort and only at an effort its model supports; the endpoint
 refuses anything else before a frame starts. Routing a child to another
 provider is not supported yet. A child on a different model cannot reuse
 the root's cached views, and the shared token budget counts every model's
-tokens alike; =/status= shows the money each model's requests cost.
+tokens alike. Use =(status)= to inspect costs per model.
 
 * Policies
 
