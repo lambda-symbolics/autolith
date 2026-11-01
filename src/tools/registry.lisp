@@ -838,11 +838,33 @@ A missing file's failure also carries its observation for resource.edit."
                uri)))
     (resource-registry-resolve (resource-tool-resource-registry tool) identity context)))
 
+(defvar *resource-read-notes* nil
+  "Notes a resource read collects about arguments it adjusted instead of rejecting.")
+
+(-> resource-read-note (string &rest t) null)
+(defun resource-read-note (control &rest arguments)
+  "Record a note, formatted from CONTROL and ARGUMENTS, for the current resource.read result.
+
+Reads accept natural requests that exceed a limit or name an unsupported
+option, and say what they did, so the model need not retry a failed call."
+  (push (apply #'format nil control arguments) *resource-read-notes*)
+  nil)
+
+(-> tool-result-append-notes (tool-result list) tool-result)
+(defun tool-result-append-notes (result notes)
+  "Append NOTES, oldest first, to RESULT's model-visible content."
+  (when notes
+    (setf (slot-value result 'content)
+          (format nil "~A~%~{Note: ~A~%~}" (tool-result-content result) notes)))
+  result)
+
 (defmethod tool-execute
     ((tool resource-read-tool) (context tool-context) (arguments hash-table))
-  "Resolve and dispatch one model-facing resource read."
-  (resource-tool-read (resource-tool--resolve tool context arguments)
-                      tool context arguments))
+  "Resolve and dispatch one model-facing resource read, appending any adjustment notes."
+  (let ((*resource-read-notes* nil))
+    (let ((result (resource-tool-read (resource-tool--resolve tool context arguments)
+                                      tool context arguments)))
+      (tool-result-append-notes result (reverse *resource-read-notes*)))))
 
 (defmethod tool-execute
     ((tool resource-edit-tool) (context tool-context) (arguments hash-table))

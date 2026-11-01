@@ -461,7 +461,7 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
              "byte-offset" (tool-integer-property
                             "Zero-based byte offset for a shell-log: range or search page; defaults to 0.")
              "byte-count" (tool-integer-property
-                           "Maximum raw bytes in a shell-log: range, capped by the log resource adapter.")
+                           "Raw bytes in a shell-log: range; default and maximum 4096. Larger values return 4096 bytes with a note; continue from the reported next byte offset.")
              "start-sequence" (tool-integer-property
                                "The first durable record sequence a conversation: window returns; without it the window ends at the newest record.")
              "record-count" (tool-integer-property

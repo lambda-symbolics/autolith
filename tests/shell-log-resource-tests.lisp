@@ -466,16 +466,16 @@
                                            when (= byte 120) collect index))
                          "Larger pages resume without dropping or repeating matches")
             (test-assert (null (getf next :next-byte-offset)) "The final search page reaches the end")))
-        (test-assert
-         (handler-case (progn (shell-log-tests--read resource context
-                                                     (json-object "query" "x" "max-results" 51)) nil)
-           (tool-error () t))
-         "Search result limits above fifty are rejected")
-        (test-assert
-         (handler-case (progn (shell-log-tests--read resource context
-                                                     (json-object "byte-count" 4097)) nil)
-           (tool-error () t))
-         "Oversized resource windows are rejected"))))
+        (dolist (case '(("max-results" 51 "query" "x") ("byte-count" 4097)))
+          (destructuring-bind (key value &rest more) case
+            (let* ((*resource-read-notes* nil)
+                   (result                (shell-log-tests--read
+                                           resource context
+                                           (apply #'json-object key value more))))
+              (test-assert (and (tool-result-success-p result)
+                                (search (format nil "~A ~D was reduced" key value)
+                                        (format nil "~{~A~}" *resource-read-notes*)))
+                           (format nil "~A above its limit is reduced with a note" key))))))))
   nil)
 
 (-> test-shell-log-resource-authority () null)
