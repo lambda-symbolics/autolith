@@ -1630,7 +1630,15 @@
                                  :quote "be there ten minutes early")
           (test-assert (knowledge-view-holds (knowledge-view-current configuration)
                                              '("event.buffer" "?e" "?d"))
-                       "a new assertion evaluates again")))))
+                       "a new assertion evaluates again")
+          (let ((*knowledge-view-cache-limit* 3))
+            (dotimes (index 6)
+              (knowledge-view-current configuration
+                                      :workspace (namestring
+                                                  (merge-pathnames (format nil "child-~D/" index)
+                                                                   root))))
+            (test-assert (<= (hash-table-count *knowledge-view-cache*) 3)
+                         "views for many task worktrees stay within the cache limit"))))))
   nil)
 
 (-> test-knowledge-plan-steps () null)

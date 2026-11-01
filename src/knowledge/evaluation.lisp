@@ -767,6 +767,26 @@ unknown rather than impossible."
 (defvar *knowledge-view-cache* (make-hash-table :test #'equal :synchronized t)
   "The latest view per (knowledge log, workspace), with the state it was evaluated from.")
 
+(defparameter *knowledge-view-cache-limit* 8
+  "Maximum cached views. Each isolated task worktree is its own workspace, so
+without a limit every child would leave a whole view and its base behind.")
+
+(-> knowledge--view-cache-make-room (t) null)
+(defun knowledge--view-cache-make-room (key)
+  "Evict the least recently evaluated views so KEY's entry fits within the limit."
+  (loop while (and (not (nth-value 1 (gethash key *knowledge-view-cache*)))
+                   (>= (hash-table-count *knowledge-view-cache*) *knowledge-view-cache-limit*)
+                   (plusp (hash-table-count *knowledge-view-cache*)))
+        do (let ((oldest    nil)
+                 (oldest-at nil))
+             (maphash (lambda (candidate entry)
+                        (when (or (null oldest-at) (< (getf entry :evaluated-at) oldest-at))
+                          (setf oldest    candidate
+                                oldest-at (getf entry :evaluated-at))))
+                      *knowledge-view-cache*)
+             (remhash oldest *knowledge-view-cache*)))
+  nil)
+
 (defparameter *knowledge-unix-epoch* (encode-universal-time 0 0 0 1 1 1970 0)
   "The universal time of the Unix epoch, which file modification times count from.")
 
@@ -831,6 +851,7 @@ change, not once per request. Views are shared and must not be modified."
                               :now      now
                               :memories (memory-list configuration :visibility ':all)))
                (view         (knowledge-evaluate base :workspace workspace :check check)))
+          (knowledge--view-cache-make-room key)
           (setf (gethash key *knowledge-view-cache*)
                 (list :view         view
                       :memory-key   memory-key
