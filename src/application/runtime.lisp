@@ -1863,6 +1863,23 @@ runtimes, which the replacement must retain while retiring the old registry."
   "Return the newest LIMIT editable inputs from CONVERSATION's complete sidecar."
   (conversation-input-history-page conversation :limit limit))
 
+(-> application--load-conversation-input-history (terminal-ui conversation) terminal-ui)
+(defun application--load-conversation-input-history (ui conversation)
+  "Install CONVERSATION's bounded newest history and absolute paging callbacks in UI."
+  (multiple-value-bind (entries total)
+      (conversation-input-history-page
+       conversation :limit (line-editor-history-limit (terminal-ui-editor ui)))
+    (terminal-ui-load-history
+     ui entries :offset (- total (length entries))
+     :older-function
+     (lambda (end)
+       (let ((count (min end *terminal-history-page-size*)))
+         (conversation-input-history-page conversation :start (- end count) :limit count)))
+     :newer-function
+     (lambda (start)
+       (conversation-input-history-page
+        conversation :start start :limit *terminal-history-page-size*)))))
+
 (-> application--install-owned-conversation
     (application conversation &key (:conversation-lease conversation-lease))
     application)
@@ -1874,13 +1891,6 @@ runtimes, which the replacement must retain while retiring the old registry."
             (application-configuration application)
             conversation))
          (ui                          (application-ui application))
-         (history-limit
-           (if ui
-               (line-editor-history-limit (terminal-ui-editor ui))
-               *terminal-history-limit*))
-         (input-history
-           (application--conversation-input-history
-            conversation :limit history-limit))
          (previous-configuration      (application-configuration application))
          (previous-conversation       (application-conversation application))
          (previous-conversation-lease
@@ -1947,12 +1957,7 @@ runtimes, which the replacement must retain while retiring the old registry."
                (application--load-goal application)
                (context-runtime-reset)
                (when ui
-                 (terminal-ui-load-history
-                  ui input-history
-                  :older-function (lambda (depth)
-                                    (conversation-input-history-page
-                                     conversation :skip  depth
-                                                  :limit *terminal-history-page-size*))))
+                 (application--load-conversation-input-history ui conversation))
                (application-localgroup-sync-conversation application)
                (application-publish-recovery-session application)
                (setf committed-p t))

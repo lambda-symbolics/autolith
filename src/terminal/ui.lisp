@@ -223,22 +223,32 @@ jumps between as messages."
        (with-recursive-lock-held ((terminal-ui-lock ,locked-ui))
          ,@body))))
 
-(-> terminal-ui-load-history (terminal-ui list &key (:older-function (option function)))
+(-> terminal-ui-load-history
+    (terminal-ui list &key (:offset (integer 0))
+                      (:older-function (option function))
+                      (:newer-function (option function)))
     terminal-ui)
-(defun terminal-ui-load-history (ui entries &key older-function)
-  "Replace editor history with sanitized application input ENTRIES.
+(defun terminal-ui-load-history (ui entries &key (offset 0) older-function newer-function)
+  "Replace editor history with sanitized ENTRIES beginning at absolute OFFSET.
 
-OLDER-FUNCTION, when given, receives the resident entry count once history
-traversal passes the oldest entry and returns the inputs just older than
-them, oldest first, so the complete history stays recallable without staying
-resident."
+Paging functions receive absolute oldest-based resident boundaries and return
+adjacent entries, oldest first. Both directions keep the complete history
+recallable while the resident window obeys the editor's budgets."
   (with-terminal-ui-locked (ui)
     (let ((editor (terminal-ui-editor ui)))
       (clinedi:line-editor-replace-history editor (mapcar #'sanitize-text entries))
+      ;; Replacement can trim the oldest entries to satisfy either budget.
+      (reinitialize-instance editor :history-offset
+                             (+ offset (- (length entries)
+                                          (length (clinedi:line-editor-history editor)))))
       (setf (clinedi:line-editor-history-older-function editor)
             (and older-function
-                 (lambda (depth)
-                   (mapcar #'sanitize-text (funcall older-function depth)))))))
+                 (lambda (start)
+                   (mapcar #'sanitize-text (funcall older-function start))))
+            (clinedi:line-editor-history-newer-function editor)
+            (and newer-function
+                 (lambda (end)
+                   (mapcar #'sanitize-text (funcall newer-function end)))))))
   ui)
 
 (-> terminal-ui--call-with-lock-if-available

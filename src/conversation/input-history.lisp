@@ -28,14 +28,16 @@ a nonlocal exit."
   nil)
 
 (-> conversation-input-history-page
-    (conversation &key (:skip (integer 0)) (:limit (integer 0)))
-    list)
-(defun conversation-input-history-page (conversation &key (skip 0) limit)
-  "Return up to LIMIT editable inputs just older than the newest SKIP, oldest first.
+    (conversation &key (:skip (integer 0)) (:limit (integer 0))
+                  (:start (option (integer 0))))
+    (values list (integer 0)))
+(defun conversation-input-history-page (conversation &key (skip 0) limit start)
+  "Return a bounded page, oldest first, and the total consecutive-deduplicated count.
 
-Consecutive repeats count once, as a line editor records them, so SKIP can be
-the number of entries an editor already holds. The sidecar streams twice,
-once to count and once to collect, so only the page is ever held."
+By default return up to LIMIT inputs just older than the newest SKIP. With
+START, read from that absolute oldest-based index instead. Absolute indices
+remain stable when inputs are appended. The sidecar streams twice, once to
+count and once to collect; only the requested page is held."
   (flet ((map-recalled (function)
            (let ((previous nil))
              (conversation-map-input-history
@@ -50,17 +52,17 @@ once to count and once to collect, so only the page is ever held."
       (map-recalled (lambda (input)
                       (declare (ignore input))
                       (incf total)))
-      (let ((end   (- total skip))
-            (start (max 0 (- total skip limit))))
-        (when (plusp end)
+      (let* ((end   (if start (min total (+ start limit)) (- total skip)))
+             (begin (or start (max 0 (- end limit)))))
+        (when (> end begin)
           (block collect
             (map-recalled (lambda (input)
                             (when (>= index end)
                               (return-from collect))
-                            (when (>= index start)
+                            (when (>= index begin)
                               (push input page))
                             (incf index))))))
-      (nreverse page))))
+      (values (nreverse page) total))))
 
 (-> conversation-input-history (conversation) list)
 (defun conversation-input-history (conversation)
