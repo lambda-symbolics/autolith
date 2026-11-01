@@ -219,35 +219,8 @@ transcript renderer, including in fullscreen."
 (-> application--conversation-usage (application) list)
 (defun application--conversation-usage (application)
   "Return summed token and prompt-cache usage for the active conversation."
-  (let ((input         0)
-        (output        0)
-        (total         0)
-        (cached        0)
-        (cache-created 0)
-        (cache-seen-p  nil))
-    (labels ((usage-count (usage key)
-               "Return the integer usage value stored under KEY and whether it exists."
-               (let* ((entry (assoc key usage :test #'string=))
-                      (value (and entry (second entry))))
-                 (values (if (integerp value) value 0)
-                         (and entry (integerp value))))))
-      (conversation-map-records
-       (application-conversation application)
-       (lambda (record)
-         (when (eq (first record) :provider)
-           (let ((usage (getf (getf (rest record) :metadata) :usage)))
-             (when (listp usage)
-               (incf input (usage-count usage "input_tokens"))
-               (incf output (usage-count usage "output_tokens"))
-               (incf total (usage-count usage "total_tokens"))
-               (multiple-value-bind (count present-p)
-                   (usage-count usage "cached_input_tokens")
-                 (incf cached count)
-                 (setf cache-seen-p (or cache-seen-p present-p)))
-               (multiple-value-bind (count present-p)
-                   (usage-count usage "cache_creation_input_tokens")
-                 (incf cache-created count)
-                 (setf cache-seen-p (or cache-seen-p present-p)))))))))
+  (destructuring-bind (input output total cached cache-created cache-seen-p)
+      (conversation-usage (application-conversation application))
     (list :input         input
           :output        output
           :total         total

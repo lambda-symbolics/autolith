@@ -406,6 +406,35 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-conversation-usage-totals () null)
+(defun test-conversation-usage-totals ()
+  "Sum provider usage as records arrive, across reload, and once for old histories."
+  (with-test-configuration (configuration)
+    (let ((conversation (conversation-create configuration)))
+      (flet ((usage (input output cached)
+               (conversation-append-provider-metadata
+                conversation
+                (list :usage (list (list "input_tokens" input)
+                                   (list "output_tokens" output)
+                                   (list "total_tokens" (+ input output))
+                                   (list "cached_input_tokens" cached))))))
+        (usage 100 10 40)
+        (usage 200 20 0)
+        (let ((expected (list 300 30 330 40 0 t)))
+          (test-assert (equal expected (conversation-usage conversation))
+                       "provider records add to the totals as they are appended")
+          (let ((loaded (conversation-load (conversation-pathname conversation))))
+            (test-assert (equal expected (conversation-usage loaded))
+                         "a reload recovers the totals without counting twice")
+            (setf (conversation-usage-totals loaded) nil)
+            (test-assert (equal expected (conversation-usage loaded))
+                         "a history without saved totals is scanned once")
+            (conversation-append-provider-metadata
+             loaded (list :usage (list (list "input_tokens" 1) (list "output_tokens" 1))))
+            (test-assert (equal (list 301 31 330 40 0 t) (conversation-usage loaded))
+                         "records after the scan keep adding to the totals"))))))
+  nil)
+
 (-> test-conversation-pending-input-identifier-order () null)
 (defun test-conversation-pending-input-identifier-order ()
   "Keep each durable pending-input identifier once, oldest first, across reload."
