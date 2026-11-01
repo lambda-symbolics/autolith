@@ -124,9 +124,7 @@ readable context object instead of being cut.")
     (cond
       (query
        (when (or start-sequence record-count)
-         (error 'tool-error
-                :message   "A conversation search does not accept start-sequence or record-count; read the window around a match separately."
-                :tool-name "resource.read"))
+         (resource-tool-note "A conversation search ignores start-sequence and record-count; read the window around a match with start-sequence and no query."))
        (let ((terms (and (stringp query) (conversation-search-terms query))))
          (unless terms
            (error 'tool-error
