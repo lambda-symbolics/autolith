@@ -264,9 +264,11 @@ costs at most one segment however long the history grows."
   (let ((index  (make-hash-table :test #'equal))
         (active (conversation-storage-active-pathname identity)))
     (flet ((note (details marker)
-             (when (and (proper-list-p details) (evenp (length details)))
+             (when (and (proper-list-p details) (evenp (length details))
+                        (proper-list-p (getf details :shell-logs)))
                (dolist (log (getf details :shell-logs))
-                 (when (eq (getf log :state) ':closed)
+                 (when (and (proper-list-p log) (evenp (length log))
+                            (eq (getf log :state) ':closed))
                    (push marker
                          (gethash (list (getf log :execution-id) (getf log :artifact-id))
                                   index)))))))
@@ -294,21 +296,74 @@ costs at most one segment however long the history grows."
                   (shell-log--sync-evidence identity))))
       (shell-log--sync-evidence identity)))
 
-(-> shell-log--sync-settled-p (list) boolean)
-(defun shell-log--sync-settled-p (metadata)
-  "Recognize a synchronous capture old enough that no delivery can still be pending.
+(-> shell-log--sync-receipt-pathname (pathname list) pathname)
+(defun shell-log--sync-receipt-pathname (identity key)
+  "Locate one exact capture/provider-call receipt within its owner's storage."
+  (merge-pathnames
+   (make-pathname :name (ironclad:byte-array-to-hex-string
+                         (ironclad:digest-sequence
+                          ':sha256 (utf8-string-to-octets (task--write-readable-sexp key))))
+                  :type "sexp")
+   (merge-pathnames "shell-delivery/" (conversation-storage-directory-pathname identity))))
 
-A synchronous tool call records its result when the command ends, or never if
-the process died first, so after the retention age the capture is history."
-  (> (- (get-universal-time) (getf metadata :created-at 0))
-     *shell-log-retention-age*))
+(-> shell-log--sync-receipt-key (list) list)
+(defun shell-log--sync-receipt-key (metadata)
+  "Identify a synchronous capture and its exact provider call or mission gate."
+  (list (getf metadata :execution-id) (getf metadata :artifact-id)
+        (or (getf metadata :parent-call-id) ':goal)))
+
+(-> shell-log--sync-receipt-p (configuration pathname list) boolean)
+(defun shell-log--sync-receipt-p (configuration identity metadata)
+  "Read bounded positive authority preserved before the owner's segment rotated."
+  (let* ((key     (shell-log--sync-receipt-key metadata))
+         (path    (shell-log--safe-path configuration
+                   (shell-log--sync-receipt-pathname identity key)))
+         (receipt (and (probe-file path) (task-continuity--read path))))
+    (and (eql 1 (getf receipt :version))
+         (equal (getf receipt :owner-conversation) (getf metadata :completion-owner-conversation))
+         (equal (getf receipt :capture-call) key)
+         (shell-log--delivery-recorded-p receipt)
+         t)))
+
+(defmethod conversation-append-record :before ((conversation conversation) (record list))
+  "Preserve exact committed shell delivery before replacing the active segment.
+
+The append/source locks exclude concurrent writes. This method takes no shell-log
+lock: pruning only reads receipts and committed segments, avoiding lock inversion.
+Failed receipt publication prevents rotation; partial receipts still describe only
+already committed results, never the candidate checkpoint."
+  (when (and (conversation-persisted-p conversation)
+             (conversation--compaction-record-p record))
+    (let* ((identity (conversation-pathname conversation))
+           (owner    (conversation-identifier conversation))
+           (index    (shell-log--sync-evidence identity)))
+      (maphash
+       (lambda (capture markers)
+         (dolist (marker (remove-duplicates markers :test #'equal))
+           (when (and (every #'shell-log--component-p capture)
+                      (or (stringp marker) (eq marker ':goal)))
+             (let* ((key  (append capture (list marker)))
+                    (path (shell-log--sync-receipt-pathname identity key))
+                    (root (uiop:pathname-directory-pathname identity)))
+               ;; Refuse special files and links before creating private receipts.
+               (loop for current = path then (uiop:pathname-parent-directory-pathname current)
+                     while (and current (uiop:subpathp current root))
+                     for status = (platform-path-status *platform* current :follow-links-p nil)
+                     when (and status (not (member (platform-file-status-kind status) '(:file :directory))))
+                       do (shell-log--fail "Shell delivery storage contains a link or special file." current)
+                     when (equal current root) do (return))
+               (task-continuity--write
+                path (list :version 1 :owner-conversation owner :capture-call key
+                           :delivered-at (get-universal-time)))
+               (platform-make-private *platform* (uiop:pathname-directory-pathname path))
+               (platform-make-private *platform* path)))))
+       index))))
 
 (-> shell-log--sync-delivered-p (configuration list) boolean)
 (defun shell-log--sync-delivered-p (configuration metadata)
   "Require exact-owner durable tool or mission-gate evidence for terminal sync logs.
-Match execution, artifact and originating provider call, including stale
-manifests. Evidence comes from the owner's active segment; captures older than
-the retention age need none."
+Match execution, artifact and originating provider call, including stale manifests.
+Read one preserved receipt or the active segment, never the historical transcript."
   (let ((root      (getf metadata :root-conversation))
         (owner     (getf metadata :completion-owner-conversation))
         (execution (getf metadata :execution-id))
@@ -317,8 +372,7 @@ the retention age need none."
     (and (member (getf metadata :state) '(:closed :interrupted))
          (not (getf metadata :detached-p t))
          (every #'shell-log--component-p (list root owner))
-         (or (shell-log--sync-settled-p metadata)
-             (handler-case
+         (handler-case
                  (let* ((identity
                           (if (equal owner root)
                               (conversation-pathname-for-id configuration owner)
@@ -330,14 +384,14 @@ the retention age need none."
                                                  (task--artifact-group-root configuration root))))))
                         (header (conversation-peek-header identity)))
                    (and (equal owner (getf (rest header) :id))
-                        (let ((markers (gethash (list execution artifact)
-                                                (shell-log--cached-sync-evidence identity))))
-                          (if call-id
-                              (member call-id markers :test #'equal)
-                              markers))
+                        (or (shell-log--sync-receipt-p configuration identity metadata)
+                            (member (or call-id ':goal)
+                                    (gethash (list execution artifact)
+                                             (shell-log--cached-sync-evidence identity))
+                                    :test #'equal))
                         t))
                (error ()
-                 nil)))
+                nil))
          t)))
 
 (defparameter *shell-log-receipt-cache* nil

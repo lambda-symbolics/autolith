@@ -152,6 +152,9 @@
                    (slot-value job 'parent-call-id) "expected-shell-call")
              (let* ((artifact (shell-log-allocate context :job job))
                     (metadata (shell-log-tests--finish artifact (utf8-string-to-octets "x"))))
+              (setf (getf metadata :created-at)
+                    (- (get-universal-time) *shell-log-retention-age* 1))
+              (shell-log--write-manifest artifact)
               (test-assert
                (= 1 (getf (shell-log--read-manifest
                            configuration (shell-log-capture-directory artifact))
@@ -195,8 +198,73 @@
                   (setf (getf settled :parent-call-id) "never-recorded-call"
                         (getf settled :created-at)     (- (get-universal-time)
                                                           *shell-log-retention-age* 1))
-                  (test-assert (shell-log--sync-delivered-p configuration settled)
-                               "A sync capture past the retention age needs no delivery evidence")))
+                  (test-assert (not (shell-log--sync-delivered-p configuration settled))
+                               "Age cannot acknowledge a provider call that never recorded its result"))
+                (let* ((conversation (tool-context-conversation context))
+                       (identity     (conversation-pathname conversation))
+                       (active       (conversation-storage-active-pathname identity))
+                       (write-record (symbol-function 'task-continuity--write)))
+                  (test-call-with-function-replacements
+                   (list (list 'task-continuity--write
+                               (lambda (path record &key require-absent)
+                                 (if (member "shell-delivery" (pathname-directory path) :test #'equal)
+                                     (shell-log--fail "Injected receipt publication failure.")
+                                     (funcall write-record path record :require-absent require-absent)))))
+                   (lambda ()
+                     (test-assert
+                      (handler-case (progn (conversation-append-summary conversation "Failed checkpoint") nil)
+                        (shell-log-error () t))
+                      "Receipt publication failure vetoes segment rotation")))
+                  (test-assert (equal active (conversation-storage-active-pathname identity))
+                               "Failed receipt publication preserves the committed active segment")
+                  (test-assert (shell-log--sync-delivered-p configuration metadata)
+                               "The committed result is sufficient after failed receipt publication")
+                  (let ((done     (sb-thread:make-semaphore))
+                        (failure  nil)
+                        (thread   nil)
+                        (finished nil))
+                    (with-shell-log-lock (configuration)
+                      (setf thread
+                            (make-thread
+                             (lambda ()
+                               (unwind-protect
+                                    (handler-case
+                                        (conversation-append-summary (conversation-load identity) "Shell checkpoint")
+                                      (error (condition) (setf failure condition)))
+                                 (sb-thread:signal-semaphore done)))
+                             :name "shell delivery rotation"))
+                      (setf finished (sb-thread:wait-on-semaphore done :timeout 5)))
+                    (join-thread thread)
+                    (test-assert (and finished (null failure))
+                                 "Rotation publishes committed receipts without waiting on the shell-log lock"))
+                  (test-call-with-function-replacements
+                   (list (list 'conversation--map-segment-records
+                               (lambda (&rest arguments)
+                                 (declare (ignore arguments))
+                                 (error "A preserved receipt must not scan transcript segments."))))
+                   (lambda ()
+                     (test-assert (shell-log--sync-delivered-p configuration metadata)
+                                  "Exact delivery survives rotation and reload without scanning history")))
+                  (multiple-value-bind (values worker)
+                      (test-conversation--worker-eval configuration
+                        (format nil "(let* ((configuration ~A) (directory ~S)
+                                            (metadata (shell-log--read-manifest configuration directory :measure-p nil)))
+                                       (shell-log--sync-delivered-p configuration metadata))"
+                                (test-conversation--child-configuration-form configuration)
+                                (shell-log-capture-directory artifact)))
+                    (unwind-protect
+                         (test-assert (equal values '("T"))
+                                      "A fresh process recognizes exact delivery from the rotated owner")
+                      (lisp-worker-stop worker)))
+                  (dolist (field '(:artifact-id :completion-owner-conversation :parent-call-id))
+                    (let ((wrong (copy-list metadata)))
+                      (setf (getf wrong field) "different-identity")
+                      (test-assert (not (shell-log--sync-delivered-p configuration wrong))
+                                   "A preserved receipt refuses a different artifact, owner or provider call")))
+                  (let ((stale (copy-list metadata)))
+                    (setf (getf stale :state) ':interrupted)
+                    (test-assert (shell-log--sync-delivered-p configuration stale)
+                                 "A stale interrupted manifest retains exact committed delivery"))))
               (let ((replacement (shell-log-allocate context)))
                 (test-assert (eq ':pruned (getf (shell-log--read-manifest
                                                  configuration (shell-log-capture-directory artifact)) :state))
@@ -1210,7 +1278,13 @@
                           (forms (copy-tree (conversation--read-records file))))
                      (setf (getf (rest (first forms)) :id) "other-header")
                      (conversation-identifier-migration--write-forms file forms)))
-                 (check-state (null mismatch) "after receipt"))))
+                 (check-state (null mismatch) "after receipt")
+                 (unless (eq mismatch ':header)
+                   (conversation-append-summary conversation "Details checkpoint")
+                   (unless (eq target conversation)
+                     (conversation-append-summary target "Other owner checkpoint"))
+                   (conversation-load (conversation-pathname conversation))
+                   (check-state (null mismatch) "after rotation and reload")))))
         (task-orchestrator-close runtime))))
   nil)
 
@@ -1291,13 +1365,17 @@
                                     :worker nil :conversation owner)))
                     (conversation-append-user-message owner "Capture fixture output.")
                     (push job jobs)
-                    (dolist (detached (if (equal identifier "000Owner") '(nil t) '(t)))
+                    (dolist (detached (if (equal identifier "000Owner") '(nil t) '(nil)))
                       (let ((command (task-tests--make-job runtime :identifier "command"
                                        :root-identifier "retention-root" :detached-p detached)))
                         (setf (slot-value command 'completion-owner-conversation) identifier
                               (slot-value command 'parent-call-id) "retention-call")
                         (let ((artifact (shell-log-allocate context :job command)))
                           (shell-log-tests--finish artifact #(65))
+                          (unless (equal identifier "000Owner")
+                            (setf (getf (shell-log-artifact-metadata artifact) :created-at)
+                                  (- (get-universal-time) *shell-log-retention-age* 1))
+                            (shell-log--write-manifest artifact))
                           (when (equal identifier "000Owner")
                             (if detached
                                 (shell-log-tests--receipt-append owner
@@ -1307,7 +1385,9 @@
                                         :details (list :shell-logs
                                                        (list (shell-log--public-metadata
                                                               (shell-log-artifact-metadata artifact))))))))
-                          (push artifact captures))))))
+                          (push artifact captures))))
+                    (conversation-append-summary owner "Owner checkpoint")
+                    (conversation-load (conversation-pathname owner))))
                 (setf captures (nreverse captures))
                 (test-assert (every (lambda (capture)
                                       (shell-log-tests--disk-prunable configuration capture))
