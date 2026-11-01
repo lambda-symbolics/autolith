@@ -406,6 +406,33 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-tool-failure-survey () null)
+(defun test-tool-failure-survey ()
+  "Pair failed tool results with their call arguments and group them by error shape."
+  (with-test-configuration (configuration)
+    (let ((conversation (conversation-create configuration)))
+      (loop for (call-id arguments output success-p)
+              in '(("read-1" "{\"byte-count\": 9000}" "byte-count must be at most 4096." nil)
+                   ("read-2" "{\"byte-count\": 12000}" "byte-count must be at most 4096." nil)
+                   ("read-3" "{\"byte-count\": 100}" "Content." t))
+            do (conversation-append-provider-item
+                conversation (agent-test-call :call-id call-id :namespace "resource" :name "read"
+                                              :arguments arguments))
+               (conversation-append-tool-result conversation call-id
+                                                :tool-name "resource.read"
+                                                :output    output
+                                                :success-p success-p))
+      (let ((failures (tool-failures configuration
+                                     :identifiers (list (conversation-identifier conversation)))))
+        (test-assert (equal '("{\"byte-count\": 9000}" "{\"byte-count\": 12000}")
+                            (mapcar (lambda (failure) (getf failure :arguments)) failures))
+                     "each failed result carries its own call's arguments, and successes are left out")
+        (let ((report (with-output-to-string (stream)
+                        (tool-failures-report failures :stream stream))))
+          (test-assert (search "2 x resource.read: byte-count must be at most #." report)
+                       "failures differing only in numbers form one group")))))
+  nil)
+
 (-> test-conversation-pending-input-identifier-order () null)
 (defun test-conversation-pending-input-identifier-order ()
   "Keep each durable pending-input identifier once, oldest first, across reload."
