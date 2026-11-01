@@ -330,7 +330,7 @@ retracting facts, and proposing rules."
         "agenda-add"
         (json-object
          "text" (tool-string-property
-                 (format nil "Complete agenda item text, 1 to ~D characters."
+                 (format nil "Complete agenda item text, 1 to ~D characters; longer text is cut at a word boundary with a note."
                          *agenda-item-text-limit*))
          "status" (status-property)
          "memory-ids" (memory-identifiers-property))
@@ -340,7 +340,7 @@ retracting facts, and proposing rules."
         (json-object
          "id" (tool-string-property "The stable agenda item identifier.")
          "text" (tool-string-property
-                 (format nil "Replacement agenda item text, 1 to ~D characters."
+                 (format nil "Replacement agenda item text, 1 to ~D characters; longer text is cut at a word boundary with a note."
                          *agenda-item-text-limit*))
          "status" (status-property)
          "memory-ids" (memory-identifiers-property))

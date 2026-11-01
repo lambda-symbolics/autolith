@@ -45,6 +45,39 @@
 
 ;;;; -- Agenda Resource Tests --
 
+(-> test-agenda-resource-long-text () null)
+(defun test-agenda-resource-long-text ()
+  "Cut agenda text over the limit at a word boundary and say so."
+  (with-test-configuration (base-configuration root)
+    (let* ((workspace     (merge-pathnames "agenda-long/" root))
+           (configuration (configuration-copy base-configuration :working-directory workspace))
+           (registry      (make-default-tool-registry))
+           (context       (make-instance 'tool-context
+                                         :configuration configuration
+                                         :worker        nil
+                                         :conversation  (conversation-create configuration)))
+           (text          (format nil "~{word~D ~}" (loop for index below 120 collect index))))
+      (ensure-directories-exist (merge-pathnames "marker" workspace))
+      (flet ((call (name &rest arguments)
+               (agenda-resource-tests--call registry context :namespace "resource"
+                                                             :name      name
+                                                             :arguments arguments)))
+        (let* ((read     (call "read" "uri" "agenda:current"))
+               (revision (agenda-resource-tests--field (tool-result-content read) "Revision: "))
+               (added    (call "edit" "uri" "agenda:current" "base-revision" revision
+                               "operations" (vector (agenda-resource-tests--operation
+                                                     "agenda-add" "text" text))))
+               (item     (agenda-resource-tests--current-item configuration)))
+          (test-assert (> (length text) *agenda-item-text-limit*) "the fixture text is over the limit")
+          (test-assert (and (tool-result-success-p added)
+                            (search "Agenda text had" (tool-result-content added)))
+                       "long agenda text is added with a note instead of failing")
+          (test-assert (and (<= (length (agenda-item-text item)) *agenda-item-text-limit*)
+                            (uiop:string-prefix-p (agenda-item-text item) text)
+                            (not (find #\Space (agenda-item-text item) :start (1- (length (agenda-item-text item))))))
+                       "the kept text is a prefix cut at a word boundary")))))
+  nil)
+
 (-> test-agenda-resources () null)
 (defun test-agenda-resources ()
   "Test agenda:current revision gating, confinement, compatibility, and schemas."

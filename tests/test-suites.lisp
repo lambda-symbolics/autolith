@@ -928,6 +928,7 @@
   test-workspace-resource-ergonomics)
 
 (define-test-suite agenda-resource
+  test-agenda-resource-long-text
   test-agenda-resources)
 
 (define-test-suite memory-resource
