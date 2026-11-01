@@ -467,9 +467,17 @@ Keep manifests as tombstones so old references have truthful diagnostics."
       (shell-log--fail "Private shell log storage is full; protected captures cannot be pruned.")))
   nil)
 
-(-> shell-log-allocate (tool-context &key (:job t) (:merge-output-p boolean)) shell-log-artifact)
-(defun shell-log-allocate (context &key job (merge-output-p t))
-  "Allocate private execution-owned storage and persist ownership BEFORE launch."
+(-> shell-log-allocate
+    (tool-context &key (:job t) (:merge-output-p boolean) (:receive (option function)))
+    shell-log-artifact)
+(defun shell-log-allocate (context &key job (merge-output-p t) receive)
+  "Allocate private execution-owned storage and persist ownership BEFORE launch.
+
+Pruning runs with interrupts enabled, so garbage collection can proceed while
+it reads manifests and owner evidence. RECEIVE, when supplied, gets the
+artifact with interrupts disabled at the instant it is published, so a caller
+that releases it from an UNWIND-PROTECT cleanup never misses a published
+capture."
   (with-shell-log-lock ((tool-context-configuration context))
     (let* ((configuration        (tool-context-configuration context))
            (agent                (tool-context-agent context))
@@ -523,8 +531,11 @@ Keep manifests as tombstones so old references have truthful diagnostics."
                    (setf lease (lease-acquire (merge-pathnames "owner.lock" directory)))
                    (platform-make-private *platform* (merge-pathnames "owner.lock" directory))
                    (shell-log--write-manifest artifact)
-                   (setf (gethash (namestring directory) *shell-log-active*) (cons (current-thread) lease)
-                         published-p t)
+                   (sb-sys:without-interrupts
+                     (setf (gethash (namestring directory) *shell-log-active*) (cons (current-thread) lease)
+                           published-p t)
+                     (when receive
+                       (funcall receive artifact)))
                    artifact))
              (shell-log-error (condition)
                (error condition))

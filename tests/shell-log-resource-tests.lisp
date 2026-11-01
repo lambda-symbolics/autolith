@@ -265,31 +265,47 @@
              (task-tests--make-job orchestrator :identifier "preflight-job"
                                   :root-identifier "shell-preflight" :detached-p nil)))
       (unwind-protect
-           (loop repeat 2
-                 do (test-assert
-                     (handler-case
-                         (progn
-                           (workspace-tool-run-shell-command
-                            (test-fixture-shell-command *platform* "exit 0" "exit 0")
-                            (config :working-directory configuration)
-                            :policy       ':invalid-policy
-                            :timeout      1
-                            :output-limit 32
-                            :context      context)
-                           nil)
-                       (error () t))
-                     "Policy validation fails before the executor can launch")
-                    (test-assert (zerop (hash-table-count *shell-log-active*))
-                                 "A live worker releases the abandoned artifact pin")
-                    (let* ((metadata
-                             (loop for directory in (shell-log--directories configuration)
-                                   for item = (shell-log--read-manifest configuration directory)
-                                   when (eq (getf item :state) ':closed) return item)))
-                      (test-assert (and metadata (eq ':interrupted (getf metadata :status))
-                                        (zerop (getf metadata :reserved-bytes))
-                                        (null (getf metadata :captures)))
-                                   "Pre-executor failures free quota without inventing captures")))
+           (let ((original (fdefinition 'shell-log--prune))
+                 (enabled  nil))
+             (test-call-with-function-replacements
+              (list (list 'shell-log--prune
+                          (lambda (configuration &rest arguments)
+                            (push sb-sys:*interrupts-enabled* enabled)
+                            (apply original configuration arguments))))
+              (lambda ()
+                (shell-log-tests--run-pre-executor-failures configuration context)))
+             (test-assert (and enabled (every #'identity enabled))
+                          "Pruning runs with interrupts enabled so garbage collection can proceed"))
         (task-orchestrator-close orchestrator))))
+  nil)
+
+(-> shell-log-tests--run-pre-executor-failures (configuration tool-context) null)
+(defun shell-log-tests--run-pre-executor-failures (configuration context)
+  "Run two commands that fail before launch and check each releases its capture."
+  (loop repeat 2
+        do (test-assert
+            (handler-case
+                (progn
+                  (workspace-tool-run-shell-command
+                   (test-fixture-shell-command *platform* "exit 0" "exit 0")
+                   (config :working-directory configuration)
+                   :policy       ':invalid-policy
+                   :timeout      1
+                   :output-limit 32
+                   :context      context)
+                  nil)
+              (error () t))
+            "Policy validation fails before the executor can launch")
+           (test-assert (zerop (hash-table-count *shell-log-active*))
+                        "A live worker releases the abandoned artifact pin")
+           (let* ((metadata
+                    (loop for directory in (shell-log--directories configuration)
+                          for item = (shell-log--read-manifest configuration directory)
+                          when (eq (getf item :state) ':closed) return item)))
+             (test-assert (and metadata (eq ':interrupted (getf metadata :status))
+                               (zerop (getf metadata :reserved-bytes))
+                               (null (getf metadata :captures)))
+                          "Pre-executor failures free quota without inventing captures")))
   nil)
 
 

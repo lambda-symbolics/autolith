@@ -92,50 +92,55 @@
 (defun workspace-tool-run-shell-command
     (command directory
      &key policy timeout output-limit environment context (merge-output-p t))
-  "Run one authorized command after allocating its private execution-owned capture."
-  (sb-sys:without-interrupts
-    (let* ((job      *tool-execution-current-job*)
-           (artifact (shell-log-allocate context :job job :merge-output-p merge-output-p)))
-      (unwind-protect
-           (sb-sys:with-local-interrupts
-             (let* ((diagnostic nil)
-                    (result
-                      (handler-case
-                          (destructuring-bind (program &rest arguments)
-                              (platform-shell-command-line *platform* command)
-                            (run-sandboxed
-                             program arguments
-                             :policy policy :working-directory directory :environment environment
-                             :timeout timeout :merge-output-p merge-output-p
-                             :output-limit 0 :error-output-limit 0
-                             :capture-directory  (shell-log-capture-directory artifact)
-                             :retain-output-p    t
-                             :capture-byte-limit (shell-log-capture-byte-limit artifact)
-                             :cancel-function    (when job (lambda () (job-cancellation-requested-p job)))
-                             :capture-created-function
-                             (lambda (capture-result)
-                               (shell-log-record-capture artifact capture-result :closed-p nil))
-                             :capture-function
-                             (lambda (capture-result)
-                               (handler-case
-                                   (shell-log-record-capture artifact capture-result)
-                                 (error (condition)
-                                   (setf diagnostic
-                                         (bounded-string (princ-to-string condition) :limit 500)))))))
-                        (cl-exec-sandbox:sandbox-execution-error (condition)
-                          (setf diagnostic (bounded-string (princ-to-string condition) :limit 500))
-                          (or (cl-exec-sandbox:sandbox-execution-error-result condition)
-                              (return-from workspace-tool-run-shell-command
-                                (tool-failure diagnostic)))))))
-               (shell-command-result
-                (shell-output--render-result result artifact output-limit :diagnostic diagnostic)
-                (list :exit-code          (sandbox-result-exit-code result)
-                      :execution-status   (cl-exec-sandbox:sandbox-result-status result)
-                      :shell-logs         (list (shell-log--public-metadata
-                                                 (shell-log-artifact-metadata artifact)))
-                      :capture-diagnostic diagnostic)
-                (and (null diagnostic)
-                     (eql (sandbox-result-exit-code result) 0)
-                     (eq (cl-exec-sandbox:sandbox-result-status result) ':exited)))))
+  "Run one authorized command after allocating its private execution-owned capture.
+
+Allocation runs with interrupts enabled; it hands the capture over at
+publication, so the cleanup releases every capture that was published."
+  (let ((job      *tool-execution-current-job*)
+        (artifact nil))
+    (unwind-protect
+         (progn
+           (shell-log-allocate context :job job :merge-output-p merge-output-p
+                                       :receive (lambda (allocated) (setf artifact allocated)))
+           (let* ((diagnostic nil)
+                  (result
+                    (handler-case
+                        (destructuring-bind (program &rest arguments)
+                            (platform-shell-command-line *platform* command)
+                          (run-sandboxed
+                           program arguments
+                           :policy policy :working-directory directory :environment environment
+                           :timeout timeout :merge-output-p merge-output-p
+                           :output-limit 0 :error-output-limit 0
+                           :capture-directory  (shell-log-capture-directory artifact)
+                           :retain-output-p    t
+                           :capture-byte-limit (shell-log-capture-byte-limit artifact)
+                           :cancel-function    (when job (lambda () (job-cancellation-requested-p job)))
+                           :capture-created-function
+                           (lambda (capture-result)
+                             (shell-log-record-capture artifact capture-result :closed-p nil))
+                           :capture-function
+                           (lambda (capture-result)
+                             (handler-case
+                                 (shell-log-record-capture artifact capture-result)
+                               (error (condition)
+                                 (setf diagnostic
+                                       (bounded-string (princ-to-string condition) :limit 500)))))))
+                      (cl-exec-sandbox:sandbox-execution-error (condition)
+                        (setf diagnostic (bounded-string (princ-to-string condition) :limit 500))
+                        (or (cl-exec-sandbox:sandbox-execution-error-result condition)
+                            (return-from workspace-tool-run-shell-command
+                              (tool-failure diagnostic)))))))
+             (shell-command-result
+              (shell-output--render-result result artifact output-limit :diagnostic diagnostic)
+              (list :exit-code          (sandbox-result-exit-code result)
+                    :execution-status   (cl-exec-sandbox:sandbox-result-status result)
+                    :shell-logs         (list (shell-log--public-metadata
+                                               (shell-log-artifact-metadata artifact)))
+                    :capture-diagnostic diagnostic)
+              (and (null diagnostic)
+                   (eql (sandbox-result-exit-code result) 0)
+                   (eq (cl-exec-sandbox:sandbox-result-status result) ':exited)))))
+      (when artifact
         ; mallet:suppress no-ignore-errors -- releasing the log must not mask the command result or failure
         (ignore-errors (shell-log-release-artifact artifact))))))
