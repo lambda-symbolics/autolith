@@ -189,10 +189,6 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                (error 'task-error :message
                       "A batch task call requires a non-empty tasks array."
                       :tool-name "task.run"))
-             (unless (non-empty-string-p shared-context)
-               (error 'task-error :message
-                      "A batch task call requires non-empty shared context."
-                      :tool-name "task.run"))
              (loop for item across tasks
                    collect (task--normalize-item
                             item :shared-context   shared-context
@@ -1391,7 +1387,7 @@ poll a job whose completion will wake it."
                          "Self-contained assignment for a flat call.")
                         "context"
                         (tool-string-property
-                         "Shared non-empty background required for batch calls.")
+                         "Optional background shared by every task in a batch call.")
                         "isolation" (task-worktree-options-schema)
                         "blocking"
                         (tool-boolean-property
