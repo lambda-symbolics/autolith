@@ -79,7 +79,7 @@
 (defun task-unfinished-work--owner-receipts (agent owner)
   "Index exact OWNER receipts without loading, repairing or writing a conversation."
   (if (equal owner (conversation-identifier (agent-conversation agent)))
-      (task--receipt-index (conversation-pending-input-identifiers (agent-conversation agent)))
+      (conversation-pending-input-identifier-index (agent-conversation agent))
       (task--owner-receipts (agent-configuration agent)
                             (task-parent-root-conversation-identifier agent) owner)))
 

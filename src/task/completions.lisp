@@ -136,9 +136,7 @@
 (-> task-completion--delivered-p (conversation string) boolean)
 (defun task-completion--delivered-p (conversation identifier)
   "Test durable receipt history, including receipts retained through compaction."
-  (not (null (member (task-completion--receipt identifier)
-                     (conversation-pending-input-identifiers conversation)
-                     :test #'equal))))
+  (conversation-pending-input-identifier-p conversation (task-completion--receipt identifier)))
 
 (-> task-completion--metadata (list &key (:directory pathname) (:result list)
                                   (:state keyword)) list)

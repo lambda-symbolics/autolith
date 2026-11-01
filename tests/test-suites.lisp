@@ -719,6 +719,7 @@
   test-conversation-compaction
   test-conversation-native-compaction
   test-conversation-chunk-storage
+  test-conversation-pending-input-identifier-order
   test-conversation-segment-validation
   test-conversation-legacy-storage
   test-conversation-working-seconds

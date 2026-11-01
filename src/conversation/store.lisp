@@ -354,7 +354,12 @@ not yet been told that work from the previous process is gone.")
     :initform      nil
     :accessor      conversation-durable-pending-input-identifiers
     :type          list
-    :documentation "Durable pending-input identifiers in chronological first-seen order.")
+    :documentation "Durable pending-input identifiers, newest first.")
+   (pending-input-identifier-index
+    :initform      (make-hash-table :test #'equal :synchronized t)
+    :reader        conversation-pending-input-identifier-index
+    :type          hash-table
+    :documentation "The durable pending-input identifiers as a set, for constant-time checks.")
    (picker-preview
     :initform      nil
     :accessor      conversation-picker-preview
@@ -838,15 +843,27 @@ a crash may leave one that a later lease acquisition can reuse safely."
   (let ((identifier
           (and (eq (first record) ':message)
                (getf (rest record) :pending-input-identifier))))
-    (when (and (non-empty-string-p identifier)
-               (not (member identifier
-                            (conversation-durable-pending-input-identifiers
-                             conversation)
-                            :test #'string=)))
-      (setf (conversation-durable-pending-input-identifiers conversation)
-            (append
-             (conversation-durable-pending-input-identifiers conversation)
-             (list (copy-seq identifier))))))
+    (when (non-empty-string-p identifier)
+      (conversation--remember-pending-input-identifier conversation identifier)))
+  nil)
+
+(-> conversation--remember-pending-input-identifier (conversation string) null)
+(defun conversation--remember-pending-input-identifier (conversation identifier)
+  "Add IDENTIFIER to CONVERSATION's durable pending-input identifiers unless present."
+  (let ((index (conversation-pending-input-identifier-index conversation)))
+    (unless (gethash identifier index)
+      (let ((copy (copy-seq identifier)))
+        (push copy (conversation-durable-pending-input-identifiers conversation))
+        (setf (gethash copy index) t))))
+  nil)
+
+(-> conversation--restore-pending-input-identifiers (conversation list) null)
+(defun conversation--restore-pending-input-identifiers (conversation identifiers)
+  "Replace CONVERSATION's pending-input identifiers with chronological IDENTIFIERS."
+  (setf (conversation-durable-pending-input-identifiers conversation) nil)
+  (clrhash (conversation-pending-input-identifier-index conversation))
+  (dolist (identifier identifiers)
+    (conversation--remember-pending-input-identifier conversation identifier))
   nil)
 
 (-> conversation--note-activity (conversation list) null)
@@ -892,8 +909,8 @@ a crash may leave one that a later lease acquisition can reuse safely."
         (let ((preview (conversation-picker-preview conversation)))
           (and preview (copy-seq preview)))
         :pending-input-identifiers
-        (mapcar #'copy-seq
-                (conversation-durable-pending-input-identifiers conversation))
+        (reverse (mapcar #'copy-seq
+                         (conversation-durable-pending-input-identifiers conversation)))
         :user-operation-records
         (copy-tree (deque->list
                     (conversation-user-operation-records conversation)))
@@ -2412,9 +2429,17 @@ translating a condition signaled by the record visitor."
 
 (-> conversation-pending-input-identifiers (conversation) list)
 (defun conversation-pending-input-identifiers (conversation)
-  "Return detached pending-input identifiers durably recorded in CONVERSATION."
-  (mapcar #'copy-seq
-          (conversation-durable-pending-input-identifiers conversation)))
+  "Return detached pending-input identifiers durably recorded in CONVERSATION, oldest first.
+
+This copies every identifier; use CONVERSATION-PENDING-INPUT-IDENTIFIER-P to
+test one."
+  (reverse (mapcar #'copy-seq
+                   (conversation-durable-pending-input-identifiers conversation))))
+
+(-> conversation-pending-input-identifier-p (conversation string) boolean)
+(defun conversation-pending-input-identifier-p (conversation identifier)
+  "Return true when CONVERSATION durably records pending-input IDENTIFIER."
+  (and (gethash identifier (conversation-pending-input-identifier-index conversation)) t))
 
 (-> conversation--map-picker-records (pathname function) (values boolean integer))
 (defun conversation--map-picker-records (pathname function)
@@ -3129,10 +3154,9 @@ later picker searches read it without scanning the log."
                 search-message-count
                 (conversation-picker-preview conversation)
                 (and preview (copy-seq preview))
-                (conversation-durable-pending-input-identifiers conversation)
-                (mapcar #'copy-seq pending-identifiers)
                 (conversation-latest-goal-record conversation)
                 (copy-tree latest-goal-record))
+          (conversation--restore-pending-input-identifiers conversation pending-identifiers)
           (setf (conversation-prompt-cache-usage conversation)
                 (copy-tree prompt-cache-usage)
                 (conversation-input-history-last-sequence conversation)

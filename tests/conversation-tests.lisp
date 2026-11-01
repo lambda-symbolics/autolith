@@ -406,6 +406,24 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-conversation-pending-input-identifier-order () null)
+(defun test-conversation-pending-input-identifier-order ()
+  "Keep each durable pending-input identifier once, oldest first, across reload."
+  (with-test-configuration (configuration)
+    (let ((conversation (conversation-create configuration)))
+      (dolist (identifier '("first" "second" "first" "third"))
+        (conversation-append-user-message conversation identifier
+                                          :pending-input-identifier identifier))
+      (let ((loaded (conversation-load (conversation-pathname conversation))))
+        (dolist (candidate (list conversation loaded))
+          (test-assert (equal '("first" "second" "third")
+                              (conversation-pending-input-identifiers candidate))
+                       "identifiers stay unique in first-seen order")
+          (test-assert (and (conversation-pending-input-identifier-p candidate "second")
+                            (not (conversation-pending-input-identifier-p candidate "fourth")))
+                       "membership answers without copying the identifiers")))))
+  nil)
+
 (-> test-conversation-chunk-storage () null)
 (defun test-conversation-chunk-storage ()
   "Test deterministic compaction chunks and self-contained newest-chunk resume."
@@ -497,6 +515,8 @@
                         expected-last-activity)
                      (equal (conversation-pending-input-identifiers loaded)
                             '("pending-before-compaction"))
+                     (conversation-pending-input-identifier-p loaded "pending-before-compaction")
+                     (not (conversation-pending-input-identifier-p loaded "never-recorded"))
                      (= (length (conversation-user-operation-snapshot loaded)) 1)
                      (string=
                       (getf (rest (conversation-latest-goal-record loaded))
