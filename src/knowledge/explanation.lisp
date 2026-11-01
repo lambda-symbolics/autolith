@@ -280,7 +280,8 @@ a derived claim's first derivation, so a later withdrawal can name its cause."
                                                                (getf support :reason))))))
       ((getf entry :premises)
        (loop for premise in (getf entry :premises)
-             for premise-node = (knowledge-view-node view premise)
+             for premise-node = (or (knowledge-view-node view premise)
+                                    (knowledge--archived-node view premise))
              unless (and premise-node (knowledge-node-supported-p premise-node))
                append (if premise-node
                           (let ((reasons (knowledge--withdrawal-causes

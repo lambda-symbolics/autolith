@@ -55,5 +55,7 @@ supports kept only in the log, all NIL when the knowledge log cannot be read; an
                             (format nil "input recall ~A entries" (quantity :input-recall-entries))
                             (format nil "traces ~A chars" (quantity :trace-characters))
                             (if (getf retention :knowledge-claims)
-                                (format nil "knowledge ~A claims" (quantity :knowledge-claims))
+                                (format nil "knowledge ~A claims, ~A supports archived"
+                                        (quantity :knowledge-claims)
+                                        (quantity :knowledge-archived))
                                 "knowledge unreadable")))))))

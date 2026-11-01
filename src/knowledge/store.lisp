@@ -425,20 +425,25 @@ by a newer generation stays readable after a rollback."
                          (adjoin support (getf entry :supports) :test #'string=)
                          (gethash claim (knowledge-base-claims base))
                          copy))
-                 (let ((proposition (getf properties :proposition)))
-                   (setf (gethash claim (knowledge-base-claims base))
-                         (list :id          claim
-                               :proposition proposition
-                               :scope       (getf properties :scope)
-                               :workspace   (getf properties :workspace)
-                               :supports    (list support)))
-                   (knowledge--index-add (knowledge-base-predicate-index base)
-                                         (knowledge-proposition-predicate proposition)
-                                         claim)
-                   (dolist (term (knowledge-proposition-arguments proposition))
-                     (when (stringp term)
-                       (knowledge--index-add (knowledge-base-term-index base)
-                                             term claim))))))
+                (let* ((proposition (getf properties :proposition))
+                       (history     (and (plusp (knowledge-base-archived-claims base))
+                                         (knowledge-base-claim-history base claim))))
+                  (when history
+                    (decf (knowledge-base-archived-claims base)))
+                  (setf (gethash claim (knowledge-base-claims base))
+                        (list :id                claim
+                              :proposition       proposition
+                              :scope             (getf properties :scope)
+                              :workspace         (getf properties :workspace)
+                              :supports          (list support)
+                              :archived-supports (length (getf history :supports))))
+                  (knowledge--index-add (knowledge-base-predicate-index base)
+                                        (knowledge-proposition-predicate proposition)
+                                        claim)
+                  (dolist (term (knowledge-proposition-arguments proposition))
+                    (when (stringp term)
+                      (knowledge--index-add (knowledge-base-term-index base)
+                                            term claim))))))
            (when evidence
              (knowledge--index-add (knowledge-base-evidence-index base) evidence support))))
         (:support-retracted
@@ -450,7 +455,7 @@ by a newer generation stays readable after a rollback."
                     (getf support :retraction-reason) (getf properties :reason)
                     (gethash identifier (knowledge-base-supports base)) support)
               (deque-push-back (knowledge-base-retracted-order base) identifier))
-             ((or support (knowledge--log-mentions-support-p pathname identifier))
+             ((or support (knowledge--log-mentions-support-p base identifier))
               ;; Retracting a retracted or archived support again changes nothing.
               nil)
              (t
@@ -673,19 +678,13 @@ replacement rereads the whole log."
 
 (-> knowledge--archive-history (knowledge-base) null)
 (defun knowledge--archive-history (base)
-  "Archive BASE's oldest retracted supports once it holds more than the limit.
+  "Archive BASE's oldest retracted supports beyond the resident limit.
 
-Archiving continues down to the limit once the excess reaches a quarter of it,
-so its cost spreads over many retractions. Each archived support leaves its
-claim, counted in the claim's :ARCHIVED-SUPPORTS; a claim left without
-supports leaves the base and its indexes, and evidence no resident support
-cites leaves too. Entries are replaced, never modified, because earlier bases
-may share them."
-  (let ((order (knowledge-base-retracted-order base))
-        (limit *knowledge-retracted-support-limit*))
-    (when (> (deque-count order) (+ limit (max 1 (floor limit 4))))
-      (loop while (> (deque-count order) limit)
-            do (knowledge--archive-support base (deque-pop-front order)))))
+Remove exclusive evidence and unsupported claims too. Replace shared entries
+instead of modifying them so earlier bases keep their snapshot."
+  (let ((order (knowledge-base-retracted-order base)))
+    (loop while (> (deque-count order) *knowledge-retracted-support-limit*)
+          do (knowledge--archive-support base (deque-pop-front order))))
   nil)
 
 (-> knowledge--archive-support (knowledge-base string) null)
@@ -736,28 +735,36 @@ may share them."
       (incf (knowledge-base-archived-claims base))))
   nil)
 
-(-> knowledge--map-log-records ((option pathname) function) null)
-(defun knowledge--map-log-records (pathname function)
-  "Call FUNCTION with each complete record of the knowledge log at PATHNAME.
+(-> knowledge--map-log-records
+    ((option pathname) function &key (:revision (option integer))) null)
+(defun knowledge--map-log-records (pathname function &key revision)
+  "Call FUNCTION with complete log records at PATHNAME, through REVISION.
 
-Transactions are opened, so FUNCTION sees their records one by one. A missing
-log has no records."
-  (when (and pathname (probe-file pathname))
-    (sexp-store:log-map
-     (lambda (form)
-       (labels ((visit (record)
-                  (if (eq (first record) ':transaction)
-                      (dolist (inner (getf (rest record) :records))
-                        (visit inner))
-                      (funcall function record))))
-         (unless (eq (first form) ':knowledge)
-           (visit form))))
-     pathname))
+Transactions contribute their individual records to the revision, just as in
+folding. A missing log has no records. NIL reads all complete records."
+  (block done
+    (let ((count 0))
+      (when (and pathname (probe-file pathname))
+        (sexp-store:log-map
+         (lambda (form)
+           (labels ((visit (record)
+                      (if (eq (first record) ':transaction)
+                          (dolist (inner (getf (rest record) :records))
+                            (visit inner))
+                          (progn
+                            (when (and revision (>= count revision))
+                              (return-from done nil))
+                            (incf count)
+                            (funcall function record)))))
+             (unless (eq (first form) ':knowledge)
+               (visit form))))
+         pathname))))
   nil)
 
-(-> knowledge--log-evidence ((option pathname) list) hash-table)
-(defun knowledge--log-evidence (pathname identifiers)
-  "Return the latest logged state of each evidence in IDENTIFIERS, by identifier."
+(-> knowledge--log-evidence
+    ((option pathname) list &key (:revision (option integer))) hash-table)
+(defun knowledge--log-evidence (pathname identifiers &key revision)
+  "Return evidence in IDENTIFIERS at REVISION, indexed by identifier."
   (let ((evidence (make-hash-table :test #'equal)))
     (knowledge--map-log-records
      pathname
@@ -773,27 +780,33 @@ log has no records."
                 (when renewed
                   (setf (getf renewed :observed-at) (getf properties :observed-at)
                         (getf renewed :valid-until) (getf properties :valid-until)
-                        (gethash identifier evidence) renewed)))))))))
+                         (gethash identifier evidence) renewed))))))))
+     :revision revision)
     evidence))
 
 (-> knowledge--resident-evidence ((option pathname) knowledge-base string) (option list))
 (defun knowledge--resident-evidence (pathname base identifier)
   "Return evidence IDENTIFIER from BASE, restoring it from the log at PATHNAME when archived."
   (or (gethash identifier (knowledge-base-evidence base))
-      (let ((restored (gethash identifier (knowledge--log-evidence pathname (list identifier)))))
+      (let ((restored (gethash identifier
+                               (knowledge--log-evidence
+                                pathname (list identifier)
+                                :revision (knowledge-base-revision base)))))
         (when restored
           (setf (gethash identifier (knowledge-base-evidence base)) restored))
         restored)))
 
-(-> knowledge--log-mentions-support-p ((option pathname) string) boolean)
-(defun knowledge--log-mentions-support-p (pathname identifier)
-  "Return true when the knowledge log at PATHNAME asserted support IDENTIFIER."
+(-> knowledge--log-mentions-support-p (knowledge-base string) boolean)
+(defun knowledge--log-mentions-support-p (base identifier)
+  "Return true when BASE's log asserted support IDENTIFIER by BASE's revision."
   (block found
-    (knowledge--map-log-records pathname
-                                (lambda (record)
-                                  (when (and (eq (first record) ':claim-asserted)
-                                             (equal (getf (rest record) :support) identifier))
-                                    (return-from found t))))
+    (knowledge--map-log-records
+     (knowledge-base-pathname base)
+     (lambda (record)
+       (when (and (eq (first record) ':claim-asserted)
+                  (equal (getf (rest record) :support) identifier))
+         (return-from found t)))
+     :revision (knowledge-base-revision base))
     nil))
 
 (-> knowledge-base-claim-history (knowledge-base string) (option list))
@@ -823,7 +836,8 @@ inspection of archived history, not evaluation."
               (when (and support (null (getf support :retracted-at)))
                 (setf (getf support :retracted-at)      (getf properties :time)
                       (getf support :retraction-reason) (getf properties :reason)
-                      (gethash (getf properties :support) supports) support))))))))
+                      (gethash (getf properties :support) supports) support)))))))
+     :revision (knowledge-base-revision base))
     (when first
       (let ((plists (mapcar (lambda (identifier) (gethash identifier supports))
                             (reverse order))))
@@ -834,7 +848,8 @@ inspection of archived history, not evaluation."
               :evidence    (knowledge--log-evidence
                             (knowledge-base-pathname base)
                             (remove nil (mapcar (lambda (support) (getf support :evidence))
-                                                plists))))))))
+                                                plists))
+                            :revision (knowledge-base-revision base)))))))
 
 (-> knowledge-base-archived-p (knowledge-base string) boolean)
 (defun knowledge-base-archived-p (base identifier)
@@ -848,7 +863,8 @@ inspection of archived history, not evaluation."
             (when (and (eq (first record) ':claim-asserted)
                        (or (equal (getf (rest record) :claim) identifier)
                            (equal (getf (rest record) :support) identifier)))
-              (return-from found t))))
+              (return-from found t)))
+          :revision (knowledge-base-revision base))
          nil)))
 
 
@@ -978,6 +994,27 @@ predicates, version 0, are visible everywhere."
   "Return the workspace owning knowledge in SCOPE, or NIL for global knowledge."
   (and (eq scope ':workspace) (knowledge--workspace configuration)))
 
+(-> knowledge--schema-used-p
+    (knowledge-base string &key (:scope memory-scope) (:workspace (option string))) boolean)
+(defun knowledge--schema-used-p (base predicate &key scope workspace)
+  "Return whether resident or archived claims use PREDICATE in SCOPE and WORKSPACE."
+  (flet ((matches (entry)
+           (and (eq (getf entry :scope) scope)
+                (equal (getf entry :workspace) workspace)
+                (equal (knowledge-proposition-predicate (getf entry :proposition)) predicate))))
+    (or (some (lambda (claim) (matches (knowledge-base-claim base claim)))
+              (knowledge-base-claims-with-predicate base predicate))
+        (and (plusp (knowledge-base-archived-claims base))
+             (block found
+               (knowledge--map-log-records
+                (knowledge-base-pathname base)
+                (lambda (record)
+                  (when (and (eq (first record) ':claim-asserted)
+                             (matches (rest record)))
+                    (return-from found t)))
+                :revision (knowledge-base-revision base))
+               nil)))))
+
 (-> knowledge--plan-schema-definition
     (knowledge-base list &key (:scope memory-scope) (:workspace (option string))
                              (:source-conversation (option string)))
@@ -995,11 +1032,7 @@ predicates, version 0, are visible everywhere."
         ((and existing
               (not (equal (knowledge-schema-arguments existing)
                           (knowledge-schema-arguments schema)))
-              (some (lambda (claim)
-                      (let ((entry (knowledge-base-claim base claim)))
-                        (and (eq (getf entry :scope) scope)
-                             (equal (getf entry :workspace) workspace))))
-                    (knowledge-base-claims-with-predicate base predicate)))
+              (knowledge--schema-used-p base predicate :scope scope :workspace workspace))
          (knowledge--fail ':schema-in-use predicate
                           "Claims already use ~A; keep its arguments, or define a new predicate."
                           predicate))
@@ -1066,7 +1099,11 @@ same observation recorded twice is one piece of evidence."
   (when evidence
     (let* ((properties (rest evidence))
            (identifier (getf properties :id))
-           (recorded   (knowledge-base-evidence-record base identifier)))
+           (recorded   (or (knowledge-base-evidence-record base identifier)
+                           (gethash identifier
+                                    (knowledge--log-evidence
+                                     (knowledge-base-pathname base) (list identifier)
+                                     :revision (knowledge-base-revision base))))))
       (cond
         ((null recorded)
          (list evidence))

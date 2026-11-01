@@ -447,6 +447,8 @@
   test-knowledge-schemas
   test-knowledge-store
   test-knowledge-archived-history
+  test-knowledge-archived-lifecycle
+  test-knowledge-archived-snapshots
   test-knowledge-applicability
   test-knowledge-quotation-context
   test-knowledge-rule-validation
