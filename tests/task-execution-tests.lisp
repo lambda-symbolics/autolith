@@ -312,17 +312,14 @@
               (task-error () t))
             "task normalization rejects combined blocking and async fields")
            (test-assert
-            (handler-case
-                (progn
-                  (task-normalize-arguments
-                   (json-object "tasks"
-                                (json-array
-                                 (json-object "task" "First")
-                                 (json-object "task" "Second"))))
-                  nil)
-              (task-error ()
-                t))
-            "batch task normalization requires shared context")
+            (equal '("First" "Second")
+                   (mapcar (lambda (item) (getf item :task))
+                           (task-normalize-arguments
+                            (json-object "tasks"
+                                         (json-array
+                                          (json-object "task" "First")
+                                          (json-object "task" "Second"))))))
+            "a batch without shared context runs each self-contained task")
            (dolist
                (case
                 (list
