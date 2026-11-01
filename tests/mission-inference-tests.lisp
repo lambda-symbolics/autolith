@@ -17,7 +17,7 @@
               :reader mission-inference-test-provider-blocked-p
               :type boolean :documentation "Whether calls wait for RELEASE.")
    (seen-output-cap :initform nil :accessor mission-inference-test-provider-seen-output-cap
-                    :documentation "Output caps observed at the provider boundary.")
+                    :documentation "Internal output reservations observed at the provider boundary.")
    (observation-lock :initform      (bordeaux-threads:make-lock "Inference provider observations")
                      :reader        mission-inference-test-provider-observation-lock
                      :documentation "Protects the shared observation list."))
@@ -30,7 +30,7 @@
   (declare (ignore conversation tool-namespaces event-callback goal-context compaction-p))
   (bordeaux-threads:with-lock-held
       ((mission-inference-test-provider-observation-lock provider))
-    (push *provider-maximum-output-tokens*
+    (push *provider-mission-output-allowance*
           (mission-inference-test-provider-seen-output-cap provider)))
   (bordeaux-threads:signal-semaphore
    (mission-inference-test-provider-entered provider))

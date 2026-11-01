@@ -70,12 +70,26 @@ local retention estimate, which only schedules pruning and idle compaction."
             (provider-cache-prefix-create projection tool-namespaces))))
   (call-next-method))
 
+(defgeneric provider-prepare-stream-request (provider request credentials)
+  (:documentation
+   "Finalize transport routing before output headroom, admission and cache observation.
+Methods must preserve REQUEST, copying any fields they change."))
+
+(defmethod provider-prepare-stream-request
+    ((provider model-provider) (request hash-table) credentials)
+  "Use the encoded request unchanged when no transport setup is required."
+  (declare (ignore provider credentials))
+  request)
+
 (defmethod provider-open-response-stream :around
     ((provider model-provider) (request hash-table) &key credentials conversation)
-  "Observe the complete encoded request immediately before transport."
-  (declare (ignore credentials conversation))
-  (provider-cache-prefix-observe request)
-  (call-next-method))
+  "Finalize mission headroom and observe the actual request before transport."
+  (provider-call-with-mission-output-allowance
+   provider (provider-prepare-stream-request provider request credentials)
+   (lambda (final-request)
+     (provider-cache-prefix-observe final-request)
+     (call-next-method provider final-request :credentials credentials
+                                            :conversation  conversation))))
 
 (-> provider-shared-items-split (list list) (values list list))
 (defun provider-shared-items-split (items durable-items)
@@ -557,3 +571,63 @@ changing one never invalidates a provider's cached prefix of earlier history."
          (provider-request-object provider projection effective-namespaces
                                   :compaction-p compaction-p)
          delivery)))))
+
+
+;;;; -- Request-Local Output Ceilings --
+
+(defgeneric provider-request-with-output-ceiling (provider request ceiling)
+  (:documentation
+   "Return a request-local copy with CEILING in the supported wire field.
+
+Providers without a ceiling protocol retain their original request and use
+local admission headroom only. Custom transports may specialize this protocol;
+methods must preserve the original request and unrelated nested fields."))
+
+(defmethod provider-request-with-output-ceiling
+    ((provider model-provider) (request hash-table) (ceiling integer))
+  "Keep unknown transports unchanged, without claiming remote enforcement."
+  (declare (ignore provider ceiling))
+  request)
+
+(-> provider-request--with-output-field (hash-table string integer) hash-table)
+(defun provider-request--with-output-field (request field ceiling)
+  "Copy REQUEST before replacing one top-level output FIELD."
+  (let ((copy (json-object-copy request)))
+    (setf (gethash field copy) ceiling)
+    copy))
+
+(defmethod provider-request-with-output-ceiling
+    ((provider responses-api-provider) (request hash-table) (ceiling integer))
+  "Add a Responses ceiling only on transports that support it."
+  (if (provider-output-ceiling-p provider)
+      (provider-request--with-output-field request "max_output_tokens" ceiling)
+      request))
+
+(defmethod provider-request-with-output-ceiling
+    ((provider chat-completions-provider) (request hash-table) (ceiling integer))
+  "Project the standard Chat Completions ceiling on supporting transports."
+  (if (provider-output-ceiling-p provider)
+      (provider-request--with-output-field request "max_completion_tokens" ceiling)
+      request))
+
+(defmethod provider-request-with-output-ceiling
+    ((provider anthropic-messages-provider) (request hash-table) (ceiling integer))
+  "Copy the Messages request before changing its required max_tokens field."
+  (if (provider-output-ceiling-p provider)
+      (provider-request--with-output-field request "max_tokens" ceiling)
+      request))
+
+(defmethod provider-request-with-output-ceiling
+    ((provider cl-llm-provider-api:gemini-generate-content-provider)
+     (request hash-table) (ceiling integer))
+  "Copy GenerateContent's nested generationConfig before changing its ceiling."
+  (if (provider-output-ceiling-p provider)
+      (let* ((copy       (json-object-copy request))
+             (generation (json-get request "generationConfig"))
+             (settings   (if (json-object-p generation)
+                             (json-object-copy generation)
+                             (json-object))))
+        (setf (gethash "maxOutputTokens" settings) ceiling
+              (gethash "generationConfig" copy) settings)
+        copy)
+      request))
