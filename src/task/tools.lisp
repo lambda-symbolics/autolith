@@ -189,10 +189,6 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                (error 'task-error :message
                       "A batch task call requires a non-empty tasks array."
                       :tool-name "task.run"))
-             (unless (non-empty-string-p shared-context)
-               (error 'task-error :message
-                      "A batch task call requires non-empty shared context."
-                      :tool-name "task.run"))
              (loop for item across tasks
                    collect (task--normalize-item
                             item :shared-context   shared-context
@@ -1238,10 +1234,7 @@ poll a job whose completion will wake it."
                  (tool-argument arguments "id" :required t)
                  "job.get"))
               (job
-                (find identifier
-                      (task-orchestrator-list-visible-jobs orchestrator viewer)
-                      :key  #'session-job-identifier
-                      :test #'string=)))
+                (task-orchestrator-visible-job-named orchestrator viewer identifier)))
          (if job
              (let ((snapshot (session-job-snapshot job)))
                (multiple-value-bind (form content)
@@ -1255,7 +1248,7 @@ poll a job whose completion will wake it."
                  (task--durable-job-result viewer identifier "job.get")
                (unless result
                  (error 'task-error
-                        :message   (format nil "No visible job named ~A exists."
+                        :message   (format nil "No visible job named ~A exists. Jobs from before a restart, and jobs that ended without a result, are listed by job.continuity."
                                            identifier)
                         :tool-name "job.get"
                         :task-id   identifier))
@@ -1394,7 +1387,7 @@ poll a job whose completion will wake it."
                          "Self-contained assignment for a flat call.")
                         "context"
                         (tool-string-property
-                         "Shared non-empty background required for batch calls.")
+                         "Optional background shared by every task in a batch call.")
                         "isolation" (task-worktree-options-schema)
                         "blocking"
                         (tool-boolean-property

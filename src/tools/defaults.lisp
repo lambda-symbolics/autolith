@@ -330,7 +330,7 @@ retracting facts, and proposing rules."
         "agenda-add"
         (json-object
          "text" (tool-string-property
-                 (format nil "Complete agenda item text, 1 to ~D characters."
+                 (format nil "Complete agenda item text, 1 to ~D characters; longer text is cut at a word boundary with a note."
                          *agenda-item-text-limit*))
          "status" (status-property)
          "memory-ids" (memory-identifiers-property))
@@ -340,7 +340,7 @@ retracting facts, and proposing rules."
         (json-object
          "id" (tool-string-property "The stable agenda item identifier.")
          "text" (tool-string-property
-                 (format nil "Replacement agenda item text, 1 to ~D characters."
+                 (format nil "Replacement agenda item text, 1 to ~D characters; longer text is cut at a word boundary with a note."
                          *agenda-item-text-limit*))
          "status" (status-property)
          "memory-ids" (memory-identifiers-property))
@@ -354,8 +354,10 @@ retracting facts, and proposing rules."
        (operation-schema
         "memory-remember"
         (json-object
-         "title" (tool-string-property "Complete persistent-memory title.")
-         "content" (tool-string-property "Complete persistent-memory content.")
+         "title" (tool-string-property
+                  (format nil "Complete persistent-memory title, at most ~:D characters." *memory-title-limit*))
+         "content" (tool-string-property
+                    (format nil "Complete persistent-memory content, at most ~:D characters." *memory-content-limit*))
          "tags" (memory-tags-property)
          "sources" (memory-sources-property)
          "premises" (memory-premises-property))
@@ -363,8 +365,10 @@ retracting facts, and proposing rules."
        (operation-schema
         "memory-replace"
         (json-object
-         "title" (tool-string-property "Complete replacement memory title.")
-         "content" (tool-string-property "Complete replacement memory content.")
+         "title" (tool-string-property
+                  (format nil "Complete replacement memory title, at most ~:D characters." *memory-title-limit*))
+         "content" (tool-string-property
+                    (format nil "Complete replacement memory content, at most ~:D characters." *memory-content-limit*))
          "tags" (memory-tags-property)
          "scope" (memory-scope-property)
          "sources" (memory-sources-property)
@@ -381,8 +385,10 @@ retracting facts, and proposing rules."
                        '("broken_tool" "misleading_success" "authorization" "performance" "other")
                        "Explicit issue category; omit when unknown.")
          "tool" (tool-string-property "Affected builtin tool name; omit when unknown.")
-         "title" (tool-string-property "Complete bounded papercut title.")
-         "content" (tool-string-property "Complete bounded private local papercut report.")
+         "title" (tool-string-property
+                  (format nil "Complete papercut title, at most ~:D characters." *papercut-title-limit*))
+         "content" (tool-string-property
+                    (format nil "Complete private local papercut report, at most ~:D characters." *papercut-content-limit*))
          "diagnostic" (default-tools--diagnostic-property))
         '("title" "content"))
        (operation-schema
@@ -393,7 +399,8 @@ retracting facts, and proposing rules."
                     "description" "Latest effectiveness verdict."
                     "enum" (vector "improved" "worse" "unchanged" "too-early"))
          "note" (tool-string-property
-                 "Complete bounded private local assessment note.")
+                 (format nil "Complete private local assessment note, at most ~:D characters."
+                         *papercut-assessment-note-limit*))
          "diagnostic" (default-tools--diagnostic-property))
         '("verdict" "note"))
        (operation-schema
@@ -453,15 +460,15 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "A resource URI, SCHEME:IDENTIFIER with a listed scheme, or an absolute native workspace file path. Relative paths require workspace:.")
+                    "A resource URI, SCHEME:IDENTIFIER with a listed scheme, or a native file path; a relative path without a scheme means workspace:PATH.")
              "start-line" (tool-integer-property
                            "The first line to return, starting at 1. Only line-windowed resources accept start-line and line-count; the others reject them.")
              "line-count" (tool-integer-property
-                           "How many lines to return; default 400, maximum 1000. Accepted only where start-line is.")
+                           "How many lines to return; default 400, maximum 1000. One result holds about 7,600 characters, so long lines end it sooner; only the lines it shows can be edited, and its Visible lines field says which. Accepted only where start-line is.")
              "byte-offset" (tool-integer-property
                             "Zero-based byte offset for a shell-log: range or search page; defaults to 0.")
              "byte-count" (tool-integer-property
-                           "Maximum raw bytes in a shell-log: range, capped by the log resource adapter.")
+                           "Raw bytes in a shell-log: range; default and maximum 4096. Larger values return 4096 bytes with a note; continue from the reported next byte offset.")
              "start-sequence" (tool-integer-property
                                "The first durable record sequence a conversation: window returns; without it the window ends at the newest record.")
              "record-count" (tool-integer-property

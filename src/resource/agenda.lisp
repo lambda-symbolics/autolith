@@ -238,6 +238,22 @@
               :message   "Agenda status must be todo, doing, blocked, done, or note."
               :tool-name "resource.edit")))))
 
+(-> agenda-resource--text (json-object &key (:required boolean)) (option string))
+(defun agenda-resource--text (operation &key required)
+  "Return OPERATION's agenda text, cut at a word boundary with a note when over the limit.
+
+Agenda text is the model's own status note, so a few characters too many are
+better cut than refused; the note says how much was kept."
+  (let ((text (agenda-resource--string-argument operation "text" "resource.edit"
+                                                :required required)))
+    (if (and text (> (length text) *agenda-item-text-limit*))
+        (let* ((space (position #\Space text :end *agenda-item-text-limit* :from-end t))
+               (cut   (if (and space (plusp space)) space *agenda-item-text-limit*)))
+          (resource-tool-note "Agenda text had ~D characters; it was cut to the first ~D, within the ~D-character limit."
+                              (length text) cut *agenda-item-text-limit*)
+          (subseq text 0 cut))
+        text)))
+
 (-> agenda-resource--string-argument
     (json-object string string &key (:required boolean))
     (option string))
@@ -300,8 +316,7 @@
            (agenda-resource--memory-identifiers operation "resource.edit")
          (declare (ignore memory-identifiers-supplied-p))
          (list :kind               ':add
-               :text               (agenda-resource--string-argument
-                                    operation "text" "resource.edit" :required t)
+               :text               (agenda-resource--text operation :required t)
                :status             (or (agenda-resource--status operation) ':todo)
                :memory-identifiers memory-identifiers)))
       ((string= name "agenda-update")
@@ -313,9 +328,7 @@
        (let ((identifier
                (agenda-resource--string-argument
                 operation "id" "resource.edit" :required t))
-             (text
-               (agenda-resource--string-argument
-                operation "text" "resource.edit"))
+             (text   (agenda-resource--text operation))
              (status (agenda-resource--status operation)))
          (multiple-value-bind (memory-identifiers memory-identifiers-supplied-p)
              (agenda-resource--memory-identifiers operation "resource.edit")

@@ -122,6 +122,48 @@
 
 ;;;; -- Workspace Resource Tests --
 
+(-> test-workspace-resource-ergonomics () null)
+(defun test-workspace-resource-ergonomics ()
+  "Accept the natural follow-up calls models make instead of failing them."
+  (with-test-configuration (base-configuration root)
+    (let* ((workspace     (merge-pathnames "workspace/" root))
+           (configuration (configuration-copy base-configuration :working-directory workspace))
+           (registry      (make-default-tool-registry))
+           (context       (make-instance 'tool-context
+                                         :configuration configuration
+                                         :worker        nil
+                                         :conversation  (conversation-create configuration))))
+      (workspace-resource-tests--write-text
+       (merge-pathnames "notes.txt" workspace)
+       (format nil "~{line ~D~%~}" (loop for line from 1 to 200 collect line)))
+      (flet ((call (name &rest arguments)
+               (workspace-resource-tests--call registry context :namespace "resource"
+                                                                :name      name
+                                                                :arguments arguments)))
+        (let* ((read     (call "read" "uri" "notes.txt"))
+               (revision (workspace-resource-tests--field (tool-result-content read) "Revision: ")))
+          (test-assert (and (tool-result-success-p read)
+                            (search "read as workspace:notes.txt" (tool-result-content read)))
+                       "a relative path without a scheme reads the workspace file")
+          (let* ((first    (call "edit" "uri" "workspace:notes.txt" "base-revision" revision
+                                 "operations" (vector (workspace-resource-tests--operation
+                                                       "replace-lines" "start-line" 2 "end-line" 2
+                                                       "content" (format nil "LINE 2~%LINE 2B")))))
+                 (revision (workspace-resource-tests--field (tool-result-content first) "Revision: "))
+                 (second   (call "edit" "uri" "workspace:notes.txt" "base-revision" revision
+                                 "operations" (vector (workspace-resource-tests--operation
+                                                       "replace-lines" "start-line" 190 "end-line" 190
+                                                       "content" "LINE 189")))))
+            (test-assert (tool-result-success-p first) "the first edit applies")
+            (test-assert (tool-result-success-p second)
+                         "lines read before the model's own edit stay editable in the new revision"))
+          (let ((past (call "read" "uri" "workspace:notes.txt" "start-line" 400 "line-count" 3)))
+            (test-assert (and (tool-result-success-p past)
+                              (search "showing lines 199-201" (tool-result-content past))
+                              (search "line 200" (tool-result-content past)))
+                         "a start line past the end shows the last window with a note"))))))
+  nil)
+
 (-> test-workspace-file-resources () null)
 (defun test-workspace-file-resources ()
   "Test revision-gated workspace files, directories, missing paths, and tools."

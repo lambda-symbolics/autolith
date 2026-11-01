@@ -466,16 +466,16 @@
                                            when (= byte 120) collect index))
                          "Larger pages resume without dropping or repeating matches")
             (test-assert (null (getf next :next-byte-offset)) "The final search page reaches the end")))
-        (test-assert
-         (handler-case (progn (shell-log-tests--read resource context
-                                                     (json-object "query" "x" "max-results" 51)) nil)
-           (tool-error () t))
-         "Search result limits above fifty are rejected")
-        (test-assert
-         (handler-case (progn (shell-log-tests--read resource context
-                                                     (json-object "byte-count" 4097)) nil)
-           (tool-error () t))
-         "Oversized resource windows are rejected"))))
+        (dolist (case '(("max-results" 51 "query" "x") ("byte-count" 4097)))
+          (destructuring-bind (key value &rest more) case
+            (let* ((*resource-tool-notes* nil)
+                   (result                (shell-log-tests--read
+                                           resource context
+                                           (apply #'json-object key value more))))
+              (test-assert (and (tool-result-success-p result)
+                                (search (format nil "~A ~D was reduced" key value)
+                                        (format nil "~{~A~}" *resource-tool-notes*)))
+                           (format nil "~A above its limit is reduced with a note" key))))))))
   nil)
 
 (-> test-shell-log-resource-authority () null)
@@ -498,8 +498,15 @@
          (handler-case
              (progn (resource-resolver-resolve (make-instance 'shell-log-resolver :scheme "shell-log")
                                                identifier owner) nil)
-           (resource-access-denied () t))
+           ((or resource-access-denied tool-error) () t))
          "URI identifiers cannot introduce traversal"))
+      (test-assert
+       (handler-case
+           (progn (resource-resolver-resolve (make-instance 'shell-log-resolver :scheme "shell-log")
+                                             "shell-authority/x/terminal.sexp" owner) nil)
+         (tool-error (condition)
+           (and (search "Malformed shell-log URI" (princ-to-string condition)) t)))
+       "a URI of the wrong shape is reported as malformed, with the shape to use")
       (with-test-fixture (':symbolic-links "shell capture substitution")
         (let* ((path   (merge-pathnames "output.bin" (shell-log-capture-directory artifact)))
                (secret (merge-pathnames "secret.bin" root)))

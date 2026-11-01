@@ -725,6 +725,7 @@
   test-conversation-native-compaction
   test-conversation-chunk-storage
   test-conversation-pending-input-identifier-order
+  test-tool-failure-survey
   test-conversation-segment-validation
   test-conversation-legacy-storage
   test-conversation-working-seconds
@@ -923,9 +924,11 @@
   test-resource-tool-descriptions-follow-registry)
 
 (define-test-suite workspace-resource
-  test-workspace-file-resources)
+  test-workspace-file-resources
+  test-workspace-resource-ergonomics)
 
 (define-test-suite agenda-resource
+  test-agenda-resource-long-text
   test-agenda-resources)
 
 (define-test-suite memory-resource

@@ -246,7 +246,18 @@
                (test-assert (and (not (tool-result-success-p missing))
                                  (search "No indexed file matches the constraint src/absent.lisp"
                                          (tool-result-content missing)))
-                            "a file path constraint naming no file fails instead of widening"))
+                            "a file path constraint naming no file fails instead of widening")
+               (let ((partial (search-tests--call registry context
+                                                  :namespace "search"
+                                                  :name      "content"
+                                                  :arguments (list "query" "AUTOLITH_FFF_PRIMARY"
+                                                                   "constraints"
+                                                                   "src/absent.lisp src/model-selection.lisp"))))
+                 (test-assert (and (tool-result-success-p partial)
+                                   (search "src/model-selection.lisp" (tool-result-content partial))
+                                   (search "No indexed file matches src/absent.lisp"
+                                           (tool-result-content partial)))
+                              "a missing path among other locations is dropped with a note")))
              (dolist (case
                        (list (list "patterns" #("AUTOLITH_FFF_PRIMARY" "AUTOLITH_FFF_SECONDARY")
                                    "src/ docs/" t t)

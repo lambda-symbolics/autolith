@@ -118,7 +118,8 @@
                 (tool-registry-find child-registry "search" "content")
                 "general task children inherit native repository search")
                (test-assert
-                (null (tool-registry-find child-registry "self" "status"))
+                (and (null (tool-registry-find child-registry "self" "status"))
+                     (null (tool-registry-find child-registry "lisp" "apropos")))
                 "task children never inherit active-image tools")
                (test-assert
                 (and
@@ -312,17 +313,14 @@
               (task-error () t))
             "task normalization rejects combined blocking and async fields")
            (test-assert
-            (handler-case
-                (progn
-                  (task-normalize-arguments
-                   (json-object "tasks"
-                                (json-array
-                                 (json-object "task" "First")
-                                 (json-object "task" "Second"))))
-                  nil)
-              (task-error ()
-                t))
-            "batch task normalization requires shared context")
+            (equal '("First" "Second")
+                   (mapcar (lambda (item) (getf item :task))
+                           (task-normalize-arguments
+                            (json-object "tasks"
+                                         (json-array
+                                          (json-object "task" "First")
+                                          (json-object "task" "Second"))))))
+            "a batch without shared context runs each self-contained task")
            (dolist
                (case
                 (list
@@ -760,7 +758,14 @@
                    (test-assert (and (tool-result-success-p result)
                                      (search "owned-result" (tool-result-content result)))
                                 (format nil "child job.~A returns its asynchronous result"
-                                        operation)))))
+                                        operation))))
+               (let* ((execution (getf (getf (rest (tool-result-details handoff)) :job) :execution-id))
+                      (result    (tool-execute (tool-registry-find child-registry "job" "get") context
+                                               (json-object "id" execution))))
+                 (test-assert (and (stringp execution)
+                                   (tool-result-success-p result)
+                                   (search "owned-result" (tool-result-content result)))
+                              "job.get also finds a job by the execution ID task.run reports")))
              (dolist (operation '("get" "wait" "cancel"))
                (test-assert
                 (handler-case

@@ -56,7 +56,11 @@ A descendant cannot inspect its ancestor's or a sibling's captures."
          (configuration (tool-context-configuration context)))
     (unless (and (= (length parts) 4) (every #'shell-log--component-p parts)
                  (member (fourth parts) '("output" "error") :test #'string=))
-      (error 'resource-access-denied :uri uri :operation ':read))
+      ;; The shape is public, so naming it discloses nothing about other logs.
+      (error 'tool-error
+             :message   (format nil "Malformed shell-log URI ~A; use shell-log:ROOT/EXECUTION/ARTIFACT/output or .../error exactly as shell.run reported it."
+                                uri)
+             :tool-name "resource.read"))
     (destructuring-bind (root execution artifact stream) parts
       ;; Check the root before inspecting even the existence of a foreign manifest.
       (unless (shell-log--authorized-p (list :root-conversation  root
@@ -127,12 +131,19 @@ Return the octets, current file size and actual next byte position."
 (-> shell-log-resource--integer
     (hash-table string &key (:default integer) (:maximum integer)) integer)
 (defun shell-log-resource--integer (arguments key &key (default 0) maximum)
-  "Validate a nonnegative byte window or positive result bound."
+  "Validate a nonnegative byte window or result bound, reducing one above MAXIMUM.
+
+A request above the limit returns the limit and a note rather than failing, so
+asking for a large range costs no extra call."
   (let ((value (gethash key arguments default)))
-    (unless (and (integerp value) (<= 0 value maximum))
+    (unless (and (integerp value) (<= 0 value))
       (error 'tool-error :tool-name "resource.read"
              :message               (format nil "~A must be an integer between 0 and ~D." key maximum)))
-    value))
+    (if (> value maximum)
+        (progn
+          (resource-tool-note "~A ~D was reduced to ~D, the most one read returns." key value maximum)
+          maximum)
+        value)))
 
 (-> shell-log-resource--search
     (configuration pathname &key (:query string) (:offset integer) (:maximum integer)) list)
