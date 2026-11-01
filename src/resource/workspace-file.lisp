@@ -701,10 +701,42 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
      operation)
     result))
 
+(-> workspace-file--carried-visible-ranges
+    (structlisp:integer-interval-set string string) list)
+(defun workspace-file--carried-visible-ranges (ranges old-content new-content)
+  "Return RANGES of OLD-CONTENT that NEW-CONTENT keeps unchanged, renumbered for it.
+
+Lines before the first changed line keep their numbers and lines after the last
+one shift by the change in length; the changed region in between is dropped.
+The result is inclusive ranges, so lines the model saw before its own edit stay
+visible in the revision the edit produced."
+  (let* ((old       (coerce (text--split-lines old-content) 'vector))
+         (new       (coerce (text--split-lines new-content) 'vector))
+         (limit     (min (length old) (length new)))
+         (prefix    (or (mismatch old new :test #'string= :end1 limit :end2 limit) limit))
+         (suffix    (loop for count from 0 below (- limit prefix)
+                          while (string= (aref old (- (length old) count 1))
+                                         (aref new (- (length new) count 1)))
+                          finally (return count)))
+         (kept-from (1+ (- (length old) suffix)))
+         (shift     (- (length new) (length old)))
+         (carried   nil))
+    (loop for range across (structlisp:integer-interval-set->vector ranges)
+          for start = (structlisp:integer-interval-start range)
+          for end = (1- (structlisp:integer-interval-end range))
+          do (when (<= start prefix)
+               (push (list start (min end prefix)) carried))
+             (when (>= end kept-from)
+               (push (list (+ (max start kept-from) shift) (+ end shift)) carried)))
+    (nreverse carried)))
+
 (defmethod resource-apply-operations
     ((resource workspace-file-resource) (context tool-context)
      &key base-revision operations)
-  "Apply structured original-line OPERATIONS to RESOURCE at BASE-REVISION."
+  "Apply structured original-line OPERATIONS to RESOURCE at BASE-REVISION.
+
+Return the new observation, the normalized operations, and the visible ranges
+the new revision keeps from the base one."
   (let ((conversation (tool-context-conversation context)))
     (with-recursive-lock-held (*workspace-file-mutation-lock*)
       (with-recursive-lock-held
@@ -731,7 +763,11 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
                 (values (workspace-file--publish resource context
                                                  :base-observation base
                                                  :content          content)
-                        normalized))
+                        normalized
+                        (workspace-file--carried-visible-ranges
+                         (workspace-file-observation-state-visible-ranges state)
+                         (resource-observation-content base)
+                         content)))
             (cl-hashline:hashline-error (condition)
               (error 'tool-error :message   (princ-to-string condition)
                                  :tool-name "resource.edit"))))))))
@@ -867,7 +903,7 @@ already admits the path to the readable roots, so it is not asked again."
              :tool-name "resource.edit"))
     (let ((operations (coerce operation-array 'list)))
       (handler-case
-        (multiple-value-bind (observation normalized)
+        (multiple-value-bind (observation normalized carried)
             (resource-apply-operations resource context
                                        :base-revision base-revision
                                        :operations    operations)
@@ -885,7 +921,7 @@ already admits the path to the readable roots, so it is not asked again."
                 (let* ((state
                           (resource-observation-state-ensure
                            (tool-context-conversation context) observation
-                           :visible-ranges visible-ranges))
+                           :visible-ranges (append carried visible-ranges)))
                        (result-content
                          (format nil "Applied ~{~A~^; ~}.~%~A"
                                  (mapcar
