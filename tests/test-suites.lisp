@@ -1465,6 +1465,7 @@
 
 (define-test-suite missions
   test-mission-tool-result-presentation
+  test-mission-tool-refusal-reporting
   test-mission-accounting
   test-mission-unknown-usage-and-recovery
   test-mission-gate-retries
