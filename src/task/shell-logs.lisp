@@ -415,64 +415,70 @@ batch's evidence. A single persisted form may exceed the soft byte budget."
     (values index (list :segment (file-namestring segment) :position position
                         :next-sequence next :complete-p complete-p))))
 
-(-> shell-log--backfill-owner-step (configuration string string) boolean)
-(defun shell-log--backfill-owner-step (configuration root owner)
+(-> shell-log--backfill-owner-step
+    (configuration string string &key (:source-lock-held-p boolean)) boolean)
+(defun shell-log--backfill-owner-step (configuration root owner &key source-lock-held-p)
   "Advance one lazy receipt-index batch outside the shell-log lock.
 
-Return T when all historical segments are indexed. Persist receipts before the
-cursor, so interruption or publication failure can only repeat a bounded batch.
-The source lock excludes concurrent rotation and serializes cursor publication.
-No release-specific migration state is needed: newly historical chunks use the
-same persistent index protocol."
-  (let* ((identity (shell-log--owner-identity configuration root owner))
-         (active   (conversation-storage-active-pathname identity)))
-    (unless active
-      (return-from shell-log--backfill-owner-step t))
-    (call-with-file-lock
-     (shell-log--safe-path configuration (conversation-picker-source-lock-pathname identity))
-     (lambda ()
-       (let* ((header  (conversation-peek-header identity))
-              (history (butlast (conversation-storage-pathnames identity)))
-              (path    (shell-log--safe-path configuration
-                        (merge-pathnames "shell-delivery/index.sexp"
-                                         (conversation-storage-directory-pathname identity))))
-              (cursor  (and (probe-file path) (task-continuity--read path))))
-         (unless (equal owner (getf (rest header) :id))
-           (shell-log--fail "Shell delivery source owner disagrees with its identity." identity))
-         (when cursor
-           (unless (and (eql 1 (getf cursor :version))
-                        (equal owner (getf cursor :owner-conversation))
-                        (stringp (getf cursor :segment))
-                        (typep (getf cursor :position) '(integer 0))
-                        (typep (getf cursor :next-sequence) '(integer 1)))
-             (shell-log--fail "Invalid shell delivery index cursor." path))
-           (setf history (member (getf cursor :segment) history
-                                 :key #'file-namestring :test #'equal))
-           (unless history
-             (shell-log--fail "Shell delivery index source disappeared." path))
-           (when (getf cursor :complete-p)
-             (setf history (rest history) cursor nil)))
-         (if (null history)
-             t
-             (let ((segment (shell-log--safe-path configuration (first history))))
-               (multiple-value-bind (index progress)
-                   (shell-log--index-segment identity segment cursor)
-                 (shell-log--publish-sync-evidence identity owner index)
-                 (task-continuity--write
-                  path (append (list :version 1 :owner-conversation owner) progress))
-                 (platform-make-private *platform* (uiop:pathname-directory-pathname path))
-                 (platform-make-private *platform* path)
-                 (and (getf progress :complete-p) (null (rest history)) t)))))))))
+Return T when all historical segments are indexed or retention removed the
+owner. Persist receipts before the cursor, so publication failures can only
+repeat a bounded batch. SOURCE-LOCK-HELD-P requires the caller to hold the
+owner's source lock, which excludes rotation and actual storage deletion."
+  (let ((identity (shell-log--owner-identity configuration root owner)))
+    (flet ((advance ()
+             ;; Retention can finish while this pass waits for the source lock.
+             (unless (conversation-storage-active-pathname identity)
+               (return-from shell-log--backfill-owner-step t))
+             (let* ((header  (conversation-peek-header identity))
+                    (history (butlast (conversation-storage-pathnames identity)))
+                    (path    (shell-log--safe-path configuration
+                              (merge-pathnames "shell-delivery/index.sexp"
+                                               (conversation-storage-directory-pathname identity))))
+                    (cursor  (and (probe-file path) (task-continuity--read path))))
+               (unless (equal owner (getf (rest header) :id))
+                 (shell-log--fail "Shell delivery source owner disagrees with its identity." identity))
+               (when cursor
+                 (unless (and (eql 1 (getf cursor :version))
+                              (equal owner (getf cursor :owner-conversation))
+                              (stringp (getf cursor :segment))
+                              (typep (getf cursor :position) '(integer 0))
+                              (typep (getf cursor :next-sequence) '(integer 1)))
+                   (shell-log--fail "Invalid shell delivery index cursor." path))
+                 (setf history (member (getf cursor :segment) history
+                                       :key #'file-namestring :test #'equal))
+                 (unless history
+                   (shell-log--fail "Shell delivery index source disappeared." path))
+                 (when (getf cursor :complete-p)
+                   (setf history (rest history) cursor nil)))
+               (if (null history)
+                   t
+                   (let ((segment (shell-log--safe-path configuration (first history))))
+                     (multiple-value-bind (index progress)
+                         (shell-log--index-segment identity segment cursor)
+                       (shell-log--publish-sync-evidence identity owner index)
+                       (task-continuity--write
+                        path (append (list :version 1 :owner-conversation owner) progress))
+                       (platform-make-private *platform* (uiop:pathname-directory-pathname path))
+                       (platform-make-private *platform* path)
+                       (and (getf progress :complete-p) (null (rest history)) t)))))))
+      (if source-lock-held-p
+          (advance)
+          (call-with-file-lock
+           (shell-log--safe-path configuration (conversation-picker-source-lock-pathname identity))
+           #'advance)))))
 
 (-> shell-log--backfill-delivery
-    (configuration &key (:root (option string)) (:owner (option string)) (:complete-p boolean))
+    (configuration &key (:root (option string)) (:owner (option string))
+                   (:complete-p boolean) (:source-lock-held-p boolean))
     null)
-(defun shell-log--backfill-delivery (configuration &key root owner complete-p)
+(defun shell-log--backfill-delivery
+    (configuration &key root owner complete-p source-lock-held-p)
   "Advance missing synchronous receipts without holding the artifact lock over history.
 
 Snapshot manifests under the artifact lock, then index one bounded batch per
-owner outside it. For owner retention, finish pending batches before deleting
-that owner's source. Owners without unresolved captures need no history reads."
+owner outside it. SOURCE-LOCK-HELD-P requires ROOT and OWNER and their source
+lock; retention holds it through indexing, manifest publication and deletion.
+Owners without unresolved captures need no history reads."
   (let ((owners (make-hash-table :test #'equal)))
     (with-shell-log-lock (configuration)
       (let ((directories (if root
@@ -496,7 +502,8 @@ that owner's source. Owners without unresolved captures need no history reads."
     (maphash (lambda (identity present-p)
                (declare (ignore present-p))
                (loop for finished-p = (shell-log--backfill-owner-step
-                                       configuration (first identity) (second identity))
+                                       configuration (first identity) (second identity)
+                                       :source-lock-held-p source-lock-held-p)
                      until (or finished-p (not complete-p))))
              owners))
   nil)
@@ -576,40 +583,51 @@ Read one preserved receipt or the active segment, never the historical transcrip
            (shell-log--delivered-p configuration metadata))
        t))
 
-(-> shell-log-persist-owner-delivery (configuration string string) null)
-(defun shell-log-persist-owner-delivery (configuration root owner)
-  "Preserve exact positive delivery evidence before deleting a child owner's storage.
-Any manifest inspection or publication failure vetoes retention of that owner."
+(-> shell-log-persist-owner-delivery
+    (configuration string string &key (:delete-function (option function))) null)
+(defun shell-log-persist-owner-delivery (configuration root owner &key delete-function)
+  "Preserve exact delivery and call DELETE-FUNCTION under the owner's source lock.
+
+Any inspection or publication failure vetoes deletion. Without DELETE-FUNCTION,
+only persist the evidence. The source lock precedes the artifact lock; historical
+I/O never holds the artifact lock."
   (unless (and (every #'shell-log--component-p (list root owner))
                (not (equal root owner)))
     (shell-log--fail "Invalid retained shell log owner identity."))
-  ;; Complete bounded batches before locking manifests or removing owner storage.
-  (shell-log--backfill-delivery configuration :root root :owner owner :complete-p t)
-  (with-shell-log-lock (configuration)
-    (let ((*shell-log-receipt-cache*       (make-hash-table :test #'equal))
-          (*shell-log-sync-evidence-cache* (make-hash-table :test #'equal))
-          (group                           (task--artifact-group-root configuration root)))
-      (dolist (directory (shell-log--group-directories configuration group))
-        (let ((metadata (shell-log--read-manifest configuration directory :measure-p nil)))
-          (unless metadata
-            (shell-log--fail "Cannot read shell capture ownership before retention." directory))
-          (when (and (equal root (getf metadata :root-conversation))
-                     (equal owner (getf metadata :completion-owner-conversation)))
-            (let ((execution (getf metadata :execution-id))
-                  (artifact  (getf metadata :artifact-id)))
-              (unless (and (every #'shell-log--component-p (list execution artifact))
-                           (uiop:pathname-equal directory
-                             (merge-pathnames (format nil "~A/shell-log/~A/" execution artifact) group)))
-                (shell-log--fail "Shell capture identity disagrees with its directory." directory)))
-            (when (and (member (getf metadata :state) '(:closed :interrupted))
-                       (getf metadata :job-id) (getf metadata :captures)
-                       (not (shell-log--delivery-recorded-p metadata))
-                       (not (shell-log--active-p directory))
-                       (shell-log--delivered-p configuration metadata))
-              (setf (getf metadata :delivered-at) (get-universal-time))
-              (shell-log--write-manifest
-               (make-instance 'shell-log-artifact :configuration configuration
-                              :capture-directory directory :metadata metadata))))))))
+  (call-with-file-lock
+   (shell-log--safe-path configuration
+    (conversation-picker-source-lock-pathname
+     (shell-log--owner-identity configuration root owner)))
+   (lambda ()
+     (shell-log--backfill-delivery configuration :root root :owner owner :complete-p t
+                                 :source-lock-held-p t)
+     (with-shell-log-lock (configuration)
+      (let ((*shell-log-receipt-cache*       (make-hash-table :test #'equal))
+            (*shell-log-sync-evidence-cache* (make-hash-table :test #'equal))
+            (group                           (task--artifact-group-root configuration root)))
+        (dolist (directory (shell-log--group-directories configuration group))
+          (let ((metadata (shell-log--read-manifest configuration directory :measure-p nil)))
+            (unless metadata
+              (shell-log--fail "Cannot read shell capture ownership before retention." directory))
+            (when (and (equal root (getf metadata :root-conversation))
+                       (equal owner (getf metadata :completion-owner-conversation)))
+              (let ((execution (getf metadata :execution-id))
+                    (artifact  (getf metadata :artifact-id)))
+                (unless (and (every #'shell-log--component-p (list execution artifact))
+                             (uiop:pathname-equal directory
+                               (merge-pathnames (format nil "~A/shell-log/~A/" execution artifact) group)))
+                  (shell-log--fail "Shell capture identity disagrees with its directory." directory)))
+              (when (and (member (getf metadata :state) '(:closed :interrupted))
+                         (getf metadata :job-id) (getf metadata :captures)
+                         (not (shell-log--delivery-recorded-p metadata))
+                         (not (shell-log--active-p directory))
+                         (shell-log--delivered-p configuration metadata))
+                (setf (getf metadata :delivered-at) (get-universal-time))
+                (shell-log--write-manifest
+                 (make-instance 'shell-log-artifact :configuration configuration
+                                 :capture-directory directory :metadata metadata))))))))
+     (when delete-function
+       (funcall delete-function))))
   nil)
 
 (-> shell-log--manifest-staging-p (pathname) boolean)

@@ -1336,8 +1336,9 @@
   "Give fixture result publications deterministic retention order without sleeps."
   (string< (namestring (first left)) (namestring (first right))))
 
-(-> shell-log-tests--owner-retention (function &key (:backfill-p boolean)) null)
-(defun shell-log-tests--owner-retention (check &key backfill-p)
+(-> shell-log-tests--owner-retention
+    (function &key (:backfill-p boolean) (:around-retention (option function))) null)
+(defun shell-log-tests--owner-retention (check &key backfill-p around-retention)
   "Publish real child results until retention removes delivered and silent owners."
   (with-test-configuration (configuration)
     (let* ((*shell-log-active*              (make-hash-table :test #'equal))
@@ -1405,11 +1406,15 @@
                                                       :validate t :if-does-not-exist ':ignore)))
                   (test-assert (not (shell-log-tests--disk-prunable configuration (first captures)))
                                "Pre-index rotated child evidence needs backfill before retention"))
-                (dolist (job (reverse jobs))
-                  (task--write-result-artifact job (list :status :success :output "done")))
-                (dotimes (index 3)
-                  (task--write-result-artifact (child (format nil "100Later~D" index))
-                                              (list :status :success :output "later")))
+                (flet ((retain ()
+                         (dolist (job (reverse jobs))
+                           (task--write-result-artifact job (list :status ':success :output "done")))
+                         (dotimes (index 3)
+                           (task--write-result-artifact (child (format nil "100Later~D" index))
+                                                       (list :status ':success :output "later")))))
+                  (if around-retention
+                      (funcall around-retention configuration root #'retain)
+                      (retain)))
                 (dolist (job jobs)
                   (test-assert (not (probe-file (task--artifact-root configuration job)))
                                "Actual result retention removed each original owner"))
@@ -2013,4 +2018,145 @@
        (test-assert (not (shell-log-tests--disk-prunable configuration (third captures)))
                     "An equally old silent owner never acquires delivery authority"))
      :backfill-p t))
+  nil)
+
+(-> shell-log-tests--allocation-retention-race
+    (configuration conversation function &key (:during-index-p boolean)) null)
+(defun shell-log-tests--allocation-retention-race
+    (configuration root retain &key during-index-p)
+  "Schedule actual owner removal before the index lock or during a historical batch."
+  (let* ((identity         (shell-log--owner-identity configuration "retention-root" "000Owner"))
+         (owner-directory  (uiop:pathname-directory-pathname identity))
+         (source-lock      (conversation-picker-source-lock-pathname identity))
+         (context          (make-instance 'tool-context :configuration configuration
+                                         :worker nil :conversation root))
+         (lock-function    (symbol-function 'call-with-file-lock))
+         (index-function   (symbol-function 'shell-log--index-segment))
+         (delete-function  (symbol-function 'platform-delete-directory-tree))
+         (active           *shell-log-active*)
+         (retention-limit  *task-artifact-retention-limit*)
+         (allocation-start (sb-thread:make-semaphore))
+         (allocation-ready (sb-thread:make-semaphore))
+         (allocation-go    (sb-thread:make-semaphore))
+         (retention-start  (sb-thread:make-semaphore))
+         (retention-ready  (sb-thread:make-semaphore))
+         (deletion-ready   (sb-thread:make-semaphore))
+         (deletion-go      (sb-thread:make-semaphore))
+         (probe-ready      (sb-thread:make-semaphore))
+         (probe-started    (sb-thread:make-semaphore))
+         (allocator        nil)
+         (retainer         nil)
+         (probe            nil)
+         (paused-p         nil))
+    (labels ((wait-for (semaphore)
+               (unless (sb-thread:wait-on-semaphore semaphore :timeout 10)
+                 (shell-log--fail
+                  (format nil "Timed out synchronizing retention (index ~S, paused ~S, allocation ~A)."
+                          during-index-p paused-p
+                          (when (and allocator (not (sb-thread:thread-alive-p allocator)))
+                            (sb-thread:join-thread allocator))))))
+
+             (pause-allocation ()
+               (unless paused-p
+                 (setf paused-p t)
+                 (sb-thread:signal-semaphore allocation-ready)
+                 (wait-for allocation-go))))
+      (unwind-protect
+           (test-call-with-function-replacements
+            (list
+             (list 'call-with-file-lock
+                   (lambda (path function &key (mode #o600))
+                     (when (uiop:pathname-equal path source-lock)
+                       (cond ((and (eq (current-thread) allocator) (not during-index-p))
+                              (pause-allocation))
+                             ((eq (current-thread) retainer)
+                              (sb-thread:signal-semaphore retention-ready))))
+                     (funcall lock-function path function :mode mode)))
+             (list 'shell-log--index-segment
+                   (lambda (source segment cursor)
+                     (when (and during-index-p (eq (current-thread) allocator)
+                                (uiop:pathname-equal source identity))
+                       (pause-allocation))
+                     (funcall index-function source segment cursor)))
+             (list 'platform-delete-directory-tree
+                   (lambda (platform directory &key validate if-does-not-exist)
+                     (when (and during-index-p (uiop:pathname-equal directory owner-directory))
+                       (sb-thread:signal-semaphore deletion-ready)
+                       (wait-for deletion-go))
+                     (funcall delete-function platform directory
+                              :validate validate :if-does-not-exist if-does-not-exist))))
+            (lambda ()
+              (setf allocator
+                    (make-thread
+                     (lambda ()
+                       (wait-for allocation-start)
+                       (let ((*shell-log-active* active))
+                         (handler-case (shell-log-allocate context)
+                           (error (condition) condition))))
+                     :name "allocation racing owner retention"))
+              (sb-thread:signal-semaphore allocation-start)
+              (wait-for allocation-ready)
+              (if during-index-p
+                  (progn
+                    (setf retainer
+                          (make-thread
+                           (lambda ()
+                             (wait-for retention-start)
+                            (let ((*shell-log-active*              active)
+                                  (*task-artifact-retention-limit* retention-limit))
+                               (handler-case (funcall retain)
+                                 (error (condition) condition))))
+                           :name "retention racing historical batch"))
+                    (sb-thread:signal-semaphore retention-start)
+                    (wait-for retention-ready)
+                    (test-assert (probe-file owner-directory)
+                                 "Retention cannot delete storage during the allocation's historical batch")
+                    (sb-thread:signal-semaphore allocation-go)
+                    (wait-for deletion-ready)
+                    (setf probe
+                          (make-thread
+                           (lambda ()
+                             (sb-thread:signal-semaphore probe-started)
+                             (funcall lock-function source-lock
+                                      (lambda () (sb-thread:signal-semaphore probe-ready))))
+                           :name "source lock probe during owner deletion"))
+                    (wait-for probe-started)
+                    (test-assert (not (sb-thread:wait-on-semaphore probe-ready :timeout 0.1))
+                                 "Retention holds the source lock through actual storage deletion")
+                    (sb-thread:signal-semaphore deletion-go)
+                    (test-assert (not (typep (sb-thread:join-thread retainer) 'condition))
+                                 "Concurrent result publication completes without an indexing failure")
+                    (wait-for probe-ready)
+                    (sb-thread:join-thread probe))
+                  (progn
+                    (funcall retain)
+                    (test-assert (not (probe-file owner-directory))
+                                 "Retention removes the owner before allocation obtains its source lock")
+                    (sb-thread:signal-semaphore allocation-go)))
+              (let ((result (sb-thread:join-thread allocator)))
+                (test-assert (typep result 'shell-log-artifact)
+                             "Allocation succeeds after concurrent owner retention")
+                (when (typep result 'shell-log-artifact)
+                  (shell-log-tests--finish result #(65))))))
+        (dolist (semaphore (list allocation-start allocation-go retention-start deletion-go))
+          (sb-thread:signal-semaphore semaphore))
+        (dolist (thread (list allocator retainer probe))
+          (when thread
+            (sb-thread:join-thread thread :timeout 15 :default nil))))))
+  nil)
+
+(-> test-shell-log-backfill-retention-races () null)
+(defun test-shell-log-backfill-retention-races ()
+  "Allocate successfully across both historical-index and owner-deletion races."
+  (dolist (during-index-p '(nil t))
+    (shell-log-tests--owner-retention
+     (lambda (configuration root captures)
+       (declare (ignore root))
+       (test-assert (shell-log-tests--marked-p configuration (first captures))
+                    "Concurrent retention preserves the historical positive delivery evidence"))
+     :backfill-p t
+     :around-retention
+     (lambda (configuration root retain)
+       (shell-log-tests--allocation-retention-race configuration root retain
+                                                   :during-index-p during-index-p))))
   nil)

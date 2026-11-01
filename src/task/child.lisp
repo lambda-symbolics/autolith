@@ -499,15 +499,17 @@ retention step."
             (uiop:pathname-directory-pathname output-path)))))
 
 (-> task--prune-result-artifacts
-    (pathname &key (:protected-roots list) (:before-delete (option function)))
+    (pathname &key (:protected-roots list) (:before-delete (option function))
+                   (:around-delete (option function)))
     null)
 (defun task--prune-result-artifacts
-    (current-root &key (protected-roots (list current-root)) before-delete)
+    (current-root &key (protected-roots (list current-root)) before-delete around-delete)
   "Remove oldest completed sibling artifacts beyond the retention limit.
 
 PROTECTED-ROOTS preserves artifacts still exposed by the live session. Directories
 without a published result are live or incomplete and are not retention
-candidates."
+candidates. AROUND-DELETE receives the directory and a zero-argument deletion
+continuation, allowing callers to hold a source lock through actual removal."
   (let* ((group-root
            (uiop:pathname-parent-directory-pathname current-root))
          (records
@@ -523,12 +525,15 @@ candidates."
                         (uiop:pathname-equal directory protected-root))
                       protected-roots)
           (handler-case
-              (progn
-                (when before-delete (funcall before-delete directory))
-                (platform-delete-directory-tree *platform* directory
-                                                :validate          t
-                                                :if-does-not-exist ':ignore)
-                (decf excess))
+                (flet ((delete-owner ()
+                         (when before-delete (funcall before-delete directory))
+                         (platform-delete-directory-tree *platform* directory
+                                                         :validate          t
+                                                         :if-does-not-exist ':ignore)
+                         (decf excess)))
+                  (if around-delete
+                      (funcall around-delete directory #'delete-owner)
+                      (delete-owner)))
             (error ()
               nil))))))
   nil)
@@ -632,8 +637,8 @@ candidates."
              (task--prune-result-artifacts
               root
               :protected-roots (task--protected-artifact-roots job root)
-              :before-delete
-              (lambda (directory)
+              :around-delete
+              (lambda (directory delete-function)
                 (let ((owner (first (last (pathname-directory directory))))
                       (group (task--artifact-group-root configuration
                                (session-job-root-conversation-identifier job))))
@@ -643,7 +648,8 @@ candidates."
                     (error 'task-error :message "Invalid retained child artifact identity."
                                        :tool-name "task.run" :task-id (job-identifier job)))
                   (shell-log-persist-owner-delivery configuration
-                    (session-job-root-conversation-identifier job) owner))))
+                    (session-job-root-conversation-identifier job) owner
+                    :delete-function delete-function))))
              target)
         (when (probe-file temporary)
           (delete-file temporary))))))
