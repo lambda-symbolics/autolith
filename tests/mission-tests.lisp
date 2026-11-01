@@ -46,6 +46,99 @@
   "Return one final provider response with exact, configurable usage."
   (agent-test-result (make-identifier) (list (agent-test-message text)) :usage usage))
 
+(-> test-mission-tool-refusal-reporting () null)
+(defun test-mission-tool-refusal-reporting ()
+  "Distinguish safe stopped-context reports without dispatch or accounting changes."
+  (dolist (case '((:blocked 1 nil :mission-usage-quarantine "BLOCKED")
+                  (:cancelled 1 nil :mission-cancelled "CANCELLED")
+                  (:active 1 t :mission-replaced "ACTIVE")
+                  (:blocked 0 nil :mission-stopped "BLOCKED")
+                  (:paused 0 nil :mission-stopped "PAUSED")
+                  (:exhausted 0 nil :mission-stopped "EXHAUSTED")
+                  (:failed 0 nil :mission-stopped "FAILED")
+                  (:verified 0 nil :mission-stopped "VERIFIED")
+                  ("private-state" "private-usage" nil :mission-stopped "UNKNOWN")))
+    (destructuring-bind (state unknown replaced-p code label) case
+      (with-test-configuration (configuration)
+        (let* ((application (mission-test--application configuration))
+               (agent       (application-agent application))
+               (dispatch    0)
+               (sentinel    "private-goal-evidence")
+               (call        (json-object "type" "function_call" "call_id" "stopped-tool"
+                                         "namespace" "resource" "name" "read" "arguments" "{}")))
+          (application-mission-start application (mission-test--specification))
+          (mission-context-inherit (application-conversation application) agent)
+          (let* ((context (mission-context-find agent))
+                 (goal    (mission-context-goal context)))
+            (setf (getf goal :status) state
+                  (getf goal :unknown-usage) unknown
+                  (getf goal :objective) sentinel
+                  (getf goal :evidence) (list sentinel)
+                  (getf goal :id) sentinel)
+            (when replaced-p
+              (setf (application-goal application) (copy-tree goal)
+                    (getf (application-goal application) :status) ':cancelled))
+            (let* ((before  (copy-tree goal))
+                   (outcome (test-call-with-function-replacements
+                             (list (list 'tool-registry-execute-call
+                                         (lambda (&rest arguments)
+                                           (declare (ignore arguments))
+                                           (incf dispatch))))
+                             (lambda () (agent--execute-tool-plan agent (list :call call)))))
+                   (result  (getf outcome :result))
+                   (text    (tool-result-content result)))
+              (test-assert (and (null (getf outcome :condition)) (zerop dispatch)
+                                (not (tool-result-success-p result)) (equal goal before))
+                           "a stopped plan refuses normally before dispatch without changing its exact goal")
+              (test-assert (eq code (tool-result-error-code result))
+                           "the refusal category follows associated identity, cancellation and unknown usage")
+              (test-assert (and (search label text)
+                                (search (if replaced-p "replaced" "current") text))
+                           "the refusal exposes associated state rather than the replacement goal's state")
+              (test-assert (and (<= (length text) 512)
+                                (not (search sentinel text))
+                                (not (search "private-state" text))
+                                (not (search "private-usage" text)))
+                           "allowlisted reports exclude arbitrary identity, state, usage and evidence text")))))))
+  (with-test-configuration (configuration)
+    (let* ((application (mission-test--application configuration))
+           (replacement (mission-test--application configuration))
+           (agent       (application-agent application))
+           (guard       (symbol-function 'mission-agent-terminal-p))
+           (dispatch    0)
+           (call        (json-object "type" "function_call" "call_id" "rebound-tool"
+                                     "namespace" "resource" "name" "read" "arguments" "{}")))
+      (application-mission-start application (mission-test--specification))
+      (application-mission-start replacement (mission-test--specification))
+      (mission-context-inherit (application-conversation application) agent)
+      (let ((goal (application-goal application)))
+        (setf (getf goal :status) ':blocked
+              (getf goal :unknown-usage) 1)
+        (let* ((before (copy-tree goal))
+               (outcome
+                 (test-call-with-function-replacements
+                  (list (list 'mission-agent-terminal-p
+                              (lambda (current)
+                                (multiple-value-bind (stopped-p context) (funcall guard current)
+                                  (mission-context-inherit (application-conversation replacement) current)
+                                  (values stopped-p context))))
+                        (list 'tool-registry-execute-call
+                              (lambda (&rest arguments)
+                                (declare (ignore arguments))
+                                (incf dispatch))))
+                  (lambda () (agent--execute-tool-plan agent (list :call call)))))
+               (result (getf outcome :result)))
+          (test-assert (and (null (getf outcome :condition)) (zerop dispatch)
+                            (equal before goal)
+                            (eq (mission-context-find agent)
+                                (mission-context-find (application-conversation replacement))))
+                       "a rebind after the guard does not dispatch or mutate the guarded goal")
+          (test-assert (and (eq (tool-result-error-code result) ':mission-usage-quarantine)
+                            (search "BLOCKED" (tool-result-content result))
+                            (not (search "ACTIVE" (tool-result-content result))))
+                       "the refusal reports the exact guarded context rather than a later agent association")))))
+  nil)
+
 (-> test-mission-tool-result-presentation () null)
 (defun test-mission-tool-result-presentation ()
   "Retain mission gate and outcome details across the tool and durable UI boundary."

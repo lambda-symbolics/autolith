@@ -388,18 +388,82 @@ The calling thread preserves provider bindings and authorization callbacks."
              (mission--record context)))))))
   nil)
 
-(-> mission-agent-terminal-p (agent) boolean)
+(-> mission-agent-terminal-p (agent) (values boolean (option mission-context)))
 (defun mission-agent-terminal-p (agent)
-  "Return true when AGENT's exact mission no longer permits it to continue.
+  "Return whether AGENT's exact mission has stopped and its associated context.
 A quarantined child with live admitted identity may finish its bounded task."
   (let ((context (mission-context-find agent)))
-    (and context
-         (or (not (eq (mission-context-goal context)
-                      (application-goal (mission-context-application context))))
-             (and (not (eq (getf (mission-context-goal context) :status) ':active))
-                  (not (and (typep agent 'task-child-agent)
-                            (mission--operation-draining-p
-                             context (task-child-agent-job agent)))))))))
+    (values
+     (and context
+          (or (not (eq (mission-context-goal context)
+                       (application-goal (mission-context-application context))))
+              (and (not (eq (getf (mission-context-goal context) :status) ':active))
+                   (not (and (typep agent 'task-child-agent)
+                             (mission--operation-draining-p
+                              context (task-child-agent-job agent)))))))
+     context)))
+
+(-> mission--stopped-tool-result ((option mission-context)) tool-result)
+(defun mission--stopped-tool-result (context)
+  "Explain a refused tool using only allowlisted exact-context state.
+Report identity relative to the guarded goal, never arbitrary goal evidence."
+  (if (null context)
+      (tool-failure "Mission work stopped; its associated context is unavailable. No tool ran."
+                    :code ':mission-stopped)
+      (with-recursive-lock-held ((mission-context-lock context))
+        (let* ((goal      (mission-context-goal context))
+               (current-p (eq goal (application-goal (mission-context-application context))))
+               (status    (case (getf goal :status)
+                            (:active
+                             "ACTIVE")
+                            (:paused
+                             "PAUSED")
+                            (:blocked
+                             "BLOCKED")
+                            (:cancelled
+                             "CANCELLED")
+                            (:exhausted
+                             "EXHAUSTED")
+                            (:failed
+                             "FAILED")
+                            (:verified
+                             "VERIFIED")
+                            (otherwise
+                             "UNKNOWN")))
+               (unknown   (getf goal :unknown-usage))
+               (code      (cond
+                            ((not current-p)
+                             ':mission-replaced)
+                            ((eq (getf goal :status) ':cancelled)
+                             ':mission-cancelled)
+                            ((and (eq (getf goal :status) ':blocked)
+                                  (integerp unknown) (plusp unknown))
+                             ':mission-usage-quarantine)
+                            (t
+                             ':mission-stopped)))
+               (reason    (case code
+                            (:mission-replaced
+                             "The associated goal was replaced.")
+                            (:mission-cancelled
+                             "The associated mission was cancelled.")
+                            (:mission-usage-quarantine
+                             "Unknown inference usage is quarantined; inspect durable accounting before an explicit budget decision.")
+                            (otherwise
+                             "Inspect the associated mission's durable state before further mission work."))))
+          (tool-failure
+           (format nil "Mission work stopped; ~A/~A; ~A goal. No tool ran. ~A"
+                   status
+                   (case code
+                     (:mission-replaced
+                      "replaced")
+                     (:mission-cancelled
+                      "cancelled")
+                     (:mission-usage-quarantine
+                      "unknown-usage")
+                     (otherwise
+                      "stopped"))
+                   (if current-p "current" "replaced") reason)
+           :code code)))))
 
 (defmethod tool-execution-invoke :around
     ((runtime task-orchestrator) parent

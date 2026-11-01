@@ -1068,20 +1068,21 @@ restricted turn cannot discover tools outside its allowlist."
          (condition                            nil))
     (handler-case
         (setf result
-              (cond
-                ((mission-agent-terminal-p agent)
-                 (tool-failure "Mission work stopped; inspect its durable state and evidence."))
-                ((getf plan :withheld-reason)
-                 (tool-mechanics (getf plan :withheld-reason)
-                                 :code ':storm-withheld))
-                (argument-error
-                 (tool-mechanics argument-error :code ':invalid-arguments))
-                (t
-                 (agent-observer-call-with-tool-execution
-                  observer call-id
-                  (lambda ()
-                    (tool-registry-execute-call
-                     (agent-tool-registry agent) call context))))))
+              (multiple-value-bind (terminal-p mission-context) (mission-agent-terminal-p agent)
+                (cond
+                  (terminal-p
+                   (mission--stopped-tool-result mission-context))
+                  ((getf plan :withheld-reason)
+                   (tool-mechanics (getf plan :withheld-reason)
+                                   :code ':storm-withheld))
+                  (argument-error
+                   (tool-mechanics argument-error :code ':invalid-arguments))
+                  (t
+                   (agent-observer-call-with-tool-execution
+                    observer call-id
+                    (lambda ()
+                      (tool-registry-execute-call
+                       (agent-tool-registry agent) call context)))))))
       ((or autolith-control-condition
            serious-condition)
        (failure)
