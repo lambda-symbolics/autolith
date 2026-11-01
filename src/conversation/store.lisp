@@ -403,11 +403,21 @@ not yet been told that work from the previous process is gone.")
     :accessor      conversation-usage-totals
     :type          list
     :documentation "Summed provider usage as (INPUT OUTPUT TOTAL CACHED CACHE-CREATED CACHE-SEEN-P), or NIL when unknown.")
+   (usage-lock
+    :initform      (make-lock "Autolith conversation usage migration")
+    :reader        conversation--usage-lock
+    :type          t
+    :documentation "Serializes legacy usage scans without blocking durable appends.")
    (usage-since
     :initform      nil
     :accessor      conversation--usage-since
     :type          list
     :documentation "Usage noted while a history scan computes the totals, or NIL when no scan runs.")
+   (usage-sources
+    :initform      nil
+    :accessor      conversation--usage-sources
+    :type          list
+    :documentation "Filesystem identities captured for the running legacy usage scan.")
    (pending-async-lisp-events
     :initform      (make-deque)
     :accessor      conversation-pending-async-lisp-events
@@ -458,83 +468,107 @@ not yet been told that work from the previous process is gone.")
 
 (-> conversation-usage-totals-after-record (list list) list)
 (defun conversation-usage-totals-after-record (totals record)
-  "Return usage TOTALS, (INPUT OUTPUT TOTAL CACHED CACHE-CREATED CACHE-SEEN-P), after RECORD."
-  (let ((usage (and (eq (first record) ':provider)
-                    (getf (getf (rest record) :metadata) :usage))))
-    (if (and usage (listp usage))
-        (flet ((field (key)
-                 (let ((value (conversation--usage-field usage key)))
-                   (if (integerp value) value 0)))
+  "Return nonnegative usage TOTALS after a provider RECORD or durable checkpoint."
+  (let* ((metadata   (and (eq (first record) :provider)
+                          (getf (rest record) :metadata)))
+         (checkpoint (getf metadata :usage-checkpoint))
+         (usage      (getf metadata :usage)))
+    (cond
+      ((conversation--usage-totals-p checkpoint)
+       (copy-list checkpoint))
+      ((and usage (listp usage))
+       (flet ((field (key)
+                (let ((value (conversation--usage-field usage key)))
+                  (if (typep value '(integer 0)) value 0)))
 
-               (present-p (key)
-                 (integerp (conversation--usage-field usage key))))
-          (destructuring-bind (input output total cached created seen-p) totals
-            (list (+ input (field "input_tokens"))
-                  (+ output (field "output_tokens"))
-                  (+ total (field "total_tokens"))
-                  (+ cached (field "cached_input_tokens"))
-                  (+ created (field "cache_creation_input_tokens"))
-                  (or seen-p
-                      (present-p "cached_input_tokens")
-                      (present-p "cache_creation_input_tokens")))))
-        totals)))
+              (present-p (key)
+                (typep (conversation--usage-field usage key) '(integer 0))))
+         (destructuring-bind (input output total cached created seen-p) totals
+           (list (+ input (field "input_tokens"))
+                 (+ output (field "output_tokens"))
+                 (+ total (field "total_tokens"))
+                 (+ cached (field "cached_input_tokens"))
+                 (+ created (field "cache_creation_input_tokens"))
+                 (or seen-p
+                     (present-p "cached_input_tokens")
+                     (present-p "cache_creation_input_tokens"))))))
+      (t
+       totals))))
 
 (-> conversation--note-usage-totals (conversation list) null)
 (defun conversation--note-usage-totals (conversation record)
-  "Add RECORD's provider usage to the known totals, or to a running scan's tally."
-  (when (eq (first record) ':provider)
+  "Apply RECORD's durable checkpoint or add its provider usage."
+  (let ((checkpoint (and (eq (first record) :provider)
+                         (getf (getf (rest record) :metadata) :usage-checkpoint))))
     (cond
+      ((conversation--usage-totals-p checkpoint)
+       (setf (conversation-usage-totals conversation) (copy-list checkpoint)))
       ((conversation-usage-totals conversation)
        (setf (conversation-usage-totals conversation)
-             (conversation-usage-totals-after-record (conversation-usage-totals conversation) record)))
+             (conversation-usage-totals-after-record
+              (conversation-usage-totals conversation) record)))
       ((conversation--usage-since conversation)
        (setf (conversation--usage-since conversation)
-             (conversation-usage-totals-after-record (conversation--usage-since conversation) record)))))
+             (conversation-usage-totals-after-record
+              (conversation--usage-since conversation) record)))))
   nil)
 
 (-> conversation--usage-totals-p (t) boolean)
 (defun conversation--usage-totals-p (totals)
-  "Recognize the portable usage totals stored in a chunk header."
-  (and (listp totals)
-       (eql (list-length totals) 6)
-       (every (lambda (value) (typep value '(integer 0))) (subseq totals 0 5))
-       (member (sixth totals) '(nil t))
-       t))
+  "Recognize nonnegative portable usage totals in a header or migration checkpoint."
+  (handler-case
+      (and (listp totals)
+           (eql (list-length totals) 6)
+           (every (lambda (value) (typep value '(integer 0))) (subseq totals 0 5))
+           (member (sixth totals) '(nil t))
+           t)
+    (type-error () nil)))
 
 (-> conversation-usage (conversation) list)
 (defun conversation-usage (conversation)
-  "Return CONVERSATION's summed provider usage totals.
+  "Return lifetime usage without reading history once initialized.
 
-Totals travel in checkpoint headers and grow with each provider record. A
-conversation saved before they existed is scanned once; records appended during
-that scan are tallied separately and added, so none is counted twice or lost."
+Serialize legacy scans separately from appends. Capture the scan boundary and
+concurrent tally together, then publish one bounded checkpoint through the
+ordinary append protocol. Failed scans or checkpoint writes can be retried."
   (or (with-recursive-lock-held ((conversation-append-lock conversation))
-        (or (conversation-usage-totals conversation)
-            (progn
-              (setf (conversation--usage-since conversation) (list 0 0 0 0 0 nil))
-              nil)))
-      (let ((scanned  (list 0 0 0 0 0 nil))
-            (boundary (with-recursive-lock-held ((conversation-append-lock conversation))
-                        (conversation-next-sequence conversation))))
-        (unwind-protect
-             (progn
-               (conversation-map-records
-                conversation
-                (lambda (record)
-                  (let ((sequence (getf (rest record) :seq)))
-                    (when (and (integerp sequence) (< sequence boundary))
-                      (setf scanned (conversation-usage-totals-after-record scanned record))))))
-               (with-recursive-lock-held ((conversation-append-lock conversation))
-                 (or (conversation-usage-totals conversation)
-                     (setf (conversation-usage-totals conversation)
-                           (destructuring-bind (input output total cached created seen-p) scanned
-                             (destructuring-bind (input-2 output-2 total-2 cached-2 created-2 seen-2-p)
-                                 (conversation--usage-since conversation)
-                               (list (+ input input-2) (+ output output-2) (+ total total-2)
-                                     (+ cached cached-2) (+ created created-2)
-                                     (or seen-p seen-2-p))))))))
-          (with-recursive-lock-held ((conversation-append-lock conversation))
-            (setf (conversation--usage-since conversation) nil))))))
+        (conversation-usage-totals conversation))
+      (with-lock-held ((conversation--usage-lock conversation))
+        (let ((boundary nil)
+              (scanned  (list 0 0 0 0 0 nil)))
+          (unwind-protect
+               (progn
+                 (with-recursive-lock-held ((conversation-append-lock conversation))
+                   (when (conversation-usage-totals conversation)
+                     (return-from conversation-usage (conversation-usage-totals conversation)))
+                   (call-with-file-lock
+                    (conversation-picker-source-lock-pathname (conversation-pathname conversation))
+                    (lambda ()
+                      (setf boundary (conversation-next-sequence conversation)
+                            (conversation--usage-since conversation) (list 0 0 0 0 0 nil)
+                            (conversation--usage-sources conversation)
+                            (mapcar (lambda (path)
+                                      (cons path (platform-path-status *platform* path)))
+                                    (conversation-storage-pathnames
+                                     (conversation-pathname conversation)))))))
+                 (conversation-map-records
+                  conversation
+                  (lambda (record)
+                    (when (< (getf (rest record) :seq) boundary)
+                      (setf scanned (conversation-usage-totals-after-record scanned record)))))
+                 (with-recursive-lock-held ((conversation-append-lock conversation))
+                   (or (conversation-usage-totals conversation)
+                       (let* ((since  (conversation--usage-since conversation))
+                              (totals (append (mapcar #'+ (subseq scanned 0 5)
+                                                       (subseq since 0 5))
+                                              (list (or (sixth scanned) (sixth since))))))
+                         (conversation-append-record
+                          conversation
+                          (list :provider :metadata (list :usage-checkpoint totals)))
+                         (conversation-usage-totals conversation)))))
+            (with-recursive-lock-held ((conversation-append-lock conversation))
+              (setf (conversation--usage-since conversation) nil
+                    (conversation--usage-sources conversation) nil)))))))
 
 (-> conversation--prompt-cache-usage-p (t) boolean)
 (defun conversation--prompt-cache-usage-p (usage)
@@ -877,6 +911,12 @@ a crash may leave one that a later lease acquisition can reuse safely."
 (defun conversation--activity-after-record
     (record &key (working-seconds 0) (user-turn-count 0) last-activity-at)
   "Return activity values after applying durable RECORD to a picker summary."
+  ;; A migration checkpoint records accounting, not new provider work.
+  (when (and (eq (first record) :provider)
+             (conversation--usage-totals-p
+              (getf (getf (rest record) :metadata) :usage-checkpoint)))
+    (return-from conversation--activity-after-record
+      (values working-seconds user-turn-count last-activity-at)))
   (let ((time (and (consp record) (getf (rest record) :time)))
         (user-message-p
           (and (consp record)
@@ -1403,6 +1443,57 @@ a crash may leave one that a later lease acquisition can reuse safely."
              :sequence (conversation-next-sequence conversation))))
   nil)
 
+(-> conversation--call-with-usage-checkpoint (conversation list function) t)
+(defun conversation--call-with-usage-checkpoint (conversation record append-function)
+  "Validate a migration's sources and reconcile an interrupted checkpoint append.
+
+The caller holds the append and source locks. Recovery reads only bytes after
+this append's original EOF, including when publication failed after the write."
+  (dolist (source (conversation--usage-sources conversation))
+    (let ((current (platform-path-status *platform* (first source))))
+      (unless (and current (rest source)
+                   (platform-file-status-same-object-p current (rest source)))
+        (error 'conversation-invariant-error
+               :message  "Conversation storage changed during usage migration."
+               :pathname (first source)
+               :sequence (conversation-next-sequence conversation)))))
+  (when (and (conversation-persisted-p conversation)
+             (not (equal (conversation-log-pathname conversation)
+                         (conversation-storage-active-pathname
+                          (conversation-pathname conversation)))))
+    (error 'conversation-invariant-error
+           :message  "The active conversation segment changed during usage migration."
+           :pathname (conversation-log-pathname conversation)
+           :sequence (conversation-next-sequence conversation)))
+  (when (conversation-incomplete-tail-p conversation)
+    (conversation--repair-incomplete-tail conversation))
+  (let* ((pathname    (conversation-log-pathname conversation))
+         (status      (platform-path-status *platform* pathname))
+         (position    (if status (platform-file-status-size status) 0))
+         (sequence    (conversation-next-sequence conversation))
+         (completed-p nil))
+    (sb-sys:without-interrupts
+      (unwind-protect
+           (prog1 (funcall append-function)
+             (setf completed-p t))
+        (unless completed-p
+          (let ((published nil))
+            (multiple-value-bind (end incomplete-p count)
+                (sexp-store:log-map
+                 (lambda (candidate)
+                   (when (and (eq (first candidate) :provider)
+                              (eql (getf (rest candidate) :seq) sequence)
+                              (equal (getf (rest candidate) :metadata)
+                                     (getf (rest record) :metadata)))
+                     (setf published candidate)))
+                 pathname :start-position position)
+              (declare (ignore end count))
+              (setf (conversation-incomplete-tail-p conversation) incomplete-p))
+            (when (and published (<= (conversation-next-sequence conversation) sequence))
+              (setf (conversation-next-sequence conversation) (1+ sequence)
+                    (conversation-persisted-p conversation) t)
+              (conversation--note-activity conversation published))))))))
+
 (defgeneric conversation-append-record (conversation record)
   (:documentation "Append portable RECORD to CONVERSATION and return the sequenced form."))
 
@@ -1411,7 +1502,13 @@ a crash may leave one that a later lease acquisition can reuse safely."
   (with-recursive-lock-held ((conversation-append-lock conversation))
     (call-with-file-lock
      (conversation-picker-source-lock-pathname (conversation-pathname conversation))
-     (lambda () (call-next-method)))))
+     (lambda ()
+       (if (and (eq (first record) :provider)
+                (conversation--usage-totals-p
+                 (getf (getf (rest record) :metadata) :usage-checkpoint)))
+           (conversation--call-with-usage-checkpoint
+            conversation record (lambda () (call-next-method)))
+           (call-next-method))))))
 
 (defmethod conversation-append-record ((conversation conversation) (record list))
   "Assign metadata, initialize persistence if needed, and append RECORD."
@@ -2341,16 +2438,15 @@ transcript show automatic INPUT as a short notice."
 
 (-> conversation--usage-field (t string) (option integer))
 (defun conversation--usage-field (usage name)
-  "Return the integer counter NAME carried by portable or wire USAGE data."
-  (cond
-    ((json-object-p usage)
-     (let ((value (json-get usage name)))
-       (and (integerp value) value)))
-    ((listp usage)
-     (let ((value (second (assoc name usage :test #'equal))))
-       (and (integerp value) value)))
-    (t
-     nil)))
+  "Return a nonnegative integer counter NAME, or NIL for malformed USAGE data."
+  (handler-case
+      (let ((value (cond
+                     ((json-object-p usage)
+                      (json-get usage name))
+                     ((listp usage)
+                      (second (assoc name usage :test #'equal))))))
+        (and (typep value '(integer 0)) value))
+    (type-error () nil)))
 
 (-> conversation--usage-total (t) (option integer))
 (defun conversation--usage-total (usage)

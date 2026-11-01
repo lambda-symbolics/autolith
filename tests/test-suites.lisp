@@ -735,6 +735,11 @@
   test-conversation-chunk-storage
   test-conversation-pending-input-identifier-order
   test-conversation-usage-totals
+  test-conversation-usage-migration
+  test-conversation-usage-concurrency
+  test-conversation-usage-checkpoint-recovery
+  test-conversation-usage-invalid-counters
+  test-conversation-usage-stale-source
   test-conversation-segment-validation
   test-conversation-legacy-storage
   test-conversation-working-seconds
