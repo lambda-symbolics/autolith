@@ -222,23 +222,47 @@ the other filters still apply to it."
                 (mapcar #'search-tool--location-glob locations))
         constraints)))
 
-(-> search-tool--check-constraints (search-tool configuration string) null)
+(-> search-tool--check-constraints (search-tool configuration (option string))
+    (values (option string) (option string)))
 (defun search-tool--check-constraints (tool configuration constraints)
-  "Refuse a file path in CONSTRAINTS that names no indexed file.
+  "Return CONSTRAINTS without file paths that name no indexed file, and a note naming them.
 
 fff drops a lone file path filter matching no file and searches the whole
 workspace instead, and among several locations a mistyped one would silently
-contribute nothing. Both read as successful searches, so they fail here."
-  (dolist (token (remove-if-not #'search-tool--file-path-constraint-p
-                                (search-tool--constraint-tokens constraints)))
-    (when (zerop (search-worker-file-count (search-tool-engine tool) configuration
-                                           (format nil "**/~A" token)))
-      (error 'tool-error
-             :message
-             (format nil "No indexed file matches the constraint ~A; check the path, or search its directory instead."
-                     token)
-             :tool-name (tool-canonical-name tool))))
-  nil)
+contribute nothing. A missing path among other locations is dropped and named
+in the note; when no location remains, the search fails instead."
+  (let* ((tokens  (and constraints (search-tool--constraint-tokens constraints)))
+         (missing (remove-if-not
+                   (lambda (token)
+                     (and (search-tool--file-path-constraint-p token)
+                          (zerop (search-worker-file-count (search-tool-engine tool) configuration
+                                                           (format nil "**/~A" token)))))
+                   tokens))
+         (kept    (set-difference tokens missing :test #'string=)))
+    (cond
+      ((null missing)
+       (values constraints nil))
+      ((notany (lambda (token)
+                 (or (search-tool--directory-constraint-p token)
+                     (search-tool--file-path-constraint-p token)))
+               kept)
+       (error 'tool-error
+              :message
+              (format nil "No indexed file matches the constraint ~{~A~^, ~}; check the path, or search its directory instead."
+                      missing)
+              :tool-name (tool-canonical-name tool)))
+      (t
+       (values (format nil "~{~A~^ ~}" (remove-if (lambda (token) (member token missing :test #'string=))
+                                                  tokens))
+               (format nil "No indexed file matches ~{~A~^, ~}, so the search covered the other locations."
+                       missing))))))
+
+(-> search-tool--with-note (string (option string)) string)
+(defun search-tool--with-note (content note)
+  "Return search result CONTENT followed by NOTE when there is one."
+  (if note
+      (format nil "~A~%Note: ~A" content note)
+      content))
 
 (-> search-tool--bounded-integer
     (json-object string
