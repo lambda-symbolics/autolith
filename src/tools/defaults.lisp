@@ -464,7 +464,7 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
              "start-line" (tool-integer-property
                            "The first line to return, starting at 1. Only line-windowed resources accept start-line and line-count; the others reject them.")
              "line-count" (tool-integer-property
-                           "How many lines to return; default 400, maximum 1000. Accepted only where start-line is.")
+                           "How many lines to return; default 400, maximum 1000. One result holds about 7,600 characters, so long lines end it sooner; only the lines it shows can be edited, and its Visible lines field says which. Accepted only where start-line is.")
              "byte-offset" (tool-integer-property
                             "Zero-based byte offset for a shell-log: range or search page; defaults to 0.")
              "byte-count" (tool-integer-property
