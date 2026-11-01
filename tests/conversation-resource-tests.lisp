@@ -160,14 +160,15 @@
         (test-assert
          (and (conversation-resource-tests--rejected-p context "current" "query" " ")
               (conversation-resource-tests--rejected-p context "current"
-                                                       "query" "argo"
-                                                       "start-sequence" 1)
-              (conversation-resource-tests--rejected-p context "current"
                                                        "max-results" 3)
               (conversation-resource-tests--rejected-p context "current"
                                                        "query" "argo"
                                                        "max-results" 51))
-         "blank queries and arguments that do not apply to search are rejected"))))
+         "blank queries and arguments that do not apply to search are rejected")
+        (let ((*resource-tool-notes* nil))
+          (conversation-resource-tests--read context "current" "query" "argo" "start-sequence" 1)
+          (test-assert (search "ignores start-sequence" (format nil "~{~A~}" *resource-tool-notes*))
+                       "a search ignores window arguments with a note instead of failing")))))
   nil)
 
 (-> test-conversation-resource-windows () null)
