@@ -492,6 +492,15 @@ Return the request and its context delivery."
 
 ;;;; -- Streaming Transport and Decoding --
 
+(defmethod provider-prepare-stream-request
+    ((provider gemini-code-assist-provider) (request hash-table) credentials)
+  "Complete setup and copy the final routing envelope before request admission."
+  (gemini-code-assist-ensure-setup provider credentials)
+  (let ((copy (json-object-copy request)))
+    (setf (gethash "project" copy)
+          (gemini-code-assist-provider-project provider))
+    copy))
+
 (defmethod provider-open-response-stream
     ((provider gemini-code-assist-provider)
      (request hash-table)
@@ -499,9 +508,6 @@ Return the request and its context delivery."
   "Open one authenticated Code Assist streamGenerateContent SSE response."
   (declare (ignore conversation)
            (type oauth-credentials credentials))
-  (gemini-code-assist-ensure-setup provider credentials)
-  (setf (gethash "project" request)
-        (gemini-code-assist-provider-project provider))
   (provider-post-event-stream
    (format nil "~A?alt=sse"
            (gemini-code-assist--method-url provider "streamGenerateContent"))
@@ -513,3 +519,11 @@ Return the request and its context delivery."
   "Unwrap one Code Assist stream EVENT into its response and trace identifier."
   (declare (ignore provider))
   (values (json-get event "response") (json-get event "traceId")))
+
+(defmethod provider-request-with-output-ceiling
+    ((provider gemini-code-assist-provider) (request hash-table) (ceiling integer))
+  "Copy Code Assist's routing envelope and bound the inner GenerateContent request."
+  (let ((copy (json-object-copy request)))
+    (setf (gethash "request" copy)
+          (call-next-method provider (json-get request "request") ceiling))
+    copy))

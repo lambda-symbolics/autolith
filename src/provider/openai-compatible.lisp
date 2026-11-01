@@ -492,3 +492,11 @@ The first SHARED-COUNT durable items also end at their own breakpoint."
    (config :provider-endpoint (provider-configuration provider))
    (json-encode-utf8 request)
    :headers (openai-compatible--request-headers provider credentials conversation)))
+
+(defmethod provider-request-with-output-ceiling
+    ((provider openai-compatible-provider) (request hash-table) (ceiling integer))
+  "Respect the compatible provider's chosen output field on a request-local copy."
+  (if (provider-output-ceiling-p provider)
+      (provider-request--with-output-field
+       request (openai-compatible-provider-output-ceiling-field provider) ceiling)
+      request))

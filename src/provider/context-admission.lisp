@@ -64,20 +64,29 @@ may use provider token counts when available; the default is not a tokenizer."))
     (not (null (or (member type '("image" "input_image" "image_url") :test #'equal)
                    (and (stringp mime) (uiop:string-prefix-p "image/" mime)))))))
 
+(-> provider-request-output-ceilings (hash-table &key (:enclosed-p boolean)) list)
+(defun provider-request-output-ceilings (request &key enclosed-p)
+  "Return positive caller and wire ceilings, optionally inside routing envelopes."
+  (let ((generation (json-get request "generationConfig"))
+        (inner      (json-get request "request")))
+    (append
+     (remove-if-not
+      (lambda (value) (and (integerp value) (plusp value)))
+      (list *provider-maximum-output-tokens*
+            (json-get request "max_output_tokens")
+            (json-get request "max_completion_tokens")
+            (json-get request "max_tokens")
+            (and (json-object-p generation)
+                 (json-get generation "maxOutputTokens"))))
+     ;; Code Assist carries the GenerateContent policy inside its routing envelope.
+     (when (and enclosed-p (json-object-p inner))
+       (provider-request-output-ceilings inner :enclosed-p t)))))
+
 (-> provider-request-output-reserve (model-provider hash-table) (integer 1))
 (defun provider-request-output-reserve (provider request)
   "Reserve the larger of configured headroom and the request's explicit output cap."
-  (let ((generation (json-get request "generationConfig")))
-    (reduce #'max
-            (remove-if-not
-             (lambda (value) (and (integerp value) (plusp value)))
-             (list (config :context-output-reserve (provider-configuration provider))
-                   *provider-maximum-output-tokens*
-                   (json-get request "max_output_tokens")
-                   (json-get request "max_completion_tokens")
-                   (json-get request "max_tokens")
-                   (and (json-object-p generation)
-                        (json-get generation "maxOutputTokens")))))))
+  (reduce #'max (provider-request-output-ceilings request)
+          :initial-value (config :context-output-reserve (provider-configuration provider))))
 
 (-> provider-check-request-context (model-provider hash-table) null)
 (defun provider-check-request-context (provider request)
@@ -131,3 +140,47 @@ may use provider token counts when available; the default is not a tokenizer."))
     :type          boolean
     :documentation "Whether image or opaque payload estimates affected admission."))
   (:documentation "Local context admission refused a request before transport."))
+
+(-> provider-call-with-mission-output-allowance (model-provider hash-table function) t)
+(defun provider-call-with-mission-output-allowance (provider request continuation)
+  "Bound internal mission headroom at the final encoded request boundary.
+
+Validate the original caller policy first. Only the mission-derived allowance
+may shrink to the context envelope. Re-estimate after adding the wire field,
+then recheck the actual final request. A nonmonotonic custom estimator may
+refuse the reduced candidate, but cannot bypass ordinary admission."
+  (if (null *provider-mission-output-allowance*)
+      (funcall continuation request)
+      (let ((ceilings (provider-request-output-ceilings request :enclosed-p t)))
+        (let ((*provider-maximum-output-tokens*
+                (when ceilings (reduce #'max ceilings))))
+          (provider-check-request-context provider request))
+        (let* ((window    (config :context-window (provider-configuration provider)))
+               (ceiling
+                 (reduce #'min ceilings
+                         :initial-value
+                         (min *provider-mission-output-allowance*
+                              (- window (provider-request-input-token-estimate provider request)))))
+               (candidate (provider-request-with-output-ceiling provider request ceiling))
+               (remaining (- window (provider-request-input-token-estimate provider candidate))))
+          (if (plusp remaining)
+              (let* ((effective                        (min ceiling remaining))
+                     (final-request
+                       (if (= effective ceiling)
+                           candidate
+                           (provider-request-with-output-ceiling provider request effective)))
+                     (*provider-maximum-output-tokens* effective))
+                (provider-check-request-context provider final-request)
+                (funcall continuation final-request))
+              ;; No positive output envelope exists for this encoded candidate.
+              (let ((*provider-maximum-output-tokens* ceiling))
+                (provider-check-request-context provider candidate)))))))
+
+(defmethod provider-open-native-compaction :around
+    ((provider model-provider) (request hash-table) &key credentials conversation)
+  "Finalize mission output headroom before native compaction admission."
+  (provider-call-with-mission-output-allowance
+   provider request
+   (lambda (final-request)
+     (call-next-method provider final-request :credentials credentials
+                                            :conversation  conversation))))

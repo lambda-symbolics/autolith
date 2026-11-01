@@ -96,14 +96,14 @@ starts, missing usage is conservatively unknown, including interrupted dispatch.
            (sb-sys:without-interrupts
              (setf reservation (mission--reserve-inference context :allowance allowance)))
            (handler-case
-               (let* ((*provider-maximum-output-tokens* reservation)
-                      (results                          (mission--supervise
-                                                         context "Mission inference"
-                                                         (lambda ()
-                                                           (setf dispatched-p t)
-                                                           (multiple-value-list (funcall function)))))
-                      (tokens                           (rlm-usage-billable-tokens
-                                                         (provider-usage-normalize (funcall usage-function results)))))
+               (let* ((*provider-mission-output-allowance* reservation)
+                      (results                             (mission--supervise
+                                                            context "Mission inference"
+                                                            (lambda ()
+                                                              (setf dispatched-p t)
+                                                              (multiple-value-list (funcall function)))))
+                      (tokens                              (rlm-usage-billable-tokens
+                                                            (provider-usage-normalize (funcall usage-function results)))))
                  (sb-sys:without-interrupts
                    (setf settled-p t)
                    (mission--settle-inference context reservation tokens :allowance allowance))

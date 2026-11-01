@@ -417,6 +417,12 @@ questions of the same views reuse them.")
 Inference frames bind this to their reserved output tranche so one
 response cannot dramatically overrun the shared subtree budget.")
 
+(defparameter *provider-mission-output-allowance* nil
+  "Internal output reservation for this request, distinct from a caller's ceiling.
+
+Mission accounting retains this entire reservation in its ledger. Final request
+admission may lower the transport allowance to fit the encoded context.")
+
 (-> provider-web-search-tool (configuration) (option json-object))
 (defun provider-web-search-tool (configuration)
   "Return NIL because the subscription Responses endpoint does not execute web_search.

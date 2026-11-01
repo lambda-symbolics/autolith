@@ -5,6 +5,15 @@
 (setf *test-suites* nil)
 
 (define-test-suite context-admission
+  test-context-admission-mission-large-budget
+  test-context-admission-mission-wire-ceiling
+  test-context-admission-mission-explicit-policy
+  test-context-admission-mission-copy-protocol
+  test-context-admission-mission-code-assist-envelope
+  test-context-admission-code-assist-first-setup
+  test-context-admission-mission-final-recheck
+  test-context-admission-mission-reviewer
+  test-context-admission-mission-refusal-settlement
   test-context-admission-boundary
   test-context-admission-fresh-projection
   test-context-admission-final-request
