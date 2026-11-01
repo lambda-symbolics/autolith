@@ -743,7 +743,8 @@ instead of modifying them so earlier bases keep their snapshot."
 Transactions contribute their individual records to the revision, just as in
 folding. A missing log has no records. NIL reads all complete records."
   (block done
-    (let ((count 0))
+    (let ((count    0)
+          (header-p t))
       (when (and pathname (probe-file pathname))
         (sexp-store:log-map
          (lambda (form)
@@ -756,8 +757,9 @@ folding. A missing log has no records. NIL reads all complete records."
                               (return-from done nil))
                             (incf count)
                             (funcall function record)))))
-             (unless (eq (first form) ':knowledge)
-               (visit form))))
+             (if header-p
+                 (setf header-p nil)
+                 (visit form))))
          pathname))))
   nil)
 
