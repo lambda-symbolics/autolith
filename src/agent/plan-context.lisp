@@ -63,6 +63,8 @@
 (defvar *plan-context-turn-changes* (make-hash-table :test #'equal :synchronized t)
   "Each conversation's plan change advice for its current turn, computed once.")
 
+(context-register-conversation-table *plan-context-turn-changes*)
+
 (-> plan-context--viewer (conversation) string)
 (defun plan-context--viewer (conversation)
   "Return the viewer name recording which plan state CONVERSATION last saw."

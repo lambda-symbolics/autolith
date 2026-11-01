@@ -149,6 +149,8 @@ adds its status and the reason."
 (defvar *memory-context-turn-changes* (make-hash-table :test #'equal :synchronized t)
   "Each conversation's knowledge-change advice for its current turn, computed once.")
 
+(context-register-conversation-table *memory-context-turn-changes*)
+
 (-> memory-context--relevant-facts (knowledge-view string) list)
 (defun memory-context--relevant-facts (view query)
   "Return VIEW's supported facts most related to retrieval terms QUERY, best first."

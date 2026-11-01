@@ -590,6 +590,7 @@
 
 (define-test-suite context
   test-session-state-context-contributor
+  test-context-forget-conversation
   test-request-local-context
   test-known-context-estimate
   test-context-estimate-cache

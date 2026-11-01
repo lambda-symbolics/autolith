@@ -826,6 +826,26 @@ the one-request contributions together: they change on every delivery."
     (cl-llm-provider-api:context-selection-complete (context-delivery-selection delivery)))
   nil)
 
+(defvar *context-conversation-tables* nil
+  "Tables that context contributors key by conversation identifier.")
+
+(-> context-register-conversation-table (hash-table) hash-table)
+(defun context-register-conversation-table (table)
+  "Register TABLE so CONTEXT-FORGET-CONVERSATION removes finished conversations from it."
+  (pushnew table *context-conversation-tables*)
+  table)
+
+(-> context-forget-conversation (string) null)
+(defun context-forget-conversation (identifier)
+  "Forget the request context state kept for finished conversation IDENTIFIER.
+
+Child agents and inference frames each run in their own conversation, so
+state keyed by conversation would otherwise grow with every one that ran."
+  (cl-llm-provider-api:context-resolver-reset *context-resolver* :session-key identifier)
+  (dolist (table *context-conversation-tables*)
+    (remhash identifier table))
+  nil)
+
 (-> context-runtime-reset () null)
 (defun context-runtime-reset ()
   "Discard request receipts and product diagnostics without changing registrations."

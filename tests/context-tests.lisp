@@ -141,6 +141,26 @@
                    "the waiting request invokes its contributor exactly once")))
   nil)
 
+(-> test-context-forget-conversation () null)
+(defun test-context-forget-conversation ()
+  "Forget a finished conversation's context state and keep every other one."
+  (let* ((*context-resolver*            (cl-llm-provider-api:make-context-resolver))
+         (*context-conversation-tables* nil)
+         (table                         (context-register-conversation-table
+                                         (make-hash-table :test #'equal)))
+         (activations                   (cl-llm-provider-api::context-resolver--activations
+                                         *context-resolver*)))
+    (dolist (identifier '("finished" "running"))
+      (setf (gethash identifier table)                         t
+            (gethash (list identifier "advice") activations) (gensym "ACTIVATION")))
+    (context-forget-conversation "finished")
+    (test-assert (and (null (gethash "finished" table)) (gethash "running" table))
+                 "registered tables drop only the finished conversation")
+    (test-assert (and (null (gethash (list "finished" "advice") activations))
+                      (gethash (list "running" "advice") activations))
+                 "the resolver drops only the finished conversation's activations"))
+  nil)
+
 (-> test-session-state-context-contributor () null)
 (defun test-session-state-context-contributor ()
   "Test the protected built-in mutable session-state contribution."

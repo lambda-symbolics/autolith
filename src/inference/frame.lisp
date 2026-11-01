@@ -503,26 +503,43 @@ returns the billable tokens settled so far."
             (make-instance 'callback-agent-observer
                            :status-callback status-callback))
           (allowlist (rlm--frame-tool-allowlist)))
-      (loop
-        (let ((result
-                (let ((*agent-restricted-maximum-tool-rounds*
-                        (max 0
-                             (min *rlm-frame-maximum-tool-rounds*
-                                  (1- (rlm-budget-remaining-calls budget))))))
-                  (unwind-protect
-                       (agent-run-user-turn agent request
-                                            :observer           observer
-                                            :tool-allowlist     allowlist
-                                            :tool-restriction-p t)
-                    (funcall flush-tranche)))))
-         (multiple-value-bind (value valid-p problem)
-             (rlm--contract-value contract
-                                  (provider-result-assistant-text result))
-           (when valid-p
-             (return (values value
-                             (conversation-identifier conversation)
-                             (funcall tokens-spent))))
-           (setf request (rlm--repair-request problem))))))))
+      (unwind-protect
+           (rlm--run-frame-turns agent request :observer      observer
+                                               :allowlist     allowlist
+                                               :contract      contract
+                                               :budget        budget
+                                               :flush-tranche flush-tranche
+                                               :tokens-spent  tokens-spent)
+        (context-forget-conversation (conversation-identifier conversation))))))
+
+(-> rlm--run-frame-turns
+    (agent t &key (:observer agent-observer) (:allowlist list) (:contract t)
+                  (:budget t) (:flush-tranche function) (:tokens-spent function))
+    (values t string (integer 0)))
+(defun rlm--run-frame-turns
+    (agent request &key observer allowlist contract budget flush-tranche tokens-spent)
+  "Repeat AGENT's restricted turns until the answer satisfies CONTRACT."
+  (let ((conversation (agent-conversation agent)))
+    (loop
+      (let ((result
+              (let ((*agent-restricted-maximum-tool-rounds*
+                      (max 0
+                           (min *rlm-frame-maximum-tool-rounds*
+                                (1- (rlm-budget-remaining-calls budget))))))
+                (unwind-protect
+                     (agent-run-user-turn agent request
+                                          :observer           observer
+                                          :tool-allowlist     allowlist
+                                          :tool-restriction-p t)
+                  (funcall flush-tranche)))))
+       (multiple-value-bind (value valid-p problem)
+           (rlm--contract-value contract
+                                (provider-result-assistant-text result))
+         (when valid-p
+           (return (values value
+                           (conversation-identifier conversation)
+                           (funcall tokens-spent))))
+         (setf request (rlm--repair-request problem)))))))
 
 (-> infer
     (string &key (:context t)
