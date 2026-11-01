@@ -398,6 +398,16 @@ not yet been told that work from the previous process is gone.")
     :accessor      conversation-prompt-cache-usage
     :type          list
     :documentation "Newest numeric prompt and cached-input usage, or NIL when unknown.")
+   (usage-totals
+    :initform      (list 0 0 0 0 0 nil)
+    :accessor      conversation-usage-totals
+    :type          list
+    :documentation "Summed provider usage as (INPUT OUTPUT TOTAL CACHED CACHE-CREATED CACHE-SEEN-P), or NIL when unknown.")
+   (usage-since
+    :initform      nil
+    :accessor      conversation--usage-since
+    :type          list
+    :documentation "Usage noted while a history scan computes the totals, or NIL when no scan runs.")
    (pending-async-lisp-events
     :initform      (make-deque)
     :accessor      conversation-pending-async-lisp-events
@@ -445,6 +455,86 @@ not yet been told that work from the previous process is gone.")
                     (list "cached_input_tokens"
                           (and (typep cached-tokens '(integer 0)) cached-tokens)))))))
   nil)
+
+(-> conversation-usage-totals-after-record (list list) list)
+(defun conversation-usage-totals-after-record (totals record)
+  "Return usage TOTALS, (INPUT OUTPUT TOTAL CACHED CACHE-CREATED CACHE-SEEN-P), after RECORD."
+  (let ((usage (and (eq (first record) ':provider)
+                    (getf (getf (rest record) :metadata) :usage))))
+    (if (and usage (listp usage))
+        (flet ((field (key)
+                 (let ((value (conversation--usage-field usage key)))
+                   (if (integerp value) value 0)))
+
+               (present-p (key)
+                 (integerp (conversation--usage-field usage key))))
+          (destructuring-bind (input output total cached created seen-p) totals
+            (list (+ input (field "input_tokens"))
+                  (+ output (field "output_tokens"))
+                  (+ total (field "total_tokens"))
+                  (+ cached (field "cached_input_tokens"))
+                  (+ created (field "cache_creation_input_tokens"))
+                  (or seen-p
+                      (present-p "cached_input_tokens")
+                      (present-p "cache_creation_input_tokens")))))
+        totals)))
+
+(-> conversation--note-usage-totals (conversation list) null)
+(defun conversation--note-usage-totals (conversation record)
+  "Add RECORD's provider usage to the known totals, or to a running scan's tally."
+  (when (eq (first record) ':provider)
+    (cond
+      ((conversation-usage-totals conversation)
+       (setf (conversation-usage-totals conversation)
+             (conversation-usage-totals-after-record (conversation-usage-totals conversation) record)))
+      ((conversation--usage-since conversation)
+       (setf (conversation--usage-since conversation)
+             (conversation-usage-totals-after-record (conversation--usage-since conversation) record)))))
+  nil)
+
+(-> conversation--usage-totals-p (t) boolean)
+(defun conversation--usage-totals-p (totals)
+  "Recognize the portable usage totals stored in a chunk header."
+  (and (listp totals)
+       (eql (list-length totals) 6)
+       (every (lambda (value) (typep value '(integer 0))) (subseq totals 0 5))
+       (member (sixth totals) '(nil t))
+       t))
+
+(-> conversation-usage (conversation) list)
+(defun conversation-usage (conversation)
+  "Return CONVERSATION's summed provider usage totals.
+
+Totals travel in checkpoint headers and grow with each provider record. A
+conversation saved before they existed is scanned once; records appended during
+that scan are tallied separately and added, so none is counted twice or lost."
+  (or (with-recursive-lock-held ((conversation-append-lock conversation))
+        (or (conversation-usage-totals conversation)
+            (progn
+              (setf (conversation--usage-since conversation) (list 0 0 0 0 0 nil))
+              nil)))
+      (let ((scanned  (list 0 0 0 0 0 nil))
+            (boundary (with-recursive-lock-held ((conversation-append-lock conversation))
+                        (conversation-next-sequence conversation))))
+        (unwind-protect
+             (progn
+               (conversation-map-records
+                conversation
+                (lambda (record)
+                  (let ((sequence (getf (rest record) :seq)))
+                    (when (and (integerp sequence) (< sequence boundary))
+                      (setf scanned (conversation-usage-totals-after-record scanned record))))))
+               (with-recursive-lock-held ((conversation-append-lock conversation))
+                 (or (conversation-usage-totals conversation)
+                     (setf (conversation-usage-totals conversation)
+                           (destructuring-bind (input output total cached created seen-p) scanned
+                             (destructuring-bind (input-2 output-2 total-2 cached-2 created-2 seen-2-p)
+                                 (conversation--usage-since conversation)
+                               (list (+ input input-2) (+ output output-2) (+ total total-2)
+                                     (+ cached cached-2) (+ created created-2)
+                                     (or seen-p seen-2-p))))))))
+          (with-recursive-lock-held ((conversation-append-lock conversation))
+            (setf (conversation--usage-since conversation) nil))))))
 
 (-> conversation--prompt-cache-usage-p (t) boolean)
 (defun conversation--prompt-cache-usage-p (usage)
@@ -880,6 +970,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
           (conversation-last-activity-at conversation) last-activity-at))
   (conversation--note-input-history conversation record)
   (conversation--note-prompt-cache-usage conversation record)
+  (conversation--note-usage-totals conversation record)
   nil)
 
 (-> conversation--header-record
@@ -919,6 +1010,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
             0
             (conversation-input-history-last-sequence conversation))
         :prompt-cache-usage   (copy-tree (conversation-prompt-cache-usage conversation))
+        :usage-totals         (copy-list (conversation-usage-totals conversation))
         :pending-async-lisp-events
         (copy-tree (deque->list
                     (conversation-pending-async-lisp-events conversation)))
@@ -3082,7 +3174,9 @@ later picker searches read it without scanning the log."
            (input-history-last-sequence
              (if (= version 2) (getf properties :input-history-last-sequence 0) 0))
            (prompt-cache-usage
-             (and (= version 2) (getf properties :prompt-cache-usage))))
+             (and (= version 2) (getf properties :prompt-cache-usage)))
+           (usage-totals
+             (and (= version 2) (getf properties :usage-totals))))
       (unless (or (and (null title) (null title-source))
                   (and normalized-title
                        (member title-source '(:initial :generated))))
@@ -3120,6 +3214,8 @@ later picker searches read it without scanning the log."
                        (< input-history-last-sequence chunk-start-sequence)
                        (or (null prompt-cache-usage)
                            (conversation--prompt-cache-usage-p prompt-cache-usage))
+                       (or (null usage-totals)
+                           (conversation--usage-totals-p usage-totals))
                        (or (null latest-goal-record)
                            (and (conversation--record-form-p latest-goal-record)
                                 (eq (first latest-goal-record) :goal))))
@@ -3146,6 +3242,8 @@ later picker searches read it without scanning the log."
                                   reasoning-effort)
                              :next-sequence     chunk-start-sequence
                              :input-items       nil)))
+        ;; Headers written before usage totals existed leave them unknown.
+        (setf (conversation-usage-totals conversation) (copy-list usage-totals))
         (when (= version 2)
           (setf (conversation-working-seconds conversation) working-seconds
                 (conversation-user-turn-count conversation) user-turn-count
