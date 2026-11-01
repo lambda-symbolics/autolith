@@ -596,6 +596,27 @@ acknowledgment is reconciled without another model-visible message."
         (setf (task-completion-service-wakeup service) nil))))
   nil)
 
+(-> task-completion-release (agent) null)
+(defun task-completion-release (agent)
+  "Close and forget AGENT's completion subscription once its conversation stops running.
+
+The service's closures hold AGENT, so a finished child agent stays reachable
+until its entry leaves the orchestrator table. A later run of the same
+conversation restores a fresh service from its durable snapshot."
+  (let ((runtime (task-completion--runtime agent)))
+    (when runtime
+      (let ((owner   (conversation-identifier (agent-conversation agent)))
+            (service nil))
+        (with-lock-held ((task-orchestrator-completion-lock runtime))
+          (setf service (gethash owner (task-orchestrator-completion-services runtime)))
+          (remhash owner (task-orchestrator-completion-services runtime)))
+        (when service
+          (with-lock-held ((task-completion-service-wakeup-lock service))
+            (setf (task-completion-service-wakeup service) nil))
+          (cl-jobpond:completion-subscription-close
+           (task-completion-service-subscription service))))))
+  nil)
+
 (-> task-completion-close (task-orchestrator) null)
 (defun task-completion-close (runtime)
   "Close all completion subscriptions after the job pools finish publishing outcomes."

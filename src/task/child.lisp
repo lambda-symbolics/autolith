@@ -860,5 +860,7 @@ candidates."
                   :conversation    conversation
                   :completion      completion)))
       (task-job-cancel-execution-descendants job ':parent-finished)
+      ; mallet:suppress no-ignore-errors -- best-effort release must not mask the child result
+      (ignore-errors (task-completion-release child))
       ; mallet:suppress no-ignore-errors -- best-effort worker shutdown must not mask the child result
       (ignore-errors (lisp-worker-pool-stop-all worker)))))

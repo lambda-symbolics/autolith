@@ -331,6 +331,10 @@
                           :text              "The peer boundary marker is ready.")
        (let ((result (task-run-child job)))
          (test-assert (eq ':success (getf result :status)) "the ordinary child runtime completes through terminal yield")
+         (test-assert (null (gethash (task-job-execution-identifier job)
+                                     (task-orchestrator-completion-services
+                                      (session-job-orchestrator job))))
+                      "a finished child releases its completion service and the agent it holds")
          (test-assert (test-object-contains-string-p (task-test-provider-request-inputs provider)
                                                     "The peer boundary marker is ready.")
                       "the actual provider request includes granted peer context")
