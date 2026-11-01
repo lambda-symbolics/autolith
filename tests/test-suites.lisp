@@ -1510,6 +1510,7 @@
   test-compaction-job-state-bounds
   test-compaction-job-state-delivery
   test-compaction-job-state-exact-owner
+  test-compaction-job-state-index
   test-compaction-job-state-live-unknown
   test-compaction-job-state-request-context
   test-compaction-unfinished-cutoff-replay

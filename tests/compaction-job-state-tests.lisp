@@ -39,6 +39,33 @@
                       "a zero-row projection retains inspectable outstanding counts")))))
   nil)
 
+(-> test-compaction-job-state-index () null)
+(defun test-compaction-job-state-index ()
+  "Read only possibly unfinished jobs once delivered work leaves the index."
+  (job-completion-tests--fixture
+   (lambda (parent runtime configuration)
+     (declare (ignore configuration))
+     (dotimes (index 6)
+       (declare (ignorable index))
+       (job-completion-tests--start parent runtime :policy ':notify))
+     (test-assert (= 6 (getf (task-unfinished-work-snapshot parent) :total))
+                  "every undelivered job counts before delivery")
+     (task-completion-deliver parent)
+     (test-assert (zerop (getf (task-unfinished-work-snapshot parent) :total))
+                  "delivered jobs are finished")
+     (test-call-with-function-replacements
+      (list (list 'task-continuity-records
+                  (lambda (viewer)
+                    (declare (ignore viewer))
+                    (error "A complete index must not scan every job directory."))))
+      (lambda ()
+        (test-assert (zerop (getf (task-unfinished-work-snapshot parent) :total))
+                     "a complete index answers without a full scan")
+        (job-completion-tests--start parent runtime :policy ':notify)
+        (test-assert (= 1 (getf (task-unfinished-work-snapshot parent) :total))
+                     "admission notes a new job in the index before its record exists")))))
+  nil)
+
 (-> test-compaction-job-state-delivery () null)
 (defun test-compaction-job-state-delivery ()
   "Derive outstanding results from authoritative receipts before and after restart."

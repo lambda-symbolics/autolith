@@ -57,6 +57,7 @@ explicit safety declaration; admission alone grants no replay authority."
         (ensure-directories-exist path)
         (when (session-job-detached-p job)
           (task-completion-index-note job configuration))
+        (task-unfinished-work-index-note job configuration)
         (task-continuity--write
          path
          (list :version 1 :job-id (session-job-identifier job)

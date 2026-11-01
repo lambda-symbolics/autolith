@@ -131,12 +131,55 @@
                                    nil))
             :continuity-path    path))))
 
-(-> task-unfinished-work--entries (agent list) list)
-(defun task-unfinished-work--entries (agent live)
-  "Join owned continuity with visible live jobs whose admission record is not yet visible."
-  (let ((entries (task-continuity-records agent))
-        (root    (task--artifact-group-root
-                  (agent-configuration agent) (task-parent-root-conversation-identifier agent))))
+(-> task-unfinished-work--index-path (pathname) pathname)
+(defun task-unfinished-work--index-path (root)
+  "Return the index of possibly unfinished jobs below task group ROOT."
+  (merge-pathnames "unfinished.outstanding.sexp" root))
+
+(-> task-unfinished-work-index-note (session-job configuration) null)
+(defun task-unfinished-work-index-note (job configuration)
+  "Record JOB as possibly unfinished before its continuity record exists.
+
+Callers hold JOB's orchestrator artifact lock and publish the continuity record
+right after this returns, so a complete index names every job that may still
+be unfinished. A note into a missing or unreadable index starts an incomplete
+one, which the next snapshot completes with one full scan."
+  (let* ((root        (task--artifact-group-root
+                       configuration (session-job-root-conversation-identifier job)))
+         (path        (task-unfinished-work--index-path root))
+         (index       (task-completion--index-read path))
+         (identifier  (session-job-execution-identifier job))
+         (identifiers (getf index :execution-ids)))
+    (unless (member identifier identifiers :test #'equal)
+      (task-completion--index-write path
+                                    :complete-p  (getf index :complete-p)
+                                    :identifiers (cons identifier identifiers))))
+  nil)
+
+(-> task-unfinished-work--index-settle
+    (task-orchestrator pathname &key (:examined list) (:kept list))
+    null)
+(defun task-unfinished-work--index-settle (runtime path &key examined kept)
+  "Drop EXAMINED jobs that are finished from the index at PATH, keeping KEPT.
+
+Jobs noted after the examined index was read stay, so a concurrent admission
+is never lost. The index is complete afterwards."
+  (with-lock-held ((task-orchestrator-artifact-lock runtime))
+    (let* ((current     (task-completion--index-read path))
+           (identifiers (union kept
+                               (set-difference (getf current :execution-ids) examined
+                                               :test #'equal)
+                               :test #'equal)))
+      (unless (and (getf current :complete-p)
+                   (null (set-exclusive-or identifiers (getf current :execution-ids)
+                                           :test #'equal)))
+        (task-completion--index-write path :complete-p t :identifiers identifiers))))
+  nil)
+
+(-> task-unfinished-work--entries (list list pathname) list)
+(defun task-unfinished-work--entries (scanned live root)
+  "Join SCANNED continuity with visible LIVE jobs whose admission record is not yet visible."
+  (let ((entries scanned))
     (dolist (job live)
       (let ((identifier (session-job-execution-identifier job)))
         (unless (find identifier entries
@@ -167,10 +210,24 @@ completion delivery, recovery, mission mutation or persistence."
          (snapshot     (list :format 1 :owner-conversation owner :total 0 :omitted-count 0 :jobs nil)))
     (when (and conversation (slot-boundp agent 'configuration)
                (typep (agent-configuration agent) 'configuration))
-      (let* ((live     (and runtime (task-orchestrator-list-visible-jobs runtime agent)))
-             (receipts (make-hash-table :test #'equal))
-             (rows     nil))
-        (dolist (entry (task-unfinished-work--entries agent live))
+      (let* ((live       (and runtime (task-orchestrator-list-visible-jobs runtime agent)))
+             (root       (task--artifact-group-root
+                          (agent-configuration agent) (task-parent-root-conversation-identifier agent)))
+             (path       (task-unfinished-work--index-path root))
+             (index      (if runtime
+                             (with-lock-held ((task-orchestrator-artifact-lock runtime))
+                               (task-completion--index-read path))
+                             (task-completion--index-read path)))
+             (complete-p (getf index :complete-p))
+             (indexed    (getf index :execution-ids))
+             (scanned    (if complete-p
+                             (loop for identifier in indexed
+                                   append (task-continuity-directory-entries
+                                           agent (merge-pathnames (format nil "~A/" identifier) root)))
+                             (task-continuity-records agent)))
+             (receipts   (make-hash-table :test #'equal))
+             (rows       nil))
+        (dolist (entry (task-unfinished-work--entries scanned live root))
           (let* ((record           (getf entry :record))
                  (completion-owner (getf record :completion-owner-conversation)))
             (when record
@@ -185,6 +242,15 @@ completion delivery, recovery, mission mutation or persistence."
                                              :key #'session-job-execution-identifier :test #'equal)
                            :viewer owner :receipts owner-receipts)))
                 (when row (push row rows))))))
+        (when (and runtime (not (typep agent 'task-child-agent)))
+          (task-unfinished-work--index-settle
+           runtime path
+           :examined (if complete-p
+                         indexed
+                         (loop for entry in scanned
+                               for record = (getf entry :record)
+                               when record collect (getf record :execution-id)))
+           :kept     (mapcar (lambda (row) (getf row :execution-id)) rows)))
         (setf rows (sort rows #'string< :key (lambda (row) (getf row :execution-id)))
               (getf snapshot :total) (length rows)
               (getf snapshot :omitted-count) (length rows))
