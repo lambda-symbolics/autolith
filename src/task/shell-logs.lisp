@@ -250,63 +250,95 @@ Disable measurement until resource resolution has checked ancestor ownership."
       (loop for session in (uiop:subdirectories root)
             append (shell-log--group-directories configuration session)))))
 
+(defparameter *shell-log-sync-evidence-cache* nil
+  "Owner synchronous delivery indexes, freshly bound for each prune; NIL means uncached.")
+
+(-> shell-log--sync-evidence (pathname) hash-table)
+(defun shell-log--sync-evidence (identity)
+  "Index the captures that IDENTITY's active segment records as delivered.
+
+Keys are lists of an execution and an artifact identifier. Each value lists the
+provider call identifiers of the tool results that delivered the capture, with
+:GOAL for mission gate evidence. Only the active segment is read, so one check
+costs at most one segment however long the history grows."
+  (let ((index  (make-hash-table :test #'equal))
+        (active (conversation-storage-active-pathname identity)))
+    (flet ((note (details marker)
+             (when (and (proper-list-p details) (evenp (length details)))
+               (dolist (log (getf details :shell-logs))
+                 (when (eq (getf log :state) ':closed)
+                   (push marker
+                         (gethash (list (getf log :execution-id) (getf log :artifact-id))
+                                  index)))))))
+      (when active
+        (conversation--map-segment-records
+         identity active
+         (lambda (record)
+           (case (first record)
+             (:tool-result
+              (when (member (getf (rest record) :status) '(:ok :error))
+                (note (getf (rest record) :details) (getf (rest record) :call-id))))
+             (:goal
+              (dolist (gate (getf (rest record) :gates))
+                (when (member (getf gate :status) '(:passed :failed))
+                  (note (getf gate :tool-details) ':goal)))))))))
+    index))
+
+(-> shell-log--cached-sync-evidence (pathname) hash-table)
+(defun shell-log--cached-sync-evidence (identity)
+  "Return IDENTITY's delivery index, reading its active segment once per prune."
+  (if *shell-log-sync-evidence-cache*
+      (let ((key (namestring identity)))
+        (or (gethash key *shell-log-sync-evidence-cache*)
+            (setf (gethash key *shell-log-sync-evidence-cache*)
+                  (shell-log--sync-evidence identity))))
+      (shell-log--sync-evidence identity)))
+
+(-> shell-log--sync-settled-p (list) boolean)
+(defun shell-log--sync-settled-p (metadata)
+  "Recognize a synchronous capture old enough that no delivery can still be pending.
+
+A synchronous tool call records its result when the command ends, or never if
+the process died first, so after the retention age the capture is history."
+  (> (- (get-universal-time) (getf metadata :created-at 0))
+     *shell-log-retention-age*))
+
 (-> shell-log--sync-delivered-p (configuration list) boolean)
 (defun shell-log--sync-delivered-p (configuration metadata)
   "Require exact-owner durable tool or mission-gate evidence for terminal sync logs.
-  Match execution, artifact and originating provider call, including stale manifests."
+Match execution, artifact and originating provider call, including stale
+manifests. Evidence comes from the owner's active segment; captures older than
+the retention age need none."
   (let ((root      (getf metadata :root-conversation))
         (owner     (getf metadata :completion-owner-conversation))
         (execution (getf metadata :execution-id))
         (artifact  (getf metadata :artifact-id))
         (call-id   (getf metadata :parent-call-id)))
-    (labels ((delivered-logs-p (logs)
-               (some (lambda (log)
-                       (and (eq (getf log :state) ':closed)
-                            (equal execution (getf log :execution-id))
-                            (equal artifact (getf log :artifact-id))))
-                     logs))
-
-             (delivered-details-p (details)
-               (and (proper-list-p details)
-                    (evenp (length details))
-                    (delivered-logs-p (getf details :shell-logs)))))
-      (and (member (getf metadata :state) '(:closed :interrupted))
-           (not (getf metadata :detached-p t))
-           (every #'shell-log--component-p (list root owner))
-           (handler-case
-               (let* ((identity
-                        (if (equal owner root)
-                            (conversation-pathname-for-id configuration owner)
-                            (shell-log--safe-path
-                             configuration
-                             (merge-pathnames
-                              (make-pathname :name owner :type "sexp")
-                              (merge-pathnames (format nil "~A/" owner)
-                                               (task--artifact-group-root configuration root))))))
-                      (header      (conversation-peek-header identity))
-                      (delivered-p nil))
-                 (when (equal owner (getf (rest header) :id))
-                   (conversation--map-storage-records
-                    identity
-                    (lambda (record)
-                      (when
-                          (case (first record)
-                            (:tool-result
-                             (and (member (getf (rest record) :status) '(:ok :error))
-                                  (or (null call-id)
-                                      (equal call-id (getf (rest record) :call-id)))
-                                  (delivered-details-p (getf (rest record) :details))))
-                            (:goal
-                             (and (null call-id)
-                                  (loop for gate in (getf (rest record) :gates)
-                                        thereis
-                                        (and (member (getf gate :status) '(:passed :failed))
-                                             (delivered-details-p (getf gate :tool-details)))))))
-                        (setf delivered-p t)))))
-                 delivered-p)
-             (error ()
-               nil))
-           t))))
+    (and (member (getf metadata :state) '(:closed :interrupted))
+         (not (getf metadata :detached-p t))
+         (every #'shell-log--component-p (list root owner))
+         (or (shell-log--sync-settled-p metadata)
+             (handler-case
+                 (let* ((identity
+                          (if (equal owner root)
+                              (conversation-pathname-for-id configuration owner)
+                              (shell-log--safe-path
+                               configuration
+                               (merge-pathnames
+                                (make-pathname :name owner :type "sexp")
+                                (merge-pathnames (format nil "~A/" owner)
+                                                 (task--artifact-group-root configuration root))))))
+                        (header (conversation-peek-header identity)))
+                   (and (equal owner (getf (rest header) :id))
+                        (let ((markers (gethash (list execution artifact)
+                                                (shell-log--cached-sync-evidence identity))))
+                          (if call-id
+                              (member call-id markers :test #'equal)
+                              markers))
+                        t))
+               (error ()
+                 nil)))
+         t)))
 
 (defparameter *shell-log-receipt-cache* nil
   "Exact owner receipt snapshots, freshly bound for each prune; NIL means uncached.")
@@ -347,8 +379,9 @@ Any manifest inspection or publication failure vetoes retention of that owner."
                (not (equal root owner)))
     (shell-log--fail "Invalid retained shell log owner identity."))
   (with-shell-log-lock (configuration)
-    (let ((*shell-log-receipt-cache* (make-hash-table :test #'equal))
-          (group                     (task--artifact-group-root configuration root)))
+    (let ((*shell-log-receipt-cache*       (make-hash-table :test #'equal))
+          (*shell-log-sync-evidence-cache* (make-hash-table :test #'equal))
+          (group                           (task--artifact-group-root configuration root)))
       (dolist (directory (shell-log--group-directories configuration group))
         (let ((metadata (shell-log--read-manifest configuration directory :measure-p nil)))
           (unless metadata
@@ -433,14 +466,15 @@ Any manifest inspection or publication failure vetoes retention of that owner."
 (defun shell-log--prune (configuration &key (reservation 0))
   "Reserve finite storage, pruning only closed receipt-backed captures.
 Keep manifests as tombstones so old references have truthful diagnostics."
-  (let* ((*shell-log-receipt-cache* (make-hash-table :test #'equal))
+  (let* ((*shell-log-receipt-cache*       (make-hash-table :test #'equal))
+         (*shell-log-sync-evidence-cache* (make-hash-table :test #'equal))
          (entries
            (loop for directory in (shell-log--directories configuration)
                  for metadata = (shell-log--scan-manifest configuration directory)
                  when (and metadata (not (eq (getf metadata :state) ':pruned)))
                    collect (list directory metadata (getf metadata :accounted-bytes 0))))
-         (total                     (loop for entry in entries sum (third entry)))
-         (count                     (length entries)))
+         (total                           (loop for entry in entries sum (third entry)))
+         (count                           (length entries)))
     (dolist (entry (sort entries #'< :key (lambda (entry) (getf (second entry) :created-at 0))))
       (destructuring-bind (directory metadata accounted-bytes) entry
         (when (and (or (> (+ total reservation) *shell-log-retention-byte-limit*)

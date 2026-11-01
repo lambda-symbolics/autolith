@@ -190,7 +190,13 @@
                 (setf (getf metadata :detached-p) t)
                 (test-assert (not (shell-log--sync-delivered-p configuration metadata))
                              "Detached jobs require a completion receipt, not an ordinary tool result")
-                (setf (getf metadata :detached-p) nil))
+                (setf (getf metadata :detached-p) nil)
+                (let ((settled (copy-list metadata)))
+                  (setf (getf settled :parent-call-id) "never-recorded-call"
+                        (getf settled :created-at)     (- (get-universal-time)
+                                                          *shell-log-retention-age* 1))
+                  (test-assert (shell-log--sync-delivered-p configuration settled)
+                               "A sync capture past the retention age needs no delivery evidence")))
               (let ((replacement (shell-log-allocate context)))
                 (test-assert (eq ':pruned (getf (shell-log--read-manifest
                                                  configuration (shell-log-capture-directory artifact)) :state))
