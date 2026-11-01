@@ -924,7 +924,8 @@
   test-resource-tool-descriptions-follow-registry)
 
 (define-test-suite workspace-resource
-  test-workspace-file-resources)
+  test-workspace-file-resources
+  test-workspace-resource-ergonomics)
 
 (define-test-suite agenda-resource
   test-agenda-resources)
