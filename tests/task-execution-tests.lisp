@@ -118,7 +118,8 @@
                 (tool-registry-find child-registry "search" "content")
                 "general task children inherit native repository search")
                (test-assert
-                (null (tool-registry-find child-registry "self" "status"))
+                (and (null (tool-registry-find child-registry "self" "status"))
+                     (null (tool-registry-find child-registry "lisp" "apropos")))
                 "task children never inherit active-image tools")
                (test-assert
                 (and
