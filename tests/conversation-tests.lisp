@@ -435,6 +435,260 @@
                          "records after the scan keep adding to the totals"))))))
   nil)
 
+(-> test-conversation--legacy-usage (configuration &key (:version (integer 1 2))) conversation)
+(defun test-conversation--legacy-usage (configuration &key (version 2))
+  "Create genuine pre-totals storage and reload it with unknown lifetime usage."
+  (let* ((created  (conversation-create configuration))
+         (identity (conversation-pathname created)))
+    (conversation-append-provider-metadata
+     created '(:usage (("input_tokens" 100) ("output_tokens" 20) ("total_tokens" 120))))
+    (let* ((active (conversation-log-pathname created))
+           (forms  (conversation--read-records active)))
+      (remf (rest (first forms)) :usage-totals)
+      (setf (getf (rest (first forms)) :version) version)
+      (setf (getf (rest (second forms)) :time) 100)
+      (conversation-identifier-migration--write-forms
+       (if (= version 1) identity active) forms)
+      (when (= version 1)
+        (platform-delete-directory-tree
+         *platform* (conversation-storage-directory-pathname identity)
+         :validate t :if-does-not-exist ':ignore)))
+    (conversation-load identity)))
+
+(-> test-conversation-usage-migration () null)
+(defun test-conversation-usage-migration ()
+  "Persist legacy totals with a bounded append and reuse them after reopen and rotation."
+  (dolist (version '(1 2))
+    (with-test-configuration (configuration)
+      (let* ((conversation (test-conversation--legacy-usage configuration :version version))
+             (identity     (conversation-pathname conversation))
+             (path         (conversation-log-pathname conversation))
+             (before       (platform-path-status *platform* path))
+             (map-function (symbol-function 'conversation-map-records))
+             (scans        0))
+        (test-assert (null (conversation-usage-totals conversation))
+                     "old headers do not claim complete lifetime totals")
+        (conversation-append-provider-metadata conversation '(:usage (("input_tokens" 2))))
+        (test-call-with-function-replacements
+         (list (list 'conversation-map-records
+                     (lambda (&rest arguments)
+                       (incf scans)
+                       (apply map-function arguments))))
+         (lambda ()
+           (test-assert (equal '(102 20 120 0 0 nil) (conversation-usage conversation))
+                        "the first migration includes providers appended before the scan")))
+        (test-assert (= scans 1) "migration scans history once")
+        (let ((after (platform-path-status *platform* path)))
+          (test-assert
+           (and (platform-file-status-same-object-p before after)
+                (< (- (platform-file-status-size after) (platform-file-status-size before)) 2048))
+           "migration appends a bounded checkpoint without replacing history"))
+        (test-call-with-function-replacements
+         (list (list 'conversation-map-records
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
+                       (error "Initialized usage must not scan history."))))
+         (lambda ()
+           (let ((loaded (conversation-load identity)))
+             (test-assert (equal '(102 20 120 0 0 nil) (conversation-usage loaded))
+                          "reopening before compaction recovers the durable checkpoint")
+             (conversation-append-provider-metadata loaded '(:usage (("input_tokens" 3))))
+             (conversation-append-summary loaded "usage migration checkpoint")
+             (test-assert
+              (equal '(105 20 120 0 0 nil) (conversation-usage (conversation-load identity)))
+              "rotated headers preserve lifetime usage and subsequent providers")))))))
+  nil)
+
+(-> test-conversation-usage-concurrency () null)
+(defun test-conversation-usage-concurrency ()
+  "Coalesce overlapping status calls while allowing appends, rotation and scan interruption."
+  (dolist (outcome '(:success :error :throw))
+    (with-test-configuration (configuration)
+      (let* ((conversation   (test-conversation--legacy-usage configuration))
+             (map-function   (symbol-function 'conversation-map-records))
+             (entered        (sb-thread:make-semaphore :count 0))
+             (release        (sb-thread:make-semaphore :count 0))
+             (second-started (sb-thread:make-semaphore :count 0))
+             (scans          0)
+             (threads        nil)
+             (expected       '(107 20 120 0 0 nil)))
+        (unwind-protect
+             (test-call-with-function-replacements
+              (list
+               (list 'conversation-map-records
+                     (lambda (&rest arguments)
+                       (let ((first-p (= (incf scans) 1)))
+                         (when first-p
+                           (sb-thread:signal-semaphore entered)
+                           (unless (sb-thread:wait-on-semaphore release :timeout 10)
+                             (error "Usage scan barrier timed out.")))
+                         (prog1 (apply map-function arguments)
+                           (when first-p
+                             (case outcome
+                               (:error
+                                (error "Interrupted usage scan."))
+                               (:throw
+                                (throw 'test-usage-scan :interrupted)))))))))
+              (lambda ()
+                (push (sb-thread:make-thread
+                       (lambda ()
+                         (catch 'test-usage-scan
+                           (handler-case (conversation-usage conversation)
+                             (error () :interrupted)))))
+                      threads)
+                (test-assert (sb-thread:wait-on-semaphore entered :timeout 5)
+                             "the first status call pauses after capturing a coherent boundary")
+                (push (sb-thread:make-thread
+                       (lambda ()
+                         (sb-thread:signal-semaphore second-started)
+                         (conversation-usage conversation)))
+                      threads)
+                (test-assert (sb-thread:wait-on-semaphore second-started :timeout 5)
+                             "a second status call overlaps the first")
+                (push (sb-thread:make-thread
+                       (lambda ()
+                         (conversation-append-provider-metadata
+                          conversation '(:usage (("input_tokens" 3))))
+                         (conversation-append-summary conversation "concurrent rotation")
+                         (conversation-append-provider-metadata
+                          conversation '(:usage (("input_tokens" 4))))
+                         :appended))
+                      threads)
+                (test-assert
+                 (eq :appended (sb-thread:join-thread (first threads) :timeout 5 :default :timeout))
+                 "providers and compaction can append while the history scan is paused")
+                (sb-thread:signal-semaphore release)
+                (test-assert
+                 (equal (if (eq outcome :success) expected :interrupted)
+                        (sb-thread:join-thread (third threads) :timeout 5 :default :timeout))
+                 "the owning scan returns its result or unwinds through cleanup")
+                (test-assert
+                 (equal expected (sb-thread:join-thread (second threads) :timeout 5 :default :timeout))
+                 "the overlapping reader shares success or retries the interrupted scan")
+                (test-assert (= scans (if (eq outcome :success) 1 2))
+                             "only one scan runs at a time and unfinished scans are retryable")
+                (test-assert (and (null (conversation--usage-since conversation))
+                                  (null (conversation--usage-sources conversation)))
+                             "all scan ownership state is cleared")
+                (test-assert
+                 (equal expected
+                        (conversation-usage (conversation-load (conversation-pathname conversation))))
+                 "concurrent providers are persisted exactly once across rotation")))
+          (sb-thread:signal-semaphore release)
+          (dolist (thread threads)
+            (sb-thread:join-thread thread :timeout 5 :default :timeout))))))
+  nil)
+
+(-> test-conversation-usage-checkpoint-recovery () null)
+(defun test-conversation-usage-checkpoint-recovery ()
+  "Retry failed checkpoint writes, including partial and already-durable appends."
+  (dolist (failure '(:before :partial :after :throw-after :publication))
+    (with-test-configuration (configuration)
+      (let* ((conversation     (test-conversation--legacy-usage configuration :version 1))
+             (append-function  (symbol-function 'log-append))
+             (publish-function (symbol-function 'conversation-picker-metadata-publish))
+             (identity         (conversation-pathname conversation)))
+        (test-call-with-function-replacements
+         (list
+          (list 'log-append
+                (lambda (path record &rest arguments)
+                  (if (getf (getf (rest record) :metadata) :usage-checkpoint)
+                      (case failure
+                        (:before
+                         (error "Checkpoint write refused."))
+                        (:partial
+                         (with-open-file (stream path :direction :output :if-exists :append)
+                           (write-string "(" stream))
+                         (error "Checkpoint write interrupted."))
+                        ((:after :throw-after)
+                         (apply append-function path record arguments)
+                         (if (eq failure :after)
+                             (error "Checkpoint write reported failure after publication.")
+                             (throw 'test-usage-write :interrupted)))
+                        (t
+                         (apply append-function path record arguments)))
+                      (apply append-function path record arguments))))
+          (list 'conversation-picker-metadata-publish
+                (lambda (candidate)
+                  (if (eq failure :publication)
+                      (error "Checkpoint sidecar publication failed.")
+                      (funcall publish-function candidate)))))
+         (lambda ()
+           (test-assert
+            (eq :interrupted
+                (catch 'test-usage-write
+                  (handler-case (conversation-usage conversation)
+                    (error () :interrupted))))
+            "checkpoint failure propagates through scan cleanup")))
+        (test-assert (eq (not (null (conversation-usage-totals conversation)))
+                         (not (null (member failure '(:after :throw-after :publication)))))
+                     "only a completed durable checkpoint initializes totals")
+        (conversation-append-provider-metadata conversation '(:usage (("input_tokens" 3))))
+        (test-assert (equal '(103 20 120 0 0 nil) (conversation-usage conversation))
+                     "retry preserves providers after the failed write without double counting")
+        (test-assert
+         (equal '(103 20 120 0 0 nil) (conversation-usage (conversation-load identity)))
+         "checkpoint recovery produces a sequenced, reloadable log"))))
+  nil)
+
+(-> test-conversation-usage-invalid-counters () null)
+(defun test-conversation-usage-invalid-counters ()
+  "Normalize absent, malformed and negative provider counters before durable headers."
+  (with-test-configuration (configuration)
+    (let ((conversation (conversation-create configuration)))
+      (dolist (usage '(nil "invalid" (broken)
+                       (("input_tokens" . 9) ("total_tokens" . 12))
+                       (("input_tokens" -3) ("output_tokens" "bad") ("total_tokens" -1)
+                        ("cached_input_tokens" -2) ("cache_creation_input_tokens" "unknown"))
+                       (("input_tokens" 5) ("output_tokens" 2) ("total_tokens" 7)
+                        ("cached_input_tokens" nil) ("cache_creation_input_tokens" -1))))
+        (conversation-append-provider-metadata conversation (list :usage usage)))
+      (test-assert (equal '(5 2 7 0 0 nil) (conversation-usage conversation))
+                   "unusable cache counters do not imply known cache accounting")
+      (conversation-append-summary conversation "unknown cache accounting")
+      (test-assert
+       (equal '(5 2 7 0 0 nil)
+              (conversation-usage (conversation-load (conversation-pathname conversation))))
+       "unknown cache accounting survives compaction and reload")
+      (conversation-append-provider-metadata
+       conversation '(:usage (("cached_input_tokens" 0) ("cache_creation_input_tokens" 3))))
+      (conversation-append-summary conversation "normalized usage")
+      (test-assert
+       (equal '(5 2 7 0 3 t)
+              (conversation-usage (conversation-load (conversation-pathname conversation))))
+       "normalized counters and known cache creation survive compaction and reload")))
+  nil)
+
+(-> test-conversation-usage-stale-source () null)
+(defun test-conversation-usage-stale-source ()
+  "Reject replacing a migration source instead of publishing totals for another file."
+  (with-test-configuration (configuration)
+    (let* ((conversation (test-conversation--legacy-usage configuration))
+           (map-function (symbol-function 'conversation-map-records))
+           (path         (conversation-log-pathname conversation)))
+      (test-call-with-function-replacements
+       (list (list 'conversation-map-records
+                   (lambda (&rest arguments)
+                     (prog1 (apply map-function arguments)
+                       (conversation-identifier-migration--write-forms
+                        path (conversation--read-records path))))))
+       (lambda ()
+         (test-assert
+          (handler-case (progn (conversation-usage conversation) nil)
+            (conversation-invariant-error () t))
+          "a source replaced during the scan fails the publication guard")))
+      (test-assert (null (conversation-usage-totals conversation))
+                   "rejected source totals are not published")
+      (let ((loaded (conversation-load (conversation-pathname conversation))))
+        (test-assert (equal '(100 20 120 0 0 nil) (conversation-usage loaded))
+                     "reopening the replacement source permits a correct retry")
+        (test-assert (and (= (conversation-working-seconds loaded) 0)
+                          (= (conversation-last-activity-at loaded) 100)
+                          (= (conversation-last-activity-at
+                              (conversation-load (conversation-pathname loaded))) 100))
+                     "a migration checkpoint does not count idle time as provider work"))))
+  nil)
+
 (-> test-conversation-pending-input-identifier-order () null)
 (defun test-conversation-pending-input-identifier-order ()
   "Keep each durable pending-input identifier once, oldest first, across reload."
