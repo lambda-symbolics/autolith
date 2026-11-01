@@ -568,6 +568,10 @@ A missing file's failure also carries its observation for resource.edit."
   "Permit disposable Lisp-worker tools inside child agents."
   t)
 
+(defmethod tool-child-safe-p ((tool lisp-apropos-tool))
+  "Withhold lisp.apropos from child agents, since it only inspects the active image."
+  nil)
+
 (defgeneric tool-storm-guard-exempt-p (tool)
   (:documentation
    "Return true when repeated calls to TOOL must remain available to the model."))
