@@ -1069,6 +1069,16 @@ values from either side of a terminal transition."
    (lambda (job) (session-job-visible-to-agent-p job viewer))
    (task-orchestrator-list-jobs orchestrator)))
 
+(-> task-orchestrator-visible-job-named (task-orchestrator t string) (option session-job))
+(defun task-orchestrator-visible-job-named (orchestrator viewer identifier)
+  "Return VIEWER's visible job whose job or execution identifier is IDENTIFIER.
+
+task.run reports both identifiers, and models pass either one."
+  (find-if (lambda (job)
+             (or (equal identifier (session-job-identifier job))
+                 (equal identifier (session-job-execution-identifier job))))
+           (task-orchestrator-list-visible-jobs orchestrator viewer)))
+
 (-> task-orchestrator-find-visible-job
     (task-orchestrator string &key (:viewer agent) (:tool-name string))
     session-job)
