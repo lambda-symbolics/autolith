@@ -60,9 +60,9 @@
                                   "Live empty task" "424242"
                                   (namestring (config :working-directory configuration)))))
            (select "b6uouHJ" "b6uouHJ")
-            (setf statuses
-                  (append statuses
-                          (list (list :localgroup-status :conversation-id "b6uouHJ" :pid 424243))))
+           (setf statuses
+                 (append statuses
+                         (list (list :localgroup-status :conversation-id "b6uouHJ" :pid 424243))))
            (select "b-6uouHJ" "b6uouHJ")
            (save "abcdef1" "Short exact ID")
            (save "abcdef123456" "Legacy first task")
@@ -91,19 +91,19 @@
   "Exercise parsed detached starts, live reuse, receipts, and rejected options."
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
-    (let* ((identifier "b6uouHJ")
-           (record     (list #p"unused.sexp" :daemon-endpoint
-                             :session-id identifier :pid 424242))
-           (live-p     nil)
-           (spawned    nil)
-           (attached   nil)
-           (operations nil)
+    (let* ((identifier  "b6uouHJ")
+           (record      (list #p"unused.sexp" :daemon-endpoint
+                              :session-id identifier :pid 424242))
+           (live-p      nil)
+           (spawned     nil)
+           (attached    nil)
+           (operations  nil)
            (spawn-error nil)
            (invalid-p   nil))
       (labels ((status ()
                  "Return an authenticated status payload for the fake endpoint."
                  (list :localgroup-status :session-id identifier
-                       :conversation-id (if invalid-p "b6uouHK" identifier)
+                       :conversation-id   (if invalid-p "b6uouHK" identifier)
                        :pid 424242 :cwd "workspace"))
 
                (reject (arguments condition-type)
@@ -131,6 +131,8 @@
                     (declare (ignore configuration))
                     (when spawn-error (error spawn-error))
                     (push arguments spawned)
+                    (when (getf arguments :ready-function)
+                      (funcall (getf arguments :ready-function) identifier))
                     identifier))
             (list 'localgroup-query-record
                   (lambda (entry operation &optional arguments)
@@ -192,16 +194,71 @@
                      spawned nil
                      spawn-error (make-condition 'platform-capability-unavailable
                                                  :capability ':detached-sessions
-                                                 :message "Unavailable for test."))
+                                                 :message    "Unavailable for test."))
                (reject '("--detached") 'platform-capability-unavailable)
                (setf spawn-error (make-condition 'localgroup-error
                                                  :operation ':spawn :message "Launch failed."))
                (reject '("--detached") 'localgroup-error)
                (setf spawn-error nil
                      invalid-p t)
-               (reject '("--detached") 'localgroup-error)
-               (test-assert (member ':kill operations)
-                            "a failed receipt stops the freshly spawned session"))))))))
+               (reject '("--detached") 'localgroup-error))))))))
+  nil)
+
+(-> test-cli-detached-receipt-cleanup () null)
+(defun test-cli-detached-receipt-cleanup ()
+  "Cancel a ready launch if endpoint discovery or receipt authentication fails."
+  (dolist (failure '(:lookup :status))
+    (with-test-configuration (configuration)
+      (configuration-ensure-directories configuration)
+      (let* ((process           (list ':test-process))
+             (ticket            nil)
+             (ready-p           nil)
+             (stopped-p         nil)
+             (released-p        nil)
+             (failure-condition (make-condition 'localgroup-error
+                                                :operation ':status
+                                                :message   "Endpoint unavailable.")))
+        (let ((*localgroup-fresh-launch-function*
+                (lambda (configuration &key handoff-pathname &allow-other-keys)
+                  (declare (ignore configuration))
+                  (setf ticket handoff-pathname)
+                  process))
+              (*localgroup-fresh-wait-function*
+                (lambda (&rest arguments)
+                  (declare (ignore arguments))
+                  (setf ready-p t)
+                  "b6uouHJ"))
+              (*localgroup-handoff-stop-function*
+                (lambda (actual-process pathname)
+                  (test-assert (and (eq process actual-process)
+                                    (equal pathname ticket)
+                                    (probe-file pathname))
+                               "failed startup retains its process and ticket for cancellation")
+                  (setf stopped-p t))))
+          (test-call-with-function-replacements
+           (list
+            (list 'localgroup--find-record
+                  (lambda (configuration identifier)
+                    (declare (ignore configuration identifier))
+                    (when (eq failure ':lookup) (error failure-condition))
+                    (list #p"unused.sexp" :daemon-endpoint :session-id "b6uouHJ" :pid 42)))
+            (list 'localgroup-query-record
+                  (lambda (&rest arguments)
+                    (declare (ignore arguments))
+                    (error failure-condition)))
+            (list 'platform-release-process
+                  (lambda (&rest arguments)
+                    (declare (ignore arguments))
+                    (setf released-p t))))
+           (lambda ()
+             (test-assert
+              (handler-case
+                  (progn (main--start-detached configuration :permission-mode ':ask) nil)
+                (localgroup-error (condition) (eq condition failure-condition)))
+              (format nil "~A receipt failure propagates its original condition" failure))
+             (test-assert (and ready-p stopped-p (not released-p)
+                               ticket (not (probe-file ticket)))
+                          "failed receipt cancels the ready process and deletes its launch ticket")))))))
   nil)
 
 
@@ -213,9 +270,9 @@
   (test-call-with-environment
    (append
     (loop for (variable directory) in '(("XDG_CONFIG_HOME" "config/")
-                                       ("XDG_DATA_HOME" "data/")
-                                       ("XDG_STATE_HOME" "state/")
-                                       ("XDG_CACHE_HOME" "cache/"))
+                                        ("XDG_DATA_HOME" "data/")
+                                        ("XDG_STATE_HOME" "state/")
+                                        ("XDG_CACHE_HOME" "cache/"))
           collect (list variable (namestring (merge-pathnames directory root))))
     (list (list "AUTOLITH_ACTIVE_CORE" (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE"))
           (list "AUTOLITH_SOURCE_ROOT" (namestring (asdf:system-source-directory :autolith)))
@@ -256,10 +313,10 @@
                     (test-assert (and (zerop status) (= (length records) 1))
                                  (format nil "non-TTY detached startup is ready: ~A ~A" output diagnostics))
                     (when records
-                      (let* ((record (first records))
+                      (let* ((record   (first records))
                              (snapshot (getf (rest (localgroup-query-record record ':status)) :status))
-                             (id (getf (rest snapshot) :conversation-id))
-                             (pid (getf (rest snapshot) :pid)))
+                             (id       (getf (rest snapshot) :conversation-id))
+                             (pid      (getf (rest snapshot) :pid)))
                         (test-assert
                          (and (search (conversation-identifier-display id) output)
                               (search (princ-to-string pid) output)
@@ -282,19 +339,19 @@
                           (declare (ignore ignored))
                           (test-assert (and (= missing-status 64) (search "prefix" errors))
                                        "a detached resume without an ID fails at the process boundary"))
-                      (let ((saved (conversation-create configuration :identifier "b6uouHJ")))
-                        (conversation-append-user-message saved "Saved resume fixture")
-                        (multiple-value-bind (resumed errors resume-status)
-                            (run '("resume" "b-6uouHJ" "--detached"))
-                          (setf records (localgroup-endpoint-records configuration))
-                          (let* ((entry (main--live-conversation-record configuration "b6uouHJ"))
-                                 (pid   (and entry (getf (rest (rest entry)) :pid))))
-                            (test-assert
-                             (and (zerop resume-status) entry (= (length records) 2)
-                                  (search "b-6uouHJ" resumed)
-                                  (search (princ-to-string pid) resumed))
-                             (format nil "saved detached resume publishes its original ID and actual PID: ~A ~A"
-                                     resumed errors))))))))
+                       (let ((saved (conversation-create configuration :identifier "b6uouHJ")))
+                         (conversation-append-user-message saved "Saved resume fixture")
+                         (multiple-value-bind (resumed errors resume-status)
+                             (run '("resume" "b-6uouHJ" "--detached"))
+                           (setf records (localgroup-endpoint-records configuration))
+                           (let* ((entry (main--live-conversation-record configuration "b6uouHJ"))
+                                  (pid   (and entry (getf (rest (rest entry)) :pid))))
+                             (test-assert
+                              (and (zerop resume-status) entry (= (length records) 2)
+                                   (search "b-6uouHJ" resumed)
+                                   (search (princ-to-string pid) resumed))
+                              (format nil "saved detached resume publishes its original ID and actual PID: ~A ~A"
+                                      resumed errors))))))))
                (dolist (record (or records (localgroup-endpoint-records configuration)))
                  ; mallet:suppress no-ignore-errors -- cleanup an endpoint which may have exited already
                  (ignore-errors (localgroup-query-record record ':kill))

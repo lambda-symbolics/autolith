@@ -396,19 +396,22 @@ before any shell is involved."
                         (:resume-command-p boolean)
                         (:recovery-diagnosis t)
                         (:attach-expected-p boolean)
+                        (:ready-function (option function))
                         (:pristine-p boolean))
     string)
 (defun localgroup-handoff-spawn-fresh
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
                         resume-command-p recovery-diagnosis pristine-p
-                        (attach-expected-p t))
+                        (attach-expected-p t) ready-function)
   "Launch a detached session and return its ready identifier.
 
 CONVERSATION-ID resumes that conversation instead of starting a fresh
 one, RESUME-COMMAND-P lets the session pick one itself through the
 attached terminal, and RECOVERY-DIAGNOSIS preserves crash diagnosis
 across the client-first launch. When ATTACH-EXPECTED-P is false, the
-session is explicitly detached and its first-attach watchdog is disabled."
+session is explicitly detached and its first-attach watchdog is disabled.
+Call READY-FUNCTION, when supplied, with the ready identifier before
+releasing startup ownership. A nonlocal exit from it cancels the launch."
   (multiple-value-bind (rows columns)
       (terminal-current-size)
     (let* ((created-at  (get-universal-time))
@@ -463,6 +466,8 @@ session is explicitly detached and its first-attach watchdog is disabled."
                                 configuration launch-id)))
                       :operation  ':spawn
                       :session-id session-id))
+             (when ready-function
+               (funcall ready-function session-id))
              (platform-release-process *platform* process)
              (setf completed-p t)
              session-id)
