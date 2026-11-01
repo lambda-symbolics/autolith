@@ -453,7 +453,7 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "A resource URI, SCHEME:IDENTIFIER with a listed scheme, or an absolute native workspace file path. Relative paths require workspace:.")
+                    "A resource URI, SCHEME:IDENTIFIER with a listed scheme, or a native file path; a relative path without a scheme means workspace:PATH.")
              "start-line" (tool-integer-property
                            "The first line to return, starting at 1. Only line-windowed resources accept start-line and line-count; the others reject them.")
              "line-count" (tool-integer-property

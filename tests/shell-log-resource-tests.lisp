@@ -468,13 +468,13 @@
             (test-assert (null (getf next :next-byte-offset)) "The final search page reaches the end")))
         (dolist (case '(("max-results" 51 "query" "x") ("byte-count" 4097)))
           (destructuring-bind (key value &rest more) case
-            (let* ((*resource-read-notes* nil)
+            (let* ((*resource-tool-notes* nil)
                    (result                (shell-log-tests--read
                                            resource context
                                            (apply #'json-object key value more))))
               (test-assert (and (tool-result-success-p result)
                                 (search (format nil "~A ~D was reduced" key value)
-                                        (format nil "~{~A~}" *resource-read-notes*)))
+                                        (format nil "~{~A~}" *resource-tool-notes*)))
                            (format nil "~A above its limit is reduced with a note" key))))))))
   nil)
 

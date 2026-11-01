@@ -137,7 +137,7 @@ asking for a large range costs no extra call."
              :message               (format nil "~A must be an integer between 0 and ~D." key maximum)))
     (if (> value maximum)
         (progn
-          (resource-read-note "~A ~D was reduced to ~D, the most one read returns." key value maximum)
+          (resource-tool-note "~A ~D was reduced to ~D, the most one read returns." key value maximum)
           maximum)
         value)))
 

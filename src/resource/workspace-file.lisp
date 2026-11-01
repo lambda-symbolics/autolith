@@ -818,10 +818,10 @@ already admits the path to the readable roots, so it is not asked again."
              (lines       (workspace-file-observation-lines observation))
              (total-lines (length lines)))
         (when (and (plusp total-lines) (> start-line total-lines))
-          (error 'tool-error
-                 :message   (format nil "Start line ~D is beyond the resource's ~D lines. Request a valid window."
-                                    start-line total-lines)
-                 :tool-name "resource.read"))
+          (let ((last-start (max 1 (1+ (- total-lines line-count)))))
+            (resource-tool-note "Start line ~D is past the end of the ~D-line resource; showing lines ~D-~D."
+                                start-line total-lines last-start total-lines)
+            (setf start-line last-start)))
         (multiple-value-bind (body visible-ranges last-line truncated-p)
             (text--numbered-line-window
              lines

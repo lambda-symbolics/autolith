@@ -827,27 +827,40 @@ A missing file's failure also carries its observation for resource.edit."
 
 (-> resource-tool--resolve (resource-tool tool-context json-object) resource)
 (defun resource-tool--resolve (tool context arguments)
-  "Resolve TOOL's resource URI or absolute native path under exact authority CONTEXT."
+  "Resolve TOOL's resource URI, absolute native path, or scheme-less relative path under CONTEXT.
+
+A relative path names a workspace file, as it would in a shell, so it is read
+as workspace:PATH instead of failing for want of a scheme."
   (let* ((uri (tool-argument arguments "uri" :required t))
          (identity
-           (if (and (non-empty-string-p uri)
-                    (handler-case (uiop:absolute-pathname-p (uiop:parse-native-namestring uri))
-                      (parse-error ()
-                        nil)))
-               (format nil "workspace:~A" (workspace-file--encode-identifier uri))
-               uri)))
+           (cond
+             ((and (non-empty-string-p uri)
+                   (handler-case (uiop:absolute-pathname-p (uiop:parse-native-namestring uri))
+                     (parse-error ()
+                       nil)))
+              (format nil "workspace:~A" (workspace-file--encode-identifier uri)))
+             ((and (non-empty-string-p uri) (not (find #\: uri)))
+              (resource-tool-note "~A has no scheme, so it was read as workspace:~A." uri uri)
+              (format nil "workspace:~A" (workspace-file--encode-identifier uri)))
+             (t
+              uri))))
     (resource-registry-resolve (resource-tool-resource-registry tool) identity context)))
 
-(defvar *resource-read-notes* nil
-  "Notes a resource read collects about arguments it adjusted instead of rejecting.")
+(defvar *resource-tool-notes* ':inactive
+  "Notes a resource tool call collects about arguments it adjusted instead of rejecting.
 
-(-> resource-read-note (string &rest t) null)
-(defun resource-read-note (control &rest arguments)
-  "Record a note, formatted from CONTROL and ARGUMENTS, for the current resource.read result.
+Calls bind it to a list; outside them it is :INACTIVE and notes are dropped,
+so direct adapter calls never accumulate notes in the global value.")
 
-Reads accept natural requests that exceed a limit or name an unsupported
-option, and say what they did, so the model need not retry a failed call."
-  (push (apply #'format nil control arguments) *resource-read-notes*)
+(-> resource-tool-note (string &rest t) null)
+(defun resource-tool-note (control &rest arguments)
+  "Record a note, formatted from CONTROL and ARGUMENTS, for the current resource tool result.
+
+Resource tools accept natural requests that exceed a limit or name an
+unsupported option, and say what they did, so the model need not retry a
+failed call."
+  (when (listp *resource-tool-notes*)
+    (push (apply #'format nil control arguments) *resource-tool-notes*))
   nil)
 
 (-> tool-result-append-notes (tool-result list) tool-result)
@@ -861,16 +874,18 @@ option, and say what they did, so the model need not retry a failed call."
 (defmethod tool-execute
     ((tool resource-read-tool) (context tool-context) (arguments hash-table))
   "Resolve and dispatch one model-facing resource read, appending any adjustment notes."
-  (let ((*resource-read-notes* nil))
+  (let ((*resource-tool-notes* nil))
     (let ((result (resource-tool-read (resource-tool--resolve tool context arguments)
                                       tool context arguments)))
-      (tool-result-append-notes result (reverse *resource-read-notes*)))))
+      (tool-result-append-notes result (reverse *resource-tool-notes*)))))
 
 (defmethod tool-execute
     ((tool resource-edit-tool) (context tool-context) (arguments hash-table))
-  "Resolve and dispatch one model-facing resource edit."
-  (resource-tool-edit (resource-tool--resolve tool context arguments)
-                      tool context arguments))
+  "Resolve and dispatch one model-facing resource edit, appending any adjustment notes."
+  (let ((*resource-tool-notes* nil))
+    (let ((result (resource-tool-edit (resource-tool--resolve tool context arguments)
+                                      tool context arguments)))
+      (tool-result-append-notes result (reverse *resource-tool-notes*)))))
 
 (defmethod tool-child-safe-p ((tool resource-read-tool))
   "Permit authority-confined resource reads inside child agents."
