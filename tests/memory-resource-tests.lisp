@@ -1326,6 +1326,9 @@
         (test-assert (search "event.start(event entity, time instant) v1 workspace key event"
                              (content (read-resource "memory:predicates")))
                      "memory:predicates lists the vocabulary")
+        (test-assert (search "query and max-results were ignored"
+                             (content (read-resource "memory:predicates" "query" "release")))
+                     "a query on a view that cannot search is ignored with a note")
         (test-assert (search "departure v1 workspace: active version 1"
                              (content (read-resource "memory:rules")))
                      "memory:rules lists the admitted rule")

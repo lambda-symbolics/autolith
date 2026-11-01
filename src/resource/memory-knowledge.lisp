@@ -451,7 +451,10 @@ Conflicted facts come first, then the rest by predicate and text."
       (memory-resource--fail "memory: knowledge views are read in full and do not accept line windows."))
     (when (and (or query maximum)
                (not (eq (memory-knowledge-resource-view-kind resource) ':facts)))
-      (memory-resource--fail "Only memory:facts accepts query and max-results."))
+      (resource-tool-note "Only memory:facts searches, so query and max-results were ignored and ~A is shown in full."
+                          (resource-uri resource))
+      (setf query   nil
+            maximum nil))
     (when (and query (not (non-empty-string-p query)))
       (memory-resource--fail "The query must be non-empty text."))
     (when (and maximum (not (and (integerp maximum) (plusp maximum))))
