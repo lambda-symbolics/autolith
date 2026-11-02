@@ -319,10 +319,12 @@ markers reads as intact, which points at the provider rather than the prompt."
                (remove nil
                        (list (and (getf change :fields)
                                   (format nil "~{~A~^, ~} changed" (getf change :fields)))
-                             (and (getf change :first-changed-item)
-                                  (format nil "item ~D of ~D changed"
-                                          (1+ (getf change :first-changed-item))
-                                          (getf change :items)))
+                             (let ((index (getf change :first-changed-item))
+                                   (count (getf change :items)))
+                               (when index
+                                 (if (< index count)
+                                     (format nil "item ~D of ~D changed" (1+ index) count)
+                                     (format nil "item ~D removed" (1+ index)))))
                              (and (getf change :breakpoints-moved-p)
                                   "cache markers moved")))))
          (if parts
