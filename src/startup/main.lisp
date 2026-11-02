@@ -393,7 +393,7 @@ checkpoint work."
     (application-call-with-session-quiesced
      application
      (lambda ()
-       (application-call-with-management-repl-quiesced
+       (management-repl-call-quiesced
         application
         (lambda ()
           (slynk-call-quiesced function)))))))
