@@ -16,10 +16,10 @@
     (let ((workspace (world-tests--workspace root "project")))
       (multiple-value-bind (human home)
           (world-participant-create configuration
-                                    :kind  ':human
-                                    :name  "user"
-                                    :home  (list :workspace workspace :title "Lobby")
-                                    :now   1000)
+                                    :kind ':human
+                                    :name "user"
+                                    :home (list :workspace workspace :title "Lobby")
+                                    :now  1000)
         (test-assert (and (eq (participant-kind human) ':human)
                           (string= (participant-residence human) (channel-identifier home))
                           (string= (channel-owner home) (participant-identifier human))
@@ -33,12 +33,12 @@
                                             :parent    (channel-identifier home)
                                             :now       1001))
                (agent (world-participant-create configuration
-                                                :kind          ':agent
-                                                :name          "autolith"
-                                                :residence     (channel-identifier side)
-                                                :parent        (participant-identifier human)
-                                                :settings      '(:model "gpt-5" :reasoning-effort "medium")
-                                                :now           1002)))
+                                                :kind      ':agent
+                                                :name      "autolith"
+                                                :residence (channel-identifier side)
+                                                :parent    (participant-identifier human)
+                                                :settings  '(:model "gpt-5" :reasoning-effort "medium")
+                                                :now       1002)))
           (test-assert (and (string= (channel-identifier side) "b-side")
                             (equal (channel-parent side) (channel-identifier home)))
                        "an explicit channel identifier and parent are kept")
@@ -49,10 +49,10 @@
           (world-participant-update configuration (participant-identifier agent)
                                     :presence ':present :now 1005)
           (world-channel-update configuration "b-side" :title "Side work" :now 1006)
-          (let* ((world    (world-load configuration))
-                 (agent    (world-participant-find world (participant-identifier agent)))
-                 (human    (world-participant-find world (participant-identifier human)))
-                 (side     (world-channel-find world "b-side")))
+          (let* ((world (world-load configuration))
+                 (agent (world-participant-find world (participant-identifier agent)))
+                 (human (world-participant-find world (participant-identifier human)))
+                 (side  (world-channel-find world "b-side")))
             (test-assert (and (string= (participant-residence agent) (channel-identifier home))
                               (eq (participant-presence agent) ':present)
                               (= (participant-updated-at agent) 1005)
@@ -224,4 +224,95 @@
                      (world-error (condition)
                        (equal (world-error-identifier condition) "p")))
                    "a dangling residence is reported with its participant")))
+  nil)
+
+(-> world-tests--persisted-conversation (configuration string timestamp) conversation)
+(defun world-tests--persisted-conversation (configuration identifier created-at)
+  "Create conversation IDENTIFIER with one durable message."
+  (let ((conversation (conversation-create configuration
+                                          :identifier identifier
+                                          :created-at created-at)))
+    (conversation-append-user-message conversation (format nil "hello from ~A" identifier))
+    conversation))
+
+(-> test-world-session-reconciliation () null)
+(defun test-world-session-reconciliation ()
+  "Test conversations map onto channels and agents, re-sync when newer, and retire when deleted."
+  (with-test-configuration (configuration)
+    (let ((first  (world-tests--persisted-conversation configuration "b-first" 1000))
+          (second (world-tests--persisted-conversation configuration "b-second" 2000)))
+      (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3000)
+        (let ((human          (world-human-participant world))
+              (first-channel  (world-channel-find world "b-first"))
+              (second-channel (world-channel-find world "b-second")))
+          (test-assert (= count 2) "every persisted conversation is migrated")
+          (test-assert (and human first-channel second-channel
+                            (string= (channel-owner first-channel) (participant-identifier human))
+                            (string= (channel-owner second-channel) (participant-identifier human))
+                            (= (channel-created-at first-channel) 1000)
+                            (string= (channel-workspace first-channel)
+                                     (workspace-directory-name
+                                      (config :working-directory configuration))))
+                       "each conversation becomes a channel of its identifier owned by the human")
+          (let ((agent (find ':agent (world-channel-residents world "b-second")
+                             :key #'participant-kind)))
+            (test-assert (and agent
+                              (equal (participant-parent agent) (participant-identifier human))
+                              (string= (participant-name agent) "autolith")
+                              (equal (getf (participant-settings agent) :model)
+                                     (conversation-model second)))
+                         "a migrated session's agent resides in its channel under the human")
+            (test-assert (= (nth-value 1 (world-reconcile-sessions configuration :now 3001)) 0)
+                         "an unchanged conversation is not migrated again")
+            (conversation-append-user-message first "a newer message")
+            (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3002)
+              (test-assert (= count 1) "a newer conversation is migrated again")
+              (test-assert (equal (channel-title (world-channel-find world "b-first"))
+                                  (conversation-title first))
+                           "the channel title follows the conversation")
+              (test-assert (= (length (remove ':human (world-participants world)
+                                              :key #'participant-kind))
+                              2)
+                           "re-migration keeps the same agent participants"))
+            (test-assert (equal (mapcar #'world-session-mapping-conversation
+                                        (world-session-mappings configuration))
+                                '("b-first" "b-second"))
+                         "mappings are kept per conversation")
+            (platform-delete-directory-tree
+             *platform*
+             (conversation-storage-directory-pathname (conversation-pathname second))
+             :validate t)
+            (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3003)
+              (test-assert (= count 1) "a vanished conversation is retired")
+              (test-assert (and (null (world-channel-find world "b-second"))
+                                (null (world-participant-find world (participant-identifier agent)))
+                                (string= (participant-residence (world-human-participant world))
+                                         "b-first"))
+                           "the retired channel and agent are gone and the human moved")
+              (test-assert (equal (mapcar #'world-session-mapping-conversation
+                                          (world-session-mappings configuration))
+                                  '("b-first"))
+                           "the retired mapping is removed"))
+            (test-assert (string= (participant-residence
+                                   (world-session-select configuration "b-first"))
+                                  "b-first")
+                         "selecting a conversation moves the human into its channel"))))))
+  nil)
+
+(-> test-world-application-sync () null)
+(defun test-world-application-sync ()
+  "Test the application hook migrates sessions and tolerates a missing conversation."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "b-hook" 1000)
+    (let ((application (make-instance 'application
+                                      :configuration configuration
+                                      :ui            (terminal-ui-create
+                                                      :terminal (make-instance 'recording-terminal
+                                                                               :columns 80)))))
+      (application-world-sync application :all-p t)
+      (test-assert (world-channel-find (world-load configuration) "b-hook")
+                   "startup sync migrates persisted conversations")
+      (test-assert (handler-case (progn (application-world-sync application) t)
+                     (warning () nil))
+                   "sync without a conversation warns about nothing")))
   nil)
