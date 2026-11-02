@@ -99,51 +99,20 @@ mismatches yield :UNKNOWN; neither read nor transport creates or modifies record
     ((or sb-sys:deadline-timeout error) ()
       ':unknown)))
 
-(-> localgroup--session-prefix-p (string string) boolean)
-(defun localgroup--session-prefix-p (prefix session-id)
-  "Return true when nonempty PREFIX matches SESSION-ID's canonical or displayed form."
-  (let ((prefix     (if (legacy-session-identifier-p session-id)
-                        (string-downcase prefix)
-                        prefix))
-        (identifier (handler-case (session-identifier-normalize session-id)
-                      (localgroup-error () session-id))))
-    (and (non-empty-string-p prefix)
-         (or (uiop:string-prefix-p prefix identifier)
-             (uiop:string-prefix-p prefix (session-identifier-display identifier))))))
-
 (-> localgroup--find-record (configuration string) cons)
 (defun localgroup--find-record (configuration session-id)
-  "Return CONFIGURATION's unique endpoint matching SESSION-ID or its prefix.
+  "Return CONFIGURATION's unique endpoint matching SESSION-ID in full or in part.
 
-Prefer exact identifiers, then normalized identifiers, then unique prefixes."
-  (let* ((records    (localgroup-endpoint-records configuration))
-         (exact      (remove-if-not
-                      (lambda (entry)
-                        (string= session-id (localgroup--record-session-id (rest entry))))
-                      records))
-         (normalized (handler-case (session-identifier-normalize session-id)
-                       (localgroup-error () session-id)))
-         (matches
-           (or exact
-               (remove-if-not
-                (lambda (entry)
-                  (string=
-                   normalized
-                   (handler-case
-                       (session-identifier-normalize
-                        (localgroup--record-session-id (rest entry)))
-                     (localgroup-error ()
-                       (localgroup--record-session-id (rest entry))))))
-                records)
-               (remove-if-not
-                (lambda (entry)
-                  (localgroup--session-prefix-p
-                   session-id (localgroup--record-session-id (rest entry))))
-                records))))
+An exact identifier in canonical or display form wins; otherwise the one
+record whose identifier contains SESSION-ID, compared without regard to case.
+Several matches are reported together and select nothing."
+  (let* ((records (localgroup-endpoint-records configuration))
+         (matches (identifier-match session-id records
+                                    :key (lambda (entry)
+                                           (localgroup--record-session-id (rest entry))))))
     (cond ((null matches)
            (error 'localgroup-error
-                  :message    (format nil "No localgroup session named ~A is running."
-                                      (session-identifier-display session-id))
+                  :message    (format nil "No running localgroup session matches ~S." session-id)
                   :operation  ':discover
                   :session-id session-id))
           ((rest matches)

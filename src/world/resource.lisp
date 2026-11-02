@@ -126,13 +126,21 @@ which the channel's parent names."
                                                 (tool-context-conversation context))))
       ((and (> (length identifier) (length prefix))
             (string= prefix identifier :end2 (length prefix)))
-       (let ((named (conversation-identifier-migration-resolve
-                     (tool-context-configuration context)
-                     (subseq identifier (length prefix)))))
+       (let* ((world (channel-resource--world context))
+              (named (channel-identifier
+                      (handler-case
+                          (world-channel-designated world
+                                                    (tool-context-configuration context)
+                                                    (subseq identifier (length prefix)))
+                        (world-error (condition)
+                          (error 'tool-error
+                                 :message   (autolith-error-message condition)
+                                 :code      ':not-found
+                                 :tool-name "resource.read"))))))
          (channel-resource--make resolver
                                  :uri-identifier (concatenate 'string prefix named)
                                  :context        context
-                                 :world          (channel-resource--world context)
+                                 :world          world
                                  :identifier     named)))
       (t
        (error 'resource-operation-unsupported

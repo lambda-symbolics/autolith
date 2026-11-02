@@ -1249,14 +1249,14 @@ for this terminal."
   (make-command
    :name        "resume"
    :description "resume a saved conversation, or pick one interactively"
-   :usage       "[PREFIX] [--detached]"
+   :usage       "[ID] [--detached]"
    :handler
    (lambda (command)
      (main--start-session
       command
       :resume-requested-p t
        :resume-id         (progn
-                            (main--single-selection command "conversation ID prefix")
+                            (main--single-selection command "conversation ID")
                             (first (command-arguments command)))))))
 
 (-> main--replay-command () clingon:command)

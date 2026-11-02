@@ -2994,7 +2994,9 @@ The current value and its source sit in aligned columns of their own."
     (when (or identifier picker-p)
       (setf (application-project-adaptation-offer-p application) nil))
     (when identifier
-      (application-resume-conversation application identifier)
+      (application-resume-conversation
+       application
+       (application-world-channel-identifier application identifier))
       (application-render-records application)
       (when startup-offer-p
         (application-maybe-offer-project-adaptation application))))

@@ -613,6 +613,7 @@
   test-world-session-reconciliation
   test-world-application-sync
   test-world-channel-resource
+  test-world-channel-resolve
   test-world-channels-command
   test-world-message-send
   test-world-channel-tools
