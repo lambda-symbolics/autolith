@@ -693,6 +693,44 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-rename-command () null)
+(defun test-rename-command ()
+  "Test (rename) naming this channel's agent or a designated participant for @mentions."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (unwind-protect
+         (let ((presented nil))
+           (conversation-append-user-message (application-conversation application) "stay")
+           (test-call-with-function-replacements
+            (list (list 'application-present
+                        (lambda (candidate entry &key identifier)
+                          (declare (ignore candidate identifier))
+                          (push entry presented))))
+            (lambda ()
+              (application--builtin-rename-command application "helper")
+              (test-assert (search "to @helper." (first presented))
+                           "without a target the channel's agent is renamed")
+              (application--builtin-rename-command application "helper" "worker")
+              (test-assert (search "Renamed @helper to @worker." (first presented))
+                           "a participant is designated by its name")
+              (application--builtin-rename-command application "user" "lukas")
+              (test-assert (search "Renamed @user to @lukas." (first presented))
+                           "the person can take a name too")
+              (test-assert (handler-case
+                               (progn (application--builtin-rename-command application "bad name")
+                                      nil)
+                             (world-error () t))
+                           "a name that no @mention could use is refused")
+              (test-assert (handler-case
+                               (progn (application--builtin-rename-command application "nobody" "x")
+                                      nil)
+                             (world-error () t))
+                           "an unknown participant is refused"))))
+      (tool-registry-close-runtime-state (application-tool-registry application))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-call-with-typed-control-application (function) null)
 (defun test-call-with-typed-control-application (function)
   "Call FUNCTION with an isolated public-operation application and observed service actions."

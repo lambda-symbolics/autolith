@@ -20,10 +20,13 @@
   "The name of the one human participant a world starts with.")
 
 (defparameter *world-agent-name* "autolith"
-  "The name of the agent participant a migrated session gets.")
+  "The handle base of a migrated session's agent when its workspace name yields none.
+
+An agent is named after its workspace's directory, so @frob reaches the
+agent working in frob; a second agent there is frob-2.")
 
 (defparameter *world-task-name* "task"
-  "The name of the agent participant a migrated child task gets.")
+  "The handle base of the agent participant a migrated child task gets.")
 
 (defvar *world-sessions-lock* (make-recursive-lock "Autolith world sessions")
   "Serializes in-process reconciliation.")
@@ -197,9 +200,6 @@ resident the migration created, so a session never gets a second agent."
   (or (and mapping (world-participant-find world (world-session-mapping-participant mapping)))
       (find-if (lambda (participant)
                  (and (eq (participant-kind participant) ':agent)
-                      (member (participant-name participant)
-                              (list *world-agent-name* *world-task-name*)
-                              :test #'string=)
                       (participant-parent participant)))
                (sort (world-channel-residents world channel-identifier) #'<
                      :key #'participant-created-at))))
@@ -370,9 +370,13 @@ root's agent while that root exists."
                     (let ((agent (make-instance 'participant
                                                 :identifier (world--generate-identifier preview now)
                                                 :kind       ':agent
-                                                :name       (if (getf change :root)
-                                                                *world-task-name*
-                                                                *world-agent-name*)
+                                                :name       (world-unique-handle
+                                                             preview
+                                                             (if (getf change :root)
+                                                                 *world-task-name*
+                                                                 (world-session--handle-base
+                                                                  (world-session--workspace
+                                                                   configuration header))))
                                                 :parent     (participant-identifier
                                                              (or (root-agent change) owner))
                                                 :residence  (getf change :id)
@@ -430,8 +434,62 @@ root's agent while that root exists."
                                :token        (getf change :token))
                 planned)))
       (dolist (mapping vanished)
-        (retire mapping)))
+        (retire mapping))
+      (dolist (record (world-session--handle-records preview now))
+        (emit record)))
     (values (nreverse records) (nreverse planned) (nreverse ended))))
+
+(-> world-session--handle-base (string) string)
+(defun world-session--handle-base (workspace)
+  "Return the handle base of an agent working in WORKSPACE, its directory's name."
+  (world-handle-base (world-workspace-leaf workspace) :fallback *world-agent-name*))
+
+(-> world-session--handle-records (world timestamp) list)
+(defun world-session--handle-records (world now)
+  "Return the records renaming WORLD's agents whose names another participant also has.
+
+The oldest participant keeps a shared name; each later agent is renamed after
+its channel's workspace, so every participant can be mentioned by name."
+  (let ((seen    nil)
+        (records nil))
+    (dolist (participant (sort (copy-list (world-participants world)) #'<
+                               :key #'participant-created-at))
+      (let ((name (participant-name participant)))
+        (if (or (member name seen :test #'string-equal)
+                (and (eq (participant-kind participant) ':agent)
+                     (not (world-handle-p name))))
+            (let* ((channel (world-channel-find world (participant-residence participant)))
+                   (base    (if channel
+                                (world-session--handle-base (channel-workspace channel))
+                                *world-agent-name*))
+                   (handle  (loop for index from 1
+                                  for candidate = (if (= index 1)
+                                                      base
+                                                      (format nil "~A-~D" base index))
+                                  unless (or (member candidate seen :test #'string-equal)
+                                             (world-participant-named-p world candidate))
+                                    return candidate)))
+              (push handle seen)
+              (push (world--participant-record
+                     (world--copy-participant participant
+                                              :name       handle
+                                              :updated-at (max now (participant-updated-at
+                                                                    participant))))
+                    records))
+            (push name seen))))
+    (nreverse records)))
+
+(-> world-session--duplicate-names-p (world) boolean)
+(defun world-session--duplicate-names-p (world)
+  "Return true when two participants of WORLD share a name, or an agent's name is no handle."
+  (let ((names nil))
+    (dolist (participant (world-participants world) nil)
+      (let ((name (participant-name participant)))
+        (when (or (member name names :test #'string-equal)
+                  (and (eq (participant-kind participant) ':agent)
+                       (not (world-handle-p name))))
+          (return t))
+        (push name names)))))
 
 (-> world-reconcile-sessions
     (configuration &key (:identities list) (:prune-p boolean) (:now timestamp))
@@ -455,7 +513,9 @@ participant and, once empty, their channel."
           (world-session--changes identities mappings :all-p (not identities-p))
         (unless prune-p
           (setf vanished nil))
-        (if (and (null changes) (null vanished))
+        (if (and (null changes)
+                 (null vanished)
+                 (not (world-session--duplicate-names-p (world-load configuration))))
             (values (world-load configuration) 0)
             (let ((updated nil) (ended nil))
               (let ((committed

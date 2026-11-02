@@ -3055,6 +3055,38 @@ the world knows no such channel."
        (application-present application (format nil "Switched to channel ~A." display)))))
   ':continue)
 
+(define-application-command application--builtin-rename-command
+    (:name              "/rename"
+     :argument          "[WHO] NAME"
+     :description       "name a participant for @mentions"
+     :tip               "renames this channel's agent, or the participant WHO names; names are letters, digits, hyphens and underscores."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application first &optional (second nil second-p))
+  (let* ((configuration (application-configuration application))
+         (name          (princ-to-string (if second-p second first)))
+         (participant   (if second-p
+                            (let ((designator (princ-to-string first)))
+                              (or (world-participant-designated
+                                   (values (world-reconcile-sessions configuration))
+                                   designator)
+                                  (error 'world-error
+                                         :message    (format nil "No participant is named ~A." designator)
+                                         :pathname   nil
+                                         :operation  ':rename-participant
+                                         :identifier designator)))
+                            (or (world-session-participant configuration
+                                                           (application-conversation application))
+                                (error 'world-error
+                                       :message   "This channel has no agent participant yet; it gets one with its first durable message."
+                                       :pathname  nil
+                                       :operation ':rename-participant))))
+         (before        (participant-name participant)))
+    (world-participant-rename configuration (participant-identifier participant) name)
+    (application-present application (format nil "Renamed @~A to @~A." before name)))
+  ':continue)
+
 (define-application-command application--builtin-conversations-command
     (:name              "/conversations"
      :argument          nil
