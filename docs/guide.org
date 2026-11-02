@@ -1458,11 +1458,39 @@ description or argument rule makes models fail.
 
 ** Local sessions
 
-Every running Autolith session publishes a private authenticated local endpoint.
-Its session ID is the active conversation ID, shared with =resume= and stable
-across detach, restart and checkpoint quiescence. Selecting another conversation
-with =new=, =resume= or =fork= moves the endpoint to that conversation ID while
-attached terminals continue using the same connection. Inspect endpoints with:
+One server process serves every channel of your world, and =autolith= in a
+directory is a client of it. The first client starts the server detached;
+later clients find it running. The client asks the server to open a channel
+for its directory, which is the most recently changed channel of that
+workspace that no other terminal controls, or a new channel there, and
+attaches to it. =autolith resume ID= opens that channel in the server
+instead. Closing the terminal, detaching or a dropped connection leaves the
+channel running in the server; =(quit)= ends the channel. The server keeps
+running with no channel and no client until you stop it:
+
+#+BEGIN_SRC sh
+autolith lg server
+autolith lg stop
+#+END_SRC
+
+=server= shows the server's process and the channels it hosts; =stop= ends
+every channel and then the server. An update or a rollback chosen in any
+channel stops the server as well, since every channel shares its image. A
+checkpoint from one channel saves the whole process, with that channel as
+the one a rollback resumes, and is refused while another channel is working.
+On Windows the exact-heap checkpoint restarts the process, so the server
+refuses it; run the channel directly to checkpoint it. =--detached= starts a
+standalone session process outside the server, and
+=AUTOLITH_SESSION_STYLE=direct= runs one session in the terminal's own
+process.
+
+Every channel the server hosts, like every directly running session,
+publishes a private authenticated local endpoint. Its session ID is the
+active conversation ID, shared with =resume= and stable across detach,
+restart and checkpoint quiescence. Selecting another conversation with
+=new=, =resume= or =fork= moves the endpoint to that conversation ID while
+attached terminals continue using the same connection. Inspect endpoints
+with:
 
 #+BEGIN_SRC sh
 autolith localgroup status
@@ -1578,7 +1606,9 @@ channel of the same identifier and an agent participant residing there, all
 owned by the one human participant, so =conversation:id/X= and =channel:id/X=
 name the same history. A conversation newer than its channel is migrated
 again onto the same identities, and a deleted conversation retires its channel
-and agent. The world lives in =world/= below the data root.
+and agent. The world lives in =world/= below the data root. One world server
+process hosts the open channels, each with its own endpoint for terminals;
+see Local sessions.
 
 =(channels)= lists every channel with its residents and subscribers, newest
 change first. A child task is a channel nested under its root channel, with
