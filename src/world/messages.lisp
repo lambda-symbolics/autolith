@@ -416,18 +416,9 @@ TEXT. The result is a plist of :id, :channels (every inbox written) and
                                  :pathname   nil
                                  :operation  ':send
                                  :identifier sender)))
-         (target      (world-channel-find world
-                                          (conversation-identifier-migration-resolve
-                                           configuration channel)))
+         (target      (world-channel-designated world configuration channel))
          (text        (world-message--text text))
          (identifier  (make-identifier)))
-    (unless target
-      (error 'world-error
-             :message    (format nil "Channel ~A does not exist. Read channel:list for the channels there are."
-                                 channel)
-             :pathname   nil
-             :operation  ':send
-             :identifier channel))
     (let* ((mentioned (append (world-message-mentions world text)
                               (loop for designator in mentions
                                     for found = (world-message-participant world designator)

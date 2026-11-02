@@ -129,6 +129,15 @@ well, since the steer persists first and the queued turn then skips."
                                        :taken      (application-world-deliveries application)))
         (world-delivery-pending-identifier-p identifier))))
 
+(-> application-world-channel-identifier (application string) string)
+(defun application-world-channel-identifier (application designator)
+  "Return the identifier of the channel DESIGNATOR names in full, by legacy alias or in part."
+  (let ((configuration (application-configuration application)))
+    (channel-identifier
+     (world-channel-designated (values (world-reconcile-sessions configuration))
+                               configuration
+                               designator))))
+
 (-> application-world-send
     (application &key (:channel string) (:text string) (:mentions list))
     list)
