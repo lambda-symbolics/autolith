@@ -414,15 +414,15 @@ Clicking the rendered call's header inserts it into the composer.")
   nil)
 
 (-> application-pending-terminal-size
-    ()
+    (terminal-ui)
     (option (cons (integer 1) (integer 1))))
-(defun application-pending-terminal-size ()
-  "Consume one pending resize and return refreshed rows and columns.
+(defun application-pending-terminal-size (ui)
+  "Consume one pending resize of UI's terminal and return refreshed rows and columns.
 
 A relayed client size takes precedence over local measurement: a
 relayed session cannot measure its terminal, so the packet is the only
 truthful source of dimensions."
-  (let ((relayed (terminal-relayed-resize-consume)))
+  (let ((relayed (terminal-relayed-resize-consume (terminal-ui-terminal ui))))
     (cond
       (relayed
        (setf *terminal-resize-pending-p* nil)

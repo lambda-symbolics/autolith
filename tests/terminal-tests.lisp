@@ -384,48 +384,49 @@
 (-> test-terminal-relayed-resize () null)
 (defun test-terminal-relayed-resize ()
   "Test relayed client resizes reflowing geometry with composition."
-  (let ((*terminal-relayed-resize*   nil)
-        (*terminal-resize-pending-p* nil))
-    (let ((localgroup-terminal (make-instance 'localgroup-terminal
-                                              :columns 60
-                                              :rows    20)))
-      (localgroup-terminal-resize localgroup-terminal :rows     24
-                                                      :columns  120
-                                                      :styled-p t)
-      (test-assert (= (terminal-columns localgroup-terminal) 60)
-                   "a relayed resize packet does not poke dimension slots")
-      (test-assert (equal *terminal-relayed-resize* '(24 . 120))
-                   "a relayed resize packet parks the exact client size"))
+  (let* ((*terminal-resize-pending-p* nil)
+         (terminal                    (make-instance 'localgroup-terminal :columns 60 :rows 20))
+         (other                       (make-instance 'localgroup-terminal :columns 50 :rows 10))
+         (ui                          (terminal-ui-create :terminal terminal)))
+    (localgroup-terminal-resize terminal :rows     24
+                                         :columns  120
+                                         :styled-p t)
+    (test-assert (= (terminal-columns terminal) 60)
+                 "a relayed resize packet does not poke dimension slots")
+    (test-assert (equal (terminal-relayed-resize terminal) '(24 . 120))
+                 "a relayed resize packet parks the exact client size")
+    (test-assert (null (terminal-relayed-resize other))
+                 "a relayed resize stays with the terminal that received it")
     (setf *terminal-resize-pending-p* t)
-    (test-assert (equal (application-pending-terminal-size) '(24 . 120))
+    (test-assert (equal (application-pending-terminal-size ui) '(24 . 120))
                  "a relayed size takes precedence over local measurement")
-    (test-assert (and (null *terminal-relayed-resize*)
+    (test-assert (and (null (terminal-relayed-resize terminal))
                       (not *terminal-resize-pending-p*))
                  "consuming a relayed size clears both pending signals")
-    (test-assert (null (application-pending-terminal-size))
+    (test-assert (null (application-pending-terminal-size ui))
                  "a consumed relayed size does not repeat")
-    (setf *terminal-relayed-resize* (cons 30 100)
-          *terminal-resize-pending-p* t)
+    (terminal-relayed-resize-publish terminal 30 100)
+    (setf *terminal-resize-pending-p* t)
     (let ((consume     (symbol-function 'terminal-relayed-resize-consume))
           (published-p nil))
       (test-call-with-function-replacements
        (list
         (list
          'terminal-relayed-resize-consume
-         (lambda ()
-           (prog1 (funcall consume)
+         (lambda (target)
+           (prog1 (funcall consume target)
              (unless published-p
                (setf published-p t)
-               (terminal-relayed-resize-publish 31 101))))))
+               (terminal-relayed-resize-publish target 31 101))))))
        (lambda ()
          (test-assert
-          (equal (application-pending-terminal-size) '(30 . 100))
+          (equal (application-pending-terminal-size ui) '(30 . 100))
           "the consumer returns the resize it atomically removed")
          (test-assert
-          (equal (application-pending-terminal-size) '(31 . 101))
+          (equal (application-pending-terminal-size ui) '(31 . 101))
           "a resize published during consumption remains pending")
          (test-assert
-          (and (null *terminal-relayed-resize*)
+          (and (null (terminal-relayed-resize terminal))
                (not *terminal-resize-pending-p*))
           "both resize signals clear after consuming the newer relay"))))
     (let* ((terminal (make-instance 'recording-terminal :columns 60))
@@ -434,7 +435,7 @@
         (terminal-ui-process-event
          active-ui
          '(:insert "a relayed resize must reflow this wrapped input line"))
-        (setf *terminal-relayed-resize* (cons 24 120))
+        (terminal-relayed-resize-publish terminal 24 120)
         (recording-terminal-reset terminal)
         (test-assert (terminal-ui-refresh-size
                       active-ui #'application-pending-terminal-size)
@@ -2294,8 +2295,10 @@
                                     :items '((:name "alpha" :description "" :value "value-a")
                                              (:name "beta" :description "" :value "value-b"))
                                     :resize-callback
-                                    (lambda () (unless resized-p
-                                                 (setf resized-p t) (cons 18 32)))))
+                                    (lambda (target)
+                                      (declare (ignore target))
+                                      (unless resized-p
+                                        (setf resized-p t) (cons 18 32)))))
        "filtered picker returns an application's explicit candidate value")
       (test-assert (and (= (terminal-columns terminal) 32)
                         (string= (line-editor-text (terminal-ui-editor ui)) "draft")

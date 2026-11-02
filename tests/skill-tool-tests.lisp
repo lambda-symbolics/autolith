@@ -384,7 +384,9 @@
               (gethash identifier (terminal-ui-finalized-identifiers ui))
               "the Skill marker is retained as finalized scrollback")
              (recording-terminal-reset terminal)
-             (terminal-ui-refresh-size ui (lambda () (cons 25 79)))
+             (terminal-ui-refresh-size ui (lambda (target)
+                                             (declare (ignore target))
+                                             (cons 25 79)))
              (test-assert
               (and (gethash identifier
                             (terminal-ui-finalized-identifiers ui))
