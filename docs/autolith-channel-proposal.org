@@ -13,6 +13,16 @@
 - Migrate each existing session into a channel plus its resident agent, placing
   history/CWD on the channel and context/memories/plans/goals on the agent.
 
+* Temporary session migration
+
+- Until the channel/agent model stabilizes, continuously reconcile legacy sessions
+  with the channels and agents they map onto, rather than migrating only once.
+- If a legacy session is newer than its mapped channel/agent state, migrate it
+  again, overwriting that state from the session.
+- Preserve the session-to-channel/agent mapping and reuse the same identities
+  on repeated migration.
+- Remove this reconciliation mechanism once the new model is stable.
+
 * Abstract types
 
 Draft logical records, not prescribed classes or storage layouts.
@@ -162,4 +172,5 @@ ClientView
 - N:1 startup, reconnection, persistence, concurrent updates, and shared-image mutation.
 - CWD matching and the meaning of "latest touched".
 - Channel URI addressing, bounded-history schema, and supported resource edits.
-- Exact migration fields and removal of existing 1:1 session assumptions.
+- Exact migration fields, freshness comparison, reconciliation triggers, and removal
+  of existing 1:1 session assumptions.
