@@ -15,7 +15,7 @@
             :input-file-descriptor 0
             :rows                  24
             :columns               80))
-         (relay        (localgroup-terminal-create direct))
+         (relay        (localgroup-terminal-create :direct-terminal direct))
          (conversation (conversation-create configuration))
          (ui           (terminal-ui-create :terminal relay))
          (application
