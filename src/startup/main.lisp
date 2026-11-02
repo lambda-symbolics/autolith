@@ -1151,7 +1151,8 @@ for this terminal."
 
 Return NIL when no server could serve it, so the session runs directly. A
 channel that asks the terminal to switch is left running, and the terminal
-attaches to the channel it named, opening it in the server first."
+attaches to the channel it named, opening it in the server first. One
+sidebar of the world follows the terminal from channel to channel."
   (multiple-value-bind (session-id started-p)
       (main--open-world-channel configuration
                                 :permission-mode    permission-mode
@@ -1162,10 +1163,14 @@ attaches to the channel it named, opening it in the server first."
                                 :recovery-diagnosis recovery-diagnosis)
     (when session-id
       (loop
+        with panel = (world-sidebar-create configuration)
+        do
         (let* ((record (localgroup--find-record configuration session-id))
                (exit
                  (handler-case
-                     (localgroup-attach-record configuration record ':control)
+                     (progn
+                       (setf (world-sidebar-current panel) session-id)
+                       (localgroup-attach-record configuration record ':control :panel panel))
                    (serious-condition (condition)
                      ;; A channel started for this terminal would otherwise
                      ;; idle in the server; one that already served others
