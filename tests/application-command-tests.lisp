@@ -1013,7 +1013,7 @@
             (not echo-disabled-p)
             (= descriptor 7))
        "stream terminals expose their direct authentication streams")))
-  (let ((terminal (localgroup-terminal-create nil)))
+  (let ((terminal (localgroup-terminal-create)))
     (multiple-value-bind
           (input output stop-ui-p echo-disabled-p descriptor)
         (terminal-authentication-streams terminal)
