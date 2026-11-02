@@ -1445,6 +1445,7 @@
   test-cli-resume-prefixes
   test-cli-detached-dispatch
   test-cli-detached-receipt-cleanup
+  test-cli-world-client-start
   test-cli-detached-process)
 
 ;;; The release scripts and the release server that drives them deploy to

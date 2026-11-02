@@ -1001,7 +1001,9 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
          (localgroup--operation-command
           "pause" "pause a detached session" ':pause)
          (localgroup--operation-command
-          "kill" "terminate a detached session" ':kill))
+          "kill" "terminate a detached session" ':kill)
+         (world-client--server-command)
+         (world-client--stop-command))
    :handler
    (lambda (command)
      (when (command-arguments command)
