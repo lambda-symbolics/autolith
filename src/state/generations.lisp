@@ -623,13 +623,16 @@ configuration error rather than a silent restart without publication."
   "Begin a validated checkpoint of CONTEXT's active image."
   (declare (ignore tool arguments))
   (let* ((configuration (tool-context-configuration context))
-         (backend       (checkpoint-backend-create
-                         configuration
-                         (tool-context-worker context)
-                         :tool-registry (tool-context-registry context)))
-         (generation    (checkpoint-create backend))
          (application   (and (boundp '*active-application*)
-                            (symbol-value '*active-application*))))
+                            (symbol-value '*active-application*)))
+         (backend       (progn
+                          (when (typep application 'application)
+                            (application--refuse-hosted-restart-checkpoint application))
+                          (checkpoint-backend-create
+                           configuration
+                           (tool-context-worker context)
+                           :tool-registry (tool-context-registry context))))
+         (generation    (checkpoint-create backend)))
     (if (and (platform-supports-p *platform* ':restartable-image-saver)
              (typep application 'application))
         (progn

@@ -58,6 +58,14 @@
   "Return CONFIGURATION's private localgroup endpoint directory."
   (merge-pathnames "localgroup/" (config :state-root configuration)))
 
+(-> localgroup-world-directory (configuration) pathname)
+(defun localgroup-world-directory (configuration)
+  "Return CONFIGURATION's private directory holding the world server's endpoint record.
+
+It sits apart from the channel endpoints, so session listings never show the
+server itself."
+  (merge-pathnames "world/" (localgroup-registry-directory configuration)))
+
 (-> localgroup-registry-pathname (configuration string) pathname)
 (defun localgroup-registry-pathname (configuration session-id)
   "Return the discovery pathname for SESSION-ID under CONFIGURATION."

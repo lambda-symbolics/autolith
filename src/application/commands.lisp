@@ -2314,9 +2314,25 @@ INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT to TERMINAL-UI-SELECT."
                   (application-configuration application)) model)))))
   nil)
 
+(-> application--refuse-hosted-restart-checkpoint ((option application)) null)
+(defun application--refuse-hosted-restart-checkpoint (application)
+  "Refuse an exact-heap checkpoint for APPLICATION when a world server hosts it.
+
+Such a checkpoint saves and restarts the whole process, which would end every
+other channel the server hosts."
+  (when (and application
+             (application-hosted-p application)
+             (platform-supports-p *platform* ':restartable-image-saver))
+    (error 'checkpoint-error
+           :message  "An exact-heap checkpoint restarts the whole process, which a world server hosting several channels cannot do. Run this channel directly with AUTOLITH_SESSION_STYLE=direct to checkpoint it."
+           :stage    ':validation
+           :pathname nil))
+  nil)
+
 (-> application-checkpoint (application) null)
 (defun application-checkpoint (application)
   "Begin a retained generation for APPLICATION."
+  (application--refuse-hosted-restart-checkpoint application)
   (application-set-activity application "checking source before checkpoint")
   (unwind-protect
        (let* ((configuration (application-configuration application))

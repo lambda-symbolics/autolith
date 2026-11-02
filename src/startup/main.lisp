@@ -430,6 +430,7 @@ once its endpoint is published. Return the controller's exit reason."
          (recovery-input-storage-ready-p
            (or (not recovery-startup-p)
                (application-recovery-input-vault-import application))))
+    (setf (application-hosted-p application) hosted-p)
     (when (and (config :fullscreen-p (application-configuration application))
                (not (terminal-ui-fullscreen-p ui)))
       (change-class ui 'fullscreen-terminal-ui))
@@ -971,6 +972,14 @@ state, including an empty list after successful or pristine startup."
     (when handoff-record
       (localgroup-handoff-begin-startup handoff-record)
       (application--clear-recovery-environment))
+    (when (and handoff-record (getf (rest handoff-record) :world-p))
+      (let* ((*localgroup-startup-record* handoff-record)
+             (status                      (world-server-run configuration
+                                                            :permission-mode permission-mode
+                                                            :pristine-p      pristine-p)))
+        (when status
+          (uiop:quit status)))
+      (return-from main--start-session nil))
     (unless handoff-record
       (let ((record (and effective-resume-id
                          (main--live-conversation-record configuration effective-resume-id))))
