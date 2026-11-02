@@ -40,6 +40,12 @@
     :accessor      localgroup-session-controller-seen-p
     :type          boolean
     :documentation "Whether any controlling client has ever attached to this endpoint.")
+   (linger-p
+    :initarg       :linger-p
+    :initform      nil
+    :accessor      localgroup-session-linger-p
+    :type          boolean
+    :documentation "Whether the session outlives every client, as a world server's channels do.")
    (attach-watchdog-thread
     :initform      nil
     :accessor      localgroup-session-attach-watchdog-thread
@@ -346,11 +352,12 @@ conversation transaction can roll back before releasing either lease."
 
 (-> localgroup--controller-lost (localgroup-session) boolean)
 (defun localgroup--controller-lost (session)
-  "Request SESSION's exit if the controlling client disconnected without detaching.
-Pending input is saved and any active turn is cancelled. Return true when requested."
+  "Exit SESSION after controller loss unless explicitly detached or hosted to linger.
+Persist pending input and cancel any active turn when exiting. Return true on exit."
   (let ((exit-p
          (with-lock-held ((image-daemon:daemon-runtime-lock session))
-           (not (localgroup-session-detached-explicitly-p session)))))
+           (not (or (localgroup-session-detached-explicitly-p session)
+                    (localgroup-session-linger-p session))))))
     (when exit-p (localgroup--exit-abandoned-session session))
     exit-p))
 
@@ -567,11 +574,16 @@ relay; a terminal that already disconnected costs nothing."
 (-> localgroup-start
     (application
      &key (:token (option string)) (:created-at (option integer))
-       (:detached-explicitly-p t) (:checkpoint-reconnect-id (option string)))
+       (:detached-explicitly-p t) (:checkpoint-reconnect-id (option string))
+       (:linger-p boolean))
     localgroup-session)
 (defun localgroup-start
-    (application &key token created-at detached-explicitly-p checkpoint-reconnect-id)
-  "Publish APPLICATION's active conversation with its product startup choreography."
+    (application &key token created-at detached-explicitly-p checkpoint-reconnect-id
+                      linger-p)
+  "Publish APPLICATION's active conversation with its product startup choreography.
+
+With LINGER-P the session outlives its clients instead of exiting when the
+last controlling client vanishes."
   (let* ((restart-p      (not (null token)))
          (startup-values (and *localgroup-startup-record* (rest *localgroup-startup-record*)))
          (configuration  (application-configuration application))
@@ -590,7 +602,8 @@ relay; a terminal that already disconnected costs nothing."
                                           :detached-explicitly-p
                                           (or detached-explicitly-p
                                               (localgroup--initially-detached-p startup-values))
-                                          :checkpoint-reconnect-id checkpoint-reconnect-id)
+                                          :checkpoint-reconnect-id checkpoint-reconnect-id
+                                          :linger-p                linger-p)
                   :request-function #'localgroup--handle-request
                   :error-function   (lambda (condition)
                                       (format *error-output*

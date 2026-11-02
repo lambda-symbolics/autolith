@@ -319,17 +319,48 @@
   nil)
 
 (-> test-localgroup--abandonment-fixture
-    (configuration &key (:persisted-p boolean))
+    (configuration &key (:persisted-p boolean) (:linger-p boolean))
     (values application application-input-controller localgroup-terminal
             localgroup-session))
-(defun test-localgroup--abandonment-fixture (configuration &key persisted-p)
+(defun test-localgroup--abandonment-fixture (configuration &key persisted-p linger-p)
   "Return a started relay APPLICATION whose foreground terminal was released."
   (configuration-ensure-directories configuration)
   (multiple-value-bind (application controller relay)
       (test-localgroup--relay-application configuration :persisted-p persisted-p)
-    (let ((session (localgroup-start application)))
+    (let ((session (localgroup-start application :linger-p linger-p)))
       (image-daemon:relay-release-direct relay)
       (values application controller relay session))))
+
+(-> test-localgroup-lingering-session () null)
+(defun test-localgroup-lingering-session ()
+  "Test a lingering session surviving lost clients and checkpoint restarts."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (application   nil)
+         (controller    nil))
+    (unwind-protect
+        (multiple-value-bind (fixture-application fixture-controller relay session)
+            (test-localgroup--abandonment-fixture configuration :persisted-p t :linger-p t)
+          (declare (ignore relay))
+          (setf application fixture-application
+                controller fixture-controller)
+          (application-input-controller--enqueue controller ':message "queued input")
+          (localgroup--note-controller-attached session)
+          (test-assert
+           (and (not (localgroup--controller-lost session))
+                (null (application-input-controller-exit-reason controller)))
+           "a lingering session outlives a client that vanished without detaching")
+          (application-call-with-localgroup-quiesced application (lambda () nil))
+          (let ((restarted (application-localgroup-session application)))
+            (test-assert
+             (and restarted
+                  (not (eq restarted session))
+                  (localgroup-session-linger-p restarted)
+                  (not (localgroup--controller-lost restarted))
+                  (null (application-input-controller-exit-reason controller)))
+             "a checkpoint restart keeps the session lingering")))
+      (test-localgroup--abandonment-cleanup application controller root)))
+  nil)
 
 (-> test-localgroup--abandonment-cleanup
     ((option application) (option application-input-controller) pathname)
