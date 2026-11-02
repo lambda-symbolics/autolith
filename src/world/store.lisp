@@ -466,6 +466,55 @@ batch that would leave a dangling reference is refused whole."
   "Return WORLD's channel IDENTIFIER, or NIL."
   (values (gethash identifier (world--channel-table world))))
 
+(-> world--channel-label (channel) string)
+(defun world--channel-label (channel)
+  "Return CHANNEL's display identifier followed by its title, when it has one."
+  (format nil "~A~@[  ~A~]"
+          (conversation-identifier-display (channel-identifier channel))
+          (channel-title channel)))
+
+(-> world-channel-resolve (world string) channel)
+(defun world-channel-resolve (world fragment)
+  "Return the one channel of WORLD that FRAGMENT names in full or in part.
+
+An exact identifier in canonical or display form wins; otherwise the one
+channel whose identifier contains FRAGMENT, compared without regard to case.
+Several matches are reported together, newest change first, and select
+nothing; so does no match."
+  (let ((matches (identifier-match fragment (world-channels world) :key #'channel-identifier)))
+    (cond
+      ((null matches)
+       (error 'world-error
+              :message    (format nil "Channel ~A does not exist. Read channel:list for the channels there are."
+                                  fragment)
+              :pathname   nil
+              :operation  ':resolve
+              :identifier fragment))
+      ((rest matches)
+       (error 'world-error
+              :message    (format nil "Channel ID ~S is ambiguous. Matching channels:~%~{  ~A~^~%~}"
+                                  fragment
+                                  (mapcar #'world--channel-label matches))
+              :pathname   nil
+              :operation  ':resolve
+              :identifier fragment))
+      (t
+       (first matches)))))
+
+(-> world-channel-designated (world configuration string) channel)
+(defun world-channel-designated (world configuration designator)
+  "Return the channel DESIGNATOR names in WORLD by identifier, legacy alias or fragment.
+
+A full identifier, in either form or as a retained legacy alias of
+CONFIGURATION, names its channel directly; anything else is resolved as a
+fragment through WORLD-CHANNEL-RESOLVE."
+  (or (let ((resolved (handler-case
+                          (conversation-identifier-migration-resolve configuration designator)
+                        (conversation-error ()
+                          nil))))
+        (and resolved (world-channel-find world resolved)))
+      (world-channel-resolve world designator)))
+
 (-> world--newest-first (list function function) list)
 (defun world--newest-first (items updated-at identifier)
   "Return ITEMS ordered by descending UPDATED-AT, then by IDENTIFIER."

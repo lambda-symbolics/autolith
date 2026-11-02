@@ -24,11 +24,13 @@
             title directory date preview (getf status :pid))))
 
 (-> main-resolve-conversation (configuration string) string)
-(defun main-resolve-conversation (configuration prefix)
-  "Resolve PREFIX against saved and live conversations, preferring exact IDs.
+(defun main-resolve-conversation (configuration fragment)
+  "Resolve FRAGMENT against saved and live conversations, preferring exact IDs.
 
-Accept canonical and displayed prefixes with localgroup's case conventions.
-Report every ambiguous match with its full displayed ID and available metadata."
+An exact identifier in canonical or display form wins; otherwise the one
+conversation whose identifier contains FRAGMENT, compared without regard to
+case. Report every ambiguous match with its full displayed ID and available
+metadata."
   (let* ((pathnames (conversation-list configuration))
          (statuses  (mapcar #'rest (localgroup-statuses configuration)))
          (identifiers
@@ -38,42 +40,29 @@ Report every ambiguous match with its full displayed ID and available metadata."
                           for identifier = (getf status :conversation-id)
                           when (non-empty-string-p identifier)
                             collect identifier))
-            :test #'string=)))
-    (labels ((normalize (identifier)
-               "Return a normalized full ID or an unchanged prefix."
-               (handler-case (session-identifier-normalize identifier)
-                 (localgroup-error () identifier))))
-      (let* ((exact      (find prefix identifiers :test #'string=))
-             (normalized (normalize prefix))
-             (matches
-               (or (and exact (list exact))
-                   (remove-if-not
-                    (lambda (identifier) (string= normalized (normalize identifier)))
-                    identifiers)
-                   (remove-if-not
-                    (lambda (identifier) (localgroup--session-prefix-p prefix identifier))
-                    identifiers))))
-        (cond
-          ((null matches)
-           (error 'configuration-error
-                  :message (format nil "No saved or running conversation matches ~S." prefix)))
-          ((rest matches)
-           (error 'configuration-error
-                  :message
-                  (format nil "Conversation ID prefix ~S is ambiguous. Use a longer prefix or a full ID:~%~{  ~A~%~}"
-                          prefix
-                          (loop for identifier in (sort matches #'string<)
-                                collect
-                                (main--resume-match-description
-                                 identifier
-                                 :pathname (find identifier pathnames
-                                                 :key #'pathname-name :test #'string=)
-                                 :status   (find identifier statuses
-                                                 :key  (lambda (status)
-                                                         (getf status :conversation-id))
-                                                 :test #'equal))))))
-          (t
-           (first matches)))))))
+            :test #'string=))
+         (matches   (identifier-match fragment identifiers)))
+    (cond
+      ((null matches)
+       (error 'configuration-error
+              :message (format nil "No saved or running conversation matches ~S." fragment)))
+      ((rest matches)
+       (error 'configuration-error
+              :message
+              (format nil "Conversation ID ~S is ambiguous. Use a longer fragment or a full ID:~%~{  ~A~%~}"
+                      fragment
+                      (loop for identifier in (sort (copy-list matches) #'string<)
+                            collect
+                            (main--resume-match-description
+                             identifier
+                             :pathname (find identifier pathnames
+                                             :key #'pathname-name :test #'string=)
+                             :status   (find identifier statuses
+                                             :key  (lambda (status)
+                                                     (getf status :conversation-id))
+                                             :test #'equal))))))
+      (t
+       (first matches)))))
 
 
 ;;;; -- Explicit Detached Starts --
@@ -86,7 +75,7 @@ Report every ambiguous match with its full displayed ID and available metadata."
   (when (getopt* command ':detached)
     (when (and resume-requested-p (not (non-empty-string-p resume-id)))
       (error 'configuration-error
-             :message "Detached resume requires a conversation ID prefix: autolith resume PREFIX --detached."))
+             :message "Detached resume requires a conversation ID: autolith resume ID --detached."))
     (dolist (option '(:images :simulate-crash :localgroup-handoff))
       (when (getopt* command option)
         (error 'configuration-error

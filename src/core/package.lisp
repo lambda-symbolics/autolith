@@ -815,6 +815,7 @@
                 #:identifier-error-message
                 #:identifier-from-seed
                 #:identifier-generate
+                #:identifier-match
                 #:identifier-normalize
                 #:identifier-p
                 #:identifier-reserved-p
