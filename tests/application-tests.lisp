@@ -3523,7 +3523,8 @@
                        (declare (ignore arguments))
                        configuration))
                (list 'application-terminal-ui-create
-                     (lambda ()
+                     (lambda (&key relay-presentation)
+                       (declare (ignore relay-presentation))
                        (terminal-ui-create
                         :terminal
                         (make-instance 'recording-terminal :columns 80)))))
@@ -7681,7 +7682,8 @@
                           :immutable-p       immutable-p)))
                       (list
                        'application-terminal-ui-create
-                       (lambda ()
+                       (lambda (&key relay-presentation)
+                         (declare (ignore relay-presentation))
                          (terminal-ui-create
                           :terminal
                           (make-instance
