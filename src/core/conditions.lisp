@@ -351,6 +351,25 @@
                      (permissions-load-warning-cause condition))))
   (:documentation "Malformed command permissions were ignored to fail closed."))
 
+(define-condition world-error (autolith-error)
+  ((pathname
+    :initarg       :pathname
+    :reader        world-error-pathname
+    :type          (option pathname)
+    :documentation "The world record file being read or written, when one is involved.")
+   (operation
+    :initarg       :operation
+    :reader        world-error-operation
+    :type          keyword
+    :documentation "The world operation that failed.")
+   (identifier
+    :initarg       :identifier
+    :initform      nil
+    :reader        world-error-identifier
+    :type          (option string)
+    :documentation "The participant or channel identifier involved, when known."))
+  (:documentation "The world of channels and participants could not be validated, read, or changed."))
+
 (define-condition agenda-error (autolith-error)
   ((pathname
     :initarg       :pathname
