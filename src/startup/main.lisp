@@ -368,20 +368,62 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
     (t
      nil)))
 
-(-> application-run
+(-> application-call-with-session-quiesced (application function) t)
+(defun application-call-with-session-quiesced (application function)
+  "Call FUNCTION while APPLICATION's reader, update check and endpoint threads are stopped.
+
+Attached clients reconnect to the endpoint restarted afterwards. Without a
+controller, only the update check and the endpoint are quiesced."
+  (let ((controller (application-input-controller application)))
+    (flet ((quiesced ()
+             "Join the update check and quiesce the endpoint around FUNCTION."
+             (application--quiesce-update-check application)
+             (application-call-with-localgroup-quiesced application function)))
+      (if controller
+          (application-input-controller-call-with-reader-paused controller #'quiesced)
+          (quiesced)))))
+
+(-> application--direct-quiescer (application) function)
+(defun application--direct-quiescer (application)
+  "Return the checkpoint quiescer of a direct session owning APPLICATION's process.
+
+It stops the session threads, the management REPL and Slynk around the
+checkpoint work."
+  (lambda (function)
+    (application-call-with-session-quiesced
+     application
+     (lambda ()
+       (application-call-with-management-repl-quiesced
+        application
+        (lambda ()
+          (slynk-call-quiesced function)))))))
+
+(-> application-serve
     (application &key (:initial-command (option string))
                       (:initial-input (option user-message-input))
                       (:recovery-diagnosis (option string))
-                      (:resume-offer-p boolean))
-    null)
-(defun application-run
+                      (:resume-offer-p boolean)
+                      (:hosted-p boolean)
+                      (:quiescer (option function))
+                      (:ready-function (option function)))
+    (option keyword))
+(defun application-serve
     (application &key initial-command initial-input recovery-diagnosis
-                      resume-offer-p)
-  "Run APPLICATION with responsive input, always restoring terminal and workers."
+                      resume-offer-p hosted-p quiescer ready-function)
+  "Serve APPLICATION's session on this thread until it exits, then release its resources.
+
+A direct session owns its process: APPLICATION-RUN wraps this function with
+the terminal resize watch, and this function starts and stops the management
+REPL, Slynk and telemetry with the session. With HOSTED-P the application is
+one of several a world server hosts, each on its own thread: its endpoint
+lingers without clients, the process services stay with the server, and
+QUIESCER, a function of one thunk, runs checkpoint work with every hosted
+session stopped. READY-FUNCTION, when supplied, is called with APPLICATION
+once its endpoint is published. Return the controller's exit reason."
   (let* ((ui                     (application-ui application))
          (worker                 (application-worker application))
          (input-controller       nil)
-         (resize-watch           nil)
+         (exit-reason            nil)
          (tool-runtimes-closed-p nil)
          (worker-stopped-p       nil)
          (recovery-startup-p     (application-recovery-startup-p application))
@@ -397,10 +439,11 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                "Close APPLICATION's external runtimes at most once."
                ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
                (ignore-errors (localgroup-stop application))
-               ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
-               (ignore-errors (management-repl-stop application))
-               ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
-               (ignore-errors (slynk-stop))
+               (unless hosted-p
+                 ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
+                 (ignore-errors (management-repl-stop application))
+                 ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
+                 (ignore-errors (slynk-stop)))
                (unless tool-runtimes-closed-p
                  (unwind-protect
                       ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
@@ -416,9 +459,10 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                       (when worker
                         (lisp-worker-manager-stop worker))
                    (setf worker-stopped-p t)))
-               ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
-               (ignore-errors (rlm-environment-pool-flush))
-               (telemetry--call-safely #'telemetry-shutdown)
+               (unless hosted-p
+                 ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
+                 (ignore-errors (rlm-environment-pool-flush))
+                 (telemetry--call-safely #'telemetry-shutdown))
                (conversation-picker-search-close
                 (application-conversation application))
                (application-release-conversation-lease application)
@@ -432,11 +476,6 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                       input-controller #'close-runtime-resources)
                      (setf input-controller nil))
                    (close-runtime-resources))))
-      (setf resize-watch
-            (platform-watch-terminal-resize
-             *platform*
-             (lambda ()
-               (setf *terminal-resize-pending-p* t))))
       (unwind-protect
            (with-terminal-ui (active-ui ui)
              (unwind-protect
@@ -497,13 +536,16 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                      application)
                     (application-present-generation-health-warning
                      application)
-                    (localgroup-start application)
+                    (localgroup-start application :linger-p hosted-p)
+                    (when ready-function
+                      (funcall ready-function application))
                     (application-startup-presentation
                      application input-controller
                      :onboarding-p (null recovery-diagnosis))
-                    (management-repl-start application)
-                    (slynk-start (application-configuration application)
-                                 :background-p t)
+                    (unless hosted-p
+                      (management-repl-start application)
+                      (slynk-start (application-configuration application)
+                                   :background-p t))
                     (application-input-controller--open-prompt-if-ready
                      input-controller)
                     (application-input-controller--start-reader
@@ -511,18 +553,7 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                     ;; Entering the interactive debugger would hang the raw
                     ;; terminal, so debugger entry becomes fatal recovery.
                     (let ((*checkpoint-thread-quiescer*
-                            (lambda (function)
-                              (application-input-controller-call-with-reader-paused
-                               input-controller
-                               (lambda ()
-                                 (application--quiesce-update-check application)
-                                 (application-call-with-localgroup-quiesced
-                                  application
-                                  (lambda ()
-                                    (application-call-with-management-repl-quiesced
-                                     application
-                                     (lambda ()
-                                       (slynk-call-quiesced function)))))))))
+                            (or quiescer (application--direct-quiescer application)))
                           (*debugger-hook*
                             (lambda (condition hook)
                               (declare (ignore hook))
@@ -562,13 +593,39 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                            (application-input-failed-original-condition
                             condition)
                            (application-input-failed-backtrace condition)))))
-                    (when (eq (application-input-controller-exit-reason
-                               input-controller)
-                              ':interrupt)
+                    (setf exit-reason
+                          (application-input-controller-exit-reason input-controller))
+                    (when (eq exit-reason ':interrupt)
                       (application--present-resume-instruction application)))
                (finish-shutdown)))
-        (platform-unwatch-terminal-resize *platform* resize-watch)
-        (finish-shutdown))))
+        (finish-shutdown)))
+    exit-reason))
+
+(-> application-run
+    (application &key (:initial-command (option string))
+                      (:initial-input (option user-message-input))
+                      (:recovery-diagnosis (option string))
+                      (:resume-offer-p boolean))
+    null)
+(defun application-run
+    (application &key initial-command initial-input recovery-diagnosis
+                      resume-offer-p)
+  "Run APPLICATION as this process's direct session, always restoring the terminal.
+
+The kernel's resize signal is watched for the session's lifetime; everything
+else about the session is APPLICATION-SERVE's."
+  (let ((resize-watch
+          (platform-watch-terminal-resize
+           *platform*
+           (lambda ()
+             (setf *terminal-resize-pending-p* t)))))
+    (unwind-protect
+         (application-serve application
+                            :initial-command    initial-command
+                            :initial-input      initial-input
+                            :recovery-diagnosis recovery-diagnosis
+                            :resume-offer-p     resume-offer-p)
+      (platform-unwatch-terminal-resize *platform* resize-watch)))
   nil)
 
 
