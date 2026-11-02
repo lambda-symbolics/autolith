@@ -449,6 +449,9 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
      (make-instance 'conversation-resolver :scheme "conversation"))
     (resource-registry-register
      resource-registry
+     (make-instance 'channel-resolver :scheme "channel"))
+    (resource-registry-register
+     resource-registry
      (make-instance 'shell-log-resolver :scheme "shell-log"))
     (dolist
         (specification

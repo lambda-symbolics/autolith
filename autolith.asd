@@ -319,6 +319,7 @@
                                           (:file "conversation/tool-failures")
                                           (:file "conversation/search")
                                           (:file "resource/conversation")
+                                          (:file "world/resource")
                                           (:file "management/repl")
                                           (:file "slynk/endpoint")
                                           (:file "application/change-viewer")

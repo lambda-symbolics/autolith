@@ -635,7 +635,9 @@
   test-world-deletion-rules
   test-world-malformed-state
   test-world-session-reconciliation
-  test-world-application-sync)
+  test-world-application-sync
+  test-world-channel-resource
+  test-world-channels-command)
 
 (define-test-suite preferences
   test-preferences
