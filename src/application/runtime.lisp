@@ -72,6 +72,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-hosted-p
     :type          boolean
     :documentation "Whether a world server hosts this application beside other channels.")
+   (world-server
+    :initform      nil
+    :accessor      application-world-server
+    :type          t
+    :documentation "The world server hosting this application, or NIL in a direct session.")
    (lisp-hinted-command-names
     :initform      nil
     :accessor      application-lisp-hinted-command-names

@@ -38,6 +38,39 @@ Records of dead processes are removed on the way."
              :message   "The world server started but its endpoint does not answer."
              :operation ':spawn)))
 
+(defparameter *world-client-wait-seconds* 60
+  "How long a client waits for a server that holds the world but does not answer yet.
+
+A server publishes its endpoint again after a checkpoint, and a channel
+opens once the checkpoint is over.")
+
+(-> world-client--entry
+    (configuration &key (:permission-mode keyword) (:immutable-p boolean) (:pristine-p boolean)
+                        (:deadline real))
+    cons)
+(defun world-client--entry (configuration &key (permission-mode ':ask) immutable-p pristine-p
+                                               deadline)
+  "Return the world server's endpoint entry: the one answering, or a new server's.
+
+A server that holds the world without answering, as during a checkpoint, is
+waited for until DEADLINE, an internal real time, rather than doubled."
+  (loop
+    (let ((entry (world-client-entry configuration)))
+      (cond
+        (entry
+         (return entry))
+        ((not (world-server-running-p configuration))
+         (return (world-client-start-server configuration
+                                            :permission-mode permission-mode
+                                            :immutable-p     immutable-p
+                                            :pristine-p      pristine-p)))
+        ((>= (get-internal-real-time) deadline)
+         (error 'localgroup-error
+                :message   "The world server holds the world but did not answer in time."
+                :operation ':open))
+        (t
+         (sleep 0.25))))))
+
 (-> world-client-open
     (configuration &key (:directory (or null string pathname)) (:channel (option string))
                         (:permission-mode keyword) (:immutable-p boolean)
@@ -55,35 +88,50 @@ takes them, and a channel already served refuses the ones it cannot change.
 Return the opened channel's session identifier, whose endpoint answers by
 then, and whether the server started the channel for this open rather than
 sharing one it already served."
-  (let ((entry (or (world-client-entry configuration)
-                   (world-client-start-server configuration
-                                              :permission-mode permission-mode
-                                              :immutable-p     immutable-p
-                                              :pristine-p      pristine-p))))
+  (let ((deadline (+ (get-internal-real-time)
+                     (* *world-client-wait-seconds* internal-time-units-per-second))))
     (multiple-value-bind (rows columns)
         (terminal-current-size)
-      (let* ((response
-               (localgroup-query-record
-                entry ':open
-                (append (when channel
-                          (list :channel channel))
-                        (when directory
-                          (list :directory (namestring directory)))
-                        (when launch
-                          (list :launch launch))
-                        (list :permission-mode    permission-mode
-                              :fullscreen-p       (not (null (config :fullscreen-p configuration)))
-                              :resume-command-p   (not (null resume-command-p))
-                              :recovery-diagnosis recovery-diagnosis
-                              :rows               rows
-                              :columns            columns
-                              :styled-p           (not (null (terminal-environment-styling-p)))))))
-             (identifier (getf (rest response) :session-id)))
-        (unless (non-empty-string-p identifier)
-          (error 'localgroup-error
-                 :message   "The world server did not name the opened channel."
-                 :operation ':open))
-        (values identifier (not (null (getf (rest response) :started-p))))))))
+      (loop
+        (let* ((entry    (world-client--entry configuration
+                                              :permission-mode permission-mode
+                                              :immutable-p     immutable-p
+                                              :pristine-p      pristine-p
+                                              :deadline        deadline))
+               (response
+                 (handler-case
+                     (localgroup-query-record
+                      entry ':open
+                      (append (when channel
+                                (list :channel channel))
+                              (when directory
+                                (list :directory (namestring directory)))
+                              (when launch
+                                (list :launch launch))
+                              (list :permission-mode    permission-mode
+                                    :fullscreen-p       (not (null (config :fullscreen-p configuration)))
+                                    :resume-command-p   (not (null resume-command-p))
+                                    :recovery-diagnosis recovery-diagnosis
+                                    :rows               rows
+                                    :columns            columns
+                                    :styled-p           (not (null (terminal-environment-styling-p))))))
+                   (localgroup-error (condition)
+                     ;; A checkpoint refuses opens until the channels resume,
+                     ;; and drops connections while the endpoint is away.
+                     (if (and (< (get-internal-real-time) deadline)
+                              (or (localgroup-error-retry-p condition)
+                                  (and (image-daemon:daemon-error-cause condition)
+                                       (world-server-running-p configuration))))
+                         nil
+                         (error condition))))))
+          (if response
+              (let ((identifier (getf (rest response) :session-id)))
+                (unless (non-empty-string-p identifier)
+                  (error 'localgroup-error
+                         :message   "The world server did not name the opened channel."
+                         :operation ':open))
+                (return (values identifier (not (null (getf (rest response) :started-p))))))
+              (sleep 0.5)))))))
 
 
 ;;;; -- Command-Line Entry --
