@@ -8,9 +8,9 @@
   (conversation-append-record
    conversation
    (cons (first record)
-         (loop for (key value) on (rest record) by #'cddr
-               unless (member key '(:seq :time))
-                 append (list key value)))))
+         (loop for (key value) on (rest record) by (lambda (tail) (rest (rest tail)))
+              unless (member key '(:seq :time))
+                append (list key value)))))
 
 (-> test-application-tool-outcomes-history-replay () null)
 (defun test-application-tool-outcomes-history-replay ()
@@ -31,21 +31,21 @@
             (setf (getf (rest result) :details)
                   (list :tool-execution :handed-off-p t :job (list :id "history-job"))))
           (setf result (application-tool-outcome-history-tests--append conversation result))
-          (let* ((later (if job-p
-                            (application-tool-outcome-history-tests--append
-                             conversation (application-tool-outcome-tests--completion
-                                           0 "history-job" :outcome (if success-p ':success ':failure)
-                                                           :summary "history body"))
-                            result))
+          (let* ((later                           (if job-p
+                                                      (application-tool-outcome-history-tests--append
+                                                       conversation (application-tool-outcome-tests--completion
+                                                                     0 "history-job" :outcome (if success-p ':success ':failure)
+                                                                                     :summary "history body"))
+                                                      result))
                  (*application-history-page-size* (if job-p 2 1)))
             (application-tool-outcome-tests--present application later)
             (setf (application-rendered-sequence application) (application--record-sequence later)
                   (application-history-floor-sequence application) (application--record-sequence later))
             (application-render-history application)
             (let* ((viewport (fullscreen-terminal-ui-viewport (application-ui application)))
-                   (call (loop for index below (clinedi:transcript-viewport-chunk-count viewport)
-                               for text = (clinedi:transcript-viewport-chunk-text viewport index)
-                               when (search "workspace:x" text) return text)))
+                   (call     (loop for index below (clinedi:transcript-viewport-chunk-count viewport)
+                                   for text = (clinedi:transcript-viewport-chunk-text viewport index)
+                                   when (search "workspace:x" text) return text)))
               (test-assert
                (and call (search (if success-p "✓ (resource.read :uri" "! (resource.read :uri") call)
                     (eql (or (not compact-p) (not success-p))
@@ -74,12 +74,11 @@
                      "history outcomes remain bounded to selected calls")
         (test-assert (= 20 count) "hidden lifecycle records do not change candidates")))))
 
-
 (-> test-application-tool-outcomes-startup-history () null)
 (defun test-application-tool-outcomes-startup-history ()
   "Fill startup pages with visible calls while applying hidden successful outcomes."
   (with-test-configuration (configuration)
-    (let* ((application (application-tool-outcome-tests--application configuration))
+    (let* ((application                     (application-tool-outcome-tests--application configuration))
            (*application-history-page-size* 2))
       (dotimes (index 3)
         (let ((call-id (format nil "startup-~D" index)))
@@ -96,12 +95,12 @@
   (dolist (compact-p '(t nil))
     (dolist (mode '(:success :failure :job-success :job-failure))
       (with-test-configuration (configuration)
-        (let* ((application (application-tool-outcome-tests--application
-                             configuration :compact-view-p compact-p))
-               (conversation (application-conversation application))
+        (let* ((application                     (application-tool-outcome-tests--application
+                                                 configuration :compact-view-p compact-p))
+               (conversation                    (application-conversation application))
                (*application-history-page-size* 6)
-               (job-p (member mode '(:job-success :job-failure)))
-               (success-p (member mode '(:success :job-success))))
+               (job-p                           (member mode '(:job-success :job-failure)))
+               (success-p                       (member mode '(:success :job-success))))
           (application-tool-outcome-history-tests--append
            conversation (application-tool-outcome-tests--call 0 "older"))
           (when job-p
@@ -124,8 +123,8 @@
            conversation (application-tool-outcome-tests--result 0 "newer"))
           (application-render-records application)
           (let* ((viewport (fullscreen-terminal-ui-viewport (application-ui application)))
-                 (older (clinedi:transcript-viewport-chunk-text viewport 0))
-                 (text (application-tool-outcome-tests--text application)))
+                 (older    (clinedi:transcript-viewport-chunk-text viewport 0))
+                 (text     (application-tool-outcome-tests--text application)))
             (test-assert
              (and (search (if success-p "✓ (resource.read :uri" "! (resource.read :uri") older)
                   (search "workspace:x" older)
@@ -147,8 +146,8 @@
   "Ignore obsolete background-job completions while replaying a retagged call."
   (dolist (startup-p '(t nil))
     (with-test-configuration (configuration)
-      (let* ((application (application-tool-outcome-tests--application configuration))
-             (conversation (application-conversation application))
+      (let* ((application                     (application-tool-outcome-tests--application configuration))
+             (conversation                    (application-conversation application))
              (*application-history-page-size* 6))
         (application-tool-outcome-history-tests--append
          conversation (application-tool-outcome-tests--call 0 "retagged"))
@@ -172,9 +171,9 @@
                       (application--record-sequence obsolete))
                 (application-render-history application))))
         (let* ((viewport (fullscreen-terminal-ui-viewport (application-ui application)))
-               (call (loop for index below (clinedi:transcript-viewport-chunk-count viewport)
-                           for text = (clinedi:transcript-viewport-chunk-text viewport index)
-                           when (search "workspace:x" text) return text)))
+               (call     (loop for index below (clinedi:transcript-viewport-chunk-count viewport)
+                               for text = (clinedi:transcript-viewport-chunk-text viewport index)
+                               when (search "workspace:x" text) return text)))
           (test-assert (and call (search "▸ (resource.read :uri" call))
                        "an obsolete completion cannot resolve the selected call's current job")))))
   nil)

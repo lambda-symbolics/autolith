@@ -51,20 +51,20 @@
                        (t
                         ':success))))
     (when call-key
-      (list :kind ':result
-            :call-key call-key
-            :job-key (application--tool-outcome-key application ':job (getf job :id))
-            :state state
+      (list :kind            ':result
+            :call-key        call-key
+            :job-key         (application--tool-outcome-key application ':job (getf job :id))
+            :state           state
             :retain-output-p (not (null entry))
-            :body (cond
-                    (handoff
-                     (cons (terminal-span ':plain (string #\Newline)) entry))
-                    ((and (eq state ':success) entry
-                          (not (eq (terminal-span-style (first entry)) ':success)))
-                     ;; Prominent notices, such as papercut reports, retain their heading.
-                     (cons (terminal-span ':plain (string #\Newline)) entry))
-                    (t
-                     (application--entry-body entry)))))))
+            :body            (cond
+                               (handoff
+                                (cons (terminal-span ':plain (string #\Newline)) entry))
+                               ((and (eq state ':success) entry
+                                     (not (eq (terminal-span-style (first entry)) ':success)))
+                                ;; Prominent notices, such as papercut reports, retain their heading.
+                                (cons (terminal-span ':plain (string #\Newline)) entry))
+                               (t
+                                (application--entry-body entry)))))))
 
 (-> application--job-completion-outcome (application list list) (option list))
 (defun application--job-completion-outcome (application properties entry)
@@ -85,15 +85,15 @@
       (list :kind ':completion :job-key job-key :state state
             :retain-output-p (or (not (eq state ':success))
                                  (not (application-compact-view-p application)))
-            :body (cond
-                    ((and (eq state ':failure) (non-empty-string-p summary))
-                     (application--tool-outcome-body
-                      application
-                      (application--failure-result-rows summary)))
-                    ((eq state ':pending)
-                     (cons (terminal-span ':plain (string #\Newline)) entry))
-                    ((not (application-compact-view-p application))
-                     (application--entry-body entry)))))))
+            :body            (cond
+                               ((and (eq state ':failure) (non-empty-string-p summary))
+                                (application--tool-outcome-body
+                                 application
+                                 (application--failure-result-rows summary)))
+                               ((eq state ':pending)
+                                (cons (terminal-span ':plain (string #\Newline)) entry))
+                               ((not (application-compact-view-p application))
+                                (application--entry-body entry)))))))
 
 (-> application--record-tool-outcome (application list list) (option list))
 (defun application--record-tool-outcome (application record entry)

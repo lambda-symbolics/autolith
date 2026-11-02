@@ -11,11 +11,11 @@
   (setf (config :compact-view-p configuration) compact-view-p)
   (make-instance 'application
                  :configuration configuration
-                 :conversation (conversation-create configuration :identifier identifier)
+                 :conversation  (conversation-create configuration :identifier identifier)
                  :tool-registry (make-default-tool-registry)
-                 :ui (terminal-ui-create
-                      :terminal (make-instance 'recording-terminal :columns 100 :rows 24)
-                      :fullscreen-p fullscreen-p)))
+                 :ui            (terminal-ui-create
+                                 :terminal     (make-instance 'recording-terminal :columns 100 :rows 24)
+                                 :fullscreen-p fullscreen-p)))
 
 (-> application-tool-outcome-tests--call (integer string &key (:name string)) list)
 (defun application-tool-outcome-tests--call (sequence call-id &key (name "read"))
@@ -63,7 +63,7 @@
   "Associate same-name calls by ID, preserving arguments and railed failure output."
   (with-test-configuration (configuration)
     (let* ((application (application-tool-outcome-tests--application configuration))
-           (viewport (fullscreen-terminal-ui-viewport (application-ui application))))
+           (viewport    (fullscreen-terminal-ui-viewport (application-ui application))))
       (application-tool-outcome-tests--present
        application
        (application-tool-outcome-tests--call 1 "a")
@@ -115,7 +115,7 @@
           (test-assert (and (search "✓ (resource.read :uri" text)
                             (eql (not compact-p) (not (null (search "ordinary output" text)))))
                        "only expanded presentation retains ordinary successful output"))
-        (let ((call (application-tool-outcome-tests--call 3 "notice"))
+        (let ((call   (application-tool-outcome-tests--call 3 "notice"))
               (result (application-tool-outcome-tests--result 4 "notice" :output "report details")))
           (setf (getf (rest call) :wire-json)
                 (json-encode (json-object "type" "function_call" "namespace" "papercut"
@@ -159,10 +159,10 @@
   "Present inline calls and results without replacing original invocation output."
   (with-test-configuration (configuration)
     (let* ((application (application-tool-outcome-tests--application configuration :fullscreen-p nil))
-           (ui (application-ui application))
-           (call (application-tool-outcome-tests--call 1 "inline"))
-           (result (application-tool-outcome-tests--result 2 "inline" :status ':error
-                                                          :output "inline failure")))
+           (ui          (application-ui application))
+           (call        (application-tool-outcome-tests--call 1 "inline"))
+           (result      (application-tool-outcome-tests--result 2 "inline" :status ':error
+                                                               :output             "inline failure")))
       (application-tool-outcome-tests--present application call result)
       (let ((text (clinedi:ansi-strip (recording-terminal-output (terminal-ui-terminal ui)))))
         (test-assert (and (search "▸ (resource.read :uri" text) (search "inline failure" text))

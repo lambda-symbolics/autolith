@@ -31,7 +31,7 @@
 (defun test-fullscreen-outcome-batch ()
   "Replace interleaved invocations in one paint without losing their clickable arguments."
   (with-terminal-ui (ui (fullscreen-test--ui
-                        (make-instance 'recording-terminal :columns 80 :rows 20)))
+                         (make-instance 'recording-terminal :columns 80 :rows 20)))
     (let ((paints 0)
           (paint  (fdefinition 'terminal-ui-fullscreen-paint)))
       (test-call-with-function-replacements
@@ -45,8 +45,8 @@
                 ui (list (tool-outcome-test--call 1 "first")
                          (tool-outcome-test--call 2 "second")
                          (tool-outcome-test--result 3 "second" :state ':failure
-                                                    :body (list (terminal-span ':plain
-                                                                               (format nil "~%  │ error"))))
+                                                    :body             (list (terminal-span ':plain
+                                                                                           (format nil "~%  │ error"))))
                          (tool-outcome-test--result 4 "first"))))
           "a batch uses each call and its hidden outcome")
          (test-assert (= paints 1) "one publication paints once")))
@@ -59,7 +59,7 @@
                           (terminal-ui-fullscreen--click-action ui 4 1))
                    "replacing a header preserves its widget action")
       (test-assert (zerop (terminal-ui-present-records
-                          ui (list (tool-outcome-test--result 4 "first"))))
+                           ui (list (tool-outcome-test--result 4 "first"))))
                    "completed record identities deduplicate")))
   nil)
 
@@ -67,7 +67,7 @@
 (defun test-fullscreen-outcome-deferred-order ()
   "Publish mixed suspended output in order and associate tags with the queued chunks."
   (with-terminal-ui (ui (fullscreen-test--ui
-                        (make-instance 'recording-terminal :columns 80 :rows 20)))
+                         (make-instance 'recording-terminal :columns 80 :rows 20)))
     (terminal-ui-present-records ui (list (tool-outcome-test--call 1 "resident")))
     (setf (terminal-ui-live-output-suspended-p ui) t)
     (terminal-ui-append-finalized ui 2 "before")
@@ -80,7 +80,7 @@
                       (search "▸ (probe" (tool-outcome-test--text ui)))
                  "suspended operations do not mutate resident chunks")
     (test-assert (zerop (terminal-ui-present-records
-                        ui (list (tool-outcome-test--result 6 "queued"))))
+                         ui (list (tool-outcome-test--result 6 "queued"))))
                  "queued outcomes deduplicate before publication")
     (setf (terminal-ui-live-output-suspended-p ui) nil)
     (terminal-ui--present-live ui)
@@ -133,7 +133,7 @@
             (record (gethash 1 (fullscreen-terminal-ui-presentation-records ui)))
             (result (tool-outcome-test--result
                      2 "retry" :state ':failure
-                     :body (list (terminal-span ':plain (format nil "~%  │ failed"))))))
+                     :body            (list (terminal-span ':plain (format nil "~%  │ failed"))))))
         (setf (failing-recording-terminal-fail-next-write-p terminal) t)
         (test-assert
          (handler-case (progn (terminal-ui-present-records ui (list result)) nil)
@@ -156,7 +156,7 @@
 (defun test-fullscreen-outcome-eviction-and-reset ()
   "Forget semantic aliases and associated result identities at the residency boundary."
   (let* ((*fullscreen-transcript-character-limit* 1000)
-         (ui (fullscreen-test--ui (make-instance 'recording-terminal :columns 80))))
+         (ui                                      (fullscreen-test--ui (make-instance 'recording-terminal :columns 80))))
     (terminal-ui-present-records
      ui (list (tool-outcome-test--call '(:conversation "owner" 1) "old")
               (tool-outcome-test--result '(:conversation "owner" 2) "old" :job-id "job")))

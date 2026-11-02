@@ -6,8 +6,18 @@
 (defun terminal-ui-fullscreen--record-entry (entry state body)
   "Color ENTRY's original call header for STATE, preserving widgets and BODY."
   (let ((header-p t)
-        (style    (case state (:success ':success) (:failure ':failure) (t ':tool)))
-        (marker   (case state (:success #\✓) (:failure #\!) (t #\▸))))
+        (style    (case state (:success
+                               ':success)
+                              (:failure
+                               ':failure)
+                              (t
+                               ':tool)))
+        (marker   (case state (:success
+                               #\✓)
+                              (:failure
+                               #\!)
+                              (t
+                               #\▸))))
     (append
      (loop for span in entry
            for text = (terminal-span-text span)
@@ -102,7 +112,7 @@
         (terminal-ui--finalized-content ui entry)
       (if (clinedi:transcript-viewport-replace
            (fullscreen-terminal-ui-viewport ui) (getf record :tag)
-           :text (concatenate 'string prefix text)
+           :text    (concatenate 'string prefix text)
            :display (concatenate 'string prefix display)
            :regions (termdown:shift-regions regions (length prefix)))
           (progn
