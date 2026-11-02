@@ -1567,6 +1567,20 @@ work must steer the running turn, not queue as follow-up work."
     :documentation "The objective or action supplied by the caller."))
   (:documentation "A public goal request has an invalid action or arguments."))
 
+(-> application--replace-lightweight-goal (application (option list)) null)
+(defun application--replace-lightweight-goal (application goal)
+  "Cancel the mission and order GOAL's installation after its terminal notices."
+  (let ((previous (mission-context-find (application-conversation application))))
+    (mission-detach application)
+    (flet ((install ()
+             (setf (application-goal application) goal)
+             (application--record-goal application)))
+      (if previous
+          (with-recursive-lock-held ((mission-context-lock previous))
+            (install))
+          (install))))
+  nil)
+
 (-> application-goal-request (application t list) null)
 (defun application-goal-request (application request arguments)
   "Set a literal string objective or apply a keyword action to APPLICATION.
@@ -1595,9 +1609,7 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
        (application-present application
                             (application--goal-description application)))
       ((eq request ':clear)
-       (mission-detach application)
-       (setf (application-goal application) nil)
-       (application--record-goal application)
+       (application--replace-lightweight-goal application nil)
        (application-present application "The session goal was cleared."))
       ((eq request ':pause)
        (if (and goal (eq (getf goal :status) ':active))
@@ -1625,13 +1637,11 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
                   (eq (getf (application-goal application) :status) ':active))
          (application--start-goal-work application)))
       (t
-       (mission-detach application)
-       (setf (application-goal application)
-             (list :objective     (copy-seq request)
-                   :status        ':active
-                   :continuations 0
-                   :created-at    (get-universal-time)))
-       (application--record-goal application)
+       (application--replace-lightweight-goal
+        application (list :objective     (copy-seq request)
+                          :status        ':active
+                          :continuations 0
+                          :created-at    (get-universal-time)))
        (application-present
         application
         (format nil

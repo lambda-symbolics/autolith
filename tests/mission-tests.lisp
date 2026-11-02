@@ -46,6 +46,348 @@
   "Return one final provider response with exact, configurable usage."
   (agent-test-result (make-identifier) (list (agent-test-message text)) :usage usage))
 
+(-> test-mission-terminal-notice-tool-path () null)
+(defun test-mission-terminal-notice-tool-path ()
+  "Show stop evidence before any result, with durable identity in either view."
+  (dolist (compact-p '(t nil))
+    (dolist (status '("blocked" "failed"))
+      (with-test-configuration (configuration)
+        (let* ((application   (mission-test--application configuration))
+               (conversation  (application-conversation application))
+               (ui            (application-ui application))
+               (decision      "DECISION NEEDED: reply csv or json.")
+               (specification (mission-test--specification)))
+          (setf (application-compact-view-p application) compact-p
+                (getf specification :objective) "private-objective-sentinel")
+          (application-mission-start application specification)
+          (let* ((result  (tool-execute
+                           (tool-registry-find (application-tool-registry application) "mission" "stop")
+                           (mission-test--context application)
+                           (json-object "status" status "evidence" decision)))
+                 (records (side-status-tests--records conversation))
+                 (record  (first records)))
+            (test-assert (tool-result-success-p result) "the registered stop operation succeeds")
+            (test-assert (= 1 (length records)) "stop stores one dedicated durable notice")
+            (test-assert
+             (and (search (string-upcase status)
+                          (recording-terminal-output (terminal-ui-terminal ui)))
+                  (search decision (recording-terminal-output (terminal-ui-terminal ui))))
+             "the visible notice explains the stop before a tool result exists")
+            (when record
+              (let* ((entry    (conversation-record-entry application record))
+                     (text     (terminal--spans-text entry))
+                     (identity (list :conversation (conversation-identifier conversation)
+                                     (getf (rest record) :seq))))
+                (test-assert
+                 (and (search decision text) (not (search "private-objective-sentinel" text))
+                      (not (search ":CRITERIA" text))
+                      (find (if (string= status "failed") ':failure ':notice)
+                            entry :key #'terminal-span-style))
+                 "the notice contains styled status and evidence, not the goal snapshot")
+                (test-assert (gethash identity (terminal-ui-finalized-identifiers ui))
+                             "the live notice already has its durable replay identity")
+                (conversation-append-tool-result
+                 conversation "notice-stop" :tool-name "mission.stop" :success-p t
+                 :output (tool-result-content result) :details (tool-result-details result))
+                (application-render-records application)
+                (let ((count (hash-table-count (terminal-ui-finalized-identifiers ui))))
+                  (application-render-records application)
+                  (test-assert (= count (hash-table-count (terminal-ui-finalized-identifiers ui)))
+                               "another render does not finalize a second notice"))
+                (let* ((loaded (conversation-load (conversation-pathname conversation)))
+                       (replay (mission-test--application configuration)))
+                  (setf (application-conversation replay) loaded
+                        (application-compact-view-p replay) compact-p)
+                  (test-assert (= 1 (length (side-status-tests--records loaded)))
+                               "resume retains one notice independently of ordinary tool output")
+                  (test-assert
+                   (search decision (getf (rest (conversation-replay-project-record record)) :content))
+                   "CLI replay includes the requested decision")
+                  (application-render-records replay)
+                  (let* ((replay-ui (application-ui replay))
+                         (count     (hash-table-count (terminal-ui-finalized-identifiers replay-ui))))
+                    (test-assert (gethash identity (terminal-ui-finalized-identifiers replay-ui))
+                                 "history finalizes the same notice identity in a fresh UI")
+                    (application-render-records replay)
+                    (test-assert (= count (hash-table-count (terminal-ui-finalized-identifiers replay-ui)))
+                                 "re-rendering history does not repeat finalized notices"))))))))))
+  nil)
+
+(-> test-mission-terminal-notice-controller () null)
+(defun test-mission-terminal-notice-controller ()
+  "Return from the production controller after mission.stop without final prose."
+  (with-test-configuration (configuration)
+    (let* ((decision     "DECISION NEEDED: approve or abandon.")
+           (call         (agent-test-call :call-id "blocked-stop" :namespace "mission" :name "stop"
+                                 :arguments (json-encode
+                                             (json-object "status" "blocked" "evidence" decision))))
+           (unused       (mission-test--result "unexpected final response"))
+           (application  (mission-test--application
+                          configuration :worker t
+                          :results              (list (agent-test-result "stop-response" (list call)) unused)))
+           (conversation (application-conversation application)))
+      (application-mission-start application (mission-test--specification))
+      (application--run-turn application "Stop on the requested decision; write no final prose.")
+      (test-assert (equal (list unused) (scripted-provider-results (application-provider application)))
+                   "the terminal controller returns without requesting a final response")
+      (test-assert (eq ':blocked (getf (application-goal application) :status))
+                   "the production dispatcher executes the registered mission.stop")
+      (test-assert (= 1 (length (side-status-tests--records conversation)))
+                   "the tool-only controller turn persists one notice")
+      (test-assert
+       (search decision (recording-terminal-output
+                         (terminal-ui-terminal (application-ui application))))
+       "the controller leaves the requested decision visible without assistant prose")))
+  nil)
+
+(-> test-mission-terminal-notice-headless-exhaustion () null)
+(defun test-mission-terminal-notice-headless-exhaustion ()
+  "Persist an automatic startup stop without a UI or a stop-tool result."
+  (with-test-configuration (configuration)
+    (let* ((application  (mission-test--application configuration))
+           (conversation (application-conversation application))
+           (ui           (application-ui application)))
+      (application-mission-start application (mission-test--specification))
+      (setf (getf (application-goal application) :deadline) (1- (get-universal-time))
+            (application-ui application) nil)
+      (mission-restore application)
+      (test-assert (eq ':exhausted (getf (application-goal application) :status))
+                   "startup detects the elapsed deadline")
+      (let* ((loaded  (conversation-load (conversation-pathname conversation)))
+             (records (side-status-tests--records loaded)))
+        (test-assert (= 1 (length records)) "automatic headless exhaustion persists a notice")
+        (test-assert
+         (not (find ':tool-result (conversation-records-newest loaded 100) :key #'first))
+         "automatic exhaustion does not require a stop-tool result")
+        (setf (application-ui application) ui)
+        (application-render-records application)
+        (test-assert
+         (search "EXHAUSTED" (recording-terminal-output (terminal-ui-terminal ui)))
+         "the persisted headless notice appears when history is displayed"))))
+  nil)
+
+(-> test-mission-terminal-notice-evidence () null)
+(defun test-mission-terminal-notice-evidence ()
+  "Bound and sanitize only supplied evidence, including structured evidence."
+  (dolist (evidence (list (format nil "unsafe~C[31m~C end" #\Escape #\Null)
+                         (make-string 10000 :initial-element #\x)
+                         '(:reason "needs disposition" :decision "approve or abandon")
+                         (concatenate 'string (make-string 4000 :initial-element #\x)
+                                      " DECISION-END")))
+    (with-test-configuration (configuration)
+      (let* ((application  (mission-test--application configuration))
+             (conversation (application-conversation application)))
+        (application-mission-start application (mission-test--specification))
+        (mission--transition (mission-context-find conversation) ':blocked evidence)
+        (let* ((record (first (side-status-tests--records conversation)))
+               (text   (and record (terminal--spans-text (getf (rest record) :spans)))))
+          (test-assert record "bounded evidence produces a dedicated notice")
+          (when record
+            (application-side-status--validate-record conversation (rest record))
+            (test-assert (and (<= (length text) 16384)
+                              (not (find #\Escape text)) (not (find #\Null text)))
+                         "persisted spans are bounded and neutralize terminal controls")
+            (when (and (stringp evidence) (search "DECISION-END" evidence))
+              (test-assert (search "DECISION-END" text)
+                           "a decision within the evidence bound survives wrapping"))
+            (when (listp evidence)
+              (test-assert (and (search "needs disposition" text) (search "approve or abandon" text))
+                           "structured evidence is printed, not mistaken for a goal")))))))
+  nil)
+
+(-> test-mission-terminal-notice-status-scope () null)
+(defun test-mission-terminal-notice-status-scope ()
+  "Announce terminal blockers without adding notices for cancellation or resume."
+  (with-test-configuration (configuration)
+    (let* ((application  (mission-test--application configuration))
+           (conversation (application-conversation application)))
+      (application-mission-start application (mission-test--specification))
+      (application-mission-stop application ':cancelled "User cancelled.")
+      (application-mission-start application (mission-test--specification))
+      (application-mission-start application (mission-test--specification))
+      (test-assert (null (side-status-tests--records conversation))
+                   "explicit cancellation and replacement need no blocker notice")
+      (application-mission-stop application ':blocked "Choose an output format.")
+      (application-mission-resume application)
+      (test-assert (= 1 (length (side-status-tests--records conversation)))
+                   "resuming does not add a terminal notice")))
+  nil)
+
+(-> test-mission-terminal-notice-replacement-timeout () null)
+(defun test-mission-terminal-notice-replacement-timeout ()
+  "Do not publish an exhausted notice for an admitted mission replaced mid-call."
+  (with-test-configuration (configuration)
+    (let* ((application (mission-test--application configuration))
+           (old-context nil)
+           (replacement (mission-test--specification)))
+      (setf (getf replacement :objective) "Replacement mission")
+      (application-mission-start application (mission-test--specification))
+      (setf old-context (mission-context-find (application-conversation application)))
+      (test-call-with-function-replacements
+       (list (list 'job-await
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))
+                     (application-mission-start application replacement)
+                     (list :state ':cancelled :cancellation-reason ':timeout))))
+       (lambda ()
+         (test-assert
+          (handler-case
+              (progn (mission--supervise old-context "delayed mission call"
+                                         (lambda () :unreachable)) nil)
+            (mission-error (condition) (eq ':exhausted (mission-error-reason condition))))
+          "a delayed call still reports its original timeout to its caller")))
+      (test-assert (equal (getf replacement :objective)
+                          (getf (application-goal application) :objective))
+                   "a delayed old call cannot overwrite the replacement mission")
+      (test-assert (null (side-status-tests--records (application-conversation application)))
+                   "a delayed old timeout publishes no stale exhausted notice")))
+  nil)
+
+(-> test-mission-terminal-notice-cancellation-ordering () null)
+(defun test-mission-terminal-notice-cancellation-ordering ()
+  "Suppress resumed notices and cancel jobs before a presentation failure."
+  (with-test-configuration (configuration)
+    (let* ((application  (mission-test--application configuration))
+           (conversation (application-conversation application))
+           (pool         (make-job-pool :name "mission-notice-race" :maximum-concurrency 1
+                                        :maximum-batch-size 1 :maximum-live-jobs 1
+                                        :start-threads-p nil))
+           (cancelled    0))
+      (unwind-protect
+           (progn
+             (application-mission-start application (mission-test--specification))
+             (let* ((context (mission-context-find conversation))
+                    (job     (first (job-pool-submit-batch
+                                     pool (list (list :name "admitted" :inline-only-p t
+                                                      :function (lambda (ignored)
+                                                                  (declare (ignore ignored)))))))))
+               (setf (mission-context-jobs context) (list job))
+               (test-call-with-function-replacements
+                (list (list 'job-cancel
+                            (lambda (ignored &key reason cascade-p)
+                              (declare (ignore ignored reason cascade-p))
+                              (incf cancelled)
+                              (application-mission-resume application))))
+                (lambda () (mission--transition context ':blocked "resume during cancellation")))
+               (test-assert (= 1 cancelled) "terminal transition cancels the admitted job")
+               (test-assert (eq ':active (getf (application-goal application) :status))
+                            "resume during cancellation restores the active mission")
+               (test-assert (null (side-status-tests--records conversation))
+                            "resume during cancellation suppresses the stale blocked notice")
+               (setf cancelled 0)
+               (test-assert
+                (handler-case
+                    (progn
+                      (test-call-with-function-replacements
+                       (list (list 'job-cancel
+                                   (lambda (ignored &key reason cascade-p)
+                                     (declare (ignore ignored reason cascade-p))
+                                     (incf cancelled)))
+                             (list 'application-side-status-present
+                                   (lambda (&rest arguments)
+                                     (declare (ignore arguments))
+                                     (error "intentional notice rendering failure"))))
+                       (lambda () (mission--transition context ':blocked "render failure")))
+                      nil)
+                  (error () t))
+                "notice rendering failures remain observable")
+               (test-assert (= 1 cancelled)
+                            "job cancellation completes before notice rendering signals")))
+        (job-pool-close pool))))
+  nil)
+
+(-> test-mission-terminal-notice-aba-ordering () null)
+(defun test-mission-terminal-notice-aba-ordering ()
+  "Publish only the newest terminal evidence when cancellation resumes and blocks again."
+  (with-test-configuration (configuration)
+    (let* ((application  (mission-test--application configuration))
+           (conversation (application-conversation application))
+           (pool         (make-job-pool :name "mission-notice-aba" :maximum-concurrency 1
+                                        :maximum-batch-size 1 :maximum-live-jobs 1
+                                        :start-threads-p nil))
+           (cancelled    0))
+      (unwind-protect
+           (progn
+             (application-mission-start application (mission-test--specification))
+             (let* ((context (mission-context-find conversation))
+                    (job     (first (job-pool-submit-batch
+                                     pool (list (list :name "aba" :inline-only-p t
+                                                      :function (lambda (ignored)
+                                                                  (declare (ignore ignored)))))))))
+               (setf (mission-context-jobs context) (list job))
+               (test-call-with-function-replacements
+                (list (list 'job-cancel
+                            (lambda (ignored &key reason cascade-p)
+                              (declare (ignore ignored reason cascade-p))
+                              (incf cancelled)
+                              (application-mission-resume application)
+                              (mission--transition context ':blocked "new blocked evidence"
+                                                    :cancel-p nil))))
+                (lambda () (mission--transition context ':blocked "old blocked evidence")))
+               (let* ((records (side-status-tests--records conversation))
+                      (text    (and records
+                                    (terminal--spans-text
+                                     (getf (rest (first records)) :spans)))))
+                 (test-assert (= 1 cancelled) "the first blocked transition cancels its admitted job")
+                 (test-assert (= 1 (length records)) "ABA cancellation publishes one terminal notice")
+                 (test-assert (and (search "new blocked evidence" text)
+                                   (not (search "old blocked evidence" text)))
+                              "ABA publication retains only the newer transition evidence"))))
+        (job-pool-close pool))))
+  nil)
+
+(-> test-mission-terminal-notice-goal-replacement-ordering () null)
+(defun test-mission-terminal-notice-goal-replacement-ordering ()
+  "Order lightweight goal replacement after an in-flight terminal publication."
+  (dolist (request '(:clear "Lightweight replacement"))
+    (with-test-configuration (configuration)
+      (let* ((application  (mission-test--application configuration))
+             (conversation (application-conversation application))
+             (detached     (bordeaux-threads:make-semaphore))
+             (present      (symbol-function 'application-side-status-present))
+             (detach       (symbol-function 'mission-detach))
+             (thread       nil)
+             (failure      nil))
+        (application-mission-start application (mission-test--specification))
+        (let ((context (mission-context-find conversation))
+              (goal    (application-goal application)))
+          (test-call-with-function-replacements
+           (list (list 'mission-detach
+                       (lambda (current)
+                         (funcall detach current)
+                         (bordeaux-threads:signal-semaphore detached)))
+                 (list 'application--start-goal-work
+                       (lambda (current) (declare (ignore current)) nil))
+                 (list 'application-side-status-present
+                       (lambda (current source spans)
+                         (setf thread
+                               (make-thread
+                                (lambda ()
+                                  (handler-case
+                                      (application-goal-request current request nil)
+                                    (error (condition) (setf failure condition))))))
+                         (test-assert (bordeaux-threads:wait-on-semaphore detached :timeout 10)
+                                      "replacement reached its installation boundary")
+                         (test-assert (eq goal (application-goal current))
+                                      "replacement waits for the in-flight publication")
+                         (funcall present current source spans))))
+           (lambda ()
+             (unwind-protect
+                  (mission--transition context ':failed "Old mission failed.")
+               (when thread (join-thread thread)))))
+          (test-assert (null failure) "concurrent goal replacement completes without an error")
+          (test-assert (if (eq request ':clear)
+                           (null (application-goal application))
+                           (equal request (getf (application-goal application) :objective)))
+                       "the requested lightweight goal is installed")
+          (let ((notice (first (side-status-tests--records conversation)))
+                (latest (find ':goal (conversation-records-newest conversation 100)
+                              :key #'first :from-end t)))
+            (test-assert (and notice latest
+                              (< (getf (rest notice) :seq) (getf (rest latest) :seq)))
+                         "the durable replacement follows the terminal notice"))))))
+  nil)
+
 (-> test-mission-tool-refusal-reporting () null)
 (defun test-mission-tool-refusal-reporting ()
   "Distinguish safe stopped-context reports without dispatch or accounting changes."

@@ -1519,6 +1519,15 @@
   test-mission-inference-reservation-recovery)
 
 (define-test-suite missions
+  test-mission-terminal-notice-tool-path
+  test-mission-terminal-notice-controller
+  test-mission-terminal-notice-headless-exhaustion
+  test-mission-terminal-notice-evidence
+  test-mission-terminal-notice-status-scope
+  test-mission-terminal-notice-replacement-timeout
+  test-mission-terminal-notice-cancellation-ordering
+  test-mission-terminal-notice-aba-ordering
+  test-mission-terminal-notice-goal-replacement-ordering
   test-mission-tool-result-presentation
   test-mission-tool-refusal-reporting
   test-mission-accounting
