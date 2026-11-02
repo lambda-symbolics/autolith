@@ -213,6 +213,54 @@
                        "an unknown channel is refused"))))))
   nil)
 
+(-> test-world-server-starting-host () null)
+(defun test-world-server-starting-host ()
+  "Test an open joins a host that is still starting instead of starting another."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((workspace (world-tests--workspace root "a"))
+            (channel   (conversation-create (configuration-copy configuration
+                                                                :working-directory workspace)
+                                            :identifier "bstart1"))
+            (terminal  (make-instance 'recording-terminal :columns 80))
+            (starting  (make-instance
+                        'world-host
+                        :application (make-instance
+                                      'application
+                                      :configuration (configuration-copy
+                                                      configuration
+                                                      :working-directory workspace)
+                                      :conversation  channel
+                                      :ui            (terminal-ui-create :terminal terminal))))
+            (started   nil))
+       (unwind-protect
+            (test-call-with-function-replacements
+             (list (list 'world-server--start-host
+                         (lambda (candidate &rest arguments)
+                           (declare (ignore candidate))
+                           (push arguments started)
+                           starting)))
+             (lambda ()
+               (with-lock-held ((world-server-lock server))
+                 (push starting (world-server-hosts server)))
+               (multiple-value-bind (host started-p)
+                   (world-server--host-for server (list :channel "bstart1"))
+                 (test-assert (and (eq host starting) (not started-p) (null started))
+                              "an open of a starting channel waits for its host"))
+               (multiple-value-bind (host started-p)
+                   (world-server--host-for server (list :directory workspace))
+                 (test-assert (and (eq host starting) (not started-p) (null started))
+                              "an open of its workspace joins the starting host nobody controls"))
+               (setf (world-host-failure starting) (make-condition 'error))
+               (multiple-value-bind (host started-p)
+                   (world-server--host-for server (list :channel "bstart1"))
+                 (test-assert (and (eq host starting) started-p (= (length started) 1))
+                              "a host that failed to start no longer holds its channel"))))
+         (with-lock-held ((world-server-lock server))
+           (setf (world-server-hosts server)
+                 (remove starting (world-server-hosts server))))))))
+  nil)
+
 (-> test-world-server-resume-order () null)
 (defun test-world-server-resume-order ()
   "Test a workspace reopens its most recently active conversation, not its newest channel record."
