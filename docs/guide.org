@@ -1057,6 +1057,15 @@ Conversation history uses read-only resource URIs:
 - =conversation:id/<id>= reads or searches another conversation by its
   identifier. Searches never span several conversations.
 
+Channels use read-only resource URIs with the same history arguments:
+
+- =channel:current= describes the current channel, its residents,
+  subscribers, workspace and owner, then reads its history like
+  =conversation:current=.
+- =channel:id/<id>= describes and reads another channel.
+- =channel:list= surveys every channel with its residents and subscribers.
+  Reading a channel never subscribes the reader.
+
 ** Memories
 
 Autolith remembers durable facts, preferences, and decisions per workspace or
@@ -1598,6 +1607,22 @@ Private files and directories carry an access control list granting only the
 owner and SYSTEM, which is what mode =0600= and =0700= mean there; a file
 Autolith publishes read-only withholds write access through that list and
 keeps the read-only attribute clear, so it can still be replaced and deleted.
+
+** Channels
+
+Autolith is moving from one session per process to one shared world of
+channels and participants. A channel is an addressable conversation and
+execution location with its own working directory and history. A participant
+is a person or an agent with private state; each resides in one channel and
+may subscribe to others. Every durable conversation is kept in step with a
+channel of the same identifier and an agent participant residing there, all
+owned by the one human participant, so =conversation:id/X= and =channel:id/X=
+name the same history. A conversation newer than its channel is migrated
+again onto the same identities, and a deleted conversation retires its channel
+and agent. The world lives in =world/= below the data root.
+
+=(channels)= lists every channel with its residents and subscribers, newest
+change first.
 
 Conversation leases, Localgroup endpoint records, and recovery state live under
 =${XDG_STATE_HOME:-~/.local/state}/autolith/= rather than =XDG_RUNTIME_DIR=.

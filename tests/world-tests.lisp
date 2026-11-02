@@ -316,3 +316,79 @@
                      (warning () nil))
                    "sync without a conversation warns about nothing")))
   nil)
+
+(-> world-tests--read (configuration conversation string &rest t) string)
+(defun world-tests--read (configuration conversation identifier &rest arguments)
+  "Read channel IDENTIFIER for CONVERSATION with ARGUMENTS and return its text."
+  (let* ((context  (make-instance 'tool-context
+                                  :configuration configuration
+                                  :worker        nil
+                                  :conversation  conversation
+                                  :registry      (make-instance 'tool-registry)))
+         (tool     (make-instance 'resource-read-tool
+                                  :namespace         "resource"
+                                  :name              "read"
+                                  :description       "Test resource read."
+                                  :parameters        (tool-object-schema (json-object) '())
+                                  :resource-registry (make-resource-registry)))
+         (resolver (make-instance 'channel-resolver :scheme "channel"))
+         (resource (resource-resolver-resolve resolver identifier context))
+         (result   (resource-tool-read resource tool context (apply #'json-object arguments))))
+    (test-assert (tool-result-success-p result) "channel resource reads succeed")
+    (tool-result-content result)))
+
+(-> test-world-channel-resource () null)
+(defun test-world-channel-resource ()
+  "Test channel: reads describe a channel and page its history."
+  (with-test-configuration (configuration)
+    (let ((first  (world-tests--persisted-conversation configuration "bfirst1" 1000))
+          (second (world-tests--persisted-conversation configuration "bsecnd2" 2000)))
+      (let ((listing (world-tests--read configuration first "list")))
+        (test-assert (and (search "2 channels" listing)
+                          (search "b-first1" listing)
+                          (search "b-secnd2" listing)
+                          (search "autolith (agent" listing)
+                          (search "user (human" listing))
+                     "channel:list surveys every migrated conversation with its residents"))
+      (let ((current (world-tests--read configuration first "current")))
+        (test-assert (and (search "Channel b-first1" current)
+                          (search "Residents: " current)
+                          (search "hello from bfirst1" current))
+                     "channel:current describes the current channel and reads its history"))
+      (let ((other (world-tests--read configuration first "id/b-secnd2" "record-count" 1)))
+        (test-assert (and (search "Channel b-secnd2" other)
+                          (search "hello from bsecnd2" other)
+                          (not (search "hello from bfirst1" other)))
+                     "channel:id/<id> reads another channel's history with the usual arguments"))
+      (conversation-append-user-message second "a second message")
+      (test-assert (search "a second message"
+                           (world-tests--read configuration first "id/bsecnd2"))
+                   "a read reconciles a conversation that grew since the last read")
+      (test-assert (handler-case (progn (world-tests--read configuration first "id/bnone11") nil)
+                     (tool-error (condition)
+                       (eq (tool-error-code condition) ':not-found)))
+                   "an unknown channel is a not-found failure")))
+  nil)
+
+(-> test-world-channels-command () null)
+(defun test-world-channels-command ()
+  "Test (channels) presents every channel with its residents."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "b-listed" 1000)
+    (let* ((terminal    (make-instance 'recording-terminal :columns 80))
+           (ui          (terminal-ui-create :terminal terminal))
+           (application (make-instance 'application
+                                       :configuration configuration
+                                       :ui            ui)))
+      (unwind-protect
+           (progn
+             (terminal-ui-start ui)
+             (test-assert (eq (application-command application "/channels") ':continue)
+                          "/channels remains inside the interactive application")
+             (let ((output (recording-terminal-output terminal)))
+               (test-assert (and (search "channels" output)
+                                 (search "b-listed" output)
+                                 (search "autolith (agent" output))
+                            "/channels shows the channel and its agent resident")))
+        (ignore-errors (terminal-ui-stop ui)))))
+  nil)
