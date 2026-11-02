@@ -1,25 +1,26 @@
 * Main change: sessions to a shared world of channels
 
-- Replace the session-centric model with one shared world of channels and agents.
+- Replace the session-centric model with one shared world of channels and participants.
   - Today: each client/server pair centers on a session and its agent.
   - Proposed: one server hosts a cross-project world; multiple clients view and
-    interact with its channels and independently identifiable agents.
-- A channel is an addressable conversation and execution location, not an agent.
-- An agent is a participant with its own context and state, resident in a channel.
+    interact with its channels and independently identifiable participants.
+- Humans and agents use the same participant type, including private context,
+  memories, plans, and goals. Their client programs differ.
+- A channel is an addressable conversation and execution location. Each participant
+  resides in one channel; a channel can have multiple residents.
 - Use ordinary channel messages for human/agent, agent/agent, and parent/child work.
   Child agents become directly inspectable participants in the same world.
-- Clients display channels; selecting a channel is separate from moving an agent
-  or subscribing an agent to messages.
-- Migrate each existing session into a channel plus its resident agent, placing
-  history/CWD on the channel and context/memories/plans/goals on the agent.
+- Client channel selection is separate from participant residence and subscription.
+- Migrate each existing session into a channel plus an agent-operated participant,
+  placing history/CWD on the channel and private state on the participant.
 
 * Temporary session migration
 
 - Until the channel/agent model stabilizes, continuously reconcile legacy sessions
-  with the channels and agents they map onto, rather than migrating only once.
-- If a legacy session is newer than its mapped channel/agent state, migrate it
+  with the channels and participants they map onto, rather than migrating only once.
+- If a legacy session is newer than its mapped channel/participant state, migrate it
   again, overwriting that state from the session.
-- Preserve the session-to-channel/agent mapping and reuse the same identities
+- Preserve the session-to-channel/participant mapping and reuse the same identities
   on repeated migration.
 - Remove this reconciliation mechanism once the new model is stable.
 
@@ -28,40 +29,38 @@
 Draft logical records, not prescribed classes or storage layouts.
 
 #+begin_src text
-Participant = HumanId | AgentId
-
-World / Localgroup
-  agents          : Map AgentId Agent
+World
+  participants    : Map ParticipantId Participant
   channels        : Map ChannelId Channel
   workspaces      : Map WorkspaceId Workspace
   globalMemories  : MemoryStore
 
-Agent
-  id              : AgentId
-  parent          : Participant
-  model / role    : Configuration
+Participant
+  id              : ParticipantId
+  parent          : Optional ParticipantId
+  configuration   : Configuration
   context         : CompactableContext
   memories        : MemoryStore
   plans           : Plans
   goals           : Goals
-  state           : Working | Yielded
+  presence        : Presence
   residence       : ChannelId
 
 Channel
   id / address    : ChannelId / ResourceURI
   parent          : Optional ChannelId
-  owner           : Participant
+  owner           : ParticipantId
   cwd / workspace : Path / WorkspaceId
-  resident        : Optional AgentId
-  subscribers     : Set AgentId
+  residents       : Set ParticipantId
+  subscribers     : Set ParticipantId
   history         : Sequence (Message | ExecutionActivity)
   jobs            : Set JobId
 
 Message
-  sender          : Participant
+  sender          : ParticipantId
   channel         : ChannelId
   content         : Content
-  mentions        : Set Participant
+  mentions        : Set ParticipantId
   position        : HistoryReference
 
 Job
@@ -75,40 +74,47 @@ Workspace
   id / path       : WorkspaceId / Path
   agenda          : Agenda
 
-ClientView
-  selectedChannel : Optional ChannelId
-  visibleChannels : Set ChannelId
+Client
+  participant     : ParticipantId
+  localState      : ImplementationDefined
 #+end_src
 
-* Channels and agents
+- Human and agent clients use the same participant operations. Agent model/role
+  settings belong to participant configuration and follow that identity.
+- Client views and execution interfaces are implementation-defined, outside the
+  shared world schema. Human and agent clients may use different interfaces.
+- Store each relationship authoritatively once; derive reverse lookups or maintain
+  indexes where needed. The logical records do not require duplicated storage.
 
-- Each agent resides in exactly one channel; each channel has at most one resident
-  in the MVP. Multiple agents can subscribe to a channel, independently of residence.
-- Only the user can move existing agents in the MVP.
-  - Occupied destination: swap residents.
-  - Empty destination: move, leaving the source empty.
-- Agents can discover, inspect, read, subscribe to, and message other channels
-  and agents across the world, including across projects.
-- Agent parent/child relationships are separate from channel nesting.
+* Channels and participants
+
+- Each participant resides in exactly one channel. A channel may have zero or more
+  residents, human or agent. Subscription is independent of residence.
+- Only the user can move existing participants in the MVP.
+  - Move the selected participant into the destination's resident set and remove
+    it from the source's. Other residents do not move; there is no automatic swap.
+- Participants can discover, inspect, read, subscribe to, and message other channels
+  and participants across the world, including across projects.
+- Participant parent/child relationships are separate from channel nesting.
 - Ownership, residence, and subscription are distinct relationships.
-- Preserve human control over the agent tree; detaching/reparenting must not
-  leave agents outside that control. Exact descendant controls need specification.
+- Preserve human control over the participant tree; detaching/reparenting must not
+  leave participants outside that control. Exact descendant controls need specification.
 
 * What belongs where
 
-- Agent: identity, model/role, context, memories, plans, goals.
-  - All follow the agent when moved.
-  - Context is accumulated agent-local working material, subject to compaction,
-    rather than simply the history of the currently displayed channel.
+- Participant: identity, configuration, private context, memories, plans, goals.
+  - These belong to humans and agents alike and follow the participant when moved.
+  - Context is private working material, subject to compaction, rather than simply
+    the history of the currently displayed channel.
   - Plans and goals stay separate.
-  - Replacements inherit no agent-local state from the previous resident.
+  - A new participant inherits no private state from previous channel residents.
 - Channel: CWD, history, jobs started there.
   - After moving, use the destination's CWD for new work.
   - Record tool calls, tool results, replies, and execution activity in the
     residence channel; messages may explicitly target another channel.
 - Workspace: agenda.
-  - Use the agenda for the resident channel's workspace, including after a move
-    or replacement. A replacement can read channel history through ordinary reads.
+  - Use the agenda for the participant's residence workspace, including after a move.
+    New residents can read channel history through ordinary reads.
 - Top-level agents may self-modify the shared image.
 
 * Communication and resources
@@ -117,46 +123,56 @@ ClientView
   - Address channels with channel resource URIs.
   - Read channel state and bounded history through the resource interface.
   - Inspect a child's channel through the same interface as any other channel.
+- Messages sent to a channel reach its residents and subscribers through the same delivery path.
 - Reading history does not subscribe the reader; subscriptions deliver future messages.
 - Mentions deliver across channels without creating a subscription.
-- Human and agent messages trigger inference in their recipients.
-  - Working recipient: deliver as a clearly labeled steer with sender and source channel.
+- Deliver human and agent messages through the same participant interface.
+  - Agent clients trigger inference; human clients present the messages to the user.
+  - Working agent recipient: deliver as a clearly labeled steer with sender and source channel.
 - Other participants' tool calls, results, and execution activity do not trigger inference.
 - Idle agents yield until a message or job completion requires work, without polling.
-- Show sender identities, color-highlight mentions, and expose subscribers,
-  channel nesting, agent relationships, and working/yielded state.
+- Human and agent clients set their own participant presence. Agent clients also expose
+  actual working/yielded status and current activity.
+- Show sender identities, color-highlight mentions, and expose residents, subscribers,
+  channel nesting, participant relationships, presence, and agent execution status.
 
 * Delegation and jobs
 
-- Delegate by creating an ordinary child agent and channel, configuring its
-  model/role, and sending an assignment through channel messages.
+- Delegate by creating an ordinary child participant and channel, configuring its
+  agent client and model/role, and sending an assignment through channel messages.
 - A delegation convenience helper is a procedure over those operations, not
   another helper agent or a separate child communication model.
-- Creating a child with its initial residence is distinct from moving an existing agent.
+- Creating a child with its initial residence is distinct from moving an existing participant.
 - The parent can read or steer the child without subscribing to all its activity.
 - Notify the parent of completion using the same channel-bound job routing.
-- Jobs stay in their starting channel when agents move or swap.
-- Completion wakes that channel's current resident, including a replacement;
-  no resident means no wakeup. Do not follow the departed agent.
-- Moving or losing an agent does not cancel jobs.
-- Running jobs block removal of associated agents, channels, and required state.
+- Jobs stay in their starting channel when participants move. Jobs cannot be detached
+  from that channel.
+- Deliver completion to that channel's current residents, including new arrivals;
+  wake their agent clients and notify their human clients. An empty channel has no
+  resident to wake. Completion does not follow departed participants.
+- Moving or deleting a participant does not cancel channel-owned jobs.
+- Running jobs block deletion of their channel and state required by the operation,
+  not removal of participants merely because they reside there.
 
 * Deletion
 
-- For the MVP, deleting a channel deletes its current resident and the agent's context.
+- Deleting a participant deletes its owned state: context, plans, goals, and private
+  memories, subject to the memory-transfer choice below.
+- Residence is not ownership. Before deleting a channel, move its residents or
+  explicitly include them in deletion; do not implicitly delete other participants.
 - Delete only unreferenced history. Retain referenced history and keep existing
   references resolvable after channel deletion.
-- Working choice: move the deleted agent's memories into the global store, keeping
-  their unique IDs. They do not become a replacement's agent-local memories.
-- Recursive deletion must respect running-job removal checks.
+- Working choice: move a deleted participant's memories into the global store,
+  keeping their unique IDs. They do not become another participant's private memories.
+- Recursive deletion must respect ownership and running-job removal checks.
 
 * Server and clients
 
-- One server is one localgroup, hosting the authoritative world across projects.
+- One server hosts one authoritative world across projects.
 - Extend the existing client-server architecture from 1:1 to N:1.
-- Reuse =autolith localgroup= commands.
-- The first client starts the server if needed; later clients attach.
-- Each client has an independent view of shared channels; several clients may
+- Reuse the existing localgroup server lifecycle machinery for shared-world commands.
+- The first client starts the server if needed; later clients connect to the same world.
+- Each client has an independent interface to shared channels; several clients may
   inspect and interact with the same channel.
 - At startup, select the latest-touched channel matching the client's launch CWD,
   or offer to create a new channel there.
@@ -165,8 +181,8 @@ ClientView
 * Implementation details left
 
 - Message ordering, batching, deduplication, and self-message handling.
-- Atomic residence swaps and their boundaries during inference, tool calls,
-  and job completion.
+- Atomic residence moves and their boundaries during inference, tool calls,
+  and job completion; delivery ordering for multiple residents.
 - Ownership, descendant controls, and reference cleanup on deletion.
 - Memory transfer, history-reference tracking, and retention of referenced history.
 - N:1 startup, reconnection, persistence, concurrent updates, and shared-image mutation.
