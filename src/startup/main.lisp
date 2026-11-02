@@ -1013,27 +1013,28 @@ state, including an empty list after successful or pristine startup."
            :image-values             image-values
            :pristine-p               pristine-p
            :simulate-crash-p         (not (null (getopt* command ':simulate-crash))))
-      (let ((session-id (main--spawn-client-session
-                         configuration
-                         :permission-mode     permission-mode
-                         :immutable-p         immutable-p
-                          :conversation-id
-                          (or effective-resume-id recovery-conversation-id)
-                          :resume-command-p
-                          (and effective-resume-requested-p
-                               (null effective-resume-id))
-                          :recovery-diagnosis recovery-diagnosis)))
+      (multiple-value-bind (session-id started-p)
+          (main--open-world-channel
+           configuration
+           :permission-mode    permission-mode
+           :immutable-p        immutable-p
+           :pristine-p         pristine-p
+           :conversation-id    (or effective-resume-id recovery-conversation-id)
+           :resume-command-p   (and effective-resume-requested-p
+                                    (null effective-resume-id))
+           :recovery-diagnosis recovery-diagnosis)
         (when session-id
           (let* ((record (localgroup--find-record configuration session-id))
                  (exit
                    (handler-case
                        (localgroup-attach-record configuration record ':control)
                      (serious-condition (condition)
-                       ;; The freshly spawned session has no other owner yet, so
-                       ;; a failed first attach would leak it as an idle
-                       ;; detached process.
-                       ; mallet:suppress no-ignore-errors -- best-effort kill while the attach failure propagates
-                       (ignore-errors (localgroup-query-record record ':kill))
+                       ;; A channel started for this terminal would otherwise
+                       ;; idle in the server; one that already served others
+                       ;; is left to them.
+                       (when started-p
+                         ; mallet:suppress no-ignore-errors -- best-effort kill while the attach failure propagates
+                         (ignore-errors (localgroup-query-record record ':kill)))
                        (error condition)))))
             (localgroup-relay-exit configuration exit ':control))
           (return-from main--start-session nil))))
@@ -1102,7 +1103,7 @@ state, including an empty list after successful or pristine startup."
     (&key handoff-record authenticate-p resume-requested-p resume-id
           recovery-conversation-id recovery-diagnosis image-values
           pristine-p simulate-crash-p)
-  "Return true when this start should spawn a detached session and attach.
+  "Return true when this start should open a channel in the world server and attach.
 
 A client-first start keeps this terminal a thin relay whose detach is
 immediate and never interrupts session work, so resumes and crash recovery
@@ -1121,28 +1122,35 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
        (platform-supports-p *platform* ':detached-sessions)
        (not (null (interactive-stream-p *standard-input*)))))
 
-(-> main--spawn-client-session
+(-> main--open-world-channel
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
+                        (:pristine-p boolean)
                         (:conversation-id (option string))
                         (:resume-command-p boolean)
-                        (:recovery-diagnosis t))
-    (option string))
-(defun main--spawn-client-session
-    (configuration &key (permission-mode ':ask) immutable-p conversation-id
+                        (:recovery-diagnosis (option string)))
+    (values (option string) boolean))
+(defun main--open-world-channel
+    (configuration &key (permission-mode ':ask) immutable-p pristine-p conversation-id
                         resume-command-p recovery-diagnosis)
-  "Spawn the detached session for a client-first start, or NIL to run direct."
+  "Open this terminal's channel in the world server, or return NIL to run direct.
+
+CONVERSATION-ID opens that channel; otherwise the launch directory selects
+or creates one. The second value says whether the server started the channel
+for this terminal."
   (handler-case
-      (localgroup-handoff-spawn-fresh configuration
-                                      :permission-mode    permission-mode
-                                      :immutable-p        immutable-p
-                                      :conversation-id    conversation-id
-                                      :resume-command-p   resume-command-p
-                                      :recovery-diagnosis recovery-diagnosis)
+      (world-client-open configuration
+                         :directory          (config :working-directory configuration)
+                         :channel            conversation-id
+                         :permission-mode    permission-mode
+                         :immutable-p        immutable-p
+                         :pristine-p         pristine-p
+                         :resume-command-p   resume-command-p
+                         :recovery-diagnosis recovery-diagnosis)
     (error (condition)
       (format *error-output*
               "Autolith is starting directly in this terminal: ~A~%"
-              (bounded-string condition :limit 400))
-      nil)))
+              (bounded-string (princ-to-string condition) :limit 400))
+      (values nil nil))))
 
 (-> main--session-options () list)
 (defun main--session-options ()

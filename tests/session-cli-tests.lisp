@@ -360,3 +360,118 @@
                             (lambda () (not (platform-process-alive-p *platform* pid))) 5)
                      (platform-terminate-process *platform* pid :force t)))))))))))
   nil)
+
+(-> test-cli-world-client-start () null)
+(defun test-cli-world-client-start ()
+  "Test a client-first start opening its channel in the world server and attaching."
+  (with-test-configuration (configuration)
+    (configuration-ensure-directories configuration)
+    (let* ((identifier   "b6uouHJ")
+           (record       (list #p"unused.sexp" :localgroup-endpoint
+                               :session-id identifier :pid 424242))
+           (opened       nil)
+           (attached     nil)
+           (queried      nil)
+           (open-error   nil)
+           (attach-error nil)
+           (started-p    t)
+           (direct-p     nil))
+      (test-call-with-function-replacements
+       (list
+        (list 'configuration-create
+              (lambda (&rest arguments) (declare (ignore arguments)) configuration))
+        (list 'main--client-session-p
+              (lambda (&rest arguments) (declare (ignore arguments)) t))
+        (list 'main-resolve-conversation
+              (lambda (resolve-configuration prefix)
+                (declare (ignore resolve-configuration prefix))
+                identifier))
+        (list 'main--live-conversation-record
+              (lambda (&rest arguments) (declare (ignore arguments)) nil))
+        (list 'world-client-open
+              (lambda (open-configuration &rest arguments)
+                (declare (ignore open-configuration))
+                (when open-error (error open-error))
+                (push arguments opened)
+                (values identifier started-p)))
+        (list 'localgroup--find-record
+              (lambda (find-configuration session-id)
+                (declare (ignore find-configuration))
+                (test-assert (string= session-id identifier)
+                             "the client attaches to the channel the server opened")
+                record))
+        (list 'localgroup-attach-record
+              (lambda (attach-configuration entry mode)
+                (declare (ignore attach-configuration))
+                (push (list (rest entry) mode) attached)
+                (when attach-error (error attach-error))
+                nil))
+        (list 'localgroup-query-record
+              (lambda (entry operation &optional arguments)
+                (declare (ignore entry arguments))
+                (push operation queried)
+                (list :ok)))
+        (list 'localgroup-relay-exit
+              (lambda (&rest arguments) (declare (ignore arguments))))
+        (list 'main--connect-application
+              (lambda (&rest arguments)
+                (declare (ignore arguments))
+                (setf direct-p t)
+                (error 'configuration-error :message "direct startup"))))
+       (lambda ()
+         (let ((*error-output* (make-string-output-stream)))
+           (main-dispatch '())
+           (let ((arguments (first opened)))
+             (test-assert (and (= (length opened) 1)
+                               (equal (getf arguments :directory)
+                                      (config :working-directory configuration))
+                               (null (getf arguments :channel))
+                               (member (getf arguments :permission-mode)
+                                       '(:ask :auto :sandboxed :full-access))
+                               (not (getf arguments :resume-command-p))
+                               (= (length attached) 1)
+                               (eq (second (first attached)) ':control)
+                               (null queried)
+                               (not direct-p))
+                          "a plain start opens a channel for its directory and attaches to it"))
+           (main-dispatch (list "resume" identifier))
+           (test-assert (and (= (length opened) 2)
+                             (string= (getf (first opened) :channel) identifier)
+                             (= (length attached) 2))
+                        "resuming a conversation opens that channel in the server")
+           (main-dispatch '("resume"))
+           (test-assert (and (= (length opened) 3)
+                             (null (getf (first opened) :channel))
+                             (getf (first opened) :resume-command-p))
+                        "a bare resume opens a channel that picks the conversation itself")
+           (setf attach-error (make-condition 'localgroup-error
+                                              :operation ':attach
+                                              :message   "The attachment was rejected."))
+           (test-assert (handler-case
+                            (progn (main-dispatch '()) nil)
+                          (localgroup-error (condition)
+                            (and (search "rejected" (autolith-error-message condition))
+                                 (equal queried '(:kill)))))
+                        "a failed attach kills the channel started for this terminal")
+           (setf started-p nil
+                 queried   nil)
+           (test-assert (handler-case
+                            (progn (main-dispatch '()) nil)
+                          (localgroup-error (condition)
+                            (and (search "rejected" (autolith-error-message condition))
+                                 (null queried))))
+                        "a failed attach leaves a channel the server already served")
+           (setf attach-error nil
+                 open-error   (make-condition 'localgroup-error
+                                              :operation ':open
+                                              :message   "No world server could start."))
+           (test-assert (handler-case
+                            (progn (main-dispatch '()) nil)
+                          (configuration-error (condition)
+                            (and direct-p
+                                 (search "direct startup" (autolith-error-message condition)))))
+                        "a failed open starts directly in this terminal")
+           (test-assert (search "No world server could start"
+                                (get-output-stream-string *error-output*))
+                        "the failed open is reported before the direct start"))))))
+  nil)
