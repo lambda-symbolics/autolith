@@ -647,7 +647,8 @@
 (define-test-suite world-server
   test-world-server-hosting
   test-world-server-checkpoint-quiescence
-  test-world-server-stop)
+  test-world-server-stop
+  test-world-server-switch)
 
 (define-test-suite preferences
   test-preferences
@@ -779,6 +780,7 @@
   test-application-command-policies
   test-built-in-application-command-policies
   test-built-in-application-command-calls
+  test-switch-command-direct
   test-application-codex-fast-mode-command
   test-application-settings-command
   test-application-mcp-reload-capability-change

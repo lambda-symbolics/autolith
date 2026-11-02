@@ -467,7 +467,10 @@ HEADER-P renders field labels rather than status values."
     (stream terminal keyword &key (:socket t))
     (option list))
 (defun localgroup--attach-terminal-loop (socket-stream terminal mode &key socket)
-  "Relay terminal I/O; return an application exit or explicit checkpoint transition."
+  "Relay terminal I/O; return an application exit, a checkpoint transition or a switch request.
+
+A (:SWITCH :SESSION-ID ID) result asks the caller to attach to channel ID
+instead; this attachment has ended by then."
   (let ((output    (make-mode-tracking-output-stream *standard-output*))
         (reconnect nil))
     (unwind-protect
@@ -478,9 +481,11 @@ HEADER-P renders field labels rather than status values."
                   :read-event-function  (lambda () (terminal-read-event terminal))
                   :packet-function
                   (lambda (packet)
-                    (when (and (eq (first packet) ':checkpoint-reconnect)
-                               (non-empty-string-p (getf (rest packet) :id))
-                               (typep (getf (rest packet) :history-position) '(integer 0)))
+                    (when (or (and (eq (first packet) ':checkpoint-reconnect)
+                                   (non-empty-string-p (getf (rest packet) :id))
+                                   (typep (getf (rest packet) :history-position) '(integer 0)))
+                              (and (eq (first packet) ':switch)
+                                   (non-empty-string-p (getf (rest packet) :session-id))))
                       (setf reconnect packet)
                       t))
                   :resize-function
@@ -554,7 +559,8 @@ HEADER-P renders field labels rather than status values."
 (defun localgroup-attach-record (configuration entry mode)
   "Attach the terminal, following explicit checkpoint transitions in the same mode.
 
-Return an application exit plist, or NIL after a detach or connection loss."
+Return an application exit plist, a (:SWITCH :SESSION-ID ID) request from
+the session, or NIL after a detach or connection loss."
   (let ((history-position nil))
     (loop
       (let ((result (localgroup--attach-record-once configuration entry mode
