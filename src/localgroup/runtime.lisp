@@ -273,6 +273,12 @@ conversation transaction can roll back before releasing either lease."
             steering-count :recalled-input-p (not (null recalled-p)) :turn-cancelling-p
             (not (null cancelling-p)) :reader-paused-p (not (null reader-paused-p))
             :task-live-count task-live-count :task-active-count task-active-count
+            :message-count      (conversation-message-count conversation)
+            :mention-count
+            (let ((person (application-world-human-identifier application)))
+              (if person
+                  (gethash person (conversation-channel-mention-counts conversation) 0)
+                  0))
             :terminal-attached-p
             (let ((terminal (terminal-ui-terminal (application-ui application))))
               (if (typep terminal 'localgroup-terminal)
