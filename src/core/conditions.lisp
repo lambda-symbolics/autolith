@@ -354,6 +354,7 @@
 (define-condition world-error (autolith-error)
   ((pathname
     :initarg       :pathname
+    :initform      nil
     :reader        world-error-pathname
     :type          (option pathname)
     :documentation "The world record file being read or written, when one is involved.")

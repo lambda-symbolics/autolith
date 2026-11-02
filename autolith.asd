@@ -389,6 +389,7 @@
                                           (:file "telemetry/hooks")
                                           (:file "startup/session-cli")
                                           (:file "startup/main")
+                                          (:file "world/server")
                                           (:file "startup/active-image"))))
   :in-order-to             ((asdf:test-op (asdf:test-op #:autolith/tests))))
 
@@ -438,6 +439,7 @@
                                           (:file "update-tests")
                                           (:file "agenda-tests")
                                           (:file "world-tests")
+                                          (:file "world-server-tests")
                                           (:file "preferences-tests")
                                           (:file "prompt-cache-tests")
                                           (:file "idle-compaction-tests")

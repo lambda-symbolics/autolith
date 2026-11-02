@@ -57,6 +57,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-ui
     :type          (option terminal-ui)
     :documentation "The reconnectable primary-screen terminal UI.")
+   (hosted-p
+    :initform      nil
+    :accessor      application-hosted-p
+    :type          boolean
+    :documentation "Whether a world server hosts this application beside other channels.")
    (lisp-hinted-command-names
     :initform      nil
     :accessor      application-lisp-hinted-command-names
