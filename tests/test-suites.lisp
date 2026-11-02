@@ -619,7 +619,8 @@
   test-world-channel-tools
   test-world-message-presentation
   test-world-child-participants
-  test-world-handles)
+  test-world-handles
+  test-world-composer-mentions)
 
 (define-test-suite world-server
   test-world-server-hosting
@@ -1408,6 +1409,7 @@
   test-terminal-lisp-operation-completion
   test-terminal-path-completion
   test-terminal-path-completion-history
+  test-terminal-mention-completion
   test-terminal-modal-selection
   test-terminal-fullscreen-picker-capacity
   test-terminal-picker-detail-column

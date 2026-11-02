@@ -140,18 +140,19 @@ offered only while the typed prefix no longer matches its primary."
      (:completion-function (option function))
      (:completion-root (option pathname))
      (:path-search-function (option function))
+     (:mention-function (option function))
      (:message-header-prefixes list)
      (:clock-function function))
     terminal-ui)
 (defun terminal-ui-create
     (&key terminal editor (prompt "> ") (placeholder "") completions
-       completion-function completion-root path-search-function fullscreen-p
-       message-header-prefixes
+       completion-function completion-root path-search-function mention-function
+       fullscreen-p message-header-prefixes
        (clock-function #'terminal-ui--monotonic-seconds))
   "Create an inline or opt-in fullscreen UI for interactive TERMINAL.
 
 MESSAGE-HEADER-PREFIXES name the transcript lines the fullscreen viewport
-jumps between as messages."
+jumps between as messages. MENTION-FUNCTION completes @ participant names."
   (unless (typep terminal 'terminal)
     (error 'terminal-error
            :message   "TERMINAL-UI-CREATE requires a terminal instance."
@@ -183,6 +184,11 @@ jumps between as messages."
            :message   "The path search provider must be a function or NIL."
            :operation ':create-ui
            :cause     nil))
+  (unless (typep mention-function '(option function))
+    (error 'terminal-error
+           :message   "The mention provider must be a function or NIL."
+           :operation ':create-ui
+           :cause     nil))
   (let ((live-region
           (make-live-region
            :columns        (terminal-columns terminal)
@@ -211,6 +217,7 @@ jumps between as messages."
                    (and completion-root
                         (uiop:ensure-directory-pathname completion-root))
                    :path-search-function    path-search-function
+                   :mention-function        mention-function
                    :completion-selector
                    (make-selector
                     :visible-count *terminal-ui-visible-completions*
@@ -660,6 +667,30 @@ the draft is exact."
        :token-end       end
        :search-function (terminal-ui-path-search-function ui)))))
 
+(-> terminal-ui--matching-mention-completions (terminal-ui string (integer 0)) list)
+(defun terminal-ui--matching-mention-completions (ui text cursor)
+  "Return participant completions for the @ token at CURSOR in TEXT.
+
+A token with a slash names a path, never a participant. Each entry is spliced
+over the token, keeping the @, and does not submit."
+  (let ((function (terminal-ui-mention-function ui)))
+    (when function
+      (multiple-value-bind (start end token)
+          (terminal-path-token text cursor)
+        (when (and token (not (find #\/ token)))
+          (let ((entries (funcall function (subseq token 1))))
+            (unless (and (listp entries) (every #'terminal-completion-p entries))
+              (error 'terminal-error
+                     :message   "The mention provider returned invalid entries."
+                     :operation ':complete
+                     :cause     nil))
+            (loop for entry in entries
+                  collect (list* :kind        ':mention
+                                 :token-start start
+                                 :token-end   end
+                                 :submit-p    nil
+                                 entry))))))))
+
 (-> terminal-ui--paired-closers (line-editor) (option string))
 (defun terminal-ui--paired-closers (editor)
   "Return the closing brackets after EDITOR's cursor when nothing else follows it.
@@ -740,7 +771,9 @@ name. Path completions apply when no command prefix matches."
                   (terminal-ui--current-completions ui))))))
     (if command-matches
         command-matches
-        (terminal-ui--matching-path-completions ui (line-editor-text editor) cursor))))
+        (let ((text (line-editor-text editor)))
+          (append (terminal-ui--matching-mention-completions ui text cursor)
+                  (terminal-ui--matching-path-completions ui text cursor))))))
 
 (-> terminal-ui--reconcile-completions (terminal-ui) list)
 (defun terminal-ui--reconcile-completions (ui)
@@ -860,9 +893,9 @@ recalled drafts. An @ path token still offers file completion."
     (terminal-ui--reconcile-completions ui)
     (terminal-ui--choice-rows (terminal-ui-completion-selector ui) row-width)))
 
-(-> terminal-ui--accept-path-completion (terminal-ui list) null)
-(defun terminal-ui--accept-path-completion (ui entry)
-  "Replace ENTRY's original path token in UI's input with its completed name."
+(-> terminal-ui--accept-token-completion (terminal-ui list) null)
+(defun terminal-ui--accept-token-completion (ui entry)
+  "Replace ENTRY's original @ token in UI's input with its completed name."
   (let* ((editor   (terminal-ui-editor ui))
          (original (or (terminal-ui-completion-prefix ui)
                        (line-editor-text editor)))
@@ -889,8 +922,8 @@ recalled drafts. An @ path token still offers file completion."
 
 Paired closers after the cursor stay after it while the completed name leaves
 its parenthesis open, and are dropped once the name closes it itself."
-  (if (eq (getf entry :kind) ':path)
-      (terminal-ui--accept-path-completion ui entry)
+  (if (member (getf entry :kind) '(:path :mention))
+      (terminal-ui--accept-token-completion ui entry)
       (let* ((editor   (terminal-ui-editor ui))
              (closers  (or (terminal-ui--paired-closers editor) ""))
              (inserted (sanitize-text
@@ -979,7 +1012,7 @@ its parenthesis open, and are dropped once the name closes it itself."
            (terminal-ui--end-completion ui)
            (cond
              ((or (getf entry :argument)
-                  (eq (getf entry :kind) ':path)
+                  (member (getf entry :kind) '(:path :mention))
                   (not (getf entry :submit-p t)))
               (terminal-ui--repaint-live ui)
               (values :changed nil))

@@ -4091,7 +4091,8 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           (:tool-allowlist (option list))
           (:tool-restriction-p boolean)
           (:goal-continuations-p boolean)
-          (:fatal-agent-loop-errors-p boolean))
+          (:fatal-agent-loop-errors-p boolean)
+          (:mentions-p boolean))
     keyword)
 (defun application--run-message-input
     (application input
@@ -4099,8 +4100,13 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           user-message-persisted-function pending-operations-function
           pending-input-identifier (tools-p t)
           tool-allowlist (tool-restriction-p nil) (goal-continuations-p t)
-          (fatal-agent-loop-errors-p t))
-  "Run model INPUT with established expected, cancellation, and fatal handling."
+          (fatal-agent-loop-errors-p t) (mentions-p t))
+  "Run model INPUT with established expected, cancellation, and fatal handling.
+
+With MENTIONS-P, a message the person typed is told to the participants it
+mentions in other channels before this channel's agent takes it."
+  (when (and mentions-p (null pending-input-identifier))
+    (application-world-mention application input))
   (application--call-with-model-error-handling
    application
    (lambda ()
@@ -4262,7 +4268,8 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
                :tool-allowlist            *application-recovery-diagnostic-tool-names*
                :tool-restriction-p        t
                :goal-continuations-p      nil
-               :fatal-agent-loop-errors-p nil)))
+               :fatal-agent-loop-errors-p nil
+               :mentions-p                nil)))
             (:native-lisp
              (application-input-controller--record-prompt-result
               controller

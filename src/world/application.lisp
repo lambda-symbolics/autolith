@@ -129,6 +129,155 @@ well, since the steer persists first and the queued turn then skips."
                                        :taken      (application-world-deliveries application)))
         (world-delivery-pending-identifier-p identifier))))
 
+(-> world-mention-completion-entries (world string) list)
+(defun world-mention-completion-entries (world token)
+  "Return completion entries for the participants of WORLD whose names start with TOKEN."
+  (loop for participant in (sort (copy-list (world-participants world)) #'string-lessp
+                                 :key #'participant-name)
+        for name = (participant-name participant)
+        when (and (world-handle-p name)
+                  (uiop:string-prefix-p (string-downcase token) (string-downcase name)))
+          collect (let ((channel (world-channel-find world (participant-residence participant))))
+                    (list :name        (format nil "@~A" name)
+                          :description (format nil "~(~A~) in ~A~@[ ~A~]"
+                                               (participant-kind participant)
+                                               (conversation-identifier-display
+                                                (participant-residence participant))
+                                               (and channel (channel-title channel)))))))
+
+(-> application-world-mention-function (configuration) function)
+(defun application-world-mention-function (configuration)
+  "Return a function completing @ participant names from CONFIGURATION's world as it is."
+  (let ((cache nil))
+    (lambda (token)
+      (let ((world (world--cached configuration cache)))
+        (setf cache (cons (world--write-date configuration) world))
+        (world-mention-completion-entries world token)))))
+
+(-> world--write-date (configuration) (option integer))
+(defun world--write-date (configuration)
+  "Return the write date of CONFIGURATION's world log, or NIL without one."
+  (let ((pathname (configuration-world-path configuration)))
+    (and (probe-file pathname) (file-write-date pathname))))
+
+(-> world--cached (configuration (option cons)) world)
+(defun world--cached (configuration cache)
+  "Return the world in CACHE, a (WRITE-DATE . WORLD) pair still current, or read it afresh.
+
+A world that cannot be read presents as empty."
+  (let ((date (world--write-date configuration)))
+    (if (and cache (eql (first cache) date))
+        (rest cache)
+        (handler-case (world-load configuration)
+          (autolith-error ()
+            (make-instance 'world))))))
+
+(-> application-world (application) world)
+(defun application-world (application)
+  "Return the world as APPLICATION last read it for presentation, rereading it once it changed."
+  (let* ((configuration (application-configuration application))
+         (cache         (application-world-cache application))
+         (world         (world--cached configuration cache)))
+    (setf (application-world-cache application)
+          (cons (world--write-date configuration) world))
+    world))
+
+(-> application-world-mention-spans (application list) list)
+(defun application-world-mention-spans (application spans)
+  "Return SPANS with every @mention of a participant styled: the person's own in the user style, others accented.
+
+The world is read only when some span holds an @, so plain text costs
+nothing."
+  (if (notany (lambda (span)
+                (and (consp span) (stringp (rest span)) (find #\@ (rest span))))
+              spans)
+      spans
+      (let ((world (application-world application)))
+        (if (null (world-participants world))
+            spans
+            (loop for span in spans
+                  append (if (and (consp span) (stringp (rest span)))
+                             (world-mention--split-span world span)
+                             (list span)))))))
+
+(-> world-mention--split-span (world cons) list)
+(defun world-mention--split-span (world span)
+  "Return SPAN cut around the @mentions its text resolves in WORLD, each styled."
+  (let ((style  (first span))
+        (text   (rest span))
+        (pieces nil)
+        (start  0))
+    (loop
+      (let ((at (position #\@ text :start start)))
+        (unless at
+          (return))
+        (let* ((end         (or (position-if-not (lambda (character)
+                                                   (or (alphanumericp character)
+                                                       (member character '(#\- #\_))))
+                                                 text :start (1+ at))
+                                (length text)))
+               (designator  (subseq text (1+ at) end))
+               (participant (and (plusp (length designator))
+                                 (world-message-participant world designator))))
+          (if participant
+              (progn
+                (when (> at start)
+                  (push (cons style (subseq text start at)) pieces))
+                (push (terminal-span (if (eq (participant-kind participant) ':human)
+                                         ':user
+                                         ':legend-accent)
+                                     (subseq text at end))
+                      pieces)
+                (setf start end))
+              (setf start (max end (1+ at)))))))
+    (when (< start (length text))
+      (push (cons style (subseq text start)) pieces))
+    (if pieces
+        (nreverse pieces)
+        (list span))))
+
+(-> application-world-mention (application t) list)
+(defun application-world-mention (application input)
+  "Tell the participants INPUT, the person's message to this channel, mentions elsewhere, and return the channels told.
+
+The message itself goes to this channel's agent as the person's turn; a
+participant residing elsewhere that it names as @name or @id gets a copy in
+its own channel. A delivery that fails is reported and never stops the turn."
+  (let ((text (cond
+                ((stringp input)
+                 input)
+                ((typep input 'user-message-input)
+                 (user-message-input-text input))
+                (t
+                 nil))))
+    (when (and (stringp text) (find #\@ text))
+      (handler-case
+          (let* ((configuration (application-configuration application))
+                 (channel       (application-world--served-channel application))
+                 (world         (and channel (values (world-reconcile-sessions configuration))))
+                 (person        (and world (world-human-participant world)))
+                 (elsewhere     (and person
+                                     (remove-if (lambda (identifier)
+                                                  (let ((mentioned (world-participant-find
+                                                                    world identifier)))
+                                                    (or (null mentioned)
+                                                        (string= (participant-residence mentioned)
+                                                                 channel))))
+                                                (world-message-mentions world text)))))
+            (when elsewhere
+              (getf (world-message-send configuration
+                                        :sender   (participant-identifier person)
+                                        :channel  channel
+                                        :text     text
+                                        :mentions elsewhere
+                                        :post-p   nil)
+                    :channels)))
+        (autolith-error (condition)
+          (application-present application
+                               (format nil "Mentions were not delivered: ~A"
+                                       (bounded-string (princ-to-string condition) :limit 300)))
+          nil)))))
+
 (-> application-world-human-identifier (application) (option string))
 (defun application-world-human-identifier (application)
   "Return the identifier of the world's human participant, or NIL before the world has one."
@@ -186,4 +335,6 @@ well, since the steer persists first and the queued turn then skips."
     (append (list (terminal-span ':brand "● ")
                   (terminal-span ':agent-name name)
                   (terminal-span ':dim (format nil " [channel ~A]~@[ ~A~]~%" channel timestamp-text)))
-            (application--markdown-body application (or (getf request :summary) "")))))
+            (application-world-mention-spans
+             application
+             (application--markdown-body application (or (getf request :summary) ""))))))
