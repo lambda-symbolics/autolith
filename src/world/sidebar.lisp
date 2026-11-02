@@ -177,7 +177,7 @@ newest change. Within a workspace, channels nest under their parents."
           (setf (gethash identifier table) status))))
     (loop for (workspace . members) in (world-sidebar--groups (world-channels world) current)
           append (cons (list :kind ':workspace
-                             :name (world-sidebar--workspace-name workspace)
+                             :name (world-workspace-leaf workspace)
                              :path (world-sidebar--short-path workspace))
                        (loop for (channel . depth) in (world-sidebar--tree members)
                              collect (world-sidebar--channel-entry
@@ -259,14 +259,6 @@ CAUGHT-UP-P because this client looks at it. Without a COUNT nothing is known."
      (when (or caught-up-p (null (gethash identifier baselines)))
        (setf (gethash identifier baselines) count))
      (max 0 (- count (gethash identifier baselines))))))
-
-(-> world-sidebar--workspace-name (string) string)
-(defun world-sidebar--workspace-name (workspace)
-  "Return the last directory name of WORKSPACE, or WORKSPACE itself."
-  (let ((name (first (last (pathname-directory (uiop:ensure-directory-pathname workspace))))))
-    (if (stringp name)
-        name
-        workspace)))
 
 (-> world-sidebar--short-path (string) string)
 (defun world-sidebar--short-path (workspace)

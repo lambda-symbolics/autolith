@@ -16,6 +16,9 @@
 (defparameter *world-name-limit* 80
   "The maximum characters in one participant name or channel title.")
 
+(defparameter *world-handle-limit* 32
+  "The most characters in a participant handle, the name an @mention uses.")
+
 (defparameter *world-settings-limit* 32
   "The maximum plist elements in one participant settings plist.")
 
@@ -149,6 +152,44 @@
   (and (non-empty-string-p value)
        (<= (length value) *world-name-limit*)
        (notany (lambda (character) (member character '(#\Newline #\Return))) value)))
+
+(-> world-handle-p (t) boolean)
+(defun world-handle-p (value)
+  "Return true when VALUE is a handle: letters, digits, hyphens and underscores, bounded in length."
+  (and (non-empty-string-p value)
+       (<= (length value) *world-handle-limit*)
+       (every (lambda (character)
+                (or (alphanumericp character) (char= character #\-) (char= character #\_)))
+              value)))
+
+(-> world-handle-base (string &key (:fallback string)) string)
+(defun world-handle-base (text &key (fallback "agent"))
+  "Return TEXT as the base of a handle, or FALLBACK when nothing of it remains.
+
+Letters are lowercased, digits kept, and every run of other characters
+becomes one hyphen, with no hyphen at either end."
+  (let ((base (string-trim "-"
+                           (with-output-to-string (stream)
+                             (let ((hyphen-p nil))
+                               (loop for character across text
+                                     do (cond
+                                          ((alphanumericp character)
+                                           (write-char (char-downcase character) stream)
+                                           (setf hyphen-p nil))
+                                          ((not hyphen-p)
+                                           (write-char #\- stream)
+                                           (setf hyphen-p t)))))))))
+    (if (world-handle-p base)
+        (subseq base 0 (min (length base) *world-handle-limit*))
+        fallback)))
+
+(-> world-workspace-leaf (string) string)
+(defun world-workspace-leaf (workspace)
+  "Return the last directory name of WORKSPACE, or WORKSPACE itself."
+  (let ((name (first (last (pathname-directory (uiop:ensure-directory-pathname workspace))))))
+    (if (stringp name)
+        name
+        workspace)))
 
 (-> world--identifier-list-p (t) boolean)
 (defun world--identifier-list-p (value)
@@ -501,6 +542,40 @@ nothing; so does no match."
       (t
        (first matches)))))
 
+(-> world-participant-named-p (world string &key (:except (option string))) boolean)
+(defun world-participant-named-p (world name &key except)
+  "Return true when a participant of WORLD other than EXCEPT is named NAME, ignoring case."
+  (not (null (find-if (lambda (participant)
+                        (and (not (equal (participant-identifier participant) except))
+                             (string-equal (participant-name participant) name)))
+                      (world-participants world)))))
+
+(-> world-unique-handle (world string) string)
+(defun world-unique-handle (world base)
+  "Return BASE, or BASE with the lowest numbered suffix, that names no participant of WORLD."
+  (loop for index from 1
+        for candidate = (if (= index 1)
+                            base
+                            (format nil "~A-~D" base index))
+        unless (world-participant-named-p world candidate)
+          return candidate))
+
+(-> world-participant-designated (world string) (option participant))
+(defun world-participant-designated (world designator)
+  "Return the participant DESIGNATOR names by identifier, display identifier, unique name or unique fragment, or NIL."
+  (or (let ((canonical (handler-case (identifier-normalize designator)
+                         (identifier-error ()
+                           nil))))
+        (or (world-participant-find world designator)
+            (and canonical (world-participant-find world canonical))))
+      (let ((named (remove-if-not (lambda (participant)
+                                    (string-equal (participant-name participant) designator))
+                                  (world-participants world))))
+        (and (= (length named) 1) (first named)))
+      (let ((matches (identifier-match designator (world-participants world)
+                                       :key #'participant-identifier)))
+        (and (= (length matches) 1) (first matches)))))
+
 (-> world-channel-designated (world configuration string) channel)
 (defun world-channel-designated (world configuration designator)
   "Return the channel DESIGNATOR names in WORLD by identifier, legacy alias or fragment.
@@ -785,6 +860,32 @@ participant owns and resides in, as a plist of :id, :workspace, :title and
                        :presence   (or presence (participant-presence participant))
                        :updated-at (max now (participant-updated-at participant)))))
          (values (list (world--participant-record updated)) updated))))))
+
+(-> world-participant-rename (configuration string string &key (:now timestamp)) participant)
+(defun world-participant-rename (configuration identifier name &key (now (get-universal-time)))
+  "Name participant IDENTIFIER NAME, a handle no other participant has, and return it."
+  (world--transact
+   configuration
+   (lambda (world)
+     (let ((participant (world--require-participant world identifier ':rename-participant)))
+       (unless (world-handle-p name)
+         (error 'world-error
+                :message    (format nil "A name is up to ~D letters, digits, hyphens and underscores, so @mentions can use it."
+                                    *world-handle-limit*)
+                :pathname   nil
+                :operation  ':rename-participant
+                :identifier identifier))
+       (when (world-participant-named-p world name :except identifier)
+         (error 'world-error
+                :message    (format nil "Another participant is already named ~A." name)
+                :pathname   nil
+                :operation  ':rename-participant
+                :identifier identifier))
+       (let ((renamed (world--copy-participant
+                       participant
+                       :name       name
+                       :updated-at (max now (participant-updated-at participant)))))
+         (values (list (world--participant-record renamed)) renamed))))))
 
 (-> world-channel-update
     (configuration string &key (:title (option string)) (:workspace (option string))

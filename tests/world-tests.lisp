@@ -258,10 +258,14 @@
                              :key #'participant-kind)))
             (test-assert (and agent
                               (equal (participant-parent agent) (participant-identifier human))
-                              (string= (participant-name agent) "autolith")
+                              (world-handle-p (participant-name agent))
+                              (uiop:string-prefix-p
+                               (world-session--handle-base
+                                (namestring (config :working-directory configuration)))
+                               (participant-name agent))
                               (equal (getf (participant-settings agent) :model)
                                      (conversation-model second)))
-                         "a migrated session's agent resides in its channel under the human")
+                         "a migrated session's agent resides in its channel under the human, named after the workspace")
             (test-assert (= (nth-value 1 (world-reconcile-sessions configuration :now 3001)) 0)
                          "an unchanged conversation is not migrated again")
             (conversation-append-user-message first "a newer message")
@@ -347,7 +351,7 @@
         (test-assert (and (search "2 channels" listing)
                           (search "b-first1" listing)
                           (search "b-secnd2" listing)
-                          (search "autolith (agent" listing)
+                          (search "(agent " listing)
                           (search "user (human" listing))
                      "channel:list surveys every migrated conversation with its residents"))
       (let ((current (world-tests--read configuration first "current")))
@@ -430,7 +434,7 @@
              (let ((output (recording-terminal-output terminal)))
                (test-assert (and (search "channels" output)
                                  (search "b-listed" output)
-                                 (search "autolith (agent" output))
+                                 (search "(agent " output))
                             "/channels shows the channel and its agent resident")))
         (ignore-errors (terminal-ui-stop ui)))))
   nil)
@@ -569,6 +573,58 @@
                                 (world-participant-find (world-load configuration)
                                                         (participant-identifier first-agent))))
                          "the subscription is removed"))))))
+  nil)
+
+(-> test-world-handles () null)
+(defun test-world-handles ()
+  "Test agents get unique workspace handles, duplicates are renamed, and renaming is checked."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+      (let ((base  (world-session--handle-base
+                    (namestring (config :working-directory configuration))))
+            (names (list (participant-name first-agent) (participant-name second-agent))))
+        (test-assert (and (member base names :test #'string=)
+                          (member (format nil "~A-2" base) names :test #'string=))
+                     "two agents in one workspace are named after it, the second numbered")
+        (world-participant-create configuration
+                                  :kind      ':agent
+                                  :name      (participant-name first-agent)
+                                  :residence "bfirst1"
+                                  :parent    (participant-identifier human)
+                                  :now       3000)
+        (let* ((world (values (world-reconcile-sessions configuration :now 3001)))
+               (all   (mapcar #'participant-name (world-participants world))))
+          (test-assert (and (= (length all) (length (remove-duplicates all :test #'string-equal)))
+                            (string= (participant-name
+                                      (world-participant-find world
+                                                              (participant-identifier first-agent)))
+                                     (participant-name first-agent)))
+                       "reconciliation renames a later agent sharing a name and keeps the older one"))
+        (let ((renamed (world-participant-rename configuration
+                                                 (participant-identifier first-agent)
+                                                 "Frobnicator")))
+          (test-assert (string= (participant-name renamed) "Frobnicator")
+                       "a participant takes a new handle"))
+        (dolist (name (list "bad name" "" (participant-name second-agent)
+                            (string-upcase (participant-name second-agent))))
+          (test-assert (handler-case
+                           (progn (world-participant-rename configuration
+                                                           (participant-identifier first-agent)
+                                                           name)
+                                  nil)
+                         (world-error () t))
+                       "a handle with other characters, or one another participant has, is refused"))
+        (let ((world (world-load configuration)))
+          (test-assert (and (eq (world-participant-designated world "frobnicator")
+                                (world-participant-find world (participant-identifier first-agent)))
+                            (eq (world-participant-designated
+                                 world (conversation-identifier-display
+                                        (participant-identifier second-agent)))
+                                (world-participant-find world (participant-identifier second-agent)))
+                            (null (world-participant-designated world "nobody")))
+                       "participants are designated by name, display identifier or unique fragment")))))
   nil)
 
 (-> test-world-message-presentation () null)
