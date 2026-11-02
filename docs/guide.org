@@ -551,9 +551,11 @@ modeline, command, RLM, and task activity rows. Use =PageUp= and =PageDown= for
 page movement. Use =Ctrl-PageUp= and =Ctrl-PageDown= to jump between user and
 assistant messages while skipping reasoning and tool activity. Use =Ctrl-Home= and
 =Ctrl-End= for the oldest and newest transcript positions, and the mouse wheel
-for incremental scrolling. A message jump places the end of the message on the
-row above the composer. If the message is taller than the window, its header
-appears at the top instead. The =--fullscreen= option enables fullscreen for one
+for incremental scrolling. In a terminal attached to a hosted channel,
+=Ctrl-T= hides and shows the channel sidebar; see Local sessions. A message
+jump places the end of the message on the row above the composer. If the
+message is taller than the window, its header appears at the top instead. The
+=--fullscreen= option enables fullscreen for one
 launch without changing the saved preference.
 Pass =nil= to =preferences-set-fullscreen= to return future launches to inline
 mode. Because the viewport owns the mouse, hold =Shift= while dragging to select
@@ -1417,8 +1419,10 @@ Provider-generated refreshes are enabled by default. Use =(titles)=, =(titles t)
 or =(titles nil)= to inspect or change the durable global preference.
 
 =(resume)= displays titles in its picker. An explicit =(resume "ID")= still uses the
-stable conversation identifier. The terminal status bar and local session status
-show the title when one is available; otherwise they show the conversation ID.
+stable conversation identifier, or any part of it that names one conversation;
+several matches are listed instead. The terminal status bar and local session
+status show the title when one is available; otherwise they show the
+conversation ID.
 
 A resumed conversation runs in a fresh process. Background jobs, asynchronous
 shell runs, and Lisp worker state from before the restart no longer exist. The
@@ -1465,7 +1469,10 @@ for its directory, which is the most recently changed channel of that
 workspace that no other terminal controls, or a new channel there, and
 attaches to it. =autolith resume ID= opens that channel in the server
 instead. Closing the terminal, detaching or a dropped connection leaves the
-channel running in the server; =(quit)= ends the channel. The server keeps
+channel running in the server; =(quit)= ends the channel. =(switch "ID")=
+moves the terminal to another channel, opening it in the server when nothing
+serves it yet, and leaves the channel it came from running; in a session
+running directly it resumes that conversation in place. The server keeps
 running with no channel and no client until you stop it:
 
 #+BEGIN_SRC sh
@@ -1484,6 +1491,19 @@ standalone session process outside the server, and
 =AUTOLITH_SESSION_STYLE=direct= runs one session in the terminal's own
 process.
 
+A terminal attached to a hosted channel receives the channel's screen as
+frames and paints them itself, so in fullscreen mode it can show the world's
+channels in a sidebar on the left. The sidebar groups channels by workspace,
+your channel's workspace first, nests child channels under their parents and
+marks each channel: =▸= the channel this terminal is in, a cyan =●= where a
+terminal is attached, a green =●= where the agent works, =○= where it waits,
+and =·= where nothing runs. A yellow count is the messages a channel received
+since this terminal last looked at it, an =@= count the ones that mentioned
+you, and =✉= the deliveries waiting for a channel nobody serves. The counts
+are this terminal's own and start caught up. =Ctrl-T= hides and shows the
+sidebar, and a terminal narrower than one hundred columns hides it on its
+own.
+
 Every channel the server hosts, like every directly running session,
 publishes a private authenticated local endpoint. Its session ID is the
 active conversation ID, shared with =resume= and stable across detach,
@@ -1499,7 +1519,7 @@ autolith lg status --sexp
 
 =idle= means that the process is at input with no active work of any kind.
 
-Start an unattended session, or resume one by conversation ID prefix:
+Start an unattended session, or resume one by conversation ID or a part of it:
 
 #+BEGIN_SRC sh
 autolith --detached
@@ -1510,10 +1530,12 @@ autolith resume
 
 With =--detached=, Autolith prints the full conversation ID and session PID,
 then exits without attaching. This works with closed stdin and with
-=AUTOLITH_SESSION_STYLE=direct=. Detached resume requires a prefix. Without
-=--detached=, omit the prefix to open the conversation picker. Exact canonical
-and displayed IDs take priority; ambiguous prefixes report every matching ID
-with its available title, workspace, time, and preview. Running conversations,
+=AUTOLITH_SESSION_STYLE=direct=. Detached resume requires an ID. Without
+=--detached=, omit the ID to open the conversation picker. An exact canonical
+or displayed ID wins; otherwise any part of an ID selects the one conversation
+containing it, without regard to case, and a part matching several reports
+every matching ID with its available title, workspace, time, and preview
+instead of selecting one. Running conversations,
 including empty new sessions, are selectable. Resuming a running conversation
 attaches to it; detached resume prints its existing PID without disturbing its
 clients. Launch-only overrides such as =--model= and =--permissions= are rejected
@@ -1535,11 +1557,11 @@ autolith lg kill   [SESSION-ID]
 
 =lg= is an alias for =localgroup=. When exactly one endpoint is reachable,
 these commands select it when =SESSION-ID= is omitted. With multiple sessions,
-provide a full ID or a prefix that matches one session. Prefixes accept IDs with
-or without the display hyphen, for example =b=, =b-6=, or =b6= for =b-6uouHJ=.
-Full IDs take priority over prefix matches. If a prefix matches more than one
-session, the error lists the matching IDs; use a longer prefix. Current IDs are
-case-sensitive. Legacy hexadecimal IDs accept either case.
+provide a full ID or any part of one that matches a single session. Parts are
+matched without regard to case and with the display hyphen dropped, for
+example =b=, =b-6=, =uouh= or =6UOU= for =b-6uouHJ=. A full ID in either form
+takes priority. If a part matches more than one session, the error lists the
+matching IDs and nothing happens; give a longer part.
 
 Use =tell= to send input to a session and resume it if paused.
 =pause= cancels active work and holds queued primary work.
@@ -1616,7 +1638,9 @@ a participant named =task= under the root's agent, so =channel:id/<execution id>
 reads a child's transcript and a message to that channel steers the child.
 
 Messages travel between channels through the same path for people and agents.
-=(tell "ID" "text")= sends a message to channel =ID= as yourself; the agent
+=(tell "ID" "text")= sends a message to channel =ID= as yourself, where =ID=
+may be any part of the identifier that names one channel, as in
+=channel:id/ID= and =(switch "ID")=; the agent
 tools =channel.send=, =channel.subscribe= and =channel.unsubscribe= do the same
 for an agent. A message reaches the channel's residents, every subscriber of
 the channel and every participant it mentions as =@name= or =@id=, wherever
