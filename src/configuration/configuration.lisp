@@ -994,6 +994,11 @@ selects its own registration, rather than inheriting the previous provider."
   "Return the atomic workspace-agenda pathname."
   (merge-pathnames "agendas.sexp" (config :data-root configuration)))
 
+(-> configuration-world-path (configuration) pathname)
+(defun configuration-world-path (configuration)
+  "Return the append-only log of participants and channels."
+  (merge-pathnames "world/world.sexp" (config :data-root configuration)))
+
 (-> configuration-image-commit-root (configuration) pathname)
 (defun configuration-image-commit-root (configuration)
   "Return the directory containing immutable private image commits."
