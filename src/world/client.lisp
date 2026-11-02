@@ -42,17 +42,19 @@ Records of dead processes are removed on the way."
     (configuration &key (:directory (or null string pathname)) (:channel (option string))
                         (:permission-mode keyword) (:immutable-p boolean)
                         (:pristine-p boolean) (:resume-command-p boolean)
-                        (:recovery-diagnosis (option string)))
+                        (:recovery-diagnosis (option string)) (:launch list))
     (values string boolean))
 (defun world-client-open
     (configuration &key directory channel (permission-mode ':ask) immutable-p pristine-p
-                        resume-command-p recovery-diagnosis)
+                        resume-command-p recovery-diagnosis launch)
   "Open CHANNEL, or a channel for DIRECTORY, in CONFIGURATION's world server.
 
-The first client starts the server; later ones find it running. Return the
-opened channel's session identifier, whose endpoint answers by then, and
-whether the server started the channel for this open rather than sharing
-one it already served."
+The first client starts the server; later ones find it running. LAUNCH is
+the plist of launch options this start stated explicitly; a new channel
+takes them, and a channel already served refuses the ones it cannot change.
+Return the opened channel's session identifier, whose endpoint answers by
+then, and whether the server started the channel for this open rather than
+sharing one it already served."
   (let ((entry (or (world-client-entry configuration)
                    (world-client-start-server configuration
                                               :permission-mode permission-mode
@@ -67,6 +69,8 @@ one it already served."
                           (list :channel channel))
                         (when directory
                           (list :directory (namestring directory)))
+                        (when launch
+                          (list :launch launch))
                         (list :permission-mode    permission-mode
                               :fullscreen-p       (not (null (config :fullscreen-p configuration)))
                               :resume-command-p   (not (null resume-command-p))
