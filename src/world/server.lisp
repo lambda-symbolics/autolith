@@ -400,22 +400,34 @@ endpoint is published, so the client can attach at once."
          (and controller
               (not (application-input-controller-exit-requested-p controller))))))
 
+(-> world-host-reserved-p (world-host) boolean)
+(defun world-host-reserved-p (host)
+  "Return true while HOST holds its channel: still starting, or serving and not ending.
+
+A starting host is a reservation: an open of the same channel or workspace
+waits for it rather than starting another, so one channel never gets two
+hosts, two leases or two threads."
+  (if (world-host-ready-p host)
+      (world-host-live-p host)
+      (null (world-host-failure host))))
+
 (-> world-server--find-host (world-server string) (option world-host))
 (defun world-server--find-host (server identifier)
-  "Return SERVER's live host of channel IDENTIFIER, or NIL."
+  "Return SERVER's host holding channel IDENTIFIER, starting or serving, or NIL."
   (find-if (lambda (host)
-             (and (world-host-live-p host)
+             (and (world-host-reserved-p host)
                   (string= identifier (world-host-channel host))))
            (world-server--hosts server)))
 
 (-> world-server--host-for (world-server list) (values world-host boolean))
 (defun world-server--host-for (server arguments)
-  "Return the host serving the channel ARGUMENTS select, and whether it was started now.
+  "Return the host holding the channel ARGUMENTS select, and whether it was started now.
 
-A named channel is served by its live host or started. A directory is served
-by a live host of that workspace nobody controls, else by the most recently
-changed top-level channel of that workspace whose conversation is free, else
-by a new channel there."
+A named channel is held by its host, starting or serving, or started. A
+directory is served by a host of that workspace nobody controls, starting or
+serving, else by the most recently active top-level channel of that
+workspace whose conversation is free, else by a new channel there. The
+caller waits for a starting host the same way as for one it started."
   (let ((channel   (getf arguments :channel))
         (directory (getf arguments :directory)))
     (cond
@@ -464,9 +476,9 @@ by a new channel there."
 
 (-> world-server--idle-host (world-server string) (option world-host))
 (defun world-server--idle-host (server workspace)
-  "Return SERVER's live host of WORKSPACE that no client controls, or NIL."
+  "Return SERVER's host of WORKSPACE that no client controls, starting or serving, or NIL."
   (find-if (lambda (host)
-             (and (world-host-live-p host)
+             (and (world-host-reserved-p host)
                   (string= workspace (world-host-workspace host))
                   (not (world-host-attached-p host))))
            (world-server--hosts server)))
