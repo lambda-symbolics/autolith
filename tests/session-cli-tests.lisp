@@ -141,8 +141,8 @@
                     (push operation operations)
                     (list :ok :status (status))))
             (list 'localgroup-attach-record
-                  (lambda (configuration entry mode)
-                    (declare (ignore configuration entry mode))
+                  (lambda (configuration entry mode &key panel)
+                    (declare (ignore configuration entry mode panel))
                     (push identifier attached)
                     nil))
             (list 'localgroup-relay-exit
@@ -403,8 +403,8 @@
                              "the client attaches to the channel the server opened")
                 record))
         (list 'localgroup-attach-record
-              (lambda (attach-configuration entry mode)
-                (declare (ignore attach-configuration))
+              (lambda (attach-configuration entry mode &key panel)
+                (declare (ignore attach-configuration panel))
                 (push (list (rest entry) mode) attached)
                 (when attach-error (error attach-error))
                 (when switch-to

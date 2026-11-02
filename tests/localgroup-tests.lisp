@@ -224,6 +224,74 @@
                    "closing an inactive screen writes nothing")))
   nil)
 
+(defclass localgroup-tests-panel ()
+  ((rows
+    :initarg       :rows
+    :reader        localgroup-tests-panel-rows
+    :type          list
+    :documentation "The fixed rows the test panel shows."))
+  (:documentation "A side panel of fixed rows for client screen tests."))
+
+(defmethod screen-panel-width ((panel localgroup-tests-panel))
+  "Ten columns."
+  10)
+
+(defmethod screen-panel-minimum-columns ((panel localgroup-tests-panel))
+  "Sixty columns."
+  60)
+
+(defmethod screen-panel-refresh ((panel localgroup-tests-panel))
+  "Nothing changes."
+  nil)
+
+(defmethod screen-panel-rows ((panel localgroup-tests-panel) terminal height)
+  "Return HEIGHT rows padded to the panel's width."
+  (declare (ignore terminal))
+  (loop for index below height
+        collect (format nil "~10A" (or (nth index (localgroup-tests-panel-rows panel)) ""))))
+
+(-> test-localgroup-screen-panel () null)
+(defun test-localgroup-screen-panel ()
+  "Test a client composing its side panel beside the session's frame and keeping the keys apart."
+  (let* ((terminal (make-instance 'recording-terminal :columns 80 :rows 6))
+         (panel    (make-instance 'localgroup-tests-panel :rows '("PANEL-A" "PANEL-B")))
+         (screen   (localgroup-screen-create :terminal terminal :panel panel)))
+    (flet ((output ()
+             "Return everything written to the client terminal so far."
+             (apply #'concatenate 'string (reverse (recording-terminal-chunks terminal))))
+           (pane ()
+             "Return the session's pane size as a list."
+             (multiple-value-list (localgroup-screen-pane-size screen))))
+      (test-assert (equal (pane) '(6 69))
+                   "the session gets the columns left beside the panel and its rule")
+      (localgroup-screen-handle-packet
+       screen '(:frame :height 6 :width 69 :complete-p t :rows ((0 "host row") (1 "second"))
+                :cursor-row 1 :cursor-column 2 :cursor-visible-p t))
+      (let ((painted (output)))
+        (test-assert (and (search "PANEL-A   │host row" painted)
+                          (search "PANEL-B   │second" painted))
+                     "frames are painted beside the panel rows with a rule between"))
+      (test-assert (eq (localgroup-screen-filter-event screen '(:click 5 2)) ':ignore)
+                   "a click in the panel does nothing")
+      (test-assert (equal (localgroup-screen-filter-event screen '(:click 20 2)) '(:click 9 2))
+                   "a click in the session's pane is moved to its columns")
+      (test-assert (eq (localgroup-screen-filter-event screen ':page-up) ':page-up)
+                   "other events pass through")
+      (test-assert (and (eq (localgroup-screen-filter-event screen '(:control #\t)) ':ignore)
+                        (localgroup-screen-take-resize screen)
+                        (not (localgroup-screen-take-resize screen))
+                        (equal (pane) '(6 80)))
+                   "the toggle key hides the panel and notes the pane's new size once")
+      (test-assert (equal (localgroup-screen-filter-event screen '(:click 5 2)) '(:click 5 2))
+                   "with the panel hidden clicks keep their columns")
+      (localgroup-screen-filter-event screen '(:control #\t))
+      (terminal-set-dimensions terminal 50 :rows 6)
+      (test-assert (and (equal (pane) '(6 50))
+                        (not (localgroup-screen-panel-visible-p screen)))
+                   "a narrow terminal hides the panel although it is wanted")
+      (localgroup-screen-close screen)))
+  nil)
+
 (-> test-localgroup-picker-waits-for-relayed-input () null)
 (defun test-localgroup-picker-waits-for-relayed-input ()
   "Test a modal picker blocks until its controlling relay sends a fresh event."
@@ -422,7 +490,8 @@
           (list 'localgroup--run-status
                 (lambda (&key sexp-p) (push (list :status sexp-p) calls) nil))
           (list 'localgroup-attach-record
-                (lambda (client-configuration entry mode)
+                (lambda (client-configuration entry mode &key panel)
+                  (declare (ignore panel))
                   (test-assert (eq client-configuration configuration)
                                "attach receives the selected client configuration")
                   (push (list (localgroup--record-session-id (rest entry)) ':attach mode)
@@ -551,8 +620,8 @@
                     (push (list session-id operation arguments) calls)
                     (list :ok :operation operation :session-id session-id))))
           (list 'localgroup-attach-record
-                (lambda (client-configuration entry mode)
-                  (declare (ignore client-configuration))
+                (lambda (client-configuration entry mode &key panel)
+                  (declare (ignore client-configuration panel))
                   (push (list (localgroup--record-session-id (rest entry))
                               ':attach mode)
                         calls)
