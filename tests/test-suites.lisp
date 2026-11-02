@@ -656,7 +656,8 @@
   test-world-message-presentation
   test-world-child-participants
   test-world-handles
-  test-world-composer-mentions)
+  test-world-composer-mentions
+  test-world-mention-highlighting)
 
 (define-test-suite world-server
   test-world-server-hosting
