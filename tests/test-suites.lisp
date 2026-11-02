@@ -650,6 +650,10 @@
   test-world-server-stop
   test-world-server-switch)
 
+(define-test-suite world-sidebar
+  test-world-sidebar-rows
+  test-world-sidebar-unread)
+
 (define-test-suite preferences
   test-preferences
   test-preferences-unavailable-provider-selection
