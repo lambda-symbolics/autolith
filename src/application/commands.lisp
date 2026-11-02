@@ -1570,7 +1570,8 @@ work must steer the running turn, not queue as follow-up work."
 (-> application--replace-lightweight-goal (application (option list)) null)
 (defun application--replace-lightweight-goal (application goal)
   "Cancel the mission and order GOAL's installation after its terminal notices."
-  (let ((previous (mission-context-find (application-conversation application))))
+  (let ((previous (and (mission-goal-p (application-goal application))
+                       (mission-context-find (application-conversation application)))))
     (mission-detach application)
     (flet ((install ()
              (setf (application-goal application) goal)
