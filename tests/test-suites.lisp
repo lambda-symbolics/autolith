@@ -652,6 +652,7 @@
   test-world-channel-resolve
   test-world-channels-command
   test-world-message-send
+  test-world-message-outbox
   test-world-channel-tools
   test-world-message-presentation
   test-world-child-participants

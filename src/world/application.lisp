@@ -91,6 +91,7 @@ in a headless job, messages wait in the inbox."
         (controller (application-input-controller application))
         (queued     0))
     (when (and channel controller)
+      (world-message-resume (application-configuration application))
       (dolist (delivery (application-world--unsettled application channel))
         (let ((identifier (world-delivery-pending-identifier delivery))
               (table      (application-world-deliveries application)))
