@@ -298,7 +298,6 @@
          (waits                       0)
          (repainted-p                 nil)
          (*terminal-resize-pending-p* nil)
-         (*terminal-relayed-resize*   nil)
          (boot-screen                 (symbol-function 'terminal-ui-boot-screen)))
     (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t))
       (test-call-with-function-replacements
@@ -321,7 +320,7 @@
                  (let ((phase-count (length *terminal-ui-boot-sequence-phases*)))
                    (cond
                      ((= waits (1+ phase-count))
-                      (terminal-relayed-resize-publish 9 28))
+                      (terminal-relayed-resize-publish terminal 9 28))
                      ((= waits (+ 2 phase-count))
                       (test-assert repainted-p "resize redraws before a start key is available")
                       (queued-recording-terminal-enqueue terminal '(:insert " ")))

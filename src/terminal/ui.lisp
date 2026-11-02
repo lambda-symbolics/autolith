@@ -2525,8 +2525,10 @@ plain text. This formatter does not change UI."
     (terminal-ui (option function))
     boolean)
 (defun terminal-ui-refresh-size (ui callback)
-  "Apply CALLBACK's pending terminal size to UI and report whether it repainted."
-  (let ((size (and callback (funcall callback))))
+  "Apply CALLBACK's pending terminal size to UI and report whether it repainted.
+
+CALLBACK receives UI, so it can consult the terminal the size belongs to."
+  (let ((size (and callback (funcall callback ui))))
     (cond
       ((null size)
        nil)

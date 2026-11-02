@@ -424,7 +424,6 @@
          (waits                       0)
          (sizes                       nil)
          (*terminal-resize-pending-p* nil)
-         (*terminal-relayed-resize*   nil)
          (paint-function              (symbol-function 'terminal-ui-fullscreen-paint)))
     (queued-recording-terminal-enqueue terminal '(:paste "free editing"))
     (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
@@ -452,10 +451,10 @@
                  (declare (ignore seconds))
                  (case (incf waits)
                    (1
-                    (terminal-relayed-resize-publish 9 28))
+                    (terminal-relayed-resize-publish terminal 9 28))
                    (2
                     (test-assert (equal (first sizes) '(9 . 28)) "shrink repaint happens before any input")
-                    (terminal-relayed-resize-publish 30 100))
+                    (terminal-relayed-resize-publish terminal 30 100))
                    (3
                     (test-assert (equal (first sizes) '(30 . 100)) "grow repaint happens before any input")
                     (test-assert (string= "free editing" (line-editor-text (terminal-ui-editor ui)))
