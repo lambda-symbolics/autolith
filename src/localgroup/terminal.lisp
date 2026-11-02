@@ -49,6 +49,17 @@ only dimension writer that keeps both in step and repaints."
   (terminal-relayed-resize-publish terminal rows columns)
   nil)
 
+(-> localgroup-terminal-switch-controller (localgroup-terminal string) boolean)
+(defun localgroup-terminal-switch-controller (terminal identifier)
+  "Ask TERMINAL's controlling client to move to the channel IDENTIFIER names.
+
+Return whether a controller was attached to ask. The client detaches on its
+own once it reads the request, so the relay keeps serving until then."
+  (let ((controller (with-lock-held ((image-daemon:relay-lock terminal))
+                      (image-daemon:relay-controller terminal))))
+    (and controller
+         (image-daemon:attachment-send controller (list :switch :session-id identifier)))))
+
 (defmethod image-daemon:transport-rows ((terminal terminal))
   "Return TERMINAL's row count to the image-daemon relay."
   (terminal-rows terminal))

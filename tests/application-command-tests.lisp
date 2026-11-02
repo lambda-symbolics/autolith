@@ -652,6 +652,47 @@
      "nonmodal resume calls do not consume the interactive startup offer"))
   nil)
 
+(-> test-switch-command-direct () null)
+(defun test-switch-command-direct ()
+  "Test (switch) resuming the named conversation in place when no server hosts the session."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (unwind-protect
+         (let* ((configuration (application-configuration application))
+                (other         (conversation-create configuration :identifier "switchtarget"))
+                (resumed       nil)
+                (presented     nil))
+           (conversation-append-user-message (application-conversation application) "stay")
+           (conversation-append-user-message other "go")
+           (test-call-with-function-replacements
+            (list (list 'application-resume-conversation
+                        (lambda (candidate identifier)
+                          (declare (ignore candidate))
+                          (push identifier resumed)))
+                  (list 'application-render-records
+                        (lambda (candidate) (declare (ignore candidate)) nil))
+                  (list 'application-present
+                        (lambda (candidate entry &key identifier)
+                          (declare (ignore candidate identifier))
+                          (push entry presented))))
+            (lambda ()
+              (application--builtin-switch-command application "switchtar")
+              (test-assert (and (equal resumed '("switchtarget"))
+                                (search "Switched to" (first presented)))
+                           "a direct session resumes the channel a unique fragment names")
+              (application--builtin-switch-command application "operation-surf")
+              (test-assert (and (equal resumed '("switchtarget"))
+                                (search "already" (first presented)))
+                           "the current channel is reported without a resume")
+              (test-assert (handler-case
+                               (progn (application--builtin-switch-command application "zzzz") nil)
+                             (world-error () t))
+                           "an unknown channel is refused"))))
+      (tool-registry-close-runtime-state (application-tool-registry application))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-call-with-typed-control-application (function) null)
 (defun test-call-with-typed-control-application (function)
   "Call FUNCTION with an isolated public-operation application and observed service actions."

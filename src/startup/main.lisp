@@ -1003,41 +1003,26 @@ state, including an empty list after successful or pristine startup."
       (format *error-output* "~&Autolith: ~A~%"
               (application--command-sandbox-unavailable-message))
       (force-output *error-output*))
-    (when (main--client-session-p
-           :handoff-record           handoff-record
-           :authenticate-p           authenticate-p
-           :resume-requested-p       effective-resume-requested-p
-           :resume-id                effective-resume-id
-           :recovery-conversation-id recovery-conversation-id
-           :recovery-diagnosis       recovery-diagnosis
-           :image-values             image-values
-           :pristine-p               pristine-p
-           :simulate-crash-p         (not (null (getopt* command ':simulate-crash))))
-      (multiple-value-bind (session-id started-p)
-          (main--open-world-channel
-           configuration
-           :permission-mode    permission-mode
-           :immutable-p        immutable-p
-           :pristine-p         pristine-p
-           :conversation-id    (or effective-resume-id recovery-conversation-id)
-           :resume-command-p   (and effective-resume-requested-p
-                                    (null effective-resume-id))
-           :recovery-diagnosis recovery-diagnosis)
-        (when session-id
-          (let* ((record (localgroup--find-record configuration session-id))
-                 (exit
-                   (handler-case
-                       (localgroup-attach-record configuration record ':control)
-                     (serious-condition (condition)
-                       ;; A channel started for this terminal would otherwise
-                       ;; idle in the server; one that already served others
-                       ;; is left to them.
-                       (when started-p
-                         ; mallet:suppress no-ignore-errors -- best-effort kill while the attach failure propagates
-                         (ignore-errors (localgroup-query-record record ':kill)))
-                       (error condition)))))
-            (localgroup-relay-exit configuration exit ':control))
-          (return-from main--start-session nil))))
+    (when (and (main--client-session-p
+                :handoff-record           handoff-record
+                :authenticate-p           authenticate-p
+                :resume-requested-p       effective-resume-requested-p
+                :resume-id                effective-resume-id
+                :recovery-conversation-id recovery-conversation-id
+                :recovery-diagnosis       recovery-diagnosis
+                :image-values             image-values
+                :pristine-p               pristine-p
+                :simulate-crash-p         (not (null (getopt* command ':simulate-crash))))
+               (main--run-world-client
+                configuration
+                :permission-mode    permission-mode
+                :immutable-p        immutable-p
+                :pristine-p         pristine-p
+                :conversation-id    (or effective-resume-id recovery-conversation-id)
+                :resume-command-p   (and effective-resume-requested-p
+                                         (null effective-resume-id))
+                :recovery-diagnosis recovery-diagnosis))
+      (return-from main--start-session nil))
     (let ((*localgroup-startup-record* handoff-record))
       (setf *active-application*
             (apply #'main--connect-application
@@ -1151,6 +1136,54 @@ for this terminal."
               "Autolith is starting directly in this terminal: ~A~%"
               (bounded-string (princ-to-string condition) :limit 400))
       (values nil nil))))
+
+(-> main--run-world-client
+    (configuration &key (:permission-mode keyword) (:immutable-p boolean)
+                        (:pristine-p boolean)
+                        (:conversation-id (option string))
+                        (:resume-command-p boolean)
+                        (:recovery-diagnosis (option string)))
+    boolean)
+(defun main--run-world-client
+    (configuration &key (permission-mode ':ask) immutable-p pristine-p conversation-id
+                        resume-command-p recovery-diagnosis)
+  "Serve this terminal as a client of the world server until its channel lets it go.
+
+Return NIL when no server could serve it, so the session runs directly. A
+channel that asks the terminal to switch is left running, and the terminal
+attaches to the channel it named, opening it in the server first."
+  (multiple-value-bind (session-id started-p)
+      (main--open-world-channel configuration
+                                :permission-mode    permission-mode
+                                :immutable-p        immutable-p
+                                :pristine-p         pristine-p
+                                :conversation-id    conversation-id
+                                :resume-command-p   resume-command-p
+                                :recovery-diagnosis recovery-diagnosis)
+    (when session-id
+      (loop
+        (let* ((record (localgroup--find-record configuration session-id))
+               (exit
+                 (handler-case
+                     (localgroup-attach-record configuration record ':control)
+                   (serious-condition (condition)
+                     ;; A channel started for this terminal would otherwise
+                     ;; idle in the server; one that already served others
+                     ;; is left to them.
+                     (when started-p
+                       ; mallet:suppress no-ignore-errors -- best-effort kill while the attach failure propagates
+                       (ignore-errors (localgroup-query-record record ':kill)))
+                     (error condition)))))
+          (if (and (consp exit) (eq (first exit) ':switch))
+              (multiple-value-setq (session-id started-p)
+                (world-client-open configuration
+                                   :channel         (getf (rest exit) :session-id)
+                                   :permission-mode permission-mode
+                                   :immutable-p     immutable-p
+                                   :pristine-p      pristine-p))
+              (progn
+                (localgroup-relay-exit configuration exit ':control)
+                (return t))))))))
 
 (-> main--session-options () list)
 (defun main--session-options ()

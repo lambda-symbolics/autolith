@@ -376,6 +376,7 @@
            (open-error   nil)
            (attach-error nil)
            (started-p    t)
+           (switch-to    nil)
            (direct-p     nil))
       (test-call-with-function-replacements
        (list
@@ -398,7 +399,7 @@
         (list 'localgroup--find-record
               (lambda (find-configuration session-id)
                 (declare (ignore find-configuration))
-                (test-assert (string= session-id identifier)
+                (test-assert (member session-id (list identifier "c6uouHJ") :test #'string=)
                              "the client attaches to the channel the server opened")
                 record))
         (list 'localgroup-attach-record
@@ -406,7 +407,8 @@
                 (declare (ignore attach-configuration))
                 (push (list (rest entry) mode) attached)
                 (when attach-error (error attach-error))
-                nil))
+                (when switch-to
+                  (list :switch :session-id (shiftf switch-to nil)))))
         (list 'localgroup-query-record
               (lambda (entry operation &optional arguments)
                 (declare (ignore entry arguments))
@@ -474,5 +476,16 @@
                         "a failed open starts directly in this terminal")
            (test-assert (search "No world server could start"
                                 (get-output-stream-string *error-output*))
-                        "the failed open is reported before the direct start"))))))
+                        "the failed open is reported before the direct start")
+           (setf open-error nil
+                 opened     nil
+                 attached   nil
+                 switch-to  "c6uouHJ")
+           (main-dispatch '())
+           (test-assert (and (= (length opened) 2)
+                             (null (getf (second opened) :channel))
+                             (string= (getf (first opened) :channel) "c6uouHJ")
+                             (= (length attached) 2)
+                             (null switch-to))
+                        "a switch request opens the named channel and attaches to it"))))))
   nil)
