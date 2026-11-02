@@ -6242,11 +6242,11 @@
                        (application--pick-identifier application
                                                      :title        "resume"
                                                      :items        nil
-                                                     :usage        "Usage: /resume ID"
+                                                     :usage        "Usage: (resume \"ID\")"
                                                      :empty-notice "none")
                        nil)
                    (configuration-error (condition)
-                     (not (null (search "Usage: /resume"
+                     (not (null (search "Usage: (resume"
                                         (format nil "~A" condition))))))
                  "non-interactive pickers demand an explicit identifier"))
   nil)

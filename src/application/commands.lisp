@@ -1475,7 +1475,7 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
 
 (-> application--goal-update-argument (string) (option string))
 (defun application--goal-update-argument (remainder)
-  "Return the objective following /goal update, or NIL for other input."
+  "Return the objective after the slash-syntax update action, or NIL otherwise."
   (let ((word (string-downcase remainder)))
     (and (uiop:string-prefix-p "update" word)
          (or (= (length word) (length "update"))
@@ -1530,7 +1530,7 @@ Return true only when the objective was rewritten."
 (defun application--start-goal-work (application)
   "Begin working toward APPLICATION's active session goal immediately.
 
-Goal turns run inside the /goal command's work item, so they wire the
+Goal turns run inside the (goal) command's work item, so they wire the
 input controller's steering hooks themselves: prose typed during goal
 work must steer the running turn, not queue as follow-up work."
   (let ((goal (application-goal application)))
@@ -2560,7 +2560,7 @@ are forwarded to TERMINAL-UI-SELECT."
 
 Settings with runtime consequences, such as the provider's reasoning
 summaries or the transcript pagination, go through their dedicated setters so
-the settings page and the slash commands behave identically."
+the settings page and commands use the same setters."
   (let* ((configuration (if (member name '(:telemetry-enabled-p :telemetry-diagnostics-p))
                             (telemetry-consent-configuration (application-configuration application))
                             (application-configuration application)))

@@ -461,7 +461,7 @@ QUERY narrows the listing with the same lexical ranking recall uses."
 
 (-> application--memories-slash-arguments (string) list)
 (defun application--memories-slash-arguments (text)
-  "Treat everything after /memories as one search query."
+  "Treat the whole slash-syntax argument text as one search query."
   (let ((query (string-trim '(#\Space #\Tab) text)))
     (and (plusp (length query)) (list query))))
 

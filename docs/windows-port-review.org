@@ -204,7 +204,7 @@ revisions inspected, and what was verified where.
   committed, since it runs the source committed at HEAD.
 - Interactive flows exercised by hand on Windows so far: startup from the
   fast-startup image, the banner, typing and submitting input. The secret
-  prompts (=/login= and the API-key commands) and =--immutable= startup were
+  prompts (authentication and API-key prompts) and =--immutable= startup were
   verified by reading, not by running; the prompts stop the terminal and read
   a cooked console line, which SBCL's own reader handles.
 - Three tests that wait for a fresh SBCL child (the task child cancellation,

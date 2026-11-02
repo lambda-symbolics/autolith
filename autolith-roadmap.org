@@ -436,7 +436,7 @@ own any newly reusable picker/layout primitives extracted while implementing it.
 Checks cover lineage, timing/usage, bounded recent output, artifact paths,
 transcript windows across compacted chunks, missing/foreign transcript refusal,
 ordinary cancellation and revive, authorization forwarding and a real multiword
-slash steering invocation.
+steering input.
 
 ** PRESENT [#B] D4. Independent reviewer / advisor
 *** Problem

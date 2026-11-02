@@ -27,11 +27,14 @@ Autolith's prompt window can also evuluate lisp forms directly:
 This can be frequently helpful since you can use the exact same tools
 the clanker can, and the same machinery is exposed to you.
 
+Slash syntax is optional syntactic sugar for command forms, for example
+=/status= for =(status)=.
+
 Type =(=, =[=, or ={= in the composer to insert a matching pair with the cursor
 between the braces. Type the closing brace to move past it, or press Backspace
 between an empty pair to delete both braces.
 
-=Tab= completes slash commands, operation names, finite options, and workspace
+=Tab= completes operation names, finite options, and workspace
 paths, and =Shift-Tab= steps back through the suggestions. With nothing to
 complete, =Tab= sends the input like Enter, or queues it as a follow-up while a
 turn is running. Inside a form you are still typing, such as =(job.continuity :=,
@@ -2205,9 +2208,8 @@ Provider preference fields are sent as supplied, including =order=,
 ** Commands
 
 Use =(btw)= or =(side)= to inspect the running session without interrupting a
-turn. Slash spellings =/btw= and =/side= use the same Lisp command. Select one
-field with =(btw :focus)=, =(btw :elapsed)=, =(btw :tasks)=, =(btw :queue)=,
-=(btw :step)=, or =(btw :eta)=; for slash syntax, write =/btw focus=.
+turn. Select one field with =(btw :focus)=, =(btw :elapsed)=, =(btw :tasks)=,
+=(btw :queue)=, =(btw :step)=, or =(btw :eta)=.
 
 The colored =◆ status= entry shows the current objective or latest user input,
 elapsed and accumulated working time, queued/running task counts, pending input,

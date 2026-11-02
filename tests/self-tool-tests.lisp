@@ -557,7 +557,7 @@
             :aliases         nil
             :action          ':continue
             :description     "Return the baseline command action."
-            :tip             "Use /self-command-existing for the baseline action."))
+            :tip             "Use (self-command-existing) for the baseline action."))
          (existing-replacement-source
            (test-application-command-definition-source
             :definition-name 'test-self-command-existing
@@ -565,7 +565,7 @@
             :aliases         '("/self-command-existing-alias")
             :action          ':quit
             :description     "Return the replacement command action."
-            :tip             "Use /self-command-existing for the replacement action."))
+            :tip             "Use (self-command-existing) for the replacement action."))
          (new-source
            (test-application-command-definition-source
             :definition-name 'test-self-command-new
@@ -573,7 +573,7 @@
             :aliases         nil
             :action          ':continue
             :description     "Return the new command action."
-            :tip             "Use /self-command-new for the new action."))
+            :tip             "Use (self-command-new) for the new action."))
          (collision-owner-source
            (test-application-command-definition-source
             :definition-name 'test-self-command-collision-owner
@@ -581,7 +581,7 @@
             :aliases         '("/self-command-collision")
             :action          ':continue
             :description     "Own the colliding command alias."
-            :tip             "Use /self-command-collision-owner for the owner."))
+            :tip             "Use (self-command-collision-owner) for the owner."))
          (collision-rejected-source
            (test-application-command-definition-source
             :definition-name 'test-self-command-collision-rejected
@@ -597,7 +597,7 @@
             :aliases         '("/self-command-replay-alias")
             :action          ':continue
             :description     "Return the replayed command action."
-            :tip             "Use /self-command-replay after private replay."))
+            :tip             "Use (self-command-replay) after private replay."))
          (existing-baseline-definition
            (self-read-form existing-baseline-source :read-eval nil))
          (existing-replacement-definition

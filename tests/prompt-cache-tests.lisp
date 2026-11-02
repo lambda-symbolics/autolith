@@ -536,7 +536,7 @@
 
 (-> test-cache-misses-command () null)
 (defun test-cache-misses-command ()
-  "Test the /cache-misses command persists and applies its preference."
+  "Test that (cache-misses) persists and applies its preference."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (conversation

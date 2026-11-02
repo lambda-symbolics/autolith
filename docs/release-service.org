@@ -4,8 +4,8 @@
 * Command notation
 
 When release documentation or release notes name an Autolith application
-command, prefer its canonical parenthesized Common Lisp form, such as
-=(update)= or =(info)=, over slash compatibility forms such as =/update=.
+command, use its canonical parenthesized Common Lisp form, such as
+=(update)= or =(info)=.
 Use slash syntax only when documenting slash-specific parsing or compatibility
 behavior.
 
