@@ -1006,6 +1006,11 @@ selects its own registration, rather than inheriting the previous provider."
   "Return the append-only log of participants and channels."
   (merge-pathnames "world/world.sexp" (config :data-root configuration)))
 
+(-> configuration-world-sessions-path (configuration) pathname)
+(defun configuration-world-sessions-path (configuration)
+  "Return the atomic mapping of legacy conversations onto world participants."
+  (merge-pathnames "world/sessions.sexp" (config :data-root configuration)))
+
 (-> configuration-image-commit-root (configuration) pathname)
 (defun configuration-image-commit-root (configuration)
   "Return the directory containing immutable private image commits."

@@ -551,6 +551,19 @@ batch that would leave a dangling reference is refused whole."
              :operation  operation
              :identifier identifier)))
 
+(-> world-workspace-name ((or pathname string)) string)
+(defun world-workspace-name (location)
+  "Return LOCATION as the canonical absolute directory name a channel stores.
+
+An existing directory is canonicalized through its truename. A directory that
+no longer exists keeps its absolute name, so a channel outlives its workspace."
+  (if (uiop:directory-exists-p location)
+      (workspace-directory-name location)
+      (namestring (uiop:ensure-pathname (platform-pathname location)
+                                        :ensure-absolute  t
+                                        :ensure-directory t
+                                        :want-non-wild    t))))
+
 (-> world--validate-name (t keyword) string)
 (defun world--validate-name (value operation)
   "Return VALUE when it is a bounded single-line name."
@@ -629,7 +642,7 @@ names the caller in refusals."
                    :identifier identifier
                    :parent     parent
                    :owner      owner
-                   :workspace  (workspace-directory-name (getf home :workspace))
+                   :workspace  (world-workspace-name (getf home :workspace))
                    :title      (and title (world--validate-name title operation))
                    :created-at now
                    :updated-at now)))
@@ -741,7 +754,7 @@ participant owns and resides in, as a plist of :id, :workspace, :title and
                                       (world--validate-name title ':update-channel)
                                       (channel-title channel))
                       :workspace  (if workspace
-                                      (workspace-directory-name workspace)
+                                      (world-workspace-name workspace)
                                       (channel-workspace channel))
                       :updated-at (max now (channel-updated-at channel)))))
        (values (list (world--channel-record updated)) updated)))))
