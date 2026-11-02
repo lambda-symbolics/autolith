@@ -642,7 +642,8 @@
   test-world-message-send
   test-world-channel-tools
   test-world-message-presentation
-  test-world-child-participants)
+  test-world-child-participants
+  test-world-handles)
 
 (define-test-suite world-server
   test-world-server-hosting
@@ -785,6 +786,7 @@
   test-built-in-application-command-policies
   test-built-in-application-command-calls
   test-switch-command-direct
+  test-rename-command
   test-application-codex-fast-mode-command
   test-application-settings-command
   test-application-mcp-reload-capability-change
