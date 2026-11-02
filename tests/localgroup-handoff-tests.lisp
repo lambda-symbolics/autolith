@@ -935,3 +935,49 @@
        (when controller (application-input-controller-stop controller))
        (when relay (terminal-stop relay)))))
   nil)
+
+(-> test-localgroup-world-spawn () null)
+(defun test-localgroup-world-spawn ()
+  "Test a world server launch recording its kind and resolving the world endpoint."
+  (with-test-configuration (configuration)
+    (configuration-ensure-directories configuration)
+    (let* ((launched   nil)
+           (waited     nil)
+           (*localgroup-fresh-launch-function*
+             (lambda (launch-configuration &key handoff-pathname &allow-other-keys)
+               (declare (ignore launch-configuration))
+               (push handoff-pathname launched)))
+           (*localgroup-fresh-wait-function*
+             (lambda (&rest arguments)
+               (declare (ignore arguments))
+               (error "A world launch must not wait for a session endpoint.")))
+           (*localgroup-world-wait-function*
+             (lambda (wait-configuration token old-pid)
+               (declare (ignore wait-configuration))
+               (setf waited (list token old-pid))
+               "world"))
+           (identifier (localgroup-handoff-spawn-fresh configuration :world-p t))
+           (record     (localgroup-handoff--read configuration (first launched))))
+      (test-assert (and (string= identifier "world")
+                        (getf (rest record) :world-p)
+                        (equal waited (list (getf (rest record) :token) (current-process-id))))
+                   "a world launch records its kind and resolves the world endpoint under its token"))
+    (let* ((token   (daemon-random-token))
+           (runtime (image-daemon:daemon-runtime-create
+                     :directory        (localgroup-world-directory configuration)
+                     :identifier       "world"
+                     :token            token
+                     :request-function (lambda (runtime request &key socket stream)
+                                         (declare (ignore runtime request socket))
+                                         (daemon-write-packet
+                                          stream (list :ok :status (list :world-status)))))))
+      (image-daemon:daemon-runtime-start runtime)
+      (unwind-protect
+           (progn
+             (test-assert (string= (localgroup-world--wait-for-fresh configuration token 0) "world")
+                          "the world wait resolves a published endpoint carrying the launch token")
+             (test-assert (null (let ((*localgroup-handoff-start-timeout-seconds* 0))
+                                  (localgroup-world--wait-for-fresh configuration "other-token" 0)))
+                          "the world wait ignores an endpoint published under another token"))
+        (image-daemon:daemon-runtime-stop runtime))))
+  nil)

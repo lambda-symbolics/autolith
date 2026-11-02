@@ -49,6 +49,11 @@
     (localgroup-handoff--wait-for-fresh configuration token old-pid))
   "The authenticated discovery boundary returning a fresh launch's conversation ID.")
 
+(defparameter *localgroup-world-wait-function*
+  (lambda (configuration token old-pid)
+    (localgroup-world--wait-for-fresh configuration token old-pid))
+  "The authenticated discovery boundary returning a fresh world server's identifier.")
+
 
 ;;;; -- Private Records --
 
@@ -115,7 +120,7 @@
   (and
    (record-check
     record :tag ':localgroup-handoff :versions (list *localgroup-handoff-version*)
-    :allow-other-keys nil :keyword-keys-p t :maximum-length 36
+    :allow-other-keys nil :keyword-keys-p t :maximum-length 38
     :fields
     `((:indicator :launch-id :validate ,(lambda (value) (or (null value) (stringp value))))
       (:indicator :session-id :validate ,(lambda (value) (or (null value) (stringp value))))
@@ -124,6 +129,8 @@
        :validate localgroup-handoff--timestamp-p)
       (:indicator :mode :required t :validate localgroup-handoff--mode-p)
       (:indicator :state :required t :validate localgroup-handoff--state-p)
+      (:indicator :world-p
+       :validate  ,(lambda (value) (typep value 'boolean)))
       (:indicator :fresh-conversation-p
        :validate  ,(lambda (value) (typep value 'boolean)))
       (:indicator :attach-expected-p
@@ -397,12 +404,13 @@ before any shell is involved."
                         (:recovery-diagnosis t)
                         (:attach-expected-p boolean)
                         (:ready-function (option function))
-                        (:pristine-p boolean))
+                        (:pristine-p boolean)
+                        (:world-p boolean))
     string)
 (defun localgroup-handoff-spawn-fresh
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
                         resume-command-p recovery-diagnosis pristine-p
-                        (attach-expected-p t) ready-function)
+                        (attach-expected-p t) ready-function world-p)
   "Launch a detached session and return its ready identifier.
 
 CONVERSATION-ID resumes that conversation instead of starting a fresh
@@ -410,8 +418,10 @@ one, RESUME-COMMAND-P lets the session pick one itself through the
 attached terminal, and RECOVERY-DIAGNOSIS preserves crash diagnosis
 across the client-first launch. When ATTACH-EXPECTED-P is false, the
 session is explicitly detached and its first-attach watchdog is disabled.
-Call READY-FUNCTION, when supplied, with the ready identifier before
-releasing startup ownership. A nonlocal exit from it cancels the launch."
+With WORLD-P the process is a world server instead of one session, and
+the identifier returned is the world endpoint's. Call READY-FUNCTION,
+when supplied, with the ready identifier before releasing startup
+ownership. A nonlocal exit from it cancels the launch."
   (multiple-value-bind (rows columns)
       (terminal-current-size)
     (let* ((created-at  (get-universal-time))
@@ -426,6 +436,7 @@ releasing startup ownership. A nonlocal exit from it cancels the launch."
                    :created-at           created-at
                    :mode                 ':detach
                    :state                ':pending
+                   :world-p              (not (null world-p))
                    :attach-expected-p    (not (null attach-expected-p))
                    :fresh-conversation-p (and (null conversation-id)
                                               (not resume-command-p))
@@ -453,13 +464,16 @@ releasing startup ownership. A nonlocal exit from it cancels the launch."
                              :immutable-p         immutable-p
                              :pristine-p          pristine-p))
              (setf session-id
-                   (funcall *localgroup-fresh-wait-function*
+                   (funcall (if world-p
+                                *localgroup-world-wait-function*
+                                *localgroup-fresh-wait-function*)
                             configuration token (current-process-id)))
              (unless session-id
                (error 'localgroup-error
                       :message
                       (format nil
-                              "The detached session did not start within ~D seconds. See ~A."
+                              "The detached ~:[session~;world server~] did not start within ~D seconds. See ~A."
+                              world-p
                               *localgroup-handoff-start-timeout-seconds*
                               (namestring
                                (localgroup-handoff-log-pathname
@@ -497,6 +511,17 @@ releasing startup ownership. A nonlocal exit from it cancels the launch."
    (lambda ()
      (loop for entry in (localgroup-endpoint-records configuration)
            thereis (localgroup-handoff--ready-conversation-id (rest entry) token old-pid)))
+   *localgroup-handoff-start-timeout-seconds*))
+
+(-> localgroup-world--wait-for-fresh (configuration string integer) (option string))
+(defun localgroup-world--wait-for-fresh (configuration token old-pid)
+  "Resolve a private launch TOKEN to the world endpoint a new process published."
+  (image-daemon:daemon-wait-until
+   (lambda ()
+     (loop for entry in (image-daemon:daemon-registry-discover
+                         (localgroup-world-directory configuration))
+           thereis (and (image-daemon:daemon-endpoint-status (rest entry) token old-pid)
+                        (getf (rest (rest entry)) :session-id))))
    *localgroup-handoff-start-timeout-seconds*))
 
 (-> localgroup-handoff--wait-for-replacement
@@ -895,9 +920,9 @@ recalled draft lives only in this editor, not in the snapshot."
                                                                           nil))))))))
   nil)
 
-(-> localgroup-handoff-finish-startup (application) null)
+(-> localgroup-handoff-finish-startup ((option application)) null)
 (defun localgroup-handoff-finish-startup (application)
-  "Delete the consumed startup handoff after APPLICATION publishes its endpoint."
+  "Delete the consumed startup handoff after APPLICATION, or the world server, publishes its endpoint."
   (declare (ignore application))
   (let ((pathname
           (and *localgroup-startup-record*

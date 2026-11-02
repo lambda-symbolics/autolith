@@ -643,6 +643,11 @@
   test-world-message-presentation
   test-world-child-participants)
 
+(define-test-suite world-server
+  test-world-server-hosting
+  test-world-server-checkpoint-quiescence
+  test-world-server-stop)
+
 (define-test-suite preferences
   test-preferences
   test-preferences-unavailable-provider-selection
@@ -1456,6 +1461,7 @@
   test-localgroup-abandoned-session-exit
   test-localgroup-lingering-session
   test-localgroup-fresh-session-spawn
+  test-localgroup-world-spawn
   test-localgroup-process-handoff)
 
 (define-test-suite localgroup-handoff-boundary
