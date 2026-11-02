@@ -104,7 +104,7 @@ When output exceeds the limit, older output is evicted and can be loaded with (h
 (-> terminal-ui-fullscreen-invalidate (fullscreen-terminal-ui) null)
 (defun terminal-ui-fullscreen-invalidate (ui)
   "Invalidate UI's physical frame without discarding its transcript or scroll anchor."
-  (clinedi:frame-painter-invalidate (fullscreen-terminal-ui-painter ui))
+  (terminal-screen-invalidate (terminal-ui-terminal ui) (fullscreen-terminal-ui-painter ui))
   nil)
 
 (defmethod terminal-ui-reset-transcript ((ui fullscreen-terminal-ui))
@@ -141,25 +141,17 @@ screen after leaving the alternate buffer."
   (unwind-protect
        (terminal-ui--leave-theme ui)
     (when (fullscreen-terminal-ui-active-p ui)
-      (unwind-protect
-           (let ((terminal (terminal-ui-terminal ui))
-                 (epilogue (shiftf (fullscreen-terminal-ui-epilogue ui) nil)))
-             (terminal--write
-              terminal
-              (concatenate
-               'string
-               (format nil "~C[0m~C[?7h~C[?25h" #\Escape #\Escape #\Escape)
-               (mouse-reporting-disable-sequence)
-               (terminal-keyboard-enhancement-disable-sequence)
-               (alternate-screen-leave-sequence)))
-             (when epilogue
-               (terminal--write-safe-text terminal (format nil "~A~%" epilogue)))
-             (terminal-flush terminal))
-        (let ((token (fullscreen-terminal-ui-platform-token ui)))
-          (setf (fullscreen-terminal-ui-active-p ui) nil
-                (fullscreen-terminal-ui-platform-token ui) nil)
-          (terminal-ui-fullscreen-invalidate ui)
-          (platform-terminal-restore-fullscreen *platform* token)))))
+      (let ((terminal (terminal-ui-terminal ui))
+            (epilogue (shiftf (fullscreen-terminal-ui-epilogue ui) nil))
+            (token    (shiftf (fullscreen-terminal-ui-platform-token ui) nil)))
+        (unwind-protect
+             (unwind-protect
+                  (terminal-screen-leave terminal token)
+               (when epilogue
+                 (terminal--write-safe-text terminal (format nil "~A~%" epilogue))
+                 (terminal-flush terminal)))
+          (setf (fullscreen-terminal-ui-active-p ui) nil)
+          (terminal-ui-fullscreen-invalidate ui)))))
   nil)
 
 (-> terminal-ui-fullscreen-enter (fullscreen-terminal-ui) null)
@@ -167,20 +159,12 @@ screen after leaving the alternate buffer."
   "Enter the alternate buffer once, unwinding partial startup before propagating failure."
   (when (and (terminal-interactive-p (terminal-ui-terminal ui))
              (not (fullscreen-terminal-ui-active-p ui)))
-    (let ((token       (platform-terminal-enable-fullscreen *platform*))
-          (completed-p nil))
+    (let ((completed-p nil))
       (unwind-protect
            (progn
-             (setf (fullscreen-terminal-ui-platform-token ui) token
-                   (fullscreen-terminal-ui-active-p ui) t)
-             (terminal--write
-              (terminal-ui-terminal ui)
-              (concatenate
-               'string
-               (alternate-screen-enter-sequence)
-               (terminal-keyboard-enhancement-enable-sequence)
-               (format nil "~C[2J~C[H" #\Escape #\Escape)
-               (mouse-reporting-enable-sequence)))
+             (setf (fullscreen-terminal-ui-active-p ui) t
+                   (fullscreen-terminal-ui-platform-token ui)
+                   (terminal-screen-enter (terminal-ui-terminal ui)))
              (terminal-ui--enter-theme ui)
              (terminal-flush (terminal-ui-terminal ui))
              (terminal-ui-fullscreen-invalidate ui)
@@ -371,19 +355,13 @@ ROWS are already wrapped to the terminal width by their composers, so they are
 compared and written as they are; the frame disables autowrap, which clips any
 row that still overruns instead of scrolling."
   (when (fullscreen-terminal-ui-active-p ui)
-    (let ((terminal (terminal-ui-terminal ui)))
-      (clinedi:frame-painter-paint
-       (fullscreen-terminal-ui-painter ui)
-       rows
-       (lambda (controls)
-         (terminal--write terminal controls)
-         (terminal-flush terminal))
-       :height           (max 1 (terminal-rows terminal))
-       :width            (max 1 (terminal-columns terminal))
-       :cursor-row       cursor-row
-       :cursor-column    cursor-column
-       :cursor-visible-p (and (fullscreen-terminal-ui-cursor-visible-p ui)
-                              (not (terminal-ui-boot-waiting-p ui))))))
+    (terminal-screen-paint (terminal-ui-terminal ui)
+                           (fullscreen-terminal-ui-painter ui)
+                           rows
+                           :cursor-row       cursor-row
+                           :cursor-column    cursor-column
+                           :cursor-visible-p (and (fullscreen-terminal-ui-cursor-visible-p ui)
+                                                  (not (terminal-ui-boot-waiting-p ui)))))
   nil)
 
 (-> terminal-ui-fullscreen-scroll (fullscreen-terminal-ui integer) null)

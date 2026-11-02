@@ -1476,6 +1476,8 @@
   test-localgroup-session-exit-relay
   test-localgroup-resume-instruction-relay
   test-localgroup-relay-exit
+  test-localgroup-relay-frames
+  test-localgroup-screen-paints-frames
   test-localgroup-cli-targets
   test-localgroup-kill-exit-observation
   test-localgroup-kill-cli-outcomes

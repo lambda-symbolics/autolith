@@ -289,6 +289,7 @@
                                           (:file "terminal/layout")
                                           (:file "terminal/stream")
                                           (:file "localgroup/terminal")
+                                          (:file "localgroup/screen")
                                           (:file "terminal/path-completion")
                                           (:file "application/input-work")
                                           (:file "terminal/ui")

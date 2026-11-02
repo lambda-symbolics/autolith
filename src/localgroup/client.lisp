@@ -487,6 +487,7 @@ HEADER-P renders field labels rather than status values."
 A (:SWITCH :SESSION-ID ID) result asks the caller to attach to channel ID
 instead; this attachment has ended by then."
   (let ((output    (make-mode-tracking-output-stream *standard-output*))
+        (screen    (localgroup-screen-create :terminal terminal))
         (reconnect nil))
     (unwind-protect
          (let ((exit
@@ -496,21 +497,29 @@ instead; this attachment has ended by then."
                   :read-event-function  (lambda () (terminal-read-event terminal))
                   :packet-function
                   (lambda (packet)
-                    (when (or (and (eq (first packet) ':checkpoint-reconnect)
-                                   (non-empty-string-p (getf (rest packet) :id))
-                                   (typep (getf (rest packet) :history-position) '(integer 0)))
-                              (and (eq (first packet) ':switch)
-                                   (non-empty-string-p (getf (rest packet) :session-id))))
-                      (setf reconnect packet)
-                      t))
+                    (cond
+                      ((localgroup-screen-handle-packet screen packet)
+                       nil)
+                      ((or (and (eq (first packet) ':checkpoint-reconnect)
+                                (non-empty-string-p (getf (rest packet) :id))
+                                (typep (getf (rest packet) :history-position) '(integer 0)))
+                           (and (eq (first packet) ':switch)
+                                (non-empty-string-p (getf (rest packet) :session-id))))
+                       (setf reconnect packet)
+                       t)
+                      (t
+                       nil)))
                   :resize-function
                   (lambda ()
                     (when *terminal-resize-pending-p*
                       (setf *terminal-resize-pending-p* nil)
                       (multiple-value-bind (rows columns) (terminal-current-size)
+                        (terminal-set-dimensions terminal columns :rows rows)
+                        (localgroup-screen-resized screen)
                         (list :rows rows :columns columns
                               :styled-p (terminal-environment-styling-p))))))))
            (or reconnect exit))
+      (localgroup-screen-close screen)
       (mode-tracking-output-stream-restore output))))
 
 (-> localgroup--wait-for-handoff-entry

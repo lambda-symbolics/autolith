@@ -465,6 +465,7 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
                (unless attached-p
                  (return-from localgroup--serve-attachment nil))
                (application-sync-window-title application)
+               (localgroup-terminal-replay-screen terminal attachment)
                (unless (eq mode ':read-only)
                  (localgroup--note-controller-attached session))
                (image-daemon:relay-read-attachment

@@ -59,6 +59,88 @@ never apply each other's resizes.")
     (prog1 (terminal-relayed-resize terminal)
       (setf (terminal-relayed-resize terminal) nil))))
 
+
+;;;; -- Whole-Screen Frames --
+
+(defgeneric terminal-screen-enter (terminal)
+  (:documentation "Take TERMINAL's whole screen for painted frames and return a restoration token.
+
+A terminal written directly enters the alternate buffer with keyboard and
+mouse reporting; a relayed terminal leaves that to its clients, which take
+their screens with the first frame."))
+
+(defgeneric terminal-screen-leave (terminal token)
+  (:documentation "Give TERMINAL's screen back, restoring the native mode TOKEN captured on entry."))
+
+(defgeneric terminal-screen-paint
+    (terminal painter rows &key cursor-row cursor-column cursor-visible-p)
+  (:documentation "Show display ROWS as TERMINAL's whole screen with the cursor at CURSOR-ROW and CURSOR-COLUMN.
+
+PAINTER rewrites only the rows that changed on a terminal written directly;
+a relayed terminal sends its clients the rows that changed since the frame
+each of them holds."))
+
+(defgeneric terminal-screen-invalidate (terminal painter)
+  (:documentation "Forget what TERMINAL's screen shows, so the next paint rewrites it completely."))
+
+(defmethod terminal-screen-enter ((terminal terminal))
+  "Enter the alternate buffer with keyboard and mouse reporting on, keeping the native mode token."
+  (let ((token       (platform-terminal-enable-fullscreen *platform*))
+        (completed-p nil))
+    (unwind-protect
+         (progn
+           (terminal--write
+            terminal
+            (concatenate 'string
+                         (alternate-screen-enter-sequence)
+                         (terminal-keyboard-enhancement-enable-sequence)
+                         (format nil "~C[2J~C[H" #\Escape #\Escape)
+                         (mouse-reporting-enable-sequence)))
+           (terminal-flush terminal)
+           (setf completed-p t))
+      (unless completed-p
+        (platform-terminal-restore-fullscreen *platform* token)))
+    token))
+
+(defmethod terminal-screen-leave ((terminal terminal) token)
+  "Leave the alternate buffer and its reporting modes, then restore the native mode TOKEN."
+  (unwind-protect
+       (progn
+         (terminal--write
+          terminal
+          (concatenate 'string
+                       (format nil "~C[0m~C[?7h~C[?25h" #\Escape #\Escape #\Escape)
+                       (mouse-reporting-disable-sequence)
+                       (terminal-keyboard-enhancement-disable-sequence)
+                       (alternate-screen-leave-sequence)))
+         (terminal-flush terminal))
+    (platform-terminal-restore-fullscreen *platform* token))
+  nil)
+
+(defmethod terminal-screen-paint
+    ((terminal terminal) painter rows &key (cursor-row 0) (cursor-column 0) (cursor-visible-p t))
+  "Paint ROWS through PAINTER at TERMINAL's size, rewriting only what changed."
+  (clinedi:frame-painter-paint
+   painter
+   rows
+   (lambda (controls)
+     (terminal--write terminal controls)
+     (terminal-flush terminal))
+   :height           (max 1 (terminal-rows terminal))
+   :width            (max 1 (terminal-columns terminal))
+   :cursor-row       cursor-row
+   :cursor-column    cursor-column
+   :cursor-visible-p cursor-visible-p)
+  nil)
+
+(defmethod terminal-screen-invalidate ((terminal terminal) painter)
+  "Make PAINTER's next frame complete."
+  (clinedi:frame-painter-invalidate painter)
+  nil)
+
+
+;;;; -- Stream Terminals --
+
 (defclass stream-terminal (terminal clinedi:host-terminal) ()
   (:default-initargs                    :event-decoder #'terminal--decode-editing-event
                     :event-prefix-p-function
