@@ -677,6 +677,41 @@ and codes follow the Codex reference at commit 6f51c65958."
         (provider--signal-http-status-failure
          provider status :headers headers :raw-body raw-body))))
 
+(-> provider--authentication-detail (t &key (:limit (integer 1 *))) (option string))
+(defun provider--authentication-detail (value &key (limit *provider-error-detail-limit*))
+  "Return detached, redacted, bounded single-line text for an auth diagnostic."
+  (when (non-empty-string-p value)
+    (let* ((redacted (provider--sanitize-wire-string value))
+           (text     (map 'string
+                          (lambda (character)
+                            (let ((code (char-code character)))
+                              (if (or (< code 32) (<= 127 code 159)
+                                      (member code '(8232 8233)))
+                                  #\Space
+                                  character)))
+                          redacted)))
+      (unless (every (lambda (character) (char= character #\Space)) text)
+        ;; BOUNDED-STRING appends a multiline truncation notice; this field must not.
+        (subseq text 0 (min (length text) limit))))))
+
+(-> provider--unauthorized-body-fields (t) (values (option string) (option string)))
+(defun provider--unauthorized-body-fields (raw-body)
+  "Read one bounded body and return only sanitized JSON message and code strings."
+  (handler-case
+      (let* ((body    (provider--error-body-text
+                       (if (and (vectorp raw-body) (> (length raw-body) 4000))
+                           (subseq raw-body 0 4000)
+                           raw-body)))
+             (decoded (and body (json-decode (provider--sanitize-wire-string body))))
+             (detail  (and (json-object-p decoded) (json-get decoded "error"))))
+        (if (json-object-p detail)
+            ;; JSON escapes can conceal exact credentials until after decoding.
+            (values (provider--authentication-detail (json-get detail "message"))
+                    (provider--authentication-detail (json-get detail "code") :limit 80))
+            (values nil nil)))
+    (error ()
+      (values nil nil))))
+
 (defgeneric provider-signal-transport-failure (provider condition)
   (:documentation
    "Record CONDITION's response headers and signal its typed provider failure."))
@@ -685,6 +720,35 @@ and codes follow the Codex reference at commit 6f51c65958."
     ((provider subscription-provider) (condition condition))
   "Signal the shared HTTP failure classification."
   (provider-signal-http-failure provider condition))
+
+(define-condition provider--unauthorized-without-message (provider-unauthorized) ()
+  (:documentation "Unauthorized response without a usable provider body message."))
+
+(defmethod provider-signal-transport-failure :around
+    ((provider subscription-provider) (condition http-request-failed))
+  "Preserve detached401 details before either shared or Codex normalization."
+  (if (= (dexador.error:response-status condition) 401)
+      (let ((headers (provider--sanitize-wire-value
+                      (dexador.error:response-headers condition))))
+        (provider-note-response-headers provider headers)
+        (multiple-value-bind (message code)
+            (provider--unauthorized-body-fields
+             (handler-case
+                 (dexador.error:response-body condition)
+               (error ()
+                 nil)))
+          (error (if message
+                     'provider-unauthorized
+                     'provider--unauthorized-without-message)
+                 :message    (or message
+                                 (format nil "The provider rejected the current ~A credentials."
+                                         (provider-account-label provider)))
+                 :status     401
+                 :code       code
+                 :request-id (provider--authentication-detail
+                              (provider--response-request-id headers) :limit 200)
+                 :response   nil)))
+      (call-next-method)))
 
 (defmethod provider-signal-transport-failure
     ((provider codex-subscription-provider) (condition http-request-failed))
@@ -863,6 +927,62 @@ are request-scoped and included in transport and result redaction."))
               (provider-signal-transport-failure adapter condition)))))
        :conversation conversation))))
 
+(define-condition provider--authentication-failure (authentication-error)
+  ((status :initarg :status :reader provider-error-status
+           :type (or null integer) :documentation "The rejected HTTP status.")
+   (code :initarg :code :reader provider-error-code
+         :type (or null string) :documentation "The sanitized provider code.")
+   (request-id :initarg :request-id :reader provider-error-request-id
+               :type (or null string) :documentation "The sanitized request identifier."))
+  (:documentation
+   "A detached terminal auth diagnostic outside provider retry classification."))
+
+(defmethod cl-llm-provider-api:provider-api-error-message
+    ((condition provider--authentication-failure))
+  "Read the actionable authentication report including available provider details."
+  (autolith-error-message condition))
+
+(defmethod provider-error-response-id ((condition provider--authentication-failure))
+  "No response object was returned on HTTP401."
+  (declare (ignore condition))
+  nil)
+
+(defmethod provider-error-response ((condition provider--authentication-failure))
+  "Never retain an arbitrary provider body in terminal authentication failures."
+  (declare (ignore condition))
+  nil)
+
+(-> provider--authentication-condition
+    (subscription-provider provider-unauthorized &key (:refreshable-p boolean))
+    authentication-error)
+(defun provider--authentication-condition (provider condition &key refreshable-p)
+  "Preserve the existing auth hint and append available detached provider diagnostics."
+  (let* ((status     (provider-error-status condition))
+         (code       (provider--authentication-detail (provider-error-code condition) :limit 80))
+         (request-id (provider--authentication-detail
+                      (provider-error-request-id condition) :limit 200))
+         (message    (unless (typep condition 'provider--unauthorized-without-message)
+                       (provider--authentication-detail
+                        (cl-llm-provider-api:provider-api-error-message condition))))
+         (hint       (if refreshable-p
+                         (format nil "~A rejected Autolith's credentials after a bounded refresh."
+                                 (provider-account-label provider))
+                         (format nil "~A rejected Autolith's API key; ~A."
+                                 (provider-account-label provider)
+                                 (credential-manager-login-hint
+                                  (provider-credential-manager provider)))))
+         (details    (append (when (integerp status) (list (format nil "HTTP ~D" status)))
+                             (when request-id (list (format nil "request ~A" request-id)))
+                             (when code (list (format nil "code ~A" code)))
+                             (when message (list message)))))
+    (make-condition 'provider--authentication-failure
+                    :message    (if details
+                                    (format nil "~A (~{~A~^, ~})" hint details)
+                                    hint)
+                    :status     (and (integerp status) status)
+                    :code       code
+                    :request-id request-id)))
+
 (-> provider--call-with-bounded-retries
     (subscription-provider function function)
     t)
@@ -884,17 +1004,8 @@ each attempt must stream through."
                 :refreshable-p refreshable-p
                 :exhausted-function
                 (lambda (condition)
-                  (declare (ignore condition))
-                  (error 'authentication-error
-                         :message
-                         (if refreshable-p
-                             (format nil
-                                     "~A rejected Autolith's credentials after a bounded refresh."
-                                     (provider-account-label provider))
-                             (format nil
-                                     "~A rejected Autolith's API key; ~A."
-                                     (provider-account-label provider)
-                                     (credential-manager-login-hint manager)))))))))
+                  (error (provider--authentication-condition
+                          provider condition :refreshable-p refreshable-p)))))))
     (call-with-streaming-retries #'attempt-with-authentication event-callback)))
 
 (defmethod provider-stream-turn

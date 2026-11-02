@@ -2102,11 +2102,14 @@
     (cond
       ((typep outcome 'provider-result)
        outcome)
+      ((typep outcome 'provider-unauthorized)
+       (error outcome))
       ((eq outcome :unauthorized)
        (error 'provider-unauthorized
-              :message    "Injected unauthorized response."
+              :message    "The provider returned HTTP 401. Provider explanation: Upstream account unavailable."
               :status     401
-              :request-id nil
+              :code       "missing_upstream_credential"
+              :request-id "request-authentication"
               :response   nil))
       ((eq outcome :stream-error)
        (error 'response-stream-error
@@ -2159,9 +2162,106 @@
                  :session-id         (make-identifier)
                  :outcomes           outcomes))
 
+(-> provider-tests--authentication-hook (subscription-provider) null)
+(defun provider-tests--authentication-hook (provider)
+  "Exercise Dexador condition bodies at the host hook, including hostile fields."
+  (let* ((body     "{\"error\":{\"message\":\"Account refused\",\"code\":\"invalid_api_key\"}}")
+         (stream   (make-string-input-stream body))
+         (fallback (format nil "The provider rejected the current ~A credentials."
+                           (provider-account-label provider))))
+    (dolist (case (list (list body "Account refused" "invalid_api_key")
+                       (list (sb-ext:string-to-octets body) "Account refused" "invalid_api_key")
+                       (list stream "Account refused" "invalid_api_key")
+                       (list (format nil "{\"error\":{\"message\":~S,\"code\":\"invalid_api_key\"}}"
+                                     fallback) fallback "invalid_api_key")
+                       (list "{broken" nil nil) (list "{}" nil nil)
+                       (list "{\"error\":{\"message\":[],\"code\":{}}}" nil nil)
+                       (list "{\"error\":{\"code\":\"scope_missing\"}}" nil "scope_missing")))
+      (let* ((condition (make-condition 'http-request-failed
+                                       :status  401
+                                       :body    (first case)
+                                       :headers '(("x-request-id" . "auth-hook-request"))
+                                       :uri     nil
+                                       :method  ':post))
+             (failure   (handler-case
+                            (provider-signal-transport-failure provider condition)
+                          (provider-unauthorized (failure)
+                            failure)))
+             (terminal  (provider--authentication-condition provider failure)))
+        (test-assert (typep failure 'provider-unauthorized)
+                     "host401 remains catchable by bounded credential refresh")
+        (test-assert (and (= (provider-error-status failure) 401)
+                          (equal (provider-error-request-id failure) "auth-hook-request")
+                          (null (provider-error-response failure)))
+                     "host401 preserves status and request-id without its body")
+        (test-assert
+         (and (equal (cl-llm-provider-api:provider-api-error-message failure)
+                     (or (second case) fallback))
+              (search (or (second case) fallback) (princ-to-string failure))
+              (equal (provider-error-code failure) (third case)))
+         "only valid JSON string fields replace the generic401 explanation")
+        (test-assert
+         (and (search "HTTP 401" (princ-to-string terminal))
+              (search "auth-hook-request" (princ-to-string terminal))
+              (if (second case)
+                  (and (not (typep failure 'provider--unauthorized-without-message))
+                       (search (second case) (princ-to-string terminal)))
+                  (and (typep failure 'provider--unauthorized-without-message)
+                       (not (search fallback (princ-to-string terminal)))))
+              (or (null (third case)) (search (third case) (princ-to-string terminal))))
+         "render body messages and codes, but omit synthesized fallback text")))
+    (test-assert (not (open-stream-p stream)) "the error-body stream closes after one drain"))
+  (let* ((*provider-active-credential-values* '("public-credential" "public-extra"))
+         (body                                (copy-seq "{\"error\":{\"message\":\"public\\u002dcredential\\npublic-extra\\u001b\",\"code\":\"public\\u002dcredential\"}}"))
+         (id                                  (copy-seq (format nil "public-credential~%public-extra")))
+         (failure
+           (handler-case
+               (provider-signal-transport-failure
+                provider (make-condition 'http-request-failed
+                                         :status  401
+                                         :body    body
+                                         :headers (list (cons "x-request-id" id))
+                                         :uri     nil
+                                         :method  ':post))
+             (provider-unauthorized (condition)
+               condition)))
+         (terminal                            (provider--authentication-condition provider failure))
+         (report                              (princ-to-string terminal)))
+    (test-assert (and (not (search "public-credential" report))
+                      (not (search "public-extra" report))
+                      (notany (lambda (character) (< (char-code character) 32)) report))
+                 "decoded fields and request identity redact active secrets and controls")
+    (fill body #\x)
+    (fill id #\x)
+    (test-assert (and (equal report (princ-to-string terminal))
+                      (null (provider-error-response terminal)))
+                 "the terminal report detaches from mutable wire strings"))
+  (let* ((body (format nil "{\"error\":{\"message\":\"~A\",\"code\":\"~A\"}}"
+                       (make-string 1600 :initial-element #\m)
+                       (make-string 500 :initial-element #\c)))
+         (failure
+           (handler-case
+               (provider-signal-transport-failure
+                provider (make-condition 'http-request-failed
+                                         :status 401 :body body :headers nil
+                                         :uri nil :method ':post))
+             (provider-unauthorized (condition)
+               condition))))
+    (test-assert
+     (and (<= (length (cl-llm-provider-api:provider-api-error-message failure))
+              *provider-error-detail-limit*)
+          (<= (length (provider-error-code failure)) 80)
+          (null (provider-error-request-id failure)))
+     "message and code are bounded while absent request identity stays absent")
+    (test-assert
+     (not (search "request NIL" (princ-to-string
+                                 (provider--authentication-condition provider failure))))
+     "missing diagnostic fields add no fabricated value"))
+  nil)
+
 (-> test-provider-authentication-retries () null)
 (defun test-provider-authentication-retries ()
-  "Test immediate bounded credential refresh and final unauthorized normalization."
+  "Test bounded refresh and detached terminal authentication diagnostics."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (conversation  (conversation-create configuration :identifier "provider-retry"))
@@ -2174,63 +2274,117 @@
                           :turn-state   nil)))
     (unwind-protect
          (progn
+           (provider-tests--authentication-hook
+            (test-codex-provider-create configuration nil))
            (let ((provider
                    (test-codex-provider-create
                     configuration
-                    (list :unauthorized result))))
+                    (list :unauthorized result)))
+                 (events nil))
              (test-assert
               (eq (provider-stream-turn provider conversation
                                         :tool-namespaces #()
-                                        :event-callback  #'identity)
+                                        :event-callback  (lambda (event) (push event events)))
                   result)
               "one forced refresh may satisfy the first unauthorized response")
              (test-assert
               (equal (nreverse (test-codex-provider-refresh-flags provider))
                      '(nil t))
-              "the first retry forces credential refresh"))
-           (let ((provider
-                   (test-codex-provider-create
-                    configuration
-                    '(:unauthorized :unauthorized))))
-             (test-assert
-              (handler-case
-                  (progn
-                    (provider-stream-turn provider conversation
-                                          :tool-namespaces #()
-                                          :event-callback  #'identity)
-                    nil)
-                (authentication-error ()
-                  t))
-              "a second unauthorized response becomes a typed authentication failure")
-             (test-assert
-              (equal (nreverse (test-codex-provider-refresh-flags provider))
-                     '(nil t))
-              "authentication failure follows one immediate forced refresh"))
-           (let* ((manager
-                    (api-key-credential-manager-create
-                     :provider-name "retry-api-key"
-                     :pathname      (configuration-api-keys-path configuration)))
-                  (provider
-                    (make-instance 'test-codex-provider
-                                   :configuration      configuration
-                                   :credential-manager manager
-                                   :session-id         (make-identifier)
-                                   :outcomes           '(:unauthorized :unexpected))))
-             (test-assert
-              (handler-case
-                  (progn
-                    (provider-stream-turn provider conversation
-                                          :tool-namespaces #()
-                                          :event-callback  #'identity)
-                    nil)
-                (authentication-error (condition)
-                  (search "run autolith auth retry-api-key"
-                          (princ-to-string condition))))
-              "a rejected static API key gives its direct authentication hint")
-             (test-assert
-              (equal (nreverse (test-codex-provider-refresh-flags provider))
-                     '(nil))
-              "a rejected static API key is not retried or refreshed")))
+              "the first retry forces credential refresh")
+             (test-assert (null events) "credential refresh adds no provider events"))
+           (dolist (case '((nil nil) (t nil) (nil t) (t t)))
+             (let* ((refreshable-p (first case))
+                    (missing-p     (second case))
+                    (message       (copy-seq "Upstream account unavailable."))
+                    (code          (copy-seq "missing_upstream_credential"))
+                    (request-id    (copy-seq "request-authentication"))
+                    (original
+                      (make-condition (if missing-p
+                                          'provider--unauthorized-without-message
+                                          'provider-unauthorized)
+                                      :message    message
+                                      :status     401
+                                      :code       code
+                                      :request-id request-id
+                                      :response   (list :discarded-body)))
+                    (provider
+                      (if refreshable-p
+                          (test-codex-provider-create
+                           configuration (list :unauthorized original :unexpected))
+                          (make-instance
+                           'test-codex-provider
+                           :configuration      configuration
+                           :credential-manager (api-key-credential-manager-create
+                                                :provider-name "retry-api-key"
+                                                :pathname      (configuration-api-keys-path configuration))
+                           :session-id         (make-identifier)
+                           :outcomes           (list original :unexpected))))
+                    (events        nil)
+                    (terminal
+                      (handler-case
+                          (provider-stream-turn
+                           provider conversation
+                           :tool-namespaces #()
+                           :event-callback  (lambda (event) (push event events)))
+                        (authentication-error (condition)
+                          condition))))
+               (test-assert (typep terminal 'authentication-error)
+                            "exhausted unauthorized responses become authentication failures")
+               (test-assert
+                (and (not (typep terminal 'provider-error))
+                     (not (typep terminal 'provider-retryable-error)))
+                "terminal authentication is outside provider retry classification")
+               (test-assert
+                (equal (nreverse (test-codex-provider-refresh-flags provider))
+                       (if refreshable-p '(nil t) '(nil)))
+                "only refreshable credentials receive one forced refresh")
+               (test-assert (null events) "authentication exhaustion adds no provider events")
+               ;; Guard diagnostic readers so the unpatched control records assertions,
+               ;; rather than aborting on its generic authentication-error condition.
+               (let* ((report      (princ-to-string terminal))
+                      (preserved-p (if missing-p
+                                       (not (search message report))
+                                       (search message report))))
+                 (test-assert preserved-p "terminal authentication renders only provider body messages")
+                 (test-assert
+                  (equal (cl-llm-provider-api:provider-api-error-message original) message)
+                  "the source condition keeps its own message for other callers")
+                 (test-assert
+                  (and (search (if refreshable-p
+                                   "rejected Autolith's credentials after a bounded refresh."
+                                   "rejected Autolith's API key;") report)
+                       (or refreshable-p (search (credential-manager-login-hint
+                                                  (provider-credential-manager provider)) report))
+                       (search "HTTP 401" report)
+                       (search code report) (search request-id report))
+                  "both auth hints survive alongside rendered provider diagnostics")
+                 (test-assert
+                  (and preserved-p (= (provider-error-status terminal) 401))
+                  "terminal authentication preserves HTTP status")
+                 (test-assert
+                  (and preserved-p (equal (provider-error-code terminal) code))
+                  "terminal authentication preserves provider code")
+                 (test-assert
+                  (and preserved-p (equal (provider-error-request-id terminal) request-id))
+                  "terminal authentication preserves request identity")
+                 (test-assert
+                  (and preserved-p (null (provider-error-response terminal))
+                       (null (provider-error-response-id terminal)))
+                  "terminal authentication retains no provider response or response identity")
+                 (test-assert
+                  (and preserved-p
+                       (equal (cl-llm-provider-api:provider-api-error-message terminal) report)
+                       (equal (autolith-error-message terminal) report))
+                  "diagnostic readers and rendering expose the same actionable report")
+                 (fill message #\x)
+                 (fill code #\x)
+                 (fill request-id #\x)
+                 (test-assert
+                  (and preserved-p
+                       (equal (princ-to-string terminal) report)
+                       (equal (provider-error-code terminal) "missing_upstream_credential")
+                       (equal (provider-error-request-id terminal) "request-authentication"))
+                  "terminal diagnostic strings are detached from the original condition")))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
