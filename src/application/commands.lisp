@@ -3002,6 +3002,60 @@ The current value and its source sit in aligned columns of their own."
         (application-maybe-offer-project-adaptation application))))
   ':continue)
 
+(-> application--switch-target (application string) string)
+(defun application--switch-target (application designator)
+  "Return the identifier of the channel DESIGNATOR names, among the world's channels or the running sessions.
+
+A channel opened moments ago has no durable record and so no world channel
+yet, but its session is published, so the running sessions are searched when
+the world knows no such channel."
+  (handler-case
+      (application-world-channel-identifier application designator)
+    (world-error (condition)
+      (or (handler-case
+              (localgroup--record-session-id
+               (rest (localgroup--find-record (application-configuration application)
+                                              designator)))
+            (localgroup-error ()
+              nil))
+          (error condition)))))
+
+(define-application-command application--builtin-switch-command
+    (:name              "/switch"
+     :argument          "ID"
+     :description       "move this terminal to another channel"
+     :tip               "takes a channel ID or a unique fragment of one; the channel you leave keeps running."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application designator)
+  (let* ((identifier (application--switch-target application (princ-to-string designator)))
+         (display    (conversation-identifier-display identifier))
+         (current    (conversation-identifier (application-conversation application)))
+         (terminal   (terminal-ui-terminal (application-ui application)))
+         (controller (application-input-controller application)))
+    (cond
+      ((string= identifier current)
+       (application-present application
+                            (format nil "This terminal is already in channel ~A." display)))
+      ((and (application-hosted-p application) (typep terminal 'localgroup-terminal))
+       (application-present
+        application
+        (if (localgroup-terminal-switch-controller terminal identifier)
+            (format nil "Switching this terminal to channel ~A." display)
+            (format nil "No terminal controls this channel; attach one to move it to ~A."
+                    display))))
+      ((and controller (application-input-controller-turn-active-p controller))
+       (application-present
+        application
+        (format nil "Wait for the turn to finish, then (switch ~S) resumes that channel here."
+                display)))
+      (t
+       (application-resume-conversation application identifier)
+       (application-render-records application)
+       (application-present application (format nil "Switched to channel ~A." display)))))
+  ':continue)
+
 (define-application-command application--builtin-conversations-command
     (:name              "/conversations"
      :argument          nil

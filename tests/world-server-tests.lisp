@@ -161,6 +161,58 @@
                     "closing an unknown channel is refused"))))
   nil)
 
+(-> test-world-server-switch () null)
+(defun test-world-server-switch ()
+  "Test (switch) asking the controlling terminal to move to another channel."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry       (world-client-entry configuration))
+            (workspace-a (world-tests--workspace root "a"))
+            (workspace-b (world-tests--workspace root "b"))
+            (id-a        (getf (rest (world-server-tests--open entry workspace-a)) :session-id))
+            (id-b        (getf (rest (world-server-tests--open entry workspace-b)) :session-id))
+            (application (world-host-application (world-server--find-host server id-a)))
+            (terminal    (terminal-ui-terminal (application-ui application)))
+            (attachment  (make-instance 'image-daemon:attachment
+                                        :socket nil
+                                        :stream (make-broadcast-stream)
+                                        :mode   ':control))
+            (presented   nil))
+       (test-call-with-function-replacements
+        (list (list 'application-present
+                    (lambda (application entry &key identifier)
+                      (declare (ignore application identifier))
+                      (push entry presented))))
+        (lambda ()
+          (application--builtin-switch-command application id-a)
+          (test-assert (search "already" (first presented))
+                       "switching to the channel the terminal is in changes nothing")
+          (application--builtin-switch-command application (conversation-identifier-display id-b))
+          (test-assert (search "No terminal controls" (first presented))
+                       "without a controller there is no terminal to move")
+          (multiple-value-bind (attached-p released-p)
+              (image-daemon:relay-attach terminal attachment :rows 24 :columns 80
+                                                             :styled-p nil :session-id id-a)
+            (declare (ignore released-p))
+            (test-assert attached-p "the switch test attaches a controller"))
+          (application--builtin-switch-command application (conversation-identifier-display id-b))
+          (test-assert (search "Switching" (first presented))
+                       "a controlled channel reports the switch it asked for")
+          (let ((packets (coerce (structlisp:deque->vector
+                                  (image-daemon:attachment-queue attachment))
+                                 'list)))
+            (test-assert (some (lambda (packet)
+                                 (and (search ":SWITCH" (string-upcase packet))
+                                      (search id-b packet)))
+                               packets)
+                         "the controller is sent the switch request naming the channel"))
+          (test-assert (handler-case
+                           (progn (application--builtin-switch-command application "zzzzzzz") nil)
+                         (world-error (condition)
+                           (search "does not exist" (autolith-error-message condition))))
+                       "an unknown channel is refused"))))))
+  nil)
+
 (-> world-server--channels-of (cons) list)
 (defun world-server--channels-of (entry)
   "Return the channel identifiers the world ENTRY reports."
