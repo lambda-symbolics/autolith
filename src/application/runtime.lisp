@@ -1192,6 +1192,7 @@ lineage instead of loading it again."
                         (application-connect-task-presentation application)
                         (application--load-goal application)
                         (application-publish-recovery-session application)
+                        (application-world-sync application :all-p t)
                         (telemetry--call-safely
                          (lambda () (telemetry-attach configuration)))
                         (setf completed-p t)
@@ -2028,6 +2029,7 @@ retiring the old registry."
                (not
                 (eq previous-conversation-lease conversation-lease)))
       (conversation-lease-release previous-conversation-lease))
+    (application-world-sync application)
     (application-refresh-context-meter application)
     application))
 

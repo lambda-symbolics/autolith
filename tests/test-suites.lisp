@@ -645,7 +645,9 @@
 (define-test-suite world
   test-world-persistence
   test-world-deletion-rules
-  test-world-malformed-state)
+  test-world-malformed-state
+  test-world-session-reconciliation
+  test-world-application-sync)
 
 (define-test-suite preferences
   test-preferences
