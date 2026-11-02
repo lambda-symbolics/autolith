@@ -34,11 +34,6 @@
     :accessor      scripted-provider-skill-contribution-snapshots
     :type          list
     :documentation "Skill contribution identifiers observed before each request.")
-   (turn-states
-    :initform      nil
-    :accessor      scripted-provider-turn-states
-    :type          list
-    :documentation "Request-local turn states observed before each request.")
    (tool-schema-counts
     :initform      nil
     :accessor      scripted-provider-tool-schema-counts
@@ -120,8 +115,6 @@
             (scripted-provider-configuration provider)
             conversation)))
      (scripted-provider-skill-contribution-snapshots provider)))
-  (push (conversation-turn-state conversation)
-        (scripted-provider-turn-states provider))
   (push (length tool-namespaces)
         (scripted-provider-tool-schema-counts provider))
   (push *provider-tool-choice*
@@ -437,14 +430,13 @@
 (-> agent-test-result
     (string list
      &key
-     (:turn-state (option string))
      (:turn-completion turn-completion)
      (:usage json-object)
      (:reasoning-context (option string)))
     provider-result)
 (defun agent-test-result
     (response-id output-items
-     &key turn-state (turn-completion :unspecified)
+     &key (turn-completion :unspecified)
        (usage (json-object "input_tokens" 1 "output_tokens" 1))
        reasoning-context)
   "Return a scripted provider result containing OUTPUT-ITEMS.
@@ -457,7 +449,6 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                  :usage           usage
                  :metadata        (make-instance 'provider-response-metadata
                                                  :reasoning-context reasoning-context)
-                 :turn-state      turn-state
                  :turn-completion turn-completion))
 
 (-> agent-test-concurrency-tool
@@ -505,7 +496,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
 
 (-> test-agent-tool-loop () null)
 (defun test-agent-tool-loop ()
-  "Test authoritative replay, correlated tool output, callbacks, and turn-state scope."
+  "Test authoritative replay, correlated tool output, and callbacks."
   (let* ((configuration       (test-configuration))
          (root                (test-configuration-root configuration))
          (conversation        (conversation-create configuration :identifier "agent-loop"))
@@ -532,8 +523,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
             (list
              (agent-test-result
               "response-1"
-              (list call blank-message)
-              :turn-state "turn-state-1")
+              (list call blank-message))
              (agent-test-result
               "response-2"
               (list message)
@@ -593,13 +583,6 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
             (equal (nreverse (scripted-provider-input-counts provider))
                    '(1 4))
             "the second request replays the call, blank message, and tool output")
-           (test-assert
-            (equal (nreverse (scripted-provider-turn-states provider))
-                   '(nil "turn-state-1"))
-            "provider turn state is replayed only inside the active turn")
-           (test-assert
-            (null (conversation-turn-state conversation))
-            "the agent clears request-local turn state after completion")
            (test-assert
             (= (length (conversation-input-items conversation)) 5)
             "conversation history contains user, call, blank answer, output, and answer")
@@ -1050,8 +1033,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
               "steering-1"
               (list (agent-test-call
                      :call-id   "steering-call"
-                     :arguments "{\"value\":\"before\"}"))
-              :turn-state "transient-turn-state")
+                     :arguments "{\"value\":\"before\"}")))
              (agent-test-result
               "steering-2"
               (list (agent-test-message "changed course"))
@@ -1088,10 +1070,6 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
             (equal (nreverse (scripted-provider-input-counts provider))
                    '(1 4))
             "steering follows the function call and correlated tool output")
-           (test-assert
-            (equal (nreverse (scripted-provider-turn-states provider))
-                   '(nil nil))
-            "new steering invalidates the request-local provider turn state")
            (let ((user-records
                    (loop for record in
                            (rest (conversation--read-records
@@ -1130,7 +1108,6 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
             :results
             (list (agent-test-result "response-1"
                                      (list (agent-test-message "working"))
-                                     :turn-state      "continuation-state"
                                      :turn-completion ':continue)
                   (agent-test-result "response-2"
                                      (list (agent-test-message "done"))
@@ -1147,13 +1124,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                         "the agent follows an explicit provider continuation")
            (test-assert
             (equal (nreverse (scripted-provider-input-counts provider)) '(1 2))
-            "the continuation request replays the first completed message")
-           (test-assert
-            (equal (nreverse (scripted-provider-turn-states provider))
-                   '(nil "continuation-state"))
-            "the continuation request receives request-local routing state")
-           (test-assert (null (conversation-turn-state conversation))
-                        "explicit continuation state is cleared after the user turn"))
+            "the continuation request replays the first completed message"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -1243,8 +1214,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                     (make-instance
                      'scripted-provider
                      :results
-                     (list (agent-test-result "first" (list first-call)
-                                              :turn-state "duplicate-state")
+                     (list (agent-test-result "first" (list first-call))
                            (agent-test-result "duplicate" (list duplicate-call)))))
                   (agent
                     (agent-create :configuration configuration
@@ -1261,9 +1231,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                   t))
               "a repeated call identity is rejected before persistence")
              (test-assert (= (length (conversation-input-items conversation)) 3)
-                          "only the first call and its correlated output remain")
-             (test-assert (null (conversation-turn-state conversation))
-                          "turn state clears after a duplicate-call invariant failure")))
+                          "only the first call and its correlated output remain")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -3099,55 +3067,6 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
    (equal (agent--portable-value (vector "label" 7))
           '("label" 7))
    "portable provider metadata preserves strings inside vectors")
-  nil)
-
-(-> test-agent-turn-state-pinned () null)
-(defun test-agent-turn-state-pinned ()
-  "Test a turn replays its first routing token even when later responses vary."
-  (let* ((configuration (test-configuration))
-         (root          (test-configuration-root configuration))
-         (conversation
-           (conversation-create configuration :identifier "agent-turn-state"))
-         (provider
-           (make-instance
-            'scripted-provider
-            :results
-            (list
-             (agent-test-result
-              "response-1"
-              (list (agent-test-call :call-id   "pinned-1"
-                                     :arguments "{\"value\":\"one\"}"))
-              :turn-state "turn-state-1")
-             (agent-test-result
-              "response-2"
-              (list (agent-test-call :call-id   "pinned-2"
-                                     :arguments "{\"value\":\"two\"}")))
-             (agent-test-result
-              "response-3"
-              (list (agent-test-call :call-id   "pinned-3"
-                                     :arguments "{\"value\":\"three\"}"))
-              :turn-state "turn-state-3")
-             (agent-test-result
-              "response-4"
-              (list (agent-test-message "done")))))))
-    (unwind-protect
-         (let* ((agent
-                  (agent-create
-                   :configuration configuration
-                   :provider      provider
-                   :conversation  conversation
-                   :tool-registry (agent-test-registry)
-                   :worker        ':unused))
-                (result (agent-run-user-turn agent "pin the turn")))
-           (test-assert (string= (provider-result-response-id result) "response-4")
-                        "the agent completes the scripted tool rounds")
-           (test-assert
-            (equal (nreverse (scripted-provider-turn-states provider))
-                   '(nil "turn-state-1" "turn-state-1" "turn-state-1"))
-            "the first routing token is replayed unchanged for the whole turn")
-           (test-assert (null (conversation-turn-state conversation))
-                        "the routing token is cleared at the turn boundary"))
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-tool-search-round () null)

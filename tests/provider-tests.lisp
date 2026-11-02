@@ -2902,7 +2902,7 @@
 
 (-> test-provider-codex-request-headers () null)
 (defun test-provider-codex-request-headers ()
-  "Test Codex requests carry conversation identity and only pinned turn state."
+  "Test Codex requests carry conversation identity and no routing token."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (conversation
@@ -2927,15 +2927,7 @@
               "the per-process provider session identity stays out of the headers")
              (test-assert
               (null (assoc "x-codex-turn-state" headers :test #'string=))
-              "an unpinned turn sends no routing token"))
-           (setf (conversation-turn-state conversation) "turn-state-1")
-           (test-assert
-            (string= (header (provider--codex-request-headers
-                              provider credentials conversation
-                              :accept "text/event-stream")
-                             "x-codex-turn-state")
-                     "turn-state-1")
-            "a pinned turn replays its routing token"))
+              "the backend's routing token is never replayed")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 

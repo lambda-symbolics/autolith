@@ -524,22 +524,29 @@ The ChatGPT backend derives prompt-cache affinity from the session-id header,
 so it carries CONVERSATION's identifier on every request, as the Codex
 reference does for its thread identifier at commit 6f51c65958. The provider
 session identity stays out of these headers: one process may serve several
-conversations, and a per-process value would route them all together."
+conversations, and a per-process value would route them all together.
+
+The x-codex-turn-state token the backend returns at turn start is not
+replayed. The Codex reference replays it on the incremental requests of its
+Responses WebSocket session, where the backend keeps the turn's state live.
+Over these HTTP requests the token pins the turn to a backend that never
+extends the stored prefix: in a live conversation on 2026-11-02 every request
+sent without the token had its prompt stored for the next request, 9 of 9,
+while no request sent with it did, 0 of 32, and a six-round probe on
+gpt-6.1-sol read 6912 cached tokens on every tool round with the token and
+grew to 11392 of 11491 without it."
   (declare (ignore provider))
-  (append
-   (list
-    (cons "Authorization"
-          (format nil "Bearer ~A" (oauth-credentials-access-token credentials)))
-    (cons "ChatGPT-Account-ID" (oauth-credentials-account-id credentials))
-    (cons "Content-Type" "application/json")
-    (cons "Accept" accept)
-    (cons "originator" "autolith")
-    (cons "User-Agent" (provider-user-agent))
-    (cons "session-id" (conversation-identifier conversation))
-    (cons "thread-id" (conversation-identifier conversation))
-    (cons "x-client-request-id" (conversation-identifier conversation)))
-   (when (conversation-turn-state conversation)
-     (list (cons "x-codex-turn-state" (conversation-turn-state conversation))))))
+  (list
+   (cons "Authorization"
+         (format nil "Bearer ~A" (oauth-credentials-access-token credentials)))
+   (cons "ChatGPT-Account-ID" (oauth-credentials-account-id credentials))
+   (cons "Content-Type" "application/json")
+   (cons "Accept" accept)
+   (cons "originator" "autolith")
+   (cons "User-Agent" (provider-user-agent))
+   (cons "session-id" (conversation-identifier conversation))
+   (cons "thread-id" (conversation-identifier conversation))
+   (cons "x-client-request-id" (conversation-identifier conversation))))
 
 (-> provider--native-compaction-endpoint (codex-subscription-provider) string)
 (defun provider--native-compaction-endpoint (provider)

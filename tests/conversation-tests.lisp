@@ -326,8 +326,6 @@
                         "compaction replaces the projection with one bridge")
            (test-assert (zerop (conversation-last-total-tokens conversation))
                         "compaction resets the tracked usage")
-           (test-assert (null (conversation-turn-state conversation))
-                        "compaction drops the provider turn state")
            (conversation-append-user-message conversation "later question")
            (let* ((reloaded    (conversation-load-by-id configuration "compact"))
                   (items       (conversation-input-items reloaded))

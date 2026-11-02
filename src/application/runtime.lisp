@@ -1474,9 +1474,7 @@ lineage instead of loading it again."
 (defmethod checkpoint-detach-state ((application application))
   "Detach APPLICATION's ephemeral object graph in a checkpoint saver child."
   (context-runtime-reset)
-  (let ((conversation (application-conversation application)))
-    (setf (conversation-turn-state conversation) nil)
-    (conversation-clear-ephemeral-input-items conversation))
+  (conversation-clear-ephemeral-input-items (application-conversation application))
   (application-release-conversation-lease application)
   (tool-registry-detach-runtime-state
    (application-tool-registry application))

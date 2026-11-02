@@ -568,8 +568,7 @@ request that carries its expansion."
                   :tool-allowlist     tool-allowlist
                   :tool-restriction-p tool-restriction-p
                   :request-number     compaction-requests))
-            (conversation-clear-ephemeral-input-items conversation)
-            (setf (conversation-turn-state conversation) nil))))))))
+            (conversation-clear-ephemeral-input-items conversation))))))))
 
 
 ;;;; -- Provider and Persistence Flow --
@@ -662,21 +661,6 @@ retries stay auditable next to the request they belong to."
        (agent-observer-status observer :provider-progress nil))
       (t
        nil))))
-
-(-> agent--note-turn-state (conversation provider-result) null)
-(defun agent--note-turn-state (conversation result)
-  "Adopt RESULT's sticky-routing token when the active turn has none yet.
-
-The Codex backend issues an x-codex-turn-state token when a turn starts and
-expects every later request in that turn to replay the same value. Later
-responses may omit it or carry another value, so an already-pinned turn keeps
-its token and the turn boundary clears it. This follows the Codex reference at
-commit 6f51c65958."
-  (let ((turn-state (provider-result-turn-state result)))
-    (when (and turn-state
-               (null (conversation-turn-state conversation)))
-      (setf (conversation-turn-state conversation) turn-state)))
-  nil)
 
 (-> agent--persist-provider-result
     (agent provider-result
@@ -2073,7 +2057,6 @@ loop, so compaction ahead of the user message shares the turn's budget."
             agent result tool-namespaces :request-number request-number)
            (agent--note-persisted-assistant-response
             observer result request-number)
-           (agent--note-turn-state conversation result)
            (agent-observer-status observer :provider-request-completed completion-details)
            (knowledge-usage-capture conversation
                                     :calls          calls

@@ -173,7 +173,6 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
       (sb-sys:without-interrupts
         (let ((published (conversation-append-record conversation record)))
           (setf (slot-value conversation 'projection) projection
-                (conversation-turn-state conversation) nil
                 (conversation-last-total-tokens conversation) 0)
           published)))))
 
@@ -288,7 +287,6 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
       (conversation--record-error
        conversation properties "A compaction checkpoint has invalid correlations.")))
   (setf (slot-value conversation 'projection) projection
-        (conversation-turn-state conversation) nil
         (conversation-last-total-tokens conversation) 0)
   nil)
 

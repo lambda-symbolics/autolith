@@ -306,11 +306,6 @@
     :type     t
     :documentation
     "The lock serializing transient resource observations and gated edits.")
-   (turn-state
-    :initform      nil
-    :accessor      conversation-turn-state
-    :type          (option string)
-    :documentation "The transient provider routing token for one user turn.")
    (resumed-p
     :initform nil
     :accessor conversation-resumed-p
@@ -2162,8 +2157,7 @@ transcript show automatic INPUT as a short notice."
                        (unless attachments
                          (list :wire-json (json-encode item))))))
                (conversation--remember-image-attachments conversation attachments)
-               (setf durable-p t
-                     (conversation-turn-state conversation) nil)
+               (setf durable-p t)
                (values (conversation--append-input-item conversation item)
                        record))
           (unless durable-p

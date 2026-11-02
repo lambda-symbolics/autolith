@@ -6661,8 +6661,6 @@
                       ':open))
                 "conversation switching retires and replaces task runtimes")
                (tool-registry-close-runtime-state new-registry)
-               (setf (conversation-turn-state second-conversation)
-                     "transient-provider-turn-state")
                (test-assert
                 (conversation-lease-matches-p
                  (application-conversation-lease application)
@@ -6672,9 +6670,6 @@
                (test-assert
                 (zerop detach-count)
                 "checkpoint detachment never revisits a retired registry")
-               (test-assert
-                (null (conversation-turn-state second-conversation))
-                "checkpoint detachment removes transient provider turn state")
                (test-assert
                 (and
                  (null (application-conversation-lease application))
