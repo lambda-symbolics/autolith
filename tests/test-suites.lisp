@@ -645,7 +645,8 @@
   test-world-child-participants
   test-world-handles
   test-world-composer-mentions
-  test-world-mention-highlighting)
+  test-world-mention-highlighting
+  test-world-presentation-cache)
 
 (define-test-suite world-server
   test-world-server-hosting

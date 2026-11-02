@@ -30,7 +30,7 @@ Clicking the rendered call's header inserts it into the composer.")
     :initform      nil
     :accessor      application-world-cache
     :type          (option cons)
-    :documentation "The world as last read for presentation, with the write date it was read at.")
+    :documentation "The world as last read for presentation, with the source token it was read at.")
    (conversation
     :initarg       :conversation
     :accessor      application-conversation
