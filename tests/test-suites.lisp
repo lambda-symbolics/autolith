@@ -630,6 +630,11 @@
   test-agenda-malformed-state
   test-agenda-tools)
 
+(define-test-suite world
+  test-world-persistence
+  test-world-deletion-rules
+  test-world-malformed-state)
+
 (define-test-suite preferences
   test-preferences
   test-preferences-unavailable-provider-selection
