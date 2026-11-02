@@ -1202,8 +1202,8 @@
                    (application-input-controller-condition-variable controller)))
                 nil))
              (list 'localgroup-start
-                   (lambda (run-application)
-                     (declare (ignore run-application))
+                   (lambda (run-application &key linger-p)
+                     (declare (ignore run-application linger-p))
                      nil))
              (list 'localgroup-stop
                    (lambda (run-application)
@@ -1383,8 +1383,8 @@
                    (application-input-controller-condition-variable controller)))
                 nil))
              (list 'localgroup-start
-                   (lambda (run-application)
-                     (declare (ignore run-application))
+                   (lambda (run-application &key linger-p)
+                     (declare (ignore run-application linger-p))
                      nil))
              (list 'localgroup-stop
                    (lambda (run-application)
@@ -1491,8 +1491,8 @@
                    (application-input-controller-condition-variable controller)))
                 nil))
              (list 'localgroup-start
-                   (lambda (run-application)
-                     (declare (ignore run-application))
+                   (lambda (run-application &key linger-p)
+                     (declare (ignore run-application linger-p))
                      nil))
              (list 'localgroup-stop
                    (lambda (run-application)
