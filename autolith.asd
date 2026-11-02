@@ -389,6 +389,7 @@
                                           (:file "startup/session-cli")
                                           (:file "startup/main")
                                           (:file "world/server")
+                                          (:file "world/client")
                                           (:file "startup/active-image"))))
   :in-order-to             ((asdf:test-op (asdf:test-op #:autolith/tests))))
 

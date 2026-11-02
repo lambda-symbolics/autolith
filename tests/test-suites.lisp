@@ -1502,6 +1502,7 @@
   test-cli-resume-prefixes
   test-cli-detached-dispatch
   test-cli-detached-receipt-cleanup
+  test-cli-world-client-start
   test-cli-detached-process)
 
 (when (test-fixture-available-p *platform* ':posix-shell)
