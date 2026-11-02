@@ -1526,4 +1526,5 @@ poll a job whose completion will wake it."
                     :parameters                         (task-continuity-parameters)))
     (task-worktree-register-tool registry orchestrator)
     (peer-message-register-tools registry :orchestrator orchestrator)
+    (channel-register-tools registry)
     registry))

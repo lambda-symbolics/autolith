@@ -392,3 +392,180 @@
                             "/channels shows the channel and its agent resident")))
         (ignore-errors (terminal-ui-stop ui)))))
   nil)
+
+(-> world-tests--agents (configuration) (values participant participant participant))
+(defun world-tests--agents (configuration)
+  "Return the human and the agents of channels bfirst1 and bsecnd2 after reconciliation."
+  (world-reconcile-sessions configuration :now 3000)
+  (let ((world (world-load configuration)))
+    (flet ((agent (channel)
+             "Return CHANNEL's agent resident."
+             (find ':agent (world-channel-residents world channel) :key #'participant-kind)))
+      (values (world-human-participant world) (agent "bfirst1") (agent "bsecnd2")))))
+
+(-> test-world-message-send () null)
+(defun test-world-message-send ()
+  "Test messages reach a channel, its subscribers and mentioned participants, and settle by receipt."
+  (with-test-configuration (configuration)
+    (let ((first (world-tests--persisted-conversation configuration "bfirst1" 1000)))
+      (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+      (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+        (world-participant-subscribe configuration (participant-identifier second-agent) "bfirst1")
+        (let ((result (world-message-send configuration
+                                          :sender   (participant-identifier human)
+                                          :channel  "bfirst1"
+                                          :text     "hello @autolith"
+                                          :notify-p nil)))
+          (test-assert (equal (getf result :channels) '("bfirst1" "bsecnd2"))
+                       "a post reaches the channel and each subscriber's residence")
+          (let ((post (first (world-inbox-deliveries configuration "bfirst1")))
+                (copy (first (world-inbox-deliveries configuration "bsecnd2"))))
+            (test-assert (and (eq (world-delivery-kind post) ':post)
+                              (eq (world-delivery-kind copy) ':subscription)
+                              (string= (world-delivery-identifier post)
+                                       (world-delivery-identifier copy))
+                              (null (world-delivery-mentions post))
+                              (search "where you reside" (world-delivery-label post))
+                              (search "which you subscribe to" (world-delivery-label copy)))
+                         "copies share the identifier and are labeled by why they arrived")))
+        (let ((result (world-message-send configuration
+                                          :sender   (participant-identifier second-agent)
+                                          :channel  "bsecnd2"
+                                          :text     (format nil "see @~A please"
+                                                            (conversation-identifier-display
+                                                             (participant-identifier first-agent)))
+                                          :notify-p nil)))
+          (test-assert (equal (getf result :channels) '("bsecnd2" "bfirst1"))
+                       "a mention reaches the mentioned participant's residence")
+          (let ((mention (second (world-inbox-deliveries configuration "bfirst1"))))
+            (test-assert (and (eq (world-delivery-kind mention) ':mention)
+                              (equal (world-delivery-mentions mention)
+                                     (list (participant-identifier first-agent))))
+                         "the mention names the participant and is labeled as one")))
+        (let ((delivery (first (world-inbox-deliveries configuration "bfirst1"))))
+          (conversation-append-user-message first (world-delivery-label delivery)
+                                            :pending-input-identifier
+                                            (world-delivery-pending-identifier delivery)
+                                            :automatic-p t)
+          (multiple-value-bind (pending settled)
+              (world-inbox-unsettled configuration "bfirst1" first)
+            (test-assert (and (= (length pending) 1)
+                              (equal settled (list (world-delivery-identifier delivery))))
+                         "a recorded receipt settles its delivery")
+            (world-inbox-settle configuration "bfirst1" settled)
+            (test-assert (= (length (world-inbox-deliveries configuration "bfirst1")) 1)
+                         "settled deliveries leave the inbox")))
+        (test-assert (handler-case
+                         (progn (world-message-send configuration
+                                                    :sender   (participant-identifier human)
+                                                    :channel  "bnone11"
+                                                    :text     "lost"
+                                                    :notify-p nil)
+                                nil)
+                       (world-error () t))
+                     "sending to an unknown channel is refused")
+        (test-assert (handler-case
+                         (progn (world-message-send configuration
+                                                    :sender   (participant-identifier human)
+                                                    :channel  "bfirst1"
+                                                    :text     "for someone"
+                                                    :mentions '("nobody")
+                                                    :notify-p nil)
+                                nil)
+                       (world-error () t))
+                     "an unknown explicit mention is refused"))))
+  nil)
+
+(-> test-world-channel-tools () null)
+(defun test-world-channel-tools ()
+  "Test the channel tools act as the conversation's participant."
+  (with-test-configuration (configuration)
+    (let ((first (world-tests--persisted-conversation configuration "bfirst1" 1000)))
+      (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+      (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+        (declare (ignore human second-agent))
+        (let* ((registry (channel-register-tools (make-instance 'tool-registry)))
+               (agent    (agent-create :configuration configuration
+                                       :conversation  first
+                                       :provider      (make-instance 'model-provider)
+                                       :tool-registry registry
+                                       :worker        nil))
+               (context  (make-instance 'tool-context
+                                        :configuration configuration
+                                        :conversation  first
+                                        :agent         agent
+                                        :registry      registry
+                                        :worker        nil)))
+          (flet ((call (name &rest arguments)
+                   "Execute channel tool NAME with ARGUMENTS and return its result."
+                   (tool-registry-execute-call
+                    registry
+                    (agent-test-call :namespace "channel"
+                                     :name      name
+                                     :arguments (json-encode (apply #'json-object arguments)))
+                    context)))
+            (test-assert (tool-result-success-p (call "send" "channel" "b-secnd2" "text" "ping"))
+                         "channel.send succeeds for a known channel")
+            (let ((delivery (first (world-inbox-deliveries configuration "bsecnd2"))))
+              (test-assert (and delivery
+                                (string= (world-delivery-sender delivery)
+                                         (participant-identifier first-agent))
+                                (string= (world-delivery-text delivery) "ping"))
+                           "the message is sent as the conversation's agent participant"))
+            (test-assert (not (tool-result-success-p (call "send" "channel" "bnone11" "text" "x")))
+                         "channel.send to an unknown channel fails")
+            (test-assert (tool-result-success-p (call "subscribe" "channel" "bsecnd2"))
+                         "channel.subscribe succeeds")
+            (test-assert (equal (participant-subscriptions
+                                 (world-participant-find (world-load configuration)
+                                                         (participant-identifier first-agent)))
+                                '("bsecnd2"))
+                         "the subscription is recorded on the participant")
+            (test-assert (tool-result-success-p (call "unsubscribe" "channel" "bsecnd2"))
+                         "channel.unsubscribe succeeds")
+            (test-assert (null (participant-subscriptions
+                                (world-participant-find (world-load configuration)
+                                                        (participant-identifier first-agent))))
+                         "the subscription is removed"))))))
+  nil)
+
+(-> test-world-message-presentation () null)
+(defun test-world-message-presentation ()
+  "Test delivered channel messages show their sender and channel, and delivery without a controller waits."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+      (declare (ignore first-agent second-agent))
+      (let* ((terminal    (make-instance 'recording-terminal :columns 80))
+             (application (make-instance 'application
+                                         :configuration configuration
+                                         :ui            (terminal-ui-create :terminal terminal)))
+             (result      (world-message-send configuration
+                                              :sender   (participant-identifier human)
+                                              :channel  "bsecnd2"
+                                              :text     "look at **this**"
+                                              :notify-p nil))
+             (delivery    (first (world-inbox-deliveries configuration "bsecnd2")))
+             (entry       (conversation-record-entry
+                           application
+                           (list :message
+                                 :role              :user
+                                 :content           (world-delivery-label delivery)
+                                 :automatic-p       t
+                                 :operation-request (world-delivery-request delivery)
+                                 :time              1000)))
+             (text        (format nil "~{~A~}"
+                                  (loop for span in entry
+                                        when (and (consp span) (stringp (rest span)))
+                                          collect (rest span)))))
+        (test-assert (getf result :id) "sending returns the delivery identifier")
+        (test-assert (and (search "user" text)
+                          (search "[channel b-secnd2]" text)
+                          (search "look at" text))
+                     "a channel message shows its sender and channel, then its text")
+        (test-assert (zerop (application-world-deliver application))
+                     "without an input controller, deliveries stay in the inbox")
+        (test-assert (= (length (world-inbox-deliveries configuration "bsecnd2")) 1)
+                     "the inbox keeps the undelivered message"))))
+  nil)
