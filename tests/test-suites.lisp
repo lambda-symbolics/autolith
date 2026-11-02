@@ -1422,6 +1422,7 @@
   test-localgroup-relay-exit
   test-localgroup-relay-frames
   test-localgroup-screen-paints-frames
+  test-localgroup-screen-panel
   test-localgroup-cli-targets
   test-localgroup-kill-exit-observation
   test-localgroup-kill-cli-outcomes

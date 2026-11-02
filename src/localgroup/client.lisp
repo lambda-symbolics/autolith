@@ -539,22 +539,29 @@ HEADER-P renders field labels rather than status values."
   nil)
 
 (-> localgroup--attach-terminal-loop
-    (stream terminal keyword &key (:socket t))
+    (stream terminal keyword &key (:socket t) (:screen (option localgroup-screen)))
     (option list))
-(defun localgroup--attach-terminal-loop (socket-stream terminal mode &key socket)
+(defun localgroup--attach-terminal-loop (socket-stream terminal mode &key socket screen)
   "Relay terminal I/O; return an application exit, a checkpoint transition or a switch request.
 
-A (:SWITCH :SESSION-ID ID) result asks the caller to attach to channel ID
+SCREEN paints the session's frames and its own side panel on TERMINAL. A
+(:SWITCH :SESSION-ID ID) result asks the caller to attach to channel ID
 instead; this attachment has ended by then."
   (let ((output    (make-mode-tracking-output-stream *standard-output*))
-        (screen    (localgroup-screen-create :terminal terminal))
+        (screen    (or screen (localgroup-screen-create :terminal terminal)))
         (reconnect nil))
     (unwind-protect
          (let ((exit
                  (image-daemon:daemon-attach-client-run
                   socket-stream :mode mode :socket socket :output-stream output
-                  :input-ready-function (lambda () (terminal-input-ready-p terminal))
-                  :read-event-function  (lambda () (terminal-read-event terminal))
+                  :input-ready-function
+                  (lambda ()
+                    ;; The side panel refreshes between keystrokes.
+                    (localgroup-screen-tick screen)
+                    (terminal-input-ready-p terminal))
+                  :read-event-function
+                  (lambda ()
+                    (localgroup-screen-filter-event screen (terminal-read-event terminal)))
                   :packet-function
                   (lambda (packet)
                     (cond
@@ -571,13 +578,15 @@ instead; this attachment has ended by then."
                        nil)))
                   :resize-function
                   (lambda ()
-                    (when *terminal-resize-pending-p*
-                      (setf *terminal-resize-pending-p* nil)
-                      (multiple-value-bind (rows columns) (terminal-current-size)
-                        (terminal-set-dimensions terminal columns :rows rows)
-                        (localgroup-screen-resized screen)
-                        (list :rows rows :columns columns
-                              :styled-p (terminal-environment-styling-p))))))))
+                    (let ((terminal-p (shiftf *terminal-resize-pending-p* nil)))
+                      (when (or (localgroup-screen-take-resize screen) terminal-p)
+                        (when terminal-p
+                          (multiple-value-bind (rows columns) (terminal-current-size)
+                            (terminal-set-dimensions terminal columns :rows rows))
+                          (localgroup-screen-resized screen))
+                        (multiple-value-bind (rows columns) (localgroup-screen-pane-size screen)
+                          (list :rows rows :columns columns
+                                :styled-p (terminal-environment-styling-p)))))))))
            (or reconnect exit))
       (localgroup-screen-close screen)
       (mode-tracking-output-stream-restore output))))
@@ -639,30 +648,37 @@ instead; this attachment has ended by then."
                                 :operation ':attach :session-id session-id))
       (sleep 0.05))))
 
-(-> localgroup-attach-record ((option configuration) cons keyword) (option list))
-(defun localgroup-attach-record (configuration entry mode)
+(-> localgroup-attach-record
+    ((option configuration) cons keyword &key (:panel t))
+    (option list))
+(defun localgroup-attach-record (configuration entry mode &key panel)
   "Attach the terminal, following explicit checkpoint transitions in the same mode.
 
-Return an application exit plist, a (:SWITCH :SESSION-ID ID) request from
-the session, or NIL after a detach or connection loss."
+PANEL, when given, is composed beside a fullscreen session's frames. Return
+an application exit plist, a (:SWITCH :SESSION-ID ID) request from the
+session, or NIL after a detach or connection loss."
   (let ((history-position nil))
     (loop
       (let ((result (localgroup--attach-record-once configuration entry mode
-                                                   :history-position history-position)))
+                                                   :history-position history-position
+                                                   :panel            panel)))
         (unless (eq (first result) ':checkpoint-reconnect)
           (return result))
         (setf entry (localgroup--wait-for-checkpoint-entry entry (getf (rest result) :id))
               history-position (getf (rest result) :history-position))))))
 
 (-> localgroup--attach-record-once
-    ((option configuration) cons keyword &key (:history-position (option integer)))
+    ((option configuration) cons keyword &key (:history-position (option integer)) (:panel t))
     (option list))
-(defun localgroup--attach-record-once (configuration entry mode &key history-position)
-  "Run one attachment and release terminal ownership before any reconnect."
+(defun localgroup--attach-record-once (configuration entry mode &key history-position panel)
+  "Run one attachment and release terminal ownership before any reconnect.
+
+The session gets the part of the terminal left beside PANEL as its size."
   (let* ((record        (rest entry))
          (socket        nil)
          (socket-stream nil)
          (terminal      nil)
+         (screen        nil)
          (resize-watch  nil))
     (unwind-protect
         (progn
@@ -672,21 +688,23 @@ the session, or NIL after a detach or connection loss."
                  (stream-terminal-create
                   :rows                  rows
                   :columns               columns
-                  :input-file-descriptor (terminal-standard-input-file-descriptor))))
+                  :input-file-descriptor (terminal-standard-input-file-descriptor))
+                 screen
+                 (localgroup-screen-create :terminal terminal :panel panel)))
          (unless (terminal--terminal-mode-or-nil terminal)
            (error 'localgroup-error :message
                   "localgroup attach requires an interactive terminal." :operation
                   ':attach :session-id (localgroup--record-session-id record)))
          (multiple-value-setq (socket socket-stream)
            (daemon-connect (localgroup--record-port record)))
-         (daemon-write-packet socket-stream
-                              (list :localgroup-request :version
-                                    *daemon-protocol-version* :token
-                                    (localgroup--record-token record) :operation ':attach
-                                    :arguments
-                                    (list :mode mode :rows (terminal-rows terminal)
-                                          :columns (terminal-columns terminal) :styled-p
-                                          (terminal-environment-styling-p))))
+         (multiple-value-bind (rows columns) (localgroup-screen-pane-size screen)
+           (daemon-write-packet socket-stream
+                                (list :localgroup-request :version
+                                      *daemon-protocol-version* :token
+                                      (localgroup--record-token record) :operation ':attach
+                                      :arguments
+                                      (list :mode mode :rows rows :columns columns
+                                            :styled-p (terminal-environment-styling-p)))))
          (let ((response (daemon-read-response socket-stream ':attach)))
            (cond
             ((and response (eq (first response) ':handoff))
@@ -706,7 +724,8 @@ the session, or NIL after a detach or connection loss."
                                             configuration session-id
                                             :token   token
                                             :old-pid old-pid)
-                                           ':control))))
+                                           ':control
+                                           :panel panel))))
             ((and response (eq (first response) ':attached))
              (let ((history (getf (rest response) :history)))
                (when (stringp history)
@@ -729,7 +748,9 @@ the session, or NIL after a detach or connection loss."
                 *platform*
                 (lambda ()
                   (setf *terminal-resize-pending-p* t))))
-         (localgroup--attach-terminal-loop socket-stream terminal mode :socket socket))
+         (localgroup--attach-terminal-loop socket-stream terminal mode
+                                           :socket socket
+                                           :screen screen))
       (when resize-watch
         (platform-unwatch-terminal-resize *platform* resize-watch))
       ;; Cleanup is best-effort so it never masks the attachment outcome.

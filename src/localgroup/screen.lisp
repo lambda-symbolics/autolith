@@ -5,11 +5,32 @@
 ;;; A terminal client of a hosted fullscreen session receives the session's
 ;;; screen as frames of display rows rather than as painted output, and
 ;;; paints them on its own terminal. The client therefore owns the alternate
-;;; buffer, the frame painter and the cursor, and can compose its own rows
-;;; around the session's.
+;;; buffer, the frame painter and the cursor, and composes its own side
+;;; panel beside the session's rows.
 
 (defparameter *localgroup-screen-dimension-limit* 10000
   "The largest frame height or width a client accepts from a session.")
+
+(defparameter *localgroup-screen-toggle-event* '(:control #\t)
+  "The key event showing or hiding the side panel.")
+
+
+;;;; -- Side Panels --
+
+(defgeneric screen-panel-width (panel)
+  (:documentation "Return the columns PANEL takes left of the session's rows."))
+
+(defgeneric screen-panel-minimum-columns (panel)
+  (:documentation "Return the narrowest terminal that shows PANEL beside the session."))
+
+(defgeneric screen-panel-refresh (panel)
+  (:documentation "Gather PANEL's current content and return whether it changed since the last call."))
+
+(defgeneric screen-panel-rows (panel terminal height)
+  (:documentation "Return HEIGHT display rows of PANEL rendered for TERMINAL, each exactly its width."))
+
+
+;;;; -- Screens --
 
 (defclass localgroup-screen ()
   ((terminal
@@ -43,13 +64,102 @@
     :initform      (list 0 0 t)
     :accessor      localgroup-screen-cursor
     :type          list
-    :documentation "The cursor row, column and visibility of the frame."))
+    :documentation "The cursor row, column and visibility of the frame.")
+   (panel
+    :initarg       :panel
+    :initform      nil
+    :reader        localgroup-screen-panel
+    :documentation "The side panel composed left of the session's rows, or NIL.")
+   (panel-shown-p
+    :initform      t
+    :accessor      localgroup-screen-panel-shown-p
+    :type          boolean
+    :documentation "Whether the person wants the side panel, which shows when the terminal is wide enough.")
+   (resize-pending-p
+    :initform      nil
+    :accessor      localgroup-screen-resize-pending-p
+    :type          boolean
+    :documentation "Whether the session's pane changed size since the client last told the session."))
   (:documentation "The whole screen a client paints from a hosted session's frames."))
 
-(-> localgroup-screen-create (&key (:terminal terminal)) localgroup-screen)
-(defun localgroup-screen-create (&key terminal)
-  "Return a screen painting a session's frames on the client's TERMINAL."
-  (make-instance 'localgroup-screen :terminal terminal))
+(-> localgroup-screen-create (&key (:terminal terminal) (:panel t)) localgroup-screen)
+(defun localgroup-screen-create (&key terminal panel)
+  "Return a screen painting a session's frames on the client's TERMINAL beside PANEL."
+  (make-instance 'localgroup-screen :terminal terminal :panel panel))
+
+(-> localgroup-screen-panel-visible-p (localgroup-screen) boolean)
+(defun localgroup-screen-panel-visible-p (screen)
+  "Return true when SCREEN's side panel takes part of the terminal."
+  (let ((panel (localgroup-screen-panel screen)))
+    (and panel
+         (localgroup-screen-panel-shown-p screen)
+         (>= (terminal-columns (localgroup-screen-terminal screen))
+             (screen-panel-minimum-columns panel))
+         t)))
+
+(-> localgroup-screen-pane-size (localgroup-screen) (values integer integer))
+(defun localgroup-screen-pane-size (screen)
+  "Return the rows and columns the session's pane gets of SCREEN's terminal."
+  (let ((terminal (localgroup-screen-terminal screen)))
+    (values (terminal-rows terminal)
+            (if (localgroup-screen-panel-visible-p screen)
+                (max 1 (- (terminal-columns terminal)
+                          (screen-panel-width (localgroup-screen-panel screen))
+                          1))
+                (terminal-columns terminal)))))
+
+(-> localgroup-screen-take-resize (localgroup-screen) boolean)
+(defun localgroup-screen-take-resize (screen)
+  "Return whether the pane changed size since the last call, clearing the note."
+  (with-lock-held ((localgroup-screen-lock screen))
+    (shiftf (localgroup-screen-resize-pending-p screen) nil)))
+
+(-> localgroup-screen-filter-event (localgroup-screen t) t)
+(defun localgroup-screen-filter-event (screen event)
+  "Return EVENT as the session should see it, or :IGNORE when SCREEN consumed it.
+
+The toggle key shows or hides the side panel. A click lands in the panel,
+where it does nothing, or in the session's pane, whose columns start after
+the panel."
+  (cond
+    ((equal event *localgroup-screen-toggle-event*)
+     (localgroup-screen-toggle-panel screen)
+     ':ignore)
+    ((and (typep event '(cons (eql :click) (cons integer (cons integer null))))
+          (localgroup-screen-panel-visible-p screen))
+     (let ((offset (1+ (screen-panel-width (localgroup-screen-panel screen)))))
+       (if (<= (second event) offset)
+           ':ignore
+           (list ':click (- (second event) offset) (third event)))))
+    (t
+     event)))
+
+(-> localgroup-screen-toggle-panel (localgroup-screen) null)
+(defun localgroup-screen-toggle-panel (screen)
+  "Show or hide SCREEN's side panel, noting the pane's new size for the session."
+  (when (localgroup-screen-panel screen)
+    (with-lock-held ((localgroup-screen-lock screen))
+      (let ((visible-p (localgroup-screen-panel-visible-p screen)))
+        (setf (localgroup-screen-panel-shown-p screen)
+              (not (localgroup-screen-panel-shown-p screen)))
+        (unless (eq visible-p (localgroup-screen-panel-visible-p screen))
+          (setf (localgroup-screen-resize-pending-p screen) t)
+          (terminal-screen-invalidate (localgroup-screen-terminal screen)
+                                      (localgroup-screen-painter screen))
+          (localgroup-screen--paint screen)))))
+  nil)
+
+(-> localgroup-screen-tick (localgroup-screen) null)
+(defun localgroup-screen-tick (screen)
+  "Refresh SCREEN's side panel and repaint when its content changed."
+  (let ((panel (localgroup-screen-panel screen)))
+    (when (and panel
+               (localgroup-screen-active-p screen)
+               (localgroup-screen-panel-visible-p screen)
+               (screen-panel-refresh panel))
+      (with-lock-held ((localgroup-screen-lock screen))
+        (localgroup-screen--paint screen))))
+  nil)
 
 (-> localgroup-screen--frame-row-p (t) boolean)
 (defun localgroup-screen--frame-row-p (row)
@@ -169,15 +279,36 @@ client it has not synchronized."
 
 (-> localgroup-screen--paint (localgroup-screen) null)
 (defun localgroup-screen--paint (screen)
-  "Paint the session's frame on the client's terminal."
+  "Paint the session's frame, beside the side panel when it shows, on the client's terminal."
   (let ((frame (localgroup-screen-frame screen)))
     (when (and frame (localgroup-screen-active-p screen))
       (destructuring-bind (cursor-row cursor-column cursor-visible-p)
           (localgroup-screen-cursor screen)
-        (terminal-screen-paint (localgroup-screen-terminal screen)
-                               (localgroup-screen-painter screen)
-                               (coerce frame 'list)
-                               :cursor-row       cursor-row
-                               :cursor-column    cursor-column
-                               :cursor-visible-p cursor-visible-p))))
+        (let* ((panel-p (localgroup-screen-panel-visible-p screen))
+               (offset  (if panel-p
+                            (1+ (screen-panel-width (localgroup-screen-panel screen)))
+                            0)))
+          (terminal-screen-paint (localgroup-screen-terminal screen)
+                                 (localgroup-screen-painter screen)
+                                 (if panel-p
+                                     (localgroup-screen--composed-rows screen frame)
+                                     (coerce frame 'list))
+                                 :cursor-row       cursor-row
+                                 :cursor-column    (+ cursor-column offset)
+                                 :cursor-visible-p cursor-visible-p)))))
   nil)
+
+(-> localgroup-screen--composed-rows (localgroup-screen vector) list)
+(defun localgroup-screen--composed-rows (screen frame)
+  "Return FRAME's rows with the side panel's rows before them, separated by a rule."
+  (let* ((terminal   (localgroup-screen-terminal screen))
+         (height     (max 1 (terminal-rows terminal)))
+         (panel-rows (screen-panel-rows (localgroup-screen-panel screen) terminal height))
+         (rule       (terminal--render-spans terminal (list (terminal-span ':dim "│")))))
+    (loop for index below height
+          collect (concatenate 'string
+                               (or (nth index panel-rows) "")
+                               rule
+                               (if (< index (length frame))
+                                   (aref frame index)
+                                   "")))))
