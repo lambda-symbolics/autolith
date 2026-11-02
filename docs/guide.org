@@ -1622,7 +1622,9 @@ again onto the same identities, and a deleted conversation retires its channel
 and agent. The world lives in =world/= below the data root.
 
 =(channels)= lists every channel with its residents and subscribers, newest
-change first.
+change first. A child task is a channel nested under its root channel, with
+a participant named =task= under the root's agent, so =channel:id/<execution id>=
+reads a child's transcript and a message to that channel steers the child.
 
 Messages travel between channels through the same path for people and agents.
 =(tell "ID" "text")= sends a message to channel =ID= as yourself; the agent

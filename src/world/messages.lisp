@@ -451,3 +451,39 @@ TEXT. The result is a plist of :id, :channels (every inbox written) and
       (list :id       identifier
             :channels (mapcar #'first pairs)
             :notified (and notify-p (world-message-notify configuration (mapcar #'first pairs)))))))
+
+
+;;;; -- Steering Delivery --
+
+(-> world-inbox-steering-take
+    (configuration &key (:channel string) (:conversation conversation) (:taken hash-table))
+    list)
+(defun world-inbox-steering-take (configuration &key channel conversation taken)
+  "Return CHANNEL's unread messages for CONVERSATION as labeled steering input.
+
+TAKEN remembers what this process took, so each message is taken once.
+Deliveries CONVERSATION already recorded are settled on the way."
+  (multiple-value-bind (pending settled)
+      (world-inbox-unsettled configuration channel conversation)
+    (when settled
+      (world-inbox-settle configuration channel settled)
+      (dolist (identifier settled)
+        (remhash (format nil "channel:~A" identifier) taken)))
+    (loop for delivery in pending
+          for identifier = (world-delivery-pending-identifier delivery)
+          unless (eq (gethash identifier taken) ':taken)
+            collect (progn
+                      (setf (gethash identifier taken) ':taken)
+                      (agent-steering-input-create :identifier identifier
+                                                   :content    (world-delivery-label delivery))))))
+
+(-> world-inbox-steering-ack
+    (configuration &key (:channel string) (:identifier string) (:taken hash-table))
+    boolean)
+(defun world-inbox-steering-ack (configuration &key channel identifier taken)
+  "Settle the delivery IDENTIFIER names in CHANNEL's inbox, or return NIL for other input."
+  (when (world-delivery-pending-identifier-p identifier)
+    (world-inbox-settle configuration channel
+                        (list (subseq identifier (length "channel:"))))
+    (remhash identifier taken)
+    t))

@@ -843,6 +843,7 @@ Live executions retain their pool ownership and remain inspectable after return.
               conversation)))
          (worker       (lisp-worker-pool-create configuration))
          (completion   (make-instance 'task-completion))
+         (taken        (make-hash-table :test #'equal))
          (registry
           (task-child-tool-registry (agent-tool-registry parent) definition
                                     :orchestrator orchestrator
@@ -872,10 +873,19 @@ Live executions retain their pool ownership and remain inspectable after return.
              (task-job-note-agent-status job status details))
            :steering-callback
            (lambda ()
-             (append (task-job-take-steering job) (peer-message-take-context child)))
+             (append (task-job-take-steering job)
+                     (peer-message-take-context child)
+                     (world-inbox-steering-take configuration
+                                                :channel      (conversation-identifier conversation)
+                                                :conversation conversation
+                                                :taken        taken)))
            :steering-persisted-callback
            (lambda (identifier)
              (or (peer-message-ack-context child identifier)
+                 (world-inbox-steering-ack configuration
+                                           :channel    (conversation-identifier conversation)
+                                           :identifier identifier
+                                           :taken      taken)
                  (task-job-acknowledge-steering job identifier)))
            :command-authorization-callback
            (task-job-command-authorization-function job)

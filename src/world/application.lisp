@@ -110,29 +110,24 @@ in a headless job, messages wait in the inbox."
 
 Each message is taken once; a message already queued as a turn is taken as
 well, since the steer persists first and the queued turn then skips."
-  (let ((channel (application-world--served-channel application))
-        (entries nil))
-    (when channel
-      (dolist (delivery (application-world--unsettled application channel))
-        (let ((identifier (world-delivery-pending-identifier delivery))
-              (table      (application-world-deliveries application)))
-          (unless (eq (gethash identifier table) ':taken)
-            (setf (gethash identifier table) ':taken)
-            (push (agent-steering-input-create :identifier identifier
-                                               :content    (world-delivery-label delivery))
-                  entries)))))
-    (nreverse entries)))
+  (let ((channel (application-world--served-channel application)))
+    (if channel
+        (world-inbox-steering-take (application-configuration application)
+                                   :channel      channel
+                                   :conversation (application-conversation application)
+                                   :taken        (application-world-deliveries application))
+        nil)))
 
 (-> application-world-steering-ack (application string) boolean)
 (defun application-world-steering-ack (application identifier)
   "Settle the channel delivery IDENTIFIER names after its durable record, or return NIL for other input."
-  (when (world-delivery-pending-identifier-p identifier)
-    (let ((channel (application-world--served-channel application)))
-      (when channel
-        (world-inbox-settle (application-configuration application) channel
-                            (list (subseq identifier (length "channel:"))))
-        (remhash identifier (application-world-deliveries application))))
-    t))
+  (let ((channel (application-world--served-channel application)))
+    (or (and channel
+             (world-inbox-steering-ack (application-configuration application)
+                                       :channel    channel
+                                       :identifier identifier
+                                       :taken      (application-world-deliveries application)))
+        (world-delivery-pending-identifier-p identifier))))
 
 (-> application-world-send
     (application &key (:channel string) (:text string) (:mentions list))

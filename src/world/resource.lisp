@@ -65,16 +65,29 @@
   "Return CONTEXT's world after bringing it in step with the conversations."
   (values (world-reconcile-sessions (tool-context-configuration context))))
 
-(-> channel-resource--history (tool-context string) (option conversation))
-(defun channel-resource--history (context identifier)
-  "Return the conversation holding channel IDENTIFIER's history, or NIL without one."
-  (let ((current (tool-context-conversation context)))
-    (if (string= identifier (conversation-identifier current))
-        current
-        (handler-case
-            (conversation-replay-load (tool-context-configuration context) identifier)
-          (conversation-error ()
-            nil)))))
+(-> channel-resource--history (tool-context channel) (option conversation))
+(defun channel-resource--history (context channel)
+  "Return the conversation holding CHANNEL's history, or NIL without one.
+
+A child task's history lives in its root conversation's task directory,
+which the channel's parent names."
+  (let ((configuration (tool-context-configuration context))
+        (identifier    (channel-identifier channel))
+        (current       (tool-context-conversation context)))
+    (cond
+      ((string= identifier (conversation-identifier current))
+       current)
+      (t
+       (handler-case
+           (conversation-replay-load configuration identifier)
+         (autolith-error ()
+           (let ((root (channel-parent channel)))
+             (and root
+                  (handler-case
+                      (conversation-replay-load-identity
+                       (conversation-task-identity-pathname configuration root identifier))
+                    (autolith-error ()
+                      nil))))))))))
 
 (-> channel-resource--make
     (channel-resolver &key (:uri-identifier string) (:context tool-context) (:world world)
@@ -93,7 +106,7 @@
                    :uri          (channel-resource--uri resolver uri-identifier)
                    :world        world
                    :channel      channel
-                   :conversation (channel-resource--history context identifier))))
+                   :conversation (channel-resource--history context channel))))
 
 (defmethod resource-resolver-resolve
     ((resolver channel-resolver) identifier (context tool-context))
