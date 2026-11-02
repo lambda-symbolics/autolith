@@ -29,3 +29,26 @@ conversations and never blocks a session."
               :pathname (configuration-world-sessions-path configuration)
               :cause    cause))))
   nil)
+
+(-> application-channels-entry (application) list)
+(defun application-channels-entry (application)
+  "Return every channel with its residents and subscribers as semantic terminal spans."
+  (let* ((world    (handler-case
+                       (values (world-reconcile-sessions (application-configuration application)))
+                     (error ()
+                       (world-load (application-configuration application)))))
+         (channels (world-channels world)))
+    (if channels
+        (append (list (terminal-span ':brand (format nil "channels~%")))
+                (loop for channel in channels
+                      for identifier = (channel-identifier channel)
+                      append (list (terminal-span ':code (conversation-identifier-display identifier))
+                                   (terminal-span ':dim
+                                                  (format nil "~@[ ~A~]~%  ~A~%  residents: ~A; subscribers: ~A~%"
+                                                          (channel-title channel)
+                                                          (channel-workspace channel)
+                                                          (channel-resource--participants-text
+                                                           (world-channel-residents world identifier))
+                                                          (channel-resource--participants-text
+                                                           (world-channel-subscribers world identifier)))))))
+        (list (terminal-span ':hint "No channels exist yet.")))))

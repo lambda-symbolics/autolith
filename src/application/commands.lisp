@@ -2997,6 +2997,19 @@ The current value and its source sit in aligned columns of their own."
                        (application-conversations-entry application))
   ':continue)
 
+(define-application-command application--builtin-channels-command
+    (:name              "/channels"
+     :argument          nil
+     :description       "list channels and their participants"
+     :tip               "lists every channel with its residents and subscribers, newest change first."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application)
+  (application-present application
+                       (application-channels-entry application))
+  ':continue)
+
 (define-application-command application--builtin-history-command
     (:name              "/history"
      :argument          nil
