@@ -301,6 +301,13 @@ each of them holds."))
     :type     (option function)
     :documentation
     "Optional function of QUERY returning ranked workspace-relative paths.")
+   (mention-function
+    :initarg  :mention-function
+    :initform nil
+    :accessor terminal-ui-mention-function
+    :type     (option function)
+    :documentation
+    "Optional function of the text after an @ returning participant completion entries.")
    (completion-selector
     :initarg       :completion-selector
     :reader        terminal-ui-completion-selector

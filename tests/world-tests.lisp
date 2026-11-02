@@ -627,6 +627,54 @@
                        "participants are designated by name, display identifier or unique fragment")))))
   nil)
 
+(-> test-world-composer-mentions () null)
+(defun test-world-composer-mentions ()
+  "Test a typed message reaches the participants it mentions elsewhere, and mentions are highlighted."
+  (with-test-configuration (configuration)
+    (let ((first (world-tests--persisted-conversation configuration "bfirst1" 1000)))
+      (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+      (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+        (let* ((terminal    (make-instance 'recording-terminal :columns 80))
+               (application (make-instance 'application
+                                           :configuration configuration
+                                           :conversation  first
+                                           :ui            (terminal-ui-create :terminal terminal)))
+               (other       (participant-name second-agent)))
+          (let ((entries (world-mention-completion-entries (world-load configuration)
+                                                           (subseq other 0 (min 3 (length other))))))
+            (test-assert (and (find (format nil "@~A" other) entries
+                                    :key (lambda (entry) (getf entry :name)) :test #'string=)
+                              (every (lambda (entry) (search " in b-" (getf entry :description)))
+                                     entries))
+                         "mention completion offers the handles starting with the typed text"))
+          (test-assert (null (application-world-mention
+                              application (format nil "hi @~A" (participant-name first-agent))))
+                       "mentioning this channel's own agent tells nobody else")
+          (test-assert (equal (application-world-mention
+                               application (format nil "ask @~A about it" other))
+                              '("bsecnd2"))
+                       "mentioning an agent elsewhere tells its channel")
+          (let ((delivery (first (world-inbox-deliveries configuration "bsecnd2"))))
+            (test-assert (and delivery
+                              (eq (world-delivery-kind delivery) ':mention)
+                              (string= (world-delivery-sender delivery)
+                                       (participant-identifier human))
+                              (string= (world-delivery-target delivery) "bfirst1"))
+                         "the copy arrives as a mention from the person in their channel"))
+          (test-assert (null (world-inbox-deliveries configuration "bfirst1"))
+                       "nothing is posted back to the person's own channel")
+          (let* ((entry  (application--user-message-entry
+                          application (format nil "ping @~A, @user and @nobody" other) 1000))
+                 (styled (loop for span in entry
+                               when (and (consp span) (stringp (rest span))
+                                         (plusp (length (rest span)))
+                                         (char= (char (rest span) 0) #\@))
+                                 collect span)))
+            (test-assert (equal styled (list (cons ':legend-accent (format nil "@~A" other))
+                                             (cons ':user "@user")))
+                         "mentions of others are accented, of the person styled as the user, unknown ones left alone")))))
+    nil))
+
 (-> test-world-message-presentation () null)
 (defun test-world-message-presentation ()
   "Test delivered channel messages show their sender and channel, and delivery without a controller waits."
