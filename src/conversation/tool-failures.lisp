@@ -76,7 +76,7 @@ identical failures, so blanking them groups the failures by their cause."
   "Return primary conversation identities and, when CHILDREN-P, task identities."
   (append (conversation-list configuration)
           (when children-p
-            (conversation-task-pathnames (config :data-root configuration)))))
+            (mapcar #'first (conversation-task-identities configuration)))))
 
 (-> tool-failure-scan (pathname &key (:since integer)) list)
 (defun tool-failure-scan (identity &key (since 0))

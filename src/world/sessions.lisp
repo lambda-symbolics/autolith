@@ -22,6 +22,9 @@
 (defparameter *world-agent-name* "autolith"
   "The name of the agent participant a migrated session gets.")
 
+(defparameter *world-task-name* "task"
+  "The name of the agent participant a migrated child task gets.")
+
 (defvar *world-sessions-lock* (make-recursive-lock "Autolith world sessions")
   "Serializes in-process reconciliation.")
 
@@ -194,11 +197,10 @@ resident the migration created, so a session never gets a second agent."
   (or (and mapping (world-participant-find world (world-session-mapping-participant mapping)))
       (find-if (lambda (participant)
                  (and (eq (participant-kind participant) ':agent)
-                      (string= (participant-name participant) *world-agent-name*)
-                      (let ((parent (participant-parent participant)))
-                        (and parent
-                             (let ((owner (world-participant-find world parent)))
-                               (and owner (eq (participant-kind owner) ':human)))))))
+                      (member (participant-name participant)
+                              (list *world-agent-name* *world-task-name*)
+                              :test #'string=)
+                      (participant-parent participant)))
                (sort (world-channel-residents world channel-identifier) #'<
                      :key #'participant-created-at))))
 
@@ -225,15 +227,18 @@ its first message finds its participant on the first call."
 (defun world-session--changes (identities mappings &key all-p)
   "Return the conversations to migrate and the mappings whose conversation vanished.
 
-Each change is a plist of :id, :identity, :token, :header and :mapping. A
-mapping has vanished when its conversation is among IDENTITIES without
-durable storage, or, with ALL-P, when IDENTITIES is every conversation and
-does not name it."
+IDENTITIES holds identity pathnames, or (IDENTITY ROOT-IDENTIFIER) pairs for
+child task conversations. Each change is a plist of :id, :identity, :root,
+:token, :header and :mapping. A mapping has vanished when its conversation is
+among IDENTITIES without durable storage, or, with ALL-P, when IDENTITIES is
+every conversation and does not name it."
   (let ((changes   nil)
         (vanished  nil)
         (requested (make-hash-table :test #'equal)))
-    (dolist (identity identities)
-      (let* ((identifier (pathname-name identity))
+    (dolist (entry identities)
+      (let* ((identity   (if (consp entry) (first entry) entry))
+             (root       (and (consp entry) (second entry)))
+             (identifier (pathname-name identity))
              (mapping    (find identifier mappings
                                :key #'world-session-mapping-conversation :test #'string=))
              (token      (and (conversation-storage-active-pathname identity)
@@ -246,6 +251,7 @@ does not name it."
             (when header
               (push (list :id       identifier
                           :identity identity
+                          :root     root
                           :token    token
                           :header   header
                           :mapping  mapping)
@@ -257,18 +263,20 @@ does not name it."
     (values (nreverse changes) (nreverse vanished))))
 
 (-> world-session--plan
-    (configuration world &key (:changes list) (:vanished list) (:now timestamp))
+    (configuration world &key (:changes list) (:vanished list) (:mappings list)
+                              (:now timestamp))
     (values list list list))
-(defun world-session--plan (configuration world &key changes vanished now)
+(defun world-session--plan (configuration world &key changes vanished mappings now)
   "Return the world records migrating CHANGES and retiring VANISHED, with the mappings each yields.
 
+MAPPINGS are the existing mappings, consulted for the root of a child task.
 The records are folded into a private copy of WORLD as they are planned, so
 every later record sees the identities the earlier ones introduce. The third
 value lists the conversation identifiers whose mappings end."
-  (let ((preview  (world--copy world))
-        (records  nil)
-        (mappings nil)
-        (ended    nil))
+  (let ((preview (world--copy world))
+        (records nil)
+        (planned nil)
+        (ended   nil))
     (labels ((emit (record)
                "Append RECORD and fold it into the preview."
                (push record records)
@@ -281,6 +289,17 @@ value lists the conversation identifiers whose mappings end."
              (created-at (change)
                "Return the creation time CHANGE's conversation header records."
                (getf (rest (getf change :header)) :created-at))
+
+             (root-agent (change)
+               "Return the agent of CHANGE's root conversation, or NIL for a primary or an unknown root."
+               (let ((root (getf change :root)))
+                 (and root
+                      (world-channel-find preview root)
+                      (world-session--mapped-participant
+                       preview
+                       (find root mappings
+                             :key #'world-session-mapping-conversation :test #'string=)
+                       root))))
 
              (ensure-human (change)
                "Create the human participant at home in CHANGE's channel when none exists."
@@ -309,17 +328,24 @@ value lists the conversation identifiers whose mappings end."
                      person)))
 
              (ensure-channel (change owner)
-               "Create or refresh CHANGE's channel, owned by OWNER when created."
+               "Create or refresh CHANGE's channel, owned by OWNER when created.
+
+A child task's channel nests under its root channel and belongs to the
+root's agent while that root exists."
                (let* ((header    (getf change :header))
                       (existing  (world-channel-find preview (getf change :id)))
                       (workspace (world-session--workspace configuration header))
-                      (title     (world-session--title (getf change :identity) header)))
+                      (title     (world-session--title (getf change :identity) header))
+                      (root      (let ((root (getf change :root)))
+                                   (and root (world-channel-find preview root) root))))
                  (cond
                    ((null existing)
                     (emit (world--channel-record
                            (make-instance 'channel
                                           :identifier (getf change :id)
-                                          :owner      (participant-identifier owner)
+                                          :parent     root
+                                          :owner      (participant-identifier
+                                                       (or (root-agent change) owner))
                                           :workspace  workspace
                                           :title      title
                                           :created-at (created-at change)
@@ -344,8 +370,11 @@ value lists the conversation identifiers whose mappings end."
                     (let ((agent (make-instance 'participant
                                                 :identifier (world--generate-identifier preview now)
                                                 :kind       ':agent
-                                                :name       *world-agent-name*
-                                                :parent     (participant-identifier owner)
+                                                :name       (if (getf change :root)
+                                                                *world-task-name*
+                                                                *world-agent-name*)
+                                                :parent     (participant-identifier
+                                                             (or (root-agent change) owner))
                                                 :residence  (getf change :id)
                                                 :settings   settings
                                                 :created-at (created-at change)
@@ -399,10 +428,10 @@ value lists the conversation identifiers whose mappings end."
                                :conversation (getf change :id)
                                :participant  (ensure-agent change owner)
                                :token        (getf change :token))
-                mappings)))
+                planned)))
       (dolist (mapping vanished)
         (retire mapping)))
-    (values (nreverse records) (nreverse mappings) (nreverse ended))))
+    (values (nreverse records) (nreverse planned) (nreverse ended))))
 
 (-> world-reconcile-sessions
     (configuration &key (:identities list) (:prune-p boolean) (:now timestamp))
@@ -412,12 +441,16 @@ value lists the conversation identifiers whose mappings end."
   "Map every conversation onto its channel and participant, and return the world and the change count.
 
 IDENTITIES limits the work to those conversation identity pathnames; otherwise
-every durable conversation is examined. A conversation whose source token
-matches its mapping costs one stat. With PRUNE-P, mappings whose conversation
-no longer exists retire their participant and, once empty, their channel."
+every durable conversation is examined, primaries before child tasks. A
+conversation whose source token matches its mapping costs one stat. With
+PRUNE-P, mappings whose conversation no longer exists retire their
+participant and, once empty, their channel."
   (with-recursive-lock-held (*world-sessions-lock*)
     (let ((mappings   (world-session-mappings configuration))
-          (identities (if identities-p identities (conversation-list configuration))))
+          (identities (if identities-p
+                          identities
+                          (append (conversation-list configuration)
+                                  (conversation-task-identities configuration)))))
       (multiple-value-bind (changes vanished)
           (world-session--changes identities mappings :all-p (not identities-p))
         (unless prune-p
@@ -434,6 +467,7 @@ no longer exists retire their participant and, once empty, their channel."
                                         (world-session--plan configuration world
                                                              :changes  changes
                                                              :vanished vanished
+                                                             :mappings mappings
                                                              :now      now)
                                       (setf updated planned ended retired)
                                       (values records nil)))))))
