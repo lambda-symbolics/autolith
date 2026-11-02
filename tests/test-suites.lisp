@@ -652,7 +652,8 @@
   test-world-server-hosting
   test-world-server-checkpoint-quiescence
   test-world-server-stop
-  test-world-server-switch)
+  test-world-server-switch
+  test-world-server-resume-order)
 
 (define-test-suite world-sidebar
   test-world-sidebar-rows

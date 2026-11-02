@@ -213,6 +213,39 @@
                        "an unknown channel is refused"))))))
   nil)
 
+(-> test-world-server-resume-order () null)
+(defun test-world-server-resume-order ()
+  "Test a workspace reopens its most recently active conversation, not its newest channel record."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bolder1" 1000)
+    (world-tests--persisted-conversation configuration "bnewer2" 2000)
+    (world-reconcile-sessions configuration :now 3000)
+    (world-channel-update configuration "bolder1" :title "Older work" :now 3500)
+    (world-channel-update configuration "bnewer2" :title "Newer work" :now 3600)
+    (let* ((world     (world-load configuration))
+           (workspace (channel-workspace (world-channel-find world "bolder1")))
+           (dates     (list (cons "bolder1" 5000) (cons "bnewer2" 4000))))
+      (test-call-with-function-replacements
+       (list (list 'conversation-storage-write-date
+                   (lambda (pathname)
+                     (or (rest (assoc (pathname-name pathname) dates :test #'string=)) 0))))
+       (lambda ()
+         (test-assert (equal (mapcar #'channel-identifier
+                                     (world-server--resume-candidates configuration world
+                                                                      :workspace workspace))
+                             '("bolder1" "bnewer2"))
+                      "the conversation written last comes first whatever its channel's record says")
+         (test-assert (equal (mapcar #'channel-identifier
+                                     (world-server--resume-candidates configuration world
+                                                                      :workspace workspace
+                                                                      :hosted    '("bolder1")))
+                             '("bnewer2"))
+                      "a channel already hosted is not a candidate")))
+      (test-assert (null (world-server--resume-candidates configuration world
+                                                          :workspace "/nowhere/"))
+                   "another workspace has no candidates")))
+  nil)
+
 (-> world-server--channels-of (cons) list)
 (defun world-server--channels-of (entry)
   "Return the channel identifiers the world ENTRY reports."
