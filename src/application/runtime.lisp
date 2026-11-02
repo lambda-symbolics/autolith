@@ -26,6 +26,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-world-human
     :type          (option string)
     :documentation "The human participant's identifier once the world has one.")
+   (world-cache
+    :initform      nil
+    :accessor      application-world-cache
+    :type          (option cons)
+    :documentation "The world as last read for presentation, with the write date it was read at.")
    (conversation
     :initarg       :conversation
     :accessor      application-conversation
@@ -461,12 +466,14 @@ exchange without scrolling through reasoning and tool activity.")
   "Ask Autolith anything. Type (help) for operations."
   "The dim hint shown on the prompt row while input is empty.")
 
-(-> application-terminal-ui-create (&key (:relay-presentation list)) terminal-ui)
-(defun application-terminal-ui-create (&key relay-presentation)
+(-> application-terminal-ui-create (&key (:relay-presentation list) (:configuration (option configuration))) terminal-ui)
+(defun application-terminal-ui-create (&key relay-presentation configuration)
   "Create the standard interactive terminal UI at the current terminal size.
 
 RELAY-PRESENTATION, a plist of :ROWS, :COLUMNS and :STYLED-P, creates a relay
-without a direct terminal at that geometry for a client that attaches later."
+without a direct terminal at that geometry for a client that attaches later.
+CONFIGURATION, when given, lets the composer complete @ participant names
+from its world."
   (multiple-value-bind (rows columns)
       (terminal-current-size)
     (terminal-ui-create
@@ -485,7 +492,9 @@ without a direct terminal at that geometry for a client that attaches later."
      :prompt                  *application-prompt*
      :message-header-prefixes *application-message-header-prefixes*
      :placeholder             *application-placeholder*
-     :completion-function     #'application-command-completion-entries)))
+     :completion-function     #'application-command-completion-entries
+     :mention-function        (and configuration
+                                   (application-world-mention-function configuration)))))
 
 (-> application--configuration-for-conversation
     (configuration conversation)
@@ -1214,7 +1223,8 @@ startup. Every resource is released again when construction fails."
                        :tool-registry registry
                        :worker        worker))
                     (ui (application-terminal-ui-create
-                         :relay-presentation relay-presentation)))
+                         :relay-presentation relay-presentation
+                         :configuration      configuration)))
                (setf application
                      (make-instance
                       'application
@@ -1427,7 +1437,8 @@ startup. Every resource is released again when construction fails."
                                              :tool-registry registry
                                              :hurry-up-p    hurry-up-p
                                              :worker        worker))
-                             (ui (application-terminal-ui-create)))
+                             (ui (application-terminal-ui-create
+                                  :configuration configuration)))
                         (setf new-application
                               (make-instance
                                'application
@@ -2276,7 +2287,9 @@ line above."
    application
    :role      ':user
    :timestamp timestamp
-   :body      (list (terminal-span ':plain (application--indented-body application text)))))
+   :body      (application-world-mention-spans
+               application
+               (list (terminal-span ':plain (application--indented-body application text))))))
 
 (-> application--child-response-entry (application list) (option list))
 (defun application--child-response-entry (application payload)

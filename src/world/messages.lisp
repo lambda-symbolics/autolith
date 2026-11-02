@@ -331,17 +331,20 @@ whether to write."
 
 (-> world-message-plan
     (world &key (:sender participant) (:channel channel) (:text string) (:mentions list)
-                (:identifier string) (:now timestamp))
+                (:identifier string) (:now timestamp) (:post-p boolean))
     list)
-(defun world-message-plan (world &key sender channel text mentions identifier (now (get-universal-time)))
+(defun world-message-plan (world &key sender channel text mentions identifier
+                                      (now (get-universal-time)) (post-p t))
   "Return the deliveries one message from SENDER to CHANNEL produces, as (CHANNEL-ID . DELIVERY) pairs.
 
 The channel itself gets a post for its residents. Each subscriber and each
 mentioned participant residing elsewhere gets a copy in its residence channel,
-one per channel, subscriptions before mentions."
+one per channel, subscriptions before mentions. Without POST-P the channel
+and its subscribers get nothing: the message was said there already, and
+only the participants it mentions elsewhere hear of it."
   (let ((target  (channel-identifier channel))
         (pairs   nil)
-        (covered nil))
+        (covered (if post-p nil (list (channel-identifier channel)))))
     (flet ((deliver (channel-identifier kind)
              "Plan one copy of KIND for CHANNEL-IDENTIFIER unless it has one already."
              (unless (member channel-identifier covered :test #'string=)
@@ -358,10 +361,11 @@ one per channel, subscriptions before mentions."
                                           :mentions    mentions
                                           :kind        kind))
                      pairs))))
-      (deliver target ':post)
-      (dolist (subscriber (world-channel-subscribers world target))
-        (unless (string= (participant-identifier subscriber) (participant-identifier sender))
-          (deliver (participant-residence subscriber) ':subscription)))
+      (when post-p
+        (deliver target ':post)
+        (dolist (subscriber (world-channel-subscribers world target))
+          (unless (string= (participant-identifier subscriber) (participant-identifier sender))
+            (deliver (participant-residence subscriber) ':subscription))))
       (dolist (mention mentions)
         (let ((mentioned (world-participant-find world mention)))
           (when (and mentioned
@@ -400,14 +404,15 @@ inbox until a process installs its conversation."
 
 (-> world-message-send
     (configuration &key (:sender string) (:channel string) (:text string) (:mentions list)
-                        (:notify-p boolean) (:now timestamp))
+                        (:notify-p boolean) (:now timestamp) (:post-p boolean))
     list)
 (defun world-message-send (configuration &key sender channel text mentions (notify-p t)
-                                              (now (get-universal-time)))
+                                              (now (get-universal-time)) (post-p t))
   "Send TEXT from participant SENDER to channel CHANNEL and return what happened.
 
 MENTIONS are explicit participant designators added to the @mentions found in
-TEXT. The result is a plist of :id, :channels (every inbox written) and
+TEXT. Without POST-P only the mentioned participants residing elsewhere are
+told. The result is a plist of :id, :channels (every inbox written) and
 :notified (the channels whose serving process was reached)."
   (let* ((world       (world-load configuration))
          (participant (or (world-participant-find world sender)
@@ -436,7 +441,8 @@ TEXT. The result is a plist of :id, :channels (every inbox written) and
                                           :mentions   (remove-duplicates mentioned :test     #'string=
                                                                                    :from-end t)
                                           :identifier identifier
-                                          :now        now)))
+                                          :now        now
+                                          :post-p     post-p)))
       (dolist (pair pairs)
         (world-inbox-append configuration (first pair) (list (rest pair))))
       (list :id       identifier
