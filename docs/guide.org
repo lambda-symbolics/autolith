@@ -1694,7 +1694,10 @@ they reside. An idle agent wakes with the message; a working one receives it
 as a steer labeled with the sender and the channel. The transcript shows the
 sender's name and the channel. Messages wait in the channel's inbox under
 =world/inbox/= until a process serves the channel, and a crash between
-delivery and the durable record repeats nothing.
+delivery and the durable record repeats nothing. A send is recorded under
+=world/outbox/= before its copies go out, so a copy an inbox refuses because
+it is full, or one a crash skipped, is delivered later under the same
+identifier, once, and the sender hears which channels still wait.
 
 Conversation leases, Localgroup endpoint records, and recovery state live under
 =${XDG_STATE_HOME:-~/.local/state}/autolith/= rather than =XDG_RUNTIME_DIR=.

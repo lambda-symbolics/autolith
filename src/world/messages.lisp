@@ -19,6 +19,9 @@
 (defparameter *world-inbox-limit* 256
   "The most undelivered messages one channel inbox holds.")
 
+(defparameter *world-outbox-version* 1
+  "The readable outbox format version.")
+
 (deftype world-delivery-kind ()
   "Why a delivery reached a channel: addressed to it, subscribed, or mentioned."
   '(member :post :subscription :mention))
@@ -246,6 +249,148 @@ whether to write."
     (values (nreverse pending) (nreverse settled))))
 
 
+;;;; -- Outbox Store --
+
+;;; A send is recorded, with its identifier and every inbox it must reach,
+;;; before any inbox is written. Each copy leaves the record once it is in
+;;; its inbox, and the record goes once every copy is. A copy an inbox
+;;; refused, or a crash between two inboxes, leaves the record to be resumed
+;;; under the same identifier, which the inboxes deduplicate.
+
+(-> world-outbox-pathname (configuration string) pathname)
+(defun world-outbox-pathname (configuration identifier)
+  "Return the outbox snapshot of the send IDENTIFIER."
+  (merge-pathnames (make-pathname :name identifier :type "sexp")
+                   (merge-pathnames "world/outbox/" (config :data-root configuration))))
+
+(-> world-outbox--form-p (t) boolean)
+(defun world-outbox--form-p (form)
+  "Return true when FORM is a complete outbox snapshot: a send's copies not yet in their inboxes."
+  (and (listp form)
+       (eq (first form) ':outbox)
+       (sexp-store:plist-schema-p (rest form)
+                                 :required-keys  '(:version :id :pending)
+                                 :allowed-keys   '(:version :id :pending)
+                                 :keyword-keys-p t)
+       (eql (getf (rest form) :version) *world-outbox-version*)
+       (non-empty-string-p (getf (rest form) :id))
+       (let ((pending (getf (rest form) :pending)))
+         (and (listp pending)
+              (handler-case (list-length pending) (error () nil))
+              (every (lambda (entry)
+                       (and (consp entry)
+                            (non-empty-string-p (first entry))
+                            (world-delivery--record-p (rest entry))))
+                     pending)
+              t))))
+
+(-> world-outbox--store (configuration string) sexp-store:snapshot-store)
+(defun world-outbox--store (configuration identifier)
+  "Describe the outbox snapshot of the send IDENTIFIER and its paths."
+  (let ((pathname (world-outbox-pathname configuration identifier)))
+    (ensure-directories-exist pathname)
+    (make-instance
+     'sexp-store:snapshot-store
+     :pathname      pathname
+     :lock-pathname (readable-state-lock-pathname pathname (format nil "~A.lock" identifier))
+     :initial-state (lambda () nil)
+     :validator     #'world-outbox--form-p
+     :decoder       (lambda (form)
+                      (mapcar (lambda (entry)
+                                (cons (first entry)
+                                      (world-delivery--record->delivery (rest entry))))
+                              (getf (rest form) :pending)))
+     :encoder       (lambda (pairs)
+                      (list :outbox
+                            :version *world-outbox-version*
+                            :id      identifier
+                            :pending (mapcar (lambda (pair)
+                                               (cons (first pair)
+                                                     (world-delivery--record (rest pair))))
+                                             pairs))))))
+
+(-> world-outbox--transact (configuration string function) t)
+(defun world-outbox--transact (configuration identifier update)
+  "Apply UPDATE to the fresh pending copies of send IDENTIFIER and return its result."
+  (handler-case
+      (sexp-store:store-transact (world-outbox--store configuration identifier) update)
+    (sexp-store:store-error (cause)
+      (world--store-error cause))))
+
+(-> world-outbox-write (configuration string list) null)
+(defun world-outbox-write (configuration identifier pairs)
+  "Record the send IDENTIFIER with PAIRS, its (CHANNEL-ID . DELIVERY) copies still to deliver."
+  (world-outbox--transact configuration identifier
+                          (lambda (current)
+                            (declare (ignore current))
+                            (values pairs nil t)))
+  nil)
+
+(-> world-outbox-pending (configuration string) list)
+(defun world-outbox-pending (configuration identifier)
+  "Return the (CHANNEL-ID . DELIVERY) copies of send IDENTIFIER not yet in their inboxes."
+  (handler-case
+      (values (sexp-store:store-read (world-outbox--store configuration identifier)))
+    (sexp-store:store-error (cause)
+      (world--store-error cause))))
+
+(-> world-outbox-identifiers (configuration) list)
+(defun world-outbox-identifiers (configuration)
+  "Return the identifiers of the sends with copies still to deliver."
+  (let ((directory (merge-pathnames "world/outbox/" (config :data-root configuration))))
+    (if (uiop:directory-exists-p directory)
+        (mapcar #'pathname-name (uiop:directory-files directory "*.sexp"))
+        nil)))
+
+(-> world-outbox--finish (configuration string string) null)
+(defun world-outbox--finish (configuration identifier channel-identifier)
+  "Drop the copy of send IDENTIFIER for CHANNEL-IDENTIFIER, and the record once none is left."
+  (let ((remaining (world-outbox--transact
+                    configuration identifier
+                    (lambda (current)
+                      (let ((rest (remove channel-identifier current
+                                          :key #'first :test #'string=)))
+                        (values rest rest t))))))
+    (unless remaining
+      (uiop:delete-file-if-exists (world-outbox-pathname configuration identifier))))
+  nil)
+
+(-> world-message--deliver (configuration string list) (values list list))
+(defun world-message--deliver (configuration identifier pairs)
+  "Put each copy of send IDENTIFIER in PAIRS into its inbox, leaving refused ones in the outbox.
+
+Return the channels that received their copy and (CHANNEL-ID . CONDITION)
+pairs for the inboxes that refused one. An inbox that holds the copy
+already keeps the one it has."
+  (let ((delivered nil)
+        (refused   nil))
+    (dolist (pair pairs)
+      (handler-case
+          (progn
+            (world-inbox-append configuration (first pair) (list (rest pair)))
+            (world-outbox--finish configuration identifier (first pair))
+            (push (first pair) delivered))
+        (world-error (condition)
+          (push (cons (first pair) condition) refused))))
+    (values (nreverse delivered) (nreverse refused))))
+
+(-> world-message-resume (configuration &key (:notify-p boolean)) list)
+(defun world-message-resume (configuration &key (notify-p t))
+  "Deliver the copies earlier sends left in the outbox and return the channels that received one.
+
+With NOTIFY-P, the process serving each of those channels is told to read."
+  (let ((reached nil))
+    (dolist (identifier (world-outbox-identifiers configuration))
+      (let ((pairs (world-outbox-pending configuration identifier)))
+        (if pairs
+            (setf reached (append reached
+                                  (world-message--deliver configuration identifier pairs)))
+            (uiop:delete-file-if-exists (world-outbox-pathname configuration identifier)))))
+    (when (and notify-p reached)
+      (world-message-notify configuration reached))
+    reached))
+
+
 ;;;; -- Model-Facing Text --
 
 (-> world-delivery-label (world-delivery) string)
@@ -412,8 +557,12 @@ inbox until a process installs its conversation."
 
 MENTIONS are explicit participant designators added to the @mentions found in
 TEXT. Without POST-P only the mentioned participants residing elsewhere are
-told. The result is a plist of :id, :channels (every inbox written) and
-:notified (the channels whose serving process was reached)."
+told. The send is recorded before any inbox is written, so a copy an inbox
+refuses, or one a crash skips, is delivered later under the same identifier.
+The result is a plist of :id, :channels (every inbox written), :pending (the
+channels whose inbox refused its copy for now) and :notified (the channels
+whose serving process was reached)."
+  (world-message-resume configuration :notify-p notify-p)
   (let* ((world       (world-load configuration))
          (participant (or (world-participant-find world sender)
                           (error 'world-error
@@ -443,11 +592,14 @@ told. The result is a plist of :id, :channels (every inbox written) and
                                           :identifier identifier
                                           :now        now
                                           :post-p     post-p)))
-      (dolist (pair pairs)
-        (world-inbox-append configuration (first pair) (list (rest pair))))
-      (list :id       identifier
-            :channels (mapcar #'first pairs)
-            :notified (and notify-p (world-message-notify configuration (mapcar #'first pairs)))))))
+      (when pairs
+        (world-outbox-write configuration identifier pairs))
+      (multiple-value-bind (delivered refused)
+          (world-message--deliver configuration identifier pairs)
+        (list :id       identifier
+              :channels delivered
+              :pending  (mapcar #'first refused)
+              :notified (and notify-p (world-message-notify configuration delivered)))))))
 
 
 ;;;; -- Steering Delivery --
