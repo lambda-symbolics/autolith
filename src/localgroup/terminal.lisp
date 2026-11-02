@@ -39,7 +39,7 @@ only dimension writer that keeps both in step and repaints."
   (with-lock-held ((image-daemon:relay-lock terminal))
     (setf (terminal-interactive-p terminal) t
           (terminal-styled-p terminal) (not (null styled-p))))
-  (terminal-relayed-resize-publish rows columns)
+  (terminal-relayed-resize-publish terminal rows columns)
   nil)
 
 (defmethod image-daemon:transport-rows ((terminal terminal))
@@ -149,5 +149,5 @@ would only spill into its normal buffer."
   "Adopt a client's styling and relay its ROWS and COLUMNS to the interactive reader."
   (setf (terminal-interactive-p terminal) t
         (terminal-styled-p terminal) (not (null styled-p)))
-  (terminal-relayed-resize-publish rows columns)
+  (terminal-relayed-resize-publish terminal rows columns)
   nil)

@@ -21,38 +21,43 @@ Older inputs page in from the conversation as history traversal reaches them.")
 
 ;;;; -- Terminal Objects --
 
-(defvar *terminal-relayed-resize* nil
-  "Pending (rows . columns) relayed by a controlling client, or NIL.
+(defclass terminal (clinedi:terminal)
+  ((relayed-resize
+    :initform      nil
+    :accessor      terminal-relayed-resize
+    :type          (option (cons (integer 1) (integer 1)))
+    :documentation "Pending (rows . columns) relayed by a controlling client, or NIL.
 
 A relayed session's process has no controlling terminal, so its own
 kernel size reports only ever see fallback defaults. Controlling
 clients therefore relay exact dimensions, and the interactive reader
 applies them through TERMINAL-UI-RESIZE. All terminal dimension
-mutation passes through TERMINAL-SET-DIMENSIONS.")
+mutation passes through TERMINAL-SET-DIMENSIONS. Each terminal keeps
+its own pending size, so several relayed terminals in one process
+never apply each other's resizes.")
+   (relayed-resize-lock
+    :initform      (make-lock "Autolith relayed terminal resize")
+    :reader        terminal-relayed-resize-lock
+    :type          t
+    :documentation "The lock making relayed resize publication and consumption atomic."))
+  (:documentation "Autolith's terminal transport extension point."))
 
-(defvar *terminal-relayed-resize-lock*
-  (make-lock "Autolith relayed terminal resize")
-  "The lock making relayed resize publication and consumption atomic.")
-
-(-> terminal-relayed-resize-publish (integer integer) null)
-(defun terminal-relayed-resize-publish (rows columns)
-  "Publish positive ROWS and COLUMNS for one relayed terminal resize."
+(-> terminal-relayed-resize-publish (terminal integer integer) null)
+(defun terminal-relayed-resize-publish (terminal rows columns)
+  "Park positive ROWS and COLUMNS as TERMINAL's pending relayed resize."
   (when (and (plusp rows) (plusp columns))
-    (with-lock-held (*terminal-relayed-resize-lock*)
-      (setf *terminal-relayed-resize* (cons rows columns))))
+    (with-lock-held ((terminal-relayed-resize-lock terminal))
+      (setf (terminal-relayed-resize terminal) (cons rows columns))))
   nil)
 
 (-> terminal-relayed-resize-consume
-    ()
+    (terminal)
     (option (cons (integer 1) (integer 1))))
-(defun terminal-relayed-resize-consume ()
-  "Atomically consume and return the newest relayed terminal size."
-  (with-lock-held (*terminal-relayed-resize-lock*)
-    (prog1 *terminal-relayed-resize*
-      (setf *terminal-relayed-resize* nil))))
-
-(defclass terminal (clinedi:terminal) ()
-  (:documentation "Autolith's terminal transport extension point."))
+(defun terminal-relayed-resize-consume (terminal)
+  "Atomically consume and return TERMINAL's newest relayed size."
+  (with-lock-held ((terminal-relayed-resize-lock terminal))
+    (prog1 (terminal-relayed-resize terminal)
+      (setf (terminal-relayed-resize terminal) nil))))
 
 (defclass stream-terminal (terminal clinedi:host-terminal) ()
   (:default-initargs                    :event-decoder #'terminal--decode-editing-event
