@@ -5,25 +5,32 @@
 (defclass localgroup-terminal (terminal image-daemon:relay) ()
   (:documentation "An image-daemon relay integrated with Autolith terminal state."))
 
-(-> localgroup-terminal-create (&optional (option terminal)) localgroup-terminal)
-(defun localgroup-terminal-create (&optional direct-terminal)
-  "Create a relay terminal initially owned by DIRECT-TERMINAL when supplied."
+(-> localgroup-terminal-create
+    (&key (:direct-terminal (option terminal)) (:rows (option integer))
+          (:columns (option integer)) (:styled-p t))
+    localgroup-terminal)
+(defun localgroup-terminal-create (&key direct-terminal rows columns styled-p)
+  "Create a relay terminal initially owned by DIRECT-TERMINAL when supplied.
+
+Without one, the relay waits for a client at ROWS by COLUMNS with STYLED-P
+styling, defaulting to the geometry of the client this process was started
+for, or to the terminal defaults."
   (let ((startup-values
          (and *localgroup-startup-record* (rest *localgroup-startup-record*))))
     (make-instance 'localgroup-terminal :direct-terminal direct-terminal :rows
                    (if direct-terminal
                        (terminal-rows direct-terminal)
-                       (or (getf startup-values :rows) *terminal-default-rows*))
+                       (or rows (getf startup-values :rows) *terminal-default-rows*))
                    :columns
                    (if direct-terminal
                        (terminal-columns direct-terminal)
-                       (or (getf startup-values :columns) *terminal-default-columns*))
+                       (or columns (getf startup-values :columns) *terminal-default-columns*))
                    :interactive-p
                    (and direct-terminal (terminal-interactive-p direct-terminal))
                    :styled-p
                    (if direct-terminal
                        (terminal-styled-p direct-terminal)
-                       (not (null (getf startup-values :styled-p)))))))
+                       (not (null (or styled-p (getf startup-values :styled-p))))))))
 
 (-> localgroup-terminal-resize
     (localgroup-terminal &key (:rows integer) (:columns integer) (:styled-p t))

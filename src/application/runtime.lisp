@@ -451,19 +451,27 @@ exchange without scrolling through reasoning and tool activity.")
   "Ask Autolith anything. Type (help) for operations."
   "The dim hint shown on the prompt row while input is empty.")
 
-(-> application-terminal-ui-create () terminal-ui)
-(defun application-terminal-ui-create ()
-  "Create the standard interactive terminal UI at the current terminal size."
+(-> application-terminal-ui-create (&key (:relay-presentation list)) terminal-ui)
+(defun application-terminal-ui-create (&key relay-presentation)
+  "Create the standard interactive terminal UI at the current terminal size.
+
+RELAY-PRESENTATION, a plist of :ROWS, :COLUMNS and :STYLED-P, creates a relay
+without a direct terminal at that geometry for a client that attaches later."
   (multiple-value-bind (rows columns)
       (terminal-current-size)
     (terminal-ui-create
      :terminal
-     (localgroup-terminal-create
-      (unless (localgroup-startup-detached-p)
-        (stream-terminal-create
-         :rows                  rows
-         :columns               columns
-         :input-file-descriptor (terminal-standard-input-file-descriptor))))
+     (if relay-presentation
+         (localgroup-terminal-create :rows     (getf relay-presentation :rows)
+                                     :columns  (getf relay-presentation :columns)
+                                     :styled-p (getf relay-presentation :styled-p))
+         (localgroup-terminal-create
+          :direct-terminal
+          (unless (localgroup-startup-detached-p)
+            (stream-terminal-create
+             :rows                  rows
+             :columns               columns
+             :input-file-descriptor (terminal-standard-input-file-descriptor)))))
      :prompt                  *application-prompt*
      :message-header-prefixes *application-message-header-prefixes*
      :placeholder             *application-placeholder*

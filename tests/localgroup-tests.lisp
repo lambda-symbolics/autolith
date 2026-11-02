@@ -96,7 +96,7 @@
           (stream-terminal-create :input-stream          (make-string-input-stream "")
                                   :output-stream         (make-string-output-stream)
                                   :input-file-descriptor -1))
-         (relay (localgroup-terminal-create direct)))
+         (relay (localgroup-terminal-create :direct-terminal direct)))
     (terminal-start relay)
     (test-assert (terminal-started-p direct) "a direct relay starts its direct terminal")
     (terminal-stop relay)
@@ -721,7 +721,7 @@
 (defun test-localgroup-checkpoint-reconnect-transition ()
   "Test repeated checkpoint reconnects over real controller and observer sockets."
   (with-test-configuration (configuration root)
-    (let* ((relay       (localgroup-terminal-create nil))
+    (let* ((relay       (localgroup-terminal-create))
            (application (make-instance 'application
                                        :configuration configuration
                                        :conversation  (conversation-create configuration)
@@ -918,7 +918,7 @@
              (multiple-value-setq (application controller)
                (test-localgroup--application configuration))
              (setf (application-ui application)
-                   (terminal-ui-create :terminal (localgroup-terminal-create nil)))
+                   (terminal-ui-create :terminal (localgroup-terminal-create)))
              (terminal-ui-start (application-ui application))
              (setf session (localgroup-start application))
              (multiple-value-setq (socket stream)
@@ -1053,7 +1053,7 @@
           (stream-terminal-create :input-stream (make-string-input-stream "")
                                   :output-stream output :input-file-descriptor 0 :rows 24
                                   :columns      80))
-         (relay         (localgroup-terminal-create direct))
+         (relay         (localgroup-terminal-create :direct-terminal direct))
          (conversation  (conversation-create configuration))
          (ui            (terminal-ui-create :terminal relay))
          (application
