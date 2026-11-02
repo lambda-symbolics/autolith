@@ -1637,6 +1637,23 @@ change first. A child task is a channel nested under its root channel, with
 a participant named =task= under the root's agent, so =channel:id/<execution id>=
 reads a child's transcript and a message to that channel steers the child.
 
+Every participant has a unique name, its handle, so =@name= reaches exactly
+one of them. A session's agent is named after its workspace directory, =frob=
+for an agent working in =~/work/frob=, and a second agent there is =frob-2=;
+a child task's agent is =task=, =task-2= and so on; you are =user=. Names are
+letters, digits, hyphens and underscores, matched without regard to case.
+=(rename "NAME")= renames this channel's agent and =(rename "WHO" "NAME")=
+renames the participant =WHO= names by handle, identifier or a part of it,
+yourself included. A name another participant has is refused.
+
+Typing =@= in the composer completes participant handles the way it completes
+workspace paths; a token with a slash stays a path. A message you type that
+mentions a participant residing in another channel is delivered to that
+channel as a mention from you before your own agent takes the message, so
+=@frob have a look= reaches frob wherever you are. The transcript highlights
+mentions: your own name in the user color, other participants' names in the
+accent color.
+
 Messages travel between channels through the same path for people and agents.
 =(tell "ID" "text")= sends a message to channel =ID= as yourself, where =ID=
 may be any part of the identifier that names one channel, as in
