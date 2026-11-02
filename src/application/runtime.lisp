@@ -21,6 +21,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :reader        application-world-deliveries
     :type          hash-table
     :documentation "Channel delivery receipts this process has queued or taken as steering.")
+   (world-human
+    :initform      nil
+    :accessor      application-world-human
+    :type          (option string)
+    :documentation "The human participant's identifier once the world has one.")
    (conversation
     :initarg       :conversation
     :accessor      application-conversation

@@ -334,6 +334,16 @@ not yet been told that work from the previous process is gone.")
     :accessor      conversation-user-turn-count
     :type          (integer 0)
     :documentation "The number of durable user message records.")
+   (message-count
+    :initform      0
+    :accessor      conversation-message-count
+    :type          (integer 0)
+    :documentation "The number of durable messages: user input, channel deliveries and assistant replies.")
+   (channel-mention-counts
+    :initform      (make-hash-table :test #'equal)
+    :reader        conversation-channel-mention-counts
+    :type          hash-table
+    :documentation "How many channel deliveries mentioned each participant, by identifier.")
    (working-seconds
     :initform 0
     :accessor conversation-working-seconds
@@ -991,6 +1001,28 @@ a crash may leave one that a later lease acquisition can reuse safely."
     (conversation--remember-pending-input-identifier conversation identifier))
   nil)
 
+(-> conversation--note-messages (conversation list) null)
+(defun conversation--note-messages (conversation record)
+  "Count RECORD in CONVERSATION's messages and channel mentions when it is one.
+
+User input, channel deliveries and assistant replies are messages; tool
+activity is not. A channel delivery's request names the participants it
+mentions."
+  (let* ((properties (rest record))
+         (user-p     (and (eq (first record) ':message)
+                          (eq (getf properties :role) ':user)))
+         (request    (and user-p (getf properties :operation-request))))
+    (when (or user-p
+              (and (eq (first record) ':provider-item)
+                   (stringp (getf properties :wire-json))
+                   (search "\"assistant\"" (getf properties :wire-json))))
+      (incf (conversation-message-count conversation)))
+    (when (equal (getf request :operation) "channel")
+      (dolist (mention (getf (getf request :message) :mentions))
+        (when (stringp mention)
+          (incf (gethash mention (conversation-channel-mention-counts conversation) 0))))))
+  nil)
+
 (-> conversation--note-activity (conversation list) null)
 (defun conversation--note-activity (conversation record)
   "Project RECORD's activity and startup metadata into CONVERSATION."
@@ -1003,6 +1035,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
     (setf (conversation-working-seconds conversation) working-seconds
           (conversation-user-turn-count conversation) user-turn-count
           (conversation-last-activity-at conversation) last-activity-at))
+  (conversation--note-messages conversation record)
   (conversation--note-input-history conversation record)
   (conversation--note-prompt-cache-usage conversation record)
   (conversation--note-usage-totals conversation record)
