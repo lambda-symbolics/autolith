@@ -2934,9 +2934,10 @@ logical theme installed and the physical frame invalid for the next repaint."
   "Return true when UI recently emitted finalized IDENTIFIER."
   (nth-value 1 (gethash identifier (terminal-ui-finalized-identifiers ui))))
 
-(-> terminal-ui--remember-finalized (terminal-ui list) null)
-(defun terminal-ui--remember-finalized (ui identifiers)
-  "Remember finalized IDENTIFIERS as just emitted, forgetting the oldest beyond the bound."
+(-> terminal-ui--remember-finalized
+    (terminal-ui list &key (:note-output-p boolean)) null)
+(defun terminal-ui--remember-finalized (ui identifiers &key (note-output-p t))
+  "Remember finalized IDENTIFIERS, optionally tagging the newest output chunk."
   (let ((table (terminal-ui-finalized-identifiers ui))
         (order (terminal-ui-finalized-order ui)))
     (dolist (identifier identifiers)
@@ -2947,7 +2948,8 @@ logical theme installed and the physical frame invalid for the next repaint."
               ;; A later emission of the same identifier keeps it remembered.
               when (eql (gethash old table) old-stamp)
                 do (remhash old table))))
-    (terminal-ui--note-finalized-output ui identifiers))
+    (when note-output-p
+      (terminal-ui--note-finalized-output ui identifiers)))
   nil)
 
 (-> terminal-ui--forget-finalized (terminal-ui t) null)
@@ -3112,6 +3114,24 @@ REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
                   (terminal-ui--forget-finalized ui (first entry)))
                 (error condition))))))
       (length pending))))
+
+(defgeneric terminal-ui-present-records (ui presentations)
+  (:documentation
+   "Present ordered (IDENTIFIER ENTRY METADATA) transcript records.
+
+METADATA is NIL for ordinary records or a presentation plist understood by a
+specialized UI.  ENTRY may be NIL for records hidden by compact presentation.
+Return the number of records emitted or used."))
+
+(defmethod terminal-ui-present-records ((ui terminal-ui) presentations)
+  "Append visible presentation records through the ordinary finalized path."
+  (terminal-ui-append-finalized-batch
+   ui
+   (loop for presentation in presentations
+         for identifier = (first presentation)
+         for entry = (second presentation)
+         when entry
+           collect (list identifier entry))))
 
 (-> terminal-ui-set-preview-rows (terminal-ui list) terminal-ui)
 (defun terminal-ui-set-preview-rows (ui rows)

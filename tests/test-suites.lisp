@@ -310,6 +310,11 @@
 
 (define-test-suite fullscreen
   test-fullscreen-transcript-residency
+  test-fullscreen-outcome-batch
+  test-fullscreen-outcome-deferred-order
+  test-fullscreen-outcome-retag
+  test-fullscreen-outcome-publication-retry
+  test-fullscreen-outcome-eviction-and-reset
   test-terminal-compact-success-groups
   test-terminal-compact-success-stream-and-retry
   test-terminal-compact-call-groups
