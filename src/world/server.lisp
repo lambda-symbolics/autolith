@@ -471,23 +471,43 @@ by a new channel there."
                   (not (world-host-attached-p host))))
            (world-server--hosts server)))
 
+(-> world-server--resume-candidates
+    (configuration world &key (:workspace string) (:hosted list))
+    list)
+(defun world-server--resume-candidates (configuration world &key workspace hosted)
+  "Return WORKSPACE's top-level channels of WORLD not among HOSTED, the most recently active first.
+
+Activity is the newest durable write of a channel's conversation, so recent
+work in an old channel outranks a newer channel's creation or a title change,
+which only move the channel's own record."
+  (stable-sort (remove-if-not (lambda (channel)
+                                (and (null (channel-parent channel))
+                                     (string= workspace (channel-workspace channel))
+                                     (not (member (channel-identifier channel) hosted
+                                                  :test #'string=))))
+                              (world-channels world))
+               #'>
+               :key (lambda (channel)
+                      (conversation-storage-write-date
+                       (conversation-pathname-for-id configuration (channel-identifier channel))))))
+
 (-> world-server--resume-host (world-server string list) (option world-host))
 (defun world-server--resume-host (server workspace arguments)
-  "Start the host of WORKSPACE's most recently changed free channel, or return NIL."
+  "Start the host of WORKSPACE's most recently active free channel, or return NIL."
   (let* ((configuration (world-server-configuration server))
          (world         (values (world-reconcile-sessions configuration)))
          (hosted        (mapcar #'world-host-channel (world-server--hosts server))))
-    (dolist (channel (world-channels world) nil)
-      (when (and (null (channel-parent channel))
-                 (string= workspace (channel-workspace channel))
-                 (not (member (channel-identifier channel) hosted :test #'string=)))
-        (handler-case
-            (return (world-server--start-host server
-                                              :conversation-id (channel-identifier channel)
-                                              :directory       workspace
-                                              :arguments       arguments))
-          (conversation-in-use ()
-            nil))))))
+    (dolist (channel (world-server--resume-candidates configuration world
+                                                      :workspace workspace
+                                                      :hosted    hosted)
+                     nil)
+      (handler-case
+          (return (world-server--start-host server
+                                            :conversation-id (channel-identifier channel)
+                                            :directory       workspace
+                                            :arguments       arguments))
+        (conversation-in-use ()
+          nil)))))
 
 (-> world-server--permission-mode (world-server t) keyword)
 (defun world-server--permission-mode (server value)
