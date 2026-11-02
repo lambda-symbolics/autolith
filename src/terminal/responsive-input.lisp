@@ -1121,15 +1121,18 @@ The caller must hold CONTROLLER's publication lock."
     queued-p))
 
 (-> application-input-controller-enqueue-operation-request
-    (application-input-controller string list)
+    (application-input-controller string list
+     &key (:pending-input-identifier (option non-empty-string)))
     boolean)
 (defun application-input-controller-enqueue-operation-request
-    (controller text request)
+    (controller text request &key pending-input-identifier)
   "Queue one model turn for operation-generated TEXT and report acceptance.
 
 REQUEST is the portable metadata the transcript shows in place of TEXT. The
 turn runs as automatic work, like a job completion, so it never enters the
-user's input history, pending follow-ups, or recovery vault."
+user's input history, pending follow-ups, or recovery vault. With
+PENDING-INPUT-IDENTIFIER, the turn records that receipt and is skipped when
+the conversation already holds it."
   (let ((queued-p nil))
     (with-lock-held ((application-input-controller-lock controller))
       (unless (or (application-input-controller-stopping-p controller)
@@ -1137,7 +1140,10 @@ user's input history, pending follow-ups, or recovery vault."
         (deque-push-back
          (application-input-controller-work-items controller)
          (list ':operation-request
-               (list :text (copy-seq text) :request (copy-tree request))))
+               (list :text                     (copy-seq text)
+                     :request                  (copy-tree request)
+                     :pending-input-identifier (and pending-input-identifier
+                                                    (copy-seq pending-input-identifier)))))
         (setf queued-p t)
         (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller))))
@@ -1508,11 +1514,16 @@ work receive steering as soon as possible instead of as follow-ups."
                    (application-input-controller--take-steering controller)
                    (peer-message-take-context
                     (application-peer-messages--actor
-                     (application-input-controller-application controller)))))
+                     (application-input-controller-application controller)))
+                   (application-world-steering-take
+                    (application-input-controller-application controller))))
                 (lambda (identifier)
                   (or (peer-message-ack-context
                        (application-peer-messages--actor
                         (application-input-controller-application controller))
+                       identifier)
+                      (application-world-steering-ack
+                       (application-input-controller-application controller)
                        identifier)
                       (application-input-controller--acknowledge-steering
                        controller identifier))))
@@ -3774,11 +3785,13 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
                       (lambda ()
                         (append
                          (application-input-controller--take-steering controller)
-                         (peer-message-take-context (application-peer-messages--actor application))))
+                         (peer-message-take-context (application-peer-messages--actor application))
+                         (application-world-steering-take application)))
                       :steering-persisted-function
                       (lambda (identifier)
                         (or (peer-message-ack-context
                              (application-peer-messages--actor application) identifier)
+                            (application-world-steering-ack application identifier)
                             (application-input-controller--acknowledge-steering
                              controller identifier)))
                       :user-message-persisted-function
@@ -3827,25 +3840,31 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
                  (application-input-controller--request-exit
                   controller ':quit))))
             (:operation-request
-             (application-input-controller--record-prompt-result
-              controller
-              (application--call-with-model-error-handling
-               application
-               (lambda ()
-                 (let ((request (second work)))
-                   (application-input-controller-call-with-primary-steering
+             (let* ((request    (second work))
+                    (identifier (getf request :pending-input-identifier)))
+               (if (and identifier
+                        (conversation-pending-input-identifier-p
+                         (application-conversation application) identifier))
+                   (application-input-controller--record-prompt-result controller ':skipped)
+                   (application-input-controller--record-prompt-result
                     controller
-                    (lambda (take acknowledge)
-                      (application--run-turn
-                       application
-                       (getf request :text)
-                       :operation-request           (getf request :request)
-                       :steering-function           take
-                       :steering-persisted-function acknowledge
-                       :pending-operations-function
-                       (lambda (owner)
-                         (application-input-controller--apply-pending-commands
-                          controller :agent owner))))))))))
+                    (application--call-with-model-error-handling
+                     application
+                     (lambda ()
+                       (application-input-controller-call-with-primary-steering
+                        controller
+                        (lambda (take acknowledge)
+                          (application--run-turn
+                           application
+                           (getf request :text)
+                           :operation-request           (getf request :request)
+                           :pending-input-identifier    identifier
+                           :steering-function           take
+                           :steering-persisted-function acknowledge
+                           :pending-operations-function
+                           (lambda (owner)
+                             (application-input-controller--apply-pending-commands
+                              controller :agent owner)))))))))))
             (:project-adaptation-offer
              (application-maybe-offer-project-adaptation application))
             (:localgroup-handoff
