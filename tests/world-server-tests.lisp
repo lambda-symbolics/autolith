@@ -261,6 +261,55 @@
                  (remove starting (world-server-hosts server))))))))
   nil)
 
+(-> test-world-server-launch-options () null)
+(defun test-world-server-launch-options ()
+  "Test a new channel takes the launch options stated, and a running one refuses those it cannot change."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry     (world-client-entry configuration))
+            (workspace (world-tests--workspace root "a"))
+            (id        (getf (rest (world-server-tests--open entry workspace
+                                                             :launch '(:immutable-p t)))
+                             :session-id))
+            (host      (world-server--find-host server id))
+            (built     (application-configuration (world-host-application host))))
+       (test-assert (config :immutable-p built)
+                    "a new channel is built with the immutable mode the open states")
+       (test-assert (string= (getf (rest (world-server-tests--open
+                                          entry workspace :launch '(:immutable-p t)))
+                                   :session-id)
+                             id)
+                    "an open stating what the channel already runs joins it")
+       (test-assert (and (string= (getf (rest (localgroup-query-record
+                                               entry ':open
+                                               (list :channel id
+                                                     :launch '(:permission-mode :full-access)
+                                                     :rows 30 :columns 90 :styled-p nil)))
+                                        :session-id)
+                                  id)
+                         (eq (application-permission-mode (world-host-application host))
+                             ':full-access))
+                    "a permission mode stated explicitly takes effect on a channel nobody controls")
+       (test-assert (handler-case
+                        (progn (localgroup-query-record
+                                entry ':open
+                                (list :channel id :launch '(:fullscreen-p t)
+                                      :rows 30 :columns 90 :styled-p nil))
+                               nil)
+                      (autolith-error (condition)
+                        (search "--fullscreen" (autolith-error-message condition))))
+                    "a running channel refuses an option it cannot change, naming it")
+       (let ((other (getf (rest (world-server-tests--open entry workspace
+                                                          :launch '(:fullscreen-p t)))
+                          :session-id)))
+         (test-assert (and other (not (string= other id))
+                           (config :fullscreen-p
+                                   (application-configuration
+                                    (world-host-application
+                                     (world-server--find-host server other)))))
+                      "a workspace open with a conflicting option gets another channel that takes it")))))
+  nil)
+
 (-> test-world-server-resume-order () null)
 (defun test-world-server-resume-order ()
   "Test a workspace reopens its most recently active conversation, not its newest channel record."

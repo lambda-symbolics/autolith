@@ -1518,7 +1518,12 @@ On Windows the exact-heap checkpoint restarts the process, so the server
 refuses it; run the channel directly to checkpoint it. =--detached= starts a
 standalone session process outside the server, and
 =AUTOLITH_SESSION_STYLE=direct= runs one session in the terminal's own
-process.
+process. The launch options a start states, =--model=, =--provider=,
+=--permissions=, =--immutable=, =--fullscreen= and =--almighty=, apply to
+the channel the server starts for it. A channel already running takes an
+explicit permission mode when no terminal controls it and refuses the other
+options, naming the one it cannot change; a workspace open with such an
+option gets another channel instead of the running one.
 
 A terminal attached to a hosted channel receives the channel's screen as
 frames and paints them itself, so in fullscreen mode it can show the world's

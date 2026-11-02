@@ -436,7 +436,9 @@ caller waits for a starting host the same way as for one it started."
               (identifier    (conversation-identifier-migration-resolve configuration channel))
               (host          (world-server--find-host server identifier)))
          (if host
-             (values host nil)
+             (progn
+               (world-server--reconcile-launch server host (getf arguments :launch))
+               (values host nil))
              (values (world-server--start-host
                       server
                       :conversation-id identifier
@@ -451,7 +453,8 @@ caller waits for a starting host the same way as for one it started."
        (let* ((workspace (world-workspace-name directory))
               (idle      (world-server--idle-host server workspace)))
          (cond
-           (idle
+           ((and idle (null (world-server--launch-conflict idle (getf arguments :launch))))
+            (world-server--reconcile-launch server idle (getf arguments :launch))
             (values idle nil))
            (t
             (values (or (world-server--resume-host server workspace arguments)
@@ -521,6 +524,58 @@ which only move the channel's own record."
         (conversation-in-use ()
           nil)))))
 
+(-> world-server--launch-conflict (world-host list) (option string))
+(defun world-server--launch-conflict (host launch)
+  "Return the option of LAUNCH that channel HOST runs differently and cannot change, or NIL.
+
+The model, provider, immutable mode, fullscreen mode and theme are fixed when
+a channel's application is built; the permission mode is not."
+  (let* ((configuration (application-configuration (world-host-application host)))
+         (model         (getf launch :model))
+         (provider      (getf launch :provider))
+         (theme         (getf launch :theme)))
+    (cond
+      ((and model (not (equal model (config :model configuration))))
+       (format nil "--model ~A; it runs ~A" model (config :model configuration)))
+      ((and provider (not (equal provider (config :model-provider configuration))))
+       (format nil "--provider ~A" provider))
+      ((and (getf launch :immutable-p) (not (config :immutable-p configuration)))
+       "--immutable")
+      ((and (getf launch :fullscreen-p) (not (config :fullscreen-p configuration)))
+       "--fullscreen")
+      ((and theme (not (eq theme (config :terminal-theme configuration))))
+       "--almighty")
+      (t
+       nil))))
+
+(-> world-server--reconcile-launch (world-server world-host list) null)
+(defun world-server--reconcile-launch (server host launch)
+  "Apply what LAUNCH may change on the running channel HOST, refusing what it may not.
+
+A permission mode stated explicitly takes effect on a channel no terminal
+controls; one another terminal controls keeps its mode and the open is
+refused, so nothing a client asked for is dropped in silence."
+  (let ((conflict (world-server--launch-conflict host launch))
+        (display  (conversation-identifier-display (world-host-channel host))))
+    (when conflict
+      (error 'world-error
+             :message    (format nil "Channel ~A is already running and cannot take ~A. Open it without that option, or open another channel."
+                                 display conflict)
+             :operation  ':open
+             :identifier (world-host-channel host)))
+    (let ((mode        (getf launch :permission-mode))
+          (application (world-host-application host)))
+      (when (and mode (not (eq mode (application-permission-mode application))))
+        (when (world-host-attached-p host)
+          (error 'world-error
+                 :message    (format nil "Channel ~A is controlled by another terminal and keeps its permission mode ~(~A~)."
+                                     display (application-permission-mode application))
+                 :operation  ':open
+                 :identifier (world-host-channel host)))
+        (setf (application-permission-mode application)
+              (world-server--permission-mode server mode)))))
+  nil)
+
 (-> world-server--permission-mode (world-server t) keyword)
 (defun world-server--permission-mode (server value)
   "Return the permission mode VALUE selects, or SERVER's default."
@@ -541,19 +596,32 @@ which only move the channel's own record."
 (defun world-server--start-host (server &key conversation-id directory arguments)
   "Build the application of CONVERSATION-ID, or a new one, in DIRECTORY and serve it.
 
-ARGUMENTS carry the opening client's choices. The host is listed before its
-thread starts, so a second open of the same channel waits for it, and is
+ARGUMENTS carry the opening client's choices, among them the :LAUNCH options
+it stated explicitly, which the new channel takes. The host is listed before
+its thread starts, so a second open of the same channel waits for it, and is
 forgotten again when no thread could start."
   (let* ((base          (world-server-configuration server))
+         (launch        (getf arguments :launch))
          (configuration (apply #'configuration-copy base
                                :working-directory (uiop:ensure-directory-pathname directory)
-                               (when (getf arguments :fullscreen-p)
-                                 (list :fullscreen-p t))))
+                               (append
+                                (when (or (getf arguments :fullscreen-p)
+                                          (getf launch :fullscreen-p))
+                                  (list :fullscreen-p t))
+                                (when (getf launch :model)
+                                  (list :model                      (getf launch :model)
+                                        :model-provider             (or (getf launch :provider) "")
+                                        :model-selection-override-p t))
+                                (when (getf launch :immutable-p)
+                                  (list :immutable-p t))
+                                (when (getf launch :theme)
+                                  (list :terminal-theme (getf launch :theme))))))
          (application   (application--build
                          configuration
                          :conversation-id          conversation-id
                          :permission-mode          (world-server--permission-mode
-                                                    server (getf arguments :permission-mode))
+                                                    server (or (getf launch :permission-mode)
+                                                               (getf arguments :permission-mode)))
                          :pristine-p               (world-server-pristine-p server)
                          :mutation-replay-failures (world-server-mutation-replay-failures server)
                          :relay-presentation       (list :rows     (getf arguments :rows)

@@ -655,7 +655,8 @@
   test-world-server-stop
   test-world-server-switch
   test-world-server-resume-order
-  test-world-server-starting-host)
+  test-world-server-starting-host
+  test-world-server-launch-options)
 
 (define-test-suite world-sidebar
   test-world-sidebar-rows
