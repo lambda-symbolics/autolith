@@ -675,6 +675,44 @@
                          "mentions of others are accented, of the person styled as the user, unknown ones left alone")))))
     nil))
 
+(-> test-world-mention-highlighting () null)
+(defun test-world-mention-highlighting ()
+  "Test highlighting styles the mentions it resolves and keeps every character of the text."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+      (declare (ignore human))
+      (let* ((world (world-load configuration))
+             (known (participant-name first-agent))
+             (other (participant-name second-agent))
+             (texts (list "email a@example.com tomorrow"
+                          "@nobody said hi"
+                          (format nil "@~A then @nobody" known)
+                          (format nil "@nobody then @~A" known)
+                          (format nil "@~A@~A" known other)
+                          "a bare @ and @ again"
+                          ""
+                          (format nil "@~A" known)
+                          (format nil "tail @~A" known))))
+        (dolist (text texts)
+          (let ((pieces (world-mention--split-span world (cons ':plain text))))
+            (test-assert (string= text (format nil "~{~A~}" (mapcar #'rest pieces)))
+                         (format nil "highlighting keeps the text of ~S" text))
+            (test-assert (every (lambda (piece)
+                                  (or (eq (first piece) ':plain)
+                                      (and (member (first piece) '(:legend-accent :user))
+                                           (char= (char (rest piece) 0) #\@))))
+                                pieces)
+                         "only resolved mentions change style")))
+        (let ((pieces (world-mention--split-span
+                       world (cons ':plain (format nil "@~A then @nobody" known)))))
+          (test-assert (and (eq (first (first pieces)) ':legend-accent)
+                            (string= (rest (first pieces)) (format nil "@~A" known))
+                            (string= (rest (second pieces)) " then @nobody"))
+                       "a known mention is styled and the unknown one stays in the plain text")))))
+  nil)
+
 (-> test-world-message-presentation () null)
 (defun test-world-message-presentation ()
   "Test delivered channel messages show their sender and channel, and delivery without a controller waits."

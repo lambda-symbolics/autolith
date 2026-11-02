@@ -202,13 +202,17 @@ nothing."
 
 (-> world-mention--split-span (world cons) list)
 (defun world-mention--split-span (world span)
-  "Return SPAN cut around the @mentions its text resolves in WORLD, each styled."
-  (let ((style  (first span))
-        (text   (rest span))
-        (pieces nil)
-        (start  0))
+  "Return SPAN cut around the @mentions its text resolves in WORLD, each styled.
+
+The pieces concatenate back to SPAN's text exactly: a token that names no
+participant is left in place, only the scan moves past it."
+  (let ((style   (first span))
+        (text    (rest span))
+        (pieces  nil)
+        (emitted 0)
+        (scan    0))
     (loop
-      (let ((at (position #\@ text :start start)))
+      (let ((at (position #\@ text :start scan)))
         (unless at
           (return))
         (let* ((end         (or (position-if-not (lambda (character)
@@ -221,17 +225,18 @@ nothing."
                                  (world-message-participant world designator))))
           (if participant
               (progn
-                (when (> at start)
-                  (push (cons style (subseq text start at)) pieces))
+                (when (> at emitted)
+                  (push (cons style (subseq text emitted at)) pieces))
                 (push (terminal-span (if (eq (participant-kind participant) ':human)
                                          ':user
                                          ':legend-accent)
                                      (subseq text at end))
                       pieces)
-                (setf start end))
-              (setf start (max end (1+ at)))))))
-    (when (< start (length text))
-      (push (cons style (subseq text start)) pieces))
+                (setf emitted end
+                      scan    end))
+              (setf scan (max end (1+ at)))))))
+    (when (< emitted (length text))
+      (push (cons style (subseq text emitted)) pieces))
     (if pieces
         (nreverse pieces)
         (list span))))
