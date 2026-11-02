@@ -260,6 +260,7 @@
                                  (zerop (getf goal :requests-outstanding)))
                             "reported usage is charged once and the original reservation released"))
           (mission-detach application)))))
+  (context-admission-test--bounded-child)
   nil)
 
 
@@ -584,4 +585,126 @@
            "a nonpositive envelope or an oversized final copy is refused")
           (test-assert (zerop (context-admission-test-provider-network-calls provider))
                        "no candidate bypasses final context admission")))))
+  nil)
+
+(defclass context-admission-child-test-provider (context-admission-capped-test-provider)
+  ((allocation :initform nil :accessor context-admission-child-test-allocation
+               :documentation "Full mission admission before final request projection.")
+   (caller-cap :initform nil :accessor context-admission-child-test-caller-cap
+               :documentation "Explicit caller policy before transport admission."))
+  (:documentation "Fail a real child after observing its final encoded request."))
+
+(defmethod provider-with-configuration
+    ((provider context-admission-child-test-provider) (configuration configuration))
+  "Retain the inert transport and observations in the native child's provider."
+  (declare (ignore configuration))
+  provider)
+
+(defmethod provider-stream-turn
+    ((provider context-admission-child-test-provider) (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Admit the real request into an inert transport, then fail without usage."
+  (declare (ignore tool-namespaces event-callback goal-context compaction-p))
+  (setf (context-admission-child-test-allocation provider) *provider-mission-output-allowance*
+        (context-admission-child-test-caller-cap provider) *provider-maximum-output-tokens*)
+  (provider-open-response-stream provider (provider-request-object provider conversation #())
+                                 :conversation conversation)
+  (error "Synthetic failure after final encoded admission without usage."))
+
+(-> context-admission-test--bounded-child () null)
+(defun context-admission-test--bounded-child ()
+  "Distinguish full child allocation, lowered wire cap and durable measured totals."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "272000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+    (with-test-configuration (configuration root)
+      (setf configuration (configuration-copy configuration :working-directory root))
+      (let* ((provider     (make-instance 'context-admission-child-test-provider
+                                          :configuration configuration))
+             (application  (mission-inference-test--application configuration provider))
+             (conversation (application-conversation application))
+             (registry     (task-augment-tool-registry (application-tool-registry application)))
+             (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "task" "run")))
+             (definition   (task-agent-definition-create
+                            :name "admission-child" :description "Exercise admission and settlement"
+                            :instructions "Attempt one request." :tools ':all :source ':test))
+             (entry        (list :definition definition :detached t
+                                 :item (list :agent "admission-child" :task "Attempt one request.")))
+             (job          nil))
+        (setf (agent-provider (application-agent application)) provider)
+        (application-mission-start application
+                                   (mission-test--specification :tokens most-positive-fixnum))
+        (let* ((goal    (application-goal application))
+               (context (mission-context-find conversation)))
+          (unwind-protect
+               (progn
+                 (setf job (first (task-orchestrator-start-jobs
+                                   orchestrator (application-agent application) (list entry))))
+                 (task-job-await job nil)
+                 (let* ((allocation (context-admission-child-test-allocation provider))
+                        (ceiling    (context-admission-test-provider-last-ceiling provider))
+                        (request    (context-admission-test-provider-last-request provider))
+                        (result     (getf (task-job-snapshot job) :result))
+                        (summary    (list :unknown-usage 1 :reservation-charged-tokens allocation
+                                          :reservation-charge-requests 1)))
+                   (test-assert (and (null (context-admission-child-test-caller-cap provider))
+                                     (typep allocation '(integer 1))
+                                     (typep ceiling '(integer 1)) (< ceiling allocation)
+                                     (= ceiling (json-get request "max_output_tokens"))
+                                     (= 1 (context-admission-test-provider-network-calls provider)))
+                                "no caller ceiling: one actual final encoded request has 0<W<R")
+                   (test-assert (<= (+ (provider-request-input-token-estimate provider request) ceiling) 272000)
+                                "the final encoded request fits the window, independently of full allocation")
+                   (test-assert (and (eq ':failed (getf result :status)) (getf result :error)
+                                     (null (getf result :usage)) (= 1 (getf result :unknown-usage 0))
+                                     (= allocation (getf result :reservation-charged-tokens 0))
+                                     (= 1 (getf result :reservation-charge-requests 0)))
+                                "the actual child retains failure and UNKNOWN audit with one full-R charge")
+                   (test-assert (and (eq goal (application-goal application))
+                                     (eq ':active (getf goal :status))
+                                     (= allocation (getf goal :tokens-used))
+                                     (= allocation (getf goal :reservation-charged-tokens 0))
+                                     (zerop (getf goal :unknown-usage))
+                                     (zerop (getf goal :requests-outstanding))
+                                     (zerop (getf goal :tokens-reserved)))
+                                "settlement releases R once without shared quarantine or replacing the goal")
+                   (test-assert (equal summary (mission-task-job-accounting-summary job))
+                                "the locked child summary separates allocation charge from measured usage")
+                   (test-assert (every #'zerop (subseq (conversation-usage conversation) 0 5))
+                                "an allocation charge is absent from running measured totals")
+                   (mission--account-inference
+                    context (lambda () (json-object "input_tokens" 2 "output_tokens" 3)) #'first)
+                   (conversation-append-provider-metadata
+                    conversation '(:usage (("input_tokens" 2) ("output_tokens" 3) ("total_tokens" 5))))
+                   (test-assert (and (eq goal (application-goal application))
+                                     (eq ':active (getf goal :status))
+                                     (= (+ allocation 5) (getf goal :tokens-used))
+                                     (= allocation (getf goal :reservation-charged-tokens))
+                                     (equal '(2 3 5 0 0 nil) (conversation-usage conversation)))
+                                "subsequent known-usage work is admitted and only measured usage enters totals")
+                   (task-job-await job nil)
+                   (test-assert (and (= 1 (context-admission-test-provider-network-calls provider))
+                                     (= (+ allocation 5) (getf goal :tokens-used))
+                                     (equal summary (mission-task-job-accounting-summary job)))
+                                "duplicate completion observation makes no request or second charge")
+                   (application--record-goal application)
+                   (conversation-append-summary conversation "Synthetic compaction after bounded failure.")
+                   (let* ((loaded   (conversation-load (conversation-pathname conversation)))
+                          (restored (progn (application--load-goal application)
+                                           (application-goal application))))
+                     (format t "~&MEASURED-COMPAT ~S ~S~%"
+                             (conversation-usage conversation) (conversation-usage loaded))
+                     (test-assert (equal '(2 3 5 0 0 nil) (conversation-usage loaded))
+                                  "compaction and reload preserve measured-only running totals")
+                     (test-assert (and (= (+ allocation 5) (getf restored :tokens-used))
+                                       (= allocation (getf restored :reservation-charged-tokens))
+                                       (= 1 (rest (assoc (job-identifier job)
+                                                        (getf restored :unknown-usage-by-child) :test #'equal)))
+                                       (equal (getf goal :reservation-charges-by-child)
+                                              (getf restored :reservation-charges-by-child))
+                                       (zerop (getf restored :unknown-usage))
+                                       (eq ':active (getf restored :status)))
+                                  "goal append, compaction and reload retain full allocation and child audit"))))
+            (when job (task-job-await job nil))
+            (task-orchestrator-close orchestrator)
+            (mission-detach application))))))
   nil)

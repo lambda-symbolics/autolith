@@ -21,7 +21,7 @@
 
 (-> mission--reserve-inference (mission-context &key (:allowance (option list))) (integer 1))
 (defun mission--reserve-inference (context &key allowance)
-  "Reserve one turn and its output ceiling atomically before provider execution."
+  "Reserve one turn and its output allocation atomically before provider execution."
   (with-recursive-lock-held ((mission-context-request-lock context))
     (with-recursive-lock-held ((mission-context-lock context))
       (mission--ensure-reservations (mission-context-goal context))
@@ -51,26 +51,40 @@
               (error condition))))))))
 
 (-> mission--settle-inference
-    (mission-context integer (option integer) &key (:allowance (option list)) (:failure t)) null)
-(defun mission--settle-inference (context reservation tokens &key allowance failure)
-  "Release RESERVATION once and retain reported usage or an uncertain outcome."
+    (mission-context integer (option integer) &key (:allowance (option list)) (:failure t)
+     (:originating-child (option task-job))) null)
+(defun mission--settle-inference (context reservation tokens &key allowance failure originating-child)
+  "Release RESERVATION once, charging measured usage or an exact child's allowance."
   (with-recursive-lock-held ((mission-context-request-lock context))
     (with-recursive-lock-held ((mission-context-lock context))
-      (let ((goal (mission-context-goal context)))
+      (let* ((goal      (mission-context-goal context))
+             (child     (and originating-child
+                             (eq (task-job-mission-context originating-child) context)
+                             originating-child))
+             (bounded-p (and child (not (integerp tokens))
+                             (typep reservation '(integer 1)))))
         (dolist (limit (remove nil (list goal allowance)))
           (decf (getf limit :requests-outstanding))
           (decf (getf limit :tokens-reserved) reservation)
-          (when (integerp tokens)
-            (incf (getf limit :tokens-used) tokens)))
+          (cond
+            ((integerp tokens)
+             (incf (getf limit :tokens-used) tokens))
+            (bounded-p
+             (mission--ensure-reservations limit)
+             (incf (getf limit :tokens-used) reservation)
+             (incf (getf limit :reservation-charged-tokens) reservation))))
         (when failure
           (mission--evidence context :inference-failure (princ-to-string failure)))
         (unless (integerp tokens)
-          (incf (getf goal :unknown-usage))
-          (when (eq (getf goal :status) ':active)
-            (mission--transition
-             context ':blocked
-             "An inference request settled without reported usage; started children may finish, new work needs a new budget."
-             :cancel-p nil)))
+          (unless bounded-p (incf (getf goal :unknown-usage)))
+          (if child
+              (mission--attribute-child-unknown context child
+                                               :reservation (when bounded-p reservation))
+              (when (eq (getf goal :status) ':active)
+                (mission--transition
+                 context ':blocked
+                 "An inference request settled without reported usage; started children may finish, new work needs a new budget."
+                 :cancel-p nil))))
         (when (and (member (getf goal :status) '(:active :blocked))
                    (> (getf goal :tokens-used) (getf goal :token-limit)))
           (mission--transition context ':exhausted "Mission token budget exhausted."))
@@ -83,11 +97,16 @@
   "Reserve allowances, execute without mission locks, then settle exactly once.
 
 ALLOWANCE optionally charges the same request to an independent reviewer policy.
-Provider-reported billable usage includes input tokens; output reservations are
-ceilings, not estimates of that usage. Preserve all provider return values.
-A request refused before invoking FUNCTION has known zero usage. Once FUNCTION
-starts, missing usage is conservatively unknown, including interrupted dispatch."
-  (let ((reservation  nil)
+Provider-reported billable usage includes input tokens. Output allocations do not
+bound total provider billing or retry exposure. Preserve all provider return values.
+A request refused before invoking FUNCTION has known zero usage. After dispatch,
+an exact child's missing usage charges its finite admitted allocation once and
+retains child UNKNOWN audit; unproven uncertainty requires conservative quarantine."
+  (let ((originating-child
+          (and (typep *mission-admitted-operation* 'task-job)
+               (eq (task-job-mission-context *mission-admitted-operation*) context)
+               *mission-admitted-operation*))
+        (reservation  nil)
         (dispatched-p nil)
         (settled-p    nil)
         (failure      nil))
@@ -106,7 +125,8 @@ starts, missing usage is conservatively unknown, including interrupted dispatch.
                                                             (provider-usage-normalize (funcall usage-function results)))))
                  (sb-sys:without-interrupts
                    (setf settled-p t)
-                   (mission--settle-inference context reservation tokens :allowance allowance))
+                   (mission--settle-inference context reservation tokens
+                                              :allowance allowance :originating-child originating-child))
                  (when (and allowance
                             (or (null tokens)
                                 (> (getf allowance :tokens-used) (getf allowance :token-limit))))
@@ -120,5 +140,6 @@ starts, missing usage is conservatively unknown, including interrupted dispatch.
           (setf settled-p t)
           (mission--settle-inference
            context reservation (if dispatched-p nil 0)
-           :allowance allowance
-           :failure   (or failure "Inference interrupted before usage settlement.")))))))
+           :allowance         allowance
+           :originating-child originating-child
+           :failure           (or failure "Inference interrupted before usage settlement.")))))))

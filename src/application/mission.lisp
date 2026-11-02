@@ -84,7 +84,7 @@
 (-> mission--ensure-reservations (list) null)
 (defun mission--ensure-reservations (allowance)
   "Append absent reservation counters without replacing ALLOWANCE's identity."
-  (dolist (key '(:tokens-reserved :requests-outstanding))
+  (dolist (key '(:tokens-reserved :requests-outstanding :reservation-charged-tokens))
     (unless (nth-value 2 (get-properties allowance (list key)))
       (nconc allowance (list key 0))))
   nil)
@@ -120,6 +120,51 @@
     (setf (getf goal :evidence)
           (last entries (min (length entries) *mission-evidence-count-limit*))))
   nil)
+
+(-> mission--attribute-child-unknown
+    (mission-context task-job &key (:reservation (option (integer 1)))) null)
+(defun mission--attribute-child-unknown (context child &key reservation)
+  "Audit one logical UNKNOWN and optional reservation charge under the mission lock."
+  (let ((goal (mission-context-goal context)))
+    (dolist (key '(:unknown-usage-by-child :reservation-charges-by-child))
+      (unless (nth-value 2 (get-properties goal (list key)))
+        (nconc goal (list key nil))))
+    (let ((entry (assoc (job-identifier child) (getf goal :unknown-usage-by-child)
+                        :test #'equal)))
+      (if entry
+          (incf (rest entry))
+          (push (cons (job-identifier child) 1) (getf goal :unknown-usage-by-child))))
+    (when reservation
+      (let ((entry (assoc (job-identifier child) (getf goal :reservation-charges-by-child)
+                          :test #'equal)))
+        (unless entry
+          (setf entry (cons (job-identifier child) (list :requests 0 :tokens 0)))
+          (push entry (getf goal :reservation-charges-by-child)))
+        (incf (getf (rest entry) :requests))
+        (incf (getf (rest entry) :tokens) reservation))))
+  nil)
+
+(-> mission-task-job-accounting-summary (task-job) list)
+(defun mission-task-job-accounting-summary (child)
+  "Read consistent child audit counters; reservation charges are included in tokens used."
+  (let ((context (task-job-mission-context child)))
+    (flet ((summary (goal)
+             (let ((charge (rest (assoc (job-identifier child)
+                                        (getf goal :reservation-charges-by-child) :test #'equal))))
+               (list :unknown-usage
+                     (or (rest (assoc (job-identifier child)
+                                      (getf goal :unknown-usage-by-child) :test #'equal)) 0)
+                     :reservation-charged-tokens  (getf charge :tokens 0)
+                     :reservation-charge-requests (getf charge :requests 0)))))
+      (if context
+          (with-recursive-lock-held ((mission-context-lock context))
+            (summary (mission-context-goal context)))
+          (summary nil)))))
+
+(-> mission-task-job-unknown-usage (task-job) unsigned-byte)
+(defun mission-task-job-unknown-usage (child)
+  "Read CHILD's durable UNKNOWN audit, including reservation-settled requests."
+  (getf (mission-task-job-accounting-summary child) :unknown-usage))
 
 (-> mission--transition (mission-context keyword t &key (:cancel-p boolean)) null)
 (defun mission--transition (context status evidence &key (cancel-p t))
@@ -173,6 +218,11 @@ NEW-WORK-P always requires an active mission. Hard budgets apply to both paths."
                 (and (not new-work-p)
                      (mission--operation-draining-p context *mission-admitted-operation*)))
       (mission--reject (getf goal :status) "The mission is not active."))
+    (when (and (eq (getf goal :status) ':active)
+               (plusp (getf goal :unknown-usage 0))
+               (or inference-p new-work-p))
+      (mission--reject ':mission-usage-quarantine
+                       "Mission usage is unknown; inference and new work require explicit spending authority."))
     (unless (plusp (mission--remaining-milliseconds context))
       (mission--transition context ':exhausted "Mission-wide wall-clock budget exhausted.")
       (mission--reject ':exhausted "Mission-wide wall-clock budget exhausted."))
@@ -297,6 +347,7 @@ The calling thread preserves provider bindings and authorization callbacks."
           :turn-limit  (getf specification :turn-limit)
           :token-limit (getf specification :token-limit)
           :turns-used 0 :tokens-used 0 :tokens-reserved 0 :unknown-usage 0 :requests-outstanding 0
+          :unknown-usage-by-child nil :reservation-charged-tokens 0 :reservation-charges-by-child nil
           :model-complete-p nil :criteria criteria :gates gates :evidence nil)))
 
 (-> application-mission-start (application list) null)

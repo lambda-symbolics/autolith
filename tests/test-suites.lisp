@@ -834,6 +834,7 @@
   test-provider-tls-eof-recovery
   test-provider-codex-request-headers
   test-provider-usage-limit-terminal
+  test-provider-usage-limit-streams
   test-provider-credential-echo-containment
   test-provider-authentication-retries
   test-agent-attempt-failure-metadata
@@ -1479,6 +1480,12 @@
   test-acp-input-validate-storage-native-work)
 
 (define-test-suite mission-inference
+  test-mission-child-bounded-unknown-length-continuation
+  test-mission-child-bounded-unknown-quota-continuation
+  test-mission-child-unknown-settlement-controls
+  test-mission-child-bounded-accounting-controls
+  test-mission-child-unknown-reservation-drain-and-recovery
+  test-mission-child-unknown-native-outcome-controls
   test-mission-inference-unknown-drains-child
   test-mission-inference-cancelling-block-refuses-continuation
   test-mission-inference-cancel-before-dispatch
