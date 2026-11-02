@@ -129,6 +129,19 @@ well, since the steer persists first and the queued turn then skips."
                                        :taken      (application-world-deliveries application)))
         (world-delivery-pending-identifier-p identifier))))
 
+(-> application-world-human-identifier (application) (option string))
+(defun application-world-human-identifier (application)
+  "Return the identifier of the world's human participant, or NIL before the world has one."
+  (or (application-world-human application)
+      (let ((person (handler-case
+                        (world-human-participant
+                         (world-load (application-configuration application)))
+                      (world-error ()
+                        nil))))
+        (and person
+             (setf (application-world-human application)
+                   (participant-identifier person))))))
+
 (-> application-world-channel-identifier (application string) string)
 (defun application-world-channel-identifier (application designator)
   "Return the identifier of the channel DESIGNATOR names in full, by legacy alias or in part."
