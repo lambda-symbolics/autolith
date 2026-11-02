@@ -675,6 +675,41 @@
                          "mentions of others are accented, of the person styled as the user, unknown ones left alone")))))
     nil))
 
+(-> test-world-presentation-cache () null)
+(defun test-world-presentation-cache ()
+  "Test the presentation world follows every change to the log, even within one second."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human first-agent) (world-tests--agents configuration)
+      (declare (ignore human))
+      (let* ((terminal    (make-instance 'recording-terminal :columns 80))
+             (application (make-instance 'application
+                                         :configuration configuration
+                                         :ui            (terminal-ui-create :terminal terminal)))
+             (identifier  (participant-identifier first-agent))
+             (loads       0))
+        (flet ((name ()
+                 "Return the agent's name as the application presents it."
+                 (participant-name (world-participant-find (application-world application)
+                                                           identifier))))
+          (test-call-with-function-replacements
+           (list (list 'world-load
+                       (let ((load (symbol-function 'world-load)))
+                         (lambda (candidate)
+                           (incf loads)
+                           (funcall load candidate)))))
+           (lambda ()
+             (name)
+             (name)
+             (test-assert (= loads 1) "an unchanged log is read once")
+             (world-participant-rename configuration identifier "first-name")
+             (world-participant-rename configuration identifier "second-name")
+             (test-assert (string= (name) "second-name")
+                          "two renames in one second both reach presentation")
+             (test-assert (= loads 2) "a changed log is read again once"))))))
+    nil))
+
 (-> test-world-mention-highlighting () null)
 (defun test-world-mention-highlighting ()
   "Test highlighting styles the mentions it resolves and keeps every character of the text."
