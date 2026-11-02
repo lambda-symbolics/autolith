@@ -157,14 +157,13 @@ whole history when a crash or retention boundary interrupted sequencing."
          (funcall function record)))))
   nil)
 
-(-> conversation-replay-load (configuration string) conversation)
-(defun conversation-replay-load (configuration identifier)
-  "Load IDENTIFIER's newest header without replaying or repairing its state."
-  (let* ((identity (conversation-pathname-for-id configuration identifier))
-         (active   (conversation-storage-active-pathname identity)))
+(-> conversation-replay-load-identity (pathname) conversation)
+(defun conversation-replay-load-identity (identity)
+  "Load conversation IDENTITY's newest header without replaying or repairing its state."
+  (let ((active (conversation-storage-active-pathname identity)))
     (unless active
       (error 'conversation-error
-             :message  (format nil "Conversation ~A does not exist." identifier)
+             :message  (format nil "Conversation ~A does not exist." (pathname-name identity))
              :pathname identity
              :sequence nil))
     (let ((conversation
@@ -172,6 +171,17 @@ whole history when a crash or retention boundary interrupted sequencing."
              identity active (conversation-peek-header active))))
       (setf (conversation-log-pathname conversation) active)
       conversation)))
+
+(-> conversation-replay-load (configuration string) conversation)
+(defun conversation-replay-load (configuration identifier)
+  "Load IDENTIFIER's newest header without replaying or repairing its state."
+  (let ((identity (conversation-pathname-for-id configuration identifier)))
+    (unless (conversation-storage-active-pathname identity)
+      (error 'conversation-error
+             :message  (format nil "Conversation ~A does not exist." identifier)
+             :pathname identity
+             :sequence nil))
+    (conversation-replay-load-identity identity)))
 
 (-> conversation-replay-create (conversation) conversation-replay-session)
 (defun conversation-replay-create (conversation)

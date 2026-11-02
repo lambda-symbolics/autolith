@@ -616,7 +616,8 @@
   test-world-channels-command
   test-world-message-send
   test-world-channel-tools
-  test-world-message-presentation)
+  test-world-message-presentation
+  test-world-child-participants)
 
 (define-test-suite preferences
   test-preferences

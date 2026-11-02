@@ -569,3 +569,76 @@
         (test-assert (= (length (world-inbox-deliveries configuration "bsecnd2")) 1)
                      "the inbox keeps the undelivered message"))))
   nil)
+
+(-> test-world-child-participants () null)
+(defun test-world-child-participants ()
+  "Test child task conversations become nested channels with steerable participants."
+  (with-test-configuration (configuration)
+    (let* ((root  (world-tests--persisted-conversation configuration "broot11" 1000))
+           (child (conversation-create configuration
+                                       :identifier   "exec-one"
+                                       :storage-root (merge-pathnames
+                                                      "tasks/broot11/exec-one/"
+                                                      (config :data-root configuration))
+                                       :created-at   1500)))
+      (conversation-append-user-message child "do the task")
+      (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3000)
+        (let ((root-agent (find ':agent (world-channel-residents world "broot11")
+                                :key #'participant-kind))
+              (channel    (world-channel-find world "exec-one"))
+              (task-agent (first (world-channel-residents world "exec-one"))))
+          (test-assert (= count 2) "the root and its child are migrated")
+          (test-assert (and channel
+                            (equal (channel-parent channel) "broot11")
+                            (string= (channel-owner channel)
+                                     (participant-identifier root-agent)))
+                       "a child channel nests under its root and belongs to the root's agent")
+          (test-assert (and task-agent
+                            (string= (participant-name task-agent) "task")
+                            (equal (participant-parent task-agent)
+                                   (participant-identifier root-agent)))
+                       "a child's participant is named task under the root's agent")
+          (test-assert (string= (participant-residence (world-human-participant world)) "broot11")
+                       "the human stays in the root channel")
+          (let ((text (world-tests--read configuration root "id/exec-one")))
+            (test-assert (and (search "Channel exec-one" text)
+                              (search "nested under b-root11" text)
+                              (search "do the task" text))
+                         "channel:id/<execution> reads a child's history"))
+          (world-message-send configuration
+                              :sender   (participant-identifier root-agent)
+                              :channel  "exec-one"
+                              :text     "stop and report"
+                              :notify-p nil)
+          (let* ((taken   (make-hash-table :test #'equal))
+                 (entries (world-inbox-steering-take configuration
+                                                     :channel      "exec-one"
+                                                     :conversation child
+                                                     :taken        taken)))
+            (test-assert (and (= (length entries) 1)
+                              (search "stop and report"
+                                      (agent-steering-input-content (first entries))))
+                         "a message to a child's channel becomes a labeled steer")
+            (test-assert (null (world-inbox-steering-take configuration
+                                                          :channel      "exec-one"
+                                                          :conversation child
+                                                          :taken        taken))
+                         "a taken message is not taken twice")
+            (test-assert (world-inbox-steering-ack configuration
+                                                   :channel    "exec-one"
+                                                   :identifier (agent-steering-input-identifier
+                                                                (first entries))
+                                                   :taken      taken)
+                         "the steer's receipt settles the delivery")
+            (test-assert (null (world-inbox-deliveries configuration "exec-one"))
+                         "the settled delivery leaves the inbox"))
+          (platform-delete-directory-tree *platform*
+                                          (merge-pathnames "tasks/broot11/"
+                                                           (config :data-root configuration))
+                                          :validate t)
+          (let ((world (values (world-reconcile-sessions configuration :now 3001))))
+            (test-assert (and (null (world-channel-find world "exec-one"))
+                              (null (world-participant-find
+                                     world (participant-identifier task-agent))))
+                         "a pruned child retires its channel and participant"))))))
+  nil)

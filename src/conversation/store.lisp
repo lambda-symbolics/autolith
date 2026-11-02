@@ -3549,6 +3549,37 @@ later picker searches read it without scanning the log."
     (mapcar #'first
             (sort summaries #'> :key #'second))))
 
+(-> conversation-task-identity-pathname (configuration string string) pathname)
+(defun conversation-task-identity-pathname (configuration root-identifier execution-identifier)
+  "Return the identity of child conversation EXECUTION-IDENTIFIER run for ROOT-IDENTIFIER."
+  (merge-pathnames
+   (make-pathname :name execution-identifier :type "sexp")
+   (merge-pathnames (format nil "tasks/~A/~A/"
+                            (or (conversation-identifier-path-fragment root-identifier)
+                                (string-downcase root-identifier))
+                            execution-identifier)
+                    (config :data-root configuration))))
+
+(-> conversation-task-identities (configuration) list)
+(defun conversation-task-identities (configuration)
+  "Return every child task conversation with its root, as (IDENTITY ROOT-IDENTIFIER) pairs.
+
+Children live under tasks/<root>/<execution>/ in the data root; only those
+with durable storage are listed."
+  (let ((tasks (merge-pathnames "tasks/" (config :data-root configuration))))
+    (when (uiop:directory-exists-p tasks)
+      (loop for group in (uiop:subdirectories tasks)
+            for root = (first (last (pathname-directory group)))
+            when (stringp root)
+              append (loop for execution in (uiop:subdirectories group)
+                           for name = (first (last (pathname-directory execution)))
+                           for identity = (and (stringp name)
+                                               (merge-pathnames
+                                                (make-pathname :name name :type "sexp")
+                                                execution))
+                           when (and identity (conversation-storage-active-pathname identity))
+                             collect (list identity root))))))
+
 (-> conversation-activity-summary (pathname)
     (values (integer 0) (integer 0)))
 (defun conversation-activity-summary (pathname)
