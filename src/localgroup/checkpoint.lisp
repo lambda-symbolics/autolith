@@ -42,7 +42,8 @@
           (reconnect-id (make-identifier))
           (detached-explicitly-p
             (with-lock-held ((image-daemon:daemon-runtime-lock session))
-              (localgroup-session-detached-explicitly-p session))))
+              (localgroup-session-detached-explicitly-p session)))
+          (linger-p     (localgroup-session-linger-p session)))
       (unwind-protect
            (progn
              (localgroup--finish-checkpoint-attachments session reconnect-id)
@@ -53,4 +54,5 @@
         (unless (application-localgroup-session application)
           (localgroup-start application :token token :created-at created-at
                                        :detached-explicitly-p   detached-explicitly-p
-                                       :checkpoint-reconnect-id reconnect-id))))))
+                                       :checkpoint-reconnect-id reconnect-id
+                                       :linger-p                linger-p))))))

@@ -1454,6 +1454,7 @@
   test-localgroup-detach-preempts-active-work
   test-localgroup-client-first-resume
   test-localgroup-abandoned-session-exit
+  test-localgroup-lingering-session
   test-localgroup-fresh-session-spawn
   test-localgroup-process-handoff)
 
