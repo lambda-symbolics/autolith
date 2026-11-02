@@ -1021,7 +1021,9 @@ state, including an empty list after successful or pristine startup."
                 :conversation-id    (or effective-resume-id recovery-conversation-id)
                 :resume-command-p   (and effective-resume-requested-p
                                          (null effective-resume-id))
-                :recovery-diagnosis recovery-diagnosis))
+                :recovery-diagnosis recovery-diagnosis
+                :launch             (main--launch-options
+                                     command :permission-mode permission-mode)))
       (return-from main--start-session nil))
     (let ((*localgroup-startup-record* handoff-record))
       (setf *active-application*
@@ -1112,11 +1114,12 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
                         (:pristine-p boolean)
                         (:conversation-id (option string))
                         (:resume-command-p boolean)
-                        (:recovery-diagnosis (option string)))
+                        (:recovery-diagnosis (option string))
+                        (:launch list))
     (values (option string) boolean))
 (defun main--open-world-channel
     (configuration &key (permission-mode ':ask) immutable-p pristine-p conversation-id
-                        resume-command-p recovery-diagnosis)
+                        resume-command-p recovery-diagnosis launch)
   "Open this terminal's channel in the world server, or return NIL to run direct.
 
 CONVERSATION-ID opens that channel; otherwise the launch directory selects
@@ -1130,23 +1133,47 @@ for this terminal."
                          :immutable-p        immutable-p
                          :pristine-p         pristine-p
                          :resume-command-p   resume-command-p
-                         :recovery-diagnosis recovery-diagnosis)
+                         :recovery-diagnosis recovery-diagnosis
+                         :launch             launch)
     (error (condition)
       (format *error-output*
               "Autolith is starting directly in this terminal: ~A~%"
               (bounded-string (princ-to-string condition) :limit 400))
       (values nil nil))))
 
+(-> main--launch-options (clingon:command &key (:permission-mode (option keyword))) list)
+(defun main--launch-options (command &key permission-mode)
+  "Return the launch options COMMAND states explicitly, as a world server applies them to a channel.
+
+Only options given on the command line appear, PERMISSION-MODE among them
+when --permissions was, so a channel the server already serves can tell a
+request it conflicts with from one that says nothing."
+  (append (let ((model (getopt* command ':model)))
+            (when model
+              (list :model model)))
+          (let ((provider (getopt* command ':provider)))
+            (when provider
+              (list :provider provider)))
+          (when (and permission-mode (getopt* command ':permissions))
+            (list :permission-mode permission-mode))
+          (when (getopt* command ':immutable)
+            (list :immutable-p t))
+          (when (or (getopt* command ':fullscreen) (getopt* command ':almighty))
+            (list :fullscreen-p t))
+          (when (getopt* command ':almighty)
+            (list :theme ':almighty))))
+
 (-> main--run-world-client
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:pristine-p boolean)
                         (:conversation-id (option string))
                         (:resume-command-p boolean)
-                        (:recovery-diagnosis (option string)))
+                        (:recovery-diagnosis (option string))
+                        (:launch list))
     boolean)
 (defun main--run-world-client
     (configuration &key (permission-mode ':ask) immutable-p pristine-p conversation-id
-                        resume-command-p recovery-diagnosis)
+                        resume-command-p recovery-diagnosis launch)
   "Serve this terminal as a client of the world server until its channel lets it go.
 
 Return NIL when no server could serve it, so the session runs directly. A
@@ -1160,7 +1187,8 @@ sidebar of the world follows the terminal from channel to channel."
                                 :pristine-p         pristine-p
                                 :conversation-id    conversation-id
                                 :resume-command-p   resume-command-p
-                                :recovery-diagnosis recovery-diagnosis)
+                                :recovery-diagnosis recovery-diagnosis
+                                :launch             launch)
     (when session-id
       (loop
         with panel = (world-sidebar-create configuration)
@@ -1185,7 +1213,8 @@ sidebar of the world follows the terminal from channel to channel."
                                    :channel         (getf (rest exit) :session-id)
                                    :permission-mode permission-mode
                                    :immutable-p     immutable-p
-                                   :pristine-p      pristine-p))
+                                   :pristine-p      pristine-p
+                                   :launch          launch))
               (progn
                 (localgroup-relay-exit configuration exit ':control)
                 (return t))))))))
