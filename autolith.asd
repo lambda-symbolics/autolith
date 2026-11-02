@@ -391,6 +391,7 @@
                                           (:file "startup/main")
                                           (:file "world/server")
                                           (:file "world/client")
+                                          (:file "world/sidebar")
                                           (:file "startup/active-image"))))
   :in-order-to             ((asdf:test-op (asdf:test-op #:autolith/tests))))
 
@@ -444,6 +445,7 @@
                                           (:file "usage-display-tests")
                                           (:file "world-tests")
                                           (:file "world-server-tests")
+                                          (:file "world-sidebar-tests")
                                           (:file "preferences-tests")
                                           (:file "prompt-cache-tests")
                                           (:file "idle-compaction-tests")
