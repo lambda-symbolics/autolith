@@ -2340,20 +2340,25 @@ other channel the server hosts."
                 (checkpoint-backend-create
                  configuration (application-worker application)
                  :tool-registry (application-tool-registry application)))
-              (generation    (checkpoint-create backend)))
-         (if (platform-supports-p *platform* ':restartable-image-saver)
-             (progn
-               (setf (application-checkpoint-restart-request application)
-                     (cons backend generation))
-               (application-present
-                application
-                (format nil "Exact heap checkpoint ~A is scheduled. Autolith will restart after this command and resume this session."
-                        (generation-identifier generation))))
-             (application-present
-              application
-              (format nil "Checkpoint ~A is being published by process ~D."
-                      (generation-identifier generation)
-                      (generation-coordinator-pid generation)))))
+              (generation    (if (application-hosted-p application)
+                                 nil
+                                 (checkpoint-create backend))))
+         (cond
+           ((application-hosted-p application)
+            (application-present application (world-server-checkpoint application backend)))
+           ((platform-supports-p *platform* ':restartable-image-saver)
+            (setf (application-checkpoint-restart-request application)
+                  (cons backend generation))
+            (application-present
+             application
+             (format nil "Exact heap checkpoint ~A is scheduled. Autolith will restart after this command and resume this session."
+                     (generation-identifier generation))))
+           (t
+            (application-present
+             application
+             (format nil "Checkpoint ~A is being published by process ~D."
+                     (generation-identifier generation)
+                     (generation-coordinator-pid generation))))))
     (application-set-activity application nil))
   nil)
 

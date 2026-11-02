@@ -405,11 +405,15 @@ checkpoint work."
                       (:resume-offer-p boolean)
                       (:hosted-p boolean)
                       (:quiescer (option function))
-                      (:ready-function (option function)))
+                      (:ready-function (option function))
+                      (:resume-p boolean)
+                      (:localgroup-identity list)
+                      (:notice (option string)))
     (option keyword))
 (defun application-serve
     (application &key initial-command initial-input recovery-diagnosis
-                      resume-offer-p hosted-p quiescer ready-function)
+                      resume-offer-p hosted-p quiescer ready-function
+                      resume-p localgroup-identity notice)
   "Serve APPLICATION's session on this thread until it exits, then release its resources.
 
 A direct session owns its process: APPLICATION-RUN wraps this function with
@@ -419,7 +423,14 @@ one of several a world server hosts, each on its own thread: its endpoint
 lingers without clients, the process services stay with the server, and
 QUIESCER, a function of one thunk, runs checkpoint work with every hosted
 session stopped. READY-FUNCTION, when supplied, is called with APPLICATION
-once its endpoint is published. Return the controller's exit reason."
+once its endpoint is published.
+
+A session that exits for a checkpoint keeps its resources: its endpoint
+stops, so its thread can end for the fork, and the same application is
+served again with RESUME-P, which skips the startup presentation and
+recovery, LOCALGROUP-IDENTITY, the :TOKEN, :CREATED-AT and
+:CHECKPOINT-RECONNECT-ID its clients wait for, and NOTICE, presented once
+the session shows again. Return the controller's exit reason."
   (let* ((ui                     (application-ui application))
          (worker                 (application-worker application))
          (input-controller       nil)
@@ -436,8 +447,18 @@ once its endpoint is published. Return the controller's exit reason."
       (change-class ui 'fullscreen-terminal-ui))
     (when (terminal-ui-fullscreen-p ui)
       (setf (terminal-ui-fullscreen-welcome-p ui) t))
-    (labels ((close-runtime-resources ()
-               "Close APPLICATION's external runtimes at most once."
+    (labels ((pause-resources ()
+               "Stop only the session's own threads, keeping APPLICATION ready to serve again."
+               ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
+               (ignore-errors (localgroup-stop application))
+               ; mallet:suppress no-ignore-errors -- a failed join must not keep the pause from completing
+               (ignore-errors (application--quiesce-update-check application))
+               nil)
+
+             (close-runtime-resources ()
+               "Close APPLICATION's external runtimes at most once, or only pause them for a checkpoint."
+               (when (eq exit-reason ':checkpoint)
+                 (return-from close-runtime-resources (pause-resources)))
                ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
                (ignore-errors (localgroup-stop application))
                (unless hosted-p
@@ -482,16 +503,17 @@ once its endpoint is published. Return the controller's exit reason."
              (unwind-protect
                   (progn
                     (application-sync-window-title application)
-                    (application-present application
-                                         (application-banner application))
-                    (let ((update-notice
-                            (application--update-notice application)))
-                      (when update-notice
-                        (application-present application update-notice)))
-                    (when (and (null initial-command)
-                               (null initial-input)
-                               (null recovery-diagnosis))
-                      (application--offer-startup-update application))
+                    (unless resume-p
+                      (application-present application
+                                           (application-banner application))
+                      (let ((update-notice
+                              (application--update-notice application)))
+                        (when update-notice
+                          (application-present application update-notice)))
+                      (when (and (null initial-command)
+                                 (null initial-input)
+                                 (null recovery-diagnosis))
+                        (application--offer-startup-update application)))
                     (let ((provenance
                             (application-installation-provenance application)))
                       (when provenance
@@ -499,20 +521,21 @@ once its endpoint is published. Return the controller's exit reason."
                               (update-check-start
                                (application-configuration application)
                                provenance))))
-                    (dolist (failure
-                             (application-mutation-replay-failures application))
-                      (application-present
-                       application
-                       (application--transcript-entry
-                        application
-                        :style  ':failure
-                        :header "✗ mutation replay skipped"
-                        :body   (format nil "~A~%~A"
-                                        (namestring (first failure))
-                                        (rest failure)))))
-                    (let ((skips (application-replay-skips-entry application)))
-                      (when skips
-                        (application-present application skips)))
+                    (unless resume-p
+                      (dolist (failure
+                               (application-mutation-replay-failures application))
+                        (application-present
+                         application
+                         (application--transcript-entry
+                          application
+                          :style  ':failure
+                          :header "✗ mutation replay skipped"
+                          :body   (format nil "~A~%~A"
+                                          (namestring (first failure))
+                                          (rest failure)))))
+                      (let ((skips (application-replay-skips-entry application)))
+                        (when skips
+                          (application-present application skips))))
                     (application-render-records application)
                     (setf (application-recovery-startup-p application) nil)
                     (when initial-input
@@ -531,18 +554,22 @@ once its endpoint is published. Return the controller's exit reason."
                            :pending-persistence-enabled-p
                            recovery-input-storage-ready-p
                            :start-reader-p nil))
-                    (application-mission-schedules-recover application :startup-p t)
-                    (application-peer-messages-recover application)
-                    (application-recovery-input-vault-present-startup-warning
-                     application)
-                    (application-present-generation-health-warning
-                     application)
-                    (localgroup-start application :linger-p hosted-p)
+                    (unless resume-p
+                      (application-mission-schedules-recover application :startup-p t)
+                      (application-peer-messages-recover application)
+                      (application-recovery-input-vault-present-startup-warning
+                       application)
+                      (application-present-generation-health-warning
+                       application))
+                    (apply #'localgroup-start application :linger-p hosted-p localgroup-identity)
                     (when ready-function
                       (funcall ready-function application))
-                    (application-startup-presentation
-                     application input-controller
-                     :onboarding-p (null recovery-diagnosis))
+                    (if resume-p
+                        (when notice
+                          (application-present application notice))
+                        (application-startup-presentation
+                         application input-controller
+                         :onboarding-p (null recovery-diagnosis)))
                     (unless hosted-p
                       (management-repl-start application)
                       (slynk-start (application-configuration application)

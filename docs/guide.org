@@ -1525,9 +1525,13 @@ autolith lg stop
 every channel and then the server. An update or a rollback chosen in any
 channel stops the server as well, since every channel shares its image. A
 checkpoint from one channel saves the whole process, with that channel as
-the one a rollback resumes, and is refused while another channel is working.
-On Windows the exact-heap checkpoint restarts the process, so the server
-refuses it; run the channel directly to checkpoint it. =--detached= starts a
+the one a rollback resumes: once every channel is idle the server pauses
+them all, each terminal reconnects by itself, and each channel resumes with
+the outcome, the one that asked with the generation's identifier. A channel
+still working refuses the checkpoint. A terminal starting during the pause
+waits for the server rather than starting a second one. On Windows the
+exact-heap checkpoint restarts the process, so the server refuses it; run
+the channel directly to checkpoint it. =--detached= starts a
 standalone session process outside the server, and
 =AUTOLITH_SESSION_STYLE=direct= runs one session in the terminal's own
 process. The launch options a start states, =--model=, =--provider=,

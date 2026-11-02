@@ -632,19 +632,27 @@ configuration error rather than a silent restart without publication."
                            configuration
                            (tool-context-worker context)
                            :tool-registry (tool-context-registry context))))
-         (generation    (checkpoint-create backend)))
-    (if (and (platform-supports-p *platform* ':restartable-image-saver)
-             (typep application 'application))
-        (progn
-          (setf (application-checkpoint-restart-request application)
-                (cons backend generation))
-          (tool-success
-           (format nil "Exact heap checkpoint ~A is scheduled after this turn; Autolith will restart and resume the current session."
-                   (generation-identifier generation))))
-        (tool-success
-         (format nil "Checkpoint ~A is being published by coordinator process ~D."
-                 (generation-identifier generation)
-                 (generation-coordinator-pid generation))))))
+         (hosted-p      (and (typep application 'application)
+                             (application-hosted-p application)))
+         (generation    (if hosted-p
+                            nil
+                            (checkpoint-create backend))))
+    (cond
+      (hosted-p
+       (tool-success (world-server-checkpoint application backend)))
+      ((and (platform-supports-p *platform* ':restartable-image-saver)
+            (typep application 'application))
+       (progn
+         (setf (application-checkpoint-restart-request application)
+               (cons backend generation))
+         (tool-success
+          (format nil "Exact heap checkpoint ~A is scheduled after this turn; Autolith will restart and resume the current session."
+                  (generation-identifier generation)))))
+      (t
+       (tool-success
+        (format nil "Checkpoint ~A is being published by coordinator process ~D."
+                (generation-identifier generation)
+                (generation-coordinator-pid generation)))))))
 
 (defmethod tool-execute ((tool self-generations-tool)
                          (context tool-context)

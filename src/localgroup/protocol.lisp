@@ -11,7 +11,12 @@
   (not (null *localgroup-startup-record*)))
 
 (define-condition localgroup-error (image-daemon:daemon-error autolith-error)
-  ()
+  ((retry-p
+    :initarg       :retry-p
+    :initform      nil
+    :reader        localgroup-error-retry-p
+    :type          boolean
+    :documentation "Whether the endpoint asked for the request again shortly, as during a checkpoint."))
   (:documentation
    "A localgroup failure joined to Autolith's condition hierarchy."))
 
