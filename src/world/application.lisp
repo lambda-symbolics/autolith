@@ -150,37 +150,48 @@ well, since the steer persists first and the queued turn then skips."
   "Return a function completing @ participant names from CONFIGURATION's world as it is."
   (let ((cache nil))
     (lambda (token)
-      (let ((world (world--cached configuration cache)))
-        (setf cache (cons (world--write-date configuration) world))
-        (world-mention-completion-entries world token)))))
+      (setf cache (world--cached configuration cache))
+      (world-mention-completion-entries (rest cache) token))))
 
-(-> world--write-date (configuration) (option integer))
-(defun world--write-date (configuration)
-  "Return the write date of CONFIGURATION's world log, or NIL without one."
+(-> world--source-token (configuration) list)
+(defun world--source-token (configuration)
+  "Return what identifies the content of CONFIGURATION's world log: its write date and size.
+
+The size tells two writes within one second apart. An absent log is the
+empty token."
   (let ((pathname (configuration-world-path configuration)))
-    (and (probe-file pathname) (file-write-date pathname))))
+    (if (probe-file pathname)
+        (list (file-write-date pathname)
+              (with-open-file (stream pathname :element-type '(unsigned-byte 8))
+                (file-length stream)))
+        nil)))
 
-(-> world--cached (configuration (option cons)) world)
+(-> world--cached (configuration (option cons)) cons)
 (defun world--cached (configuration cache)
-  "Return the world in CACHE, a (WRITE-DATE . WORLD) pair still current, or read it afresh.
+  "Return CACHE, a (TOKEN . WORLD) pair, while its token is the log's, else a fresh pair.
 
-A world that cannot be read presents as empty."
-  (let ((date (world--write-date configuration)))
-    (if (and cache (eql (first cache) date))
-        (rest cache)
-        (handler-case (world-load configuration)
-          (autolith-error ()
-            (make-instance 'world))))))
+The token is read before and after the world, and the world is read again
+until both agree, so a write during the read never pairs an old world with a
+new token. A world that cannot be read presents as empty."
+  (let ((token (world--source-token configuration)))
+    (if (and cache (equal (first cache) token))
+        cache
+        (loop for attempt from 1 to 3
+              for before = token then after
+              for world = (handler-case (world-load configuration)
+                            (autolith-error ()
+                              (make-instance 'world)))
+              for after = (world--source-token configuration)
+              when (or (equal before after) (= attempt 3))
+                return (cons after world)))))
 
 (-> application-world (application) world)
 (defun application-world (application)
   "Return the world as APPLICATION last read it for presentation, rereading it once it changed."
-  (let* ((configuration (application-configuration application))
-         (cache         (application-world-cache application))
-         (world         (world--cached configuration cache)))
-    (setf (application-world-cache application)
-          (cons (world--write-date configuration) world))
-    world))
+  (let ((cache (world--cached (application-configuration application)
+                              (application-world-cache application))))
+    (setf (application-world-cache application) cache)
+    (rest cache)))
 
 (-> application-world-mention-spans (application list) list)
 (defun application-world-mention-spans (application spans)
