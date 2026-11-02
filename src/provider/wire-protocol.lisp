@@ -56,19 +56,33 @@ local retention estimate, which only schedules pruning and idle compaction."
   (when (and *provider-cache-prefix-function* *provider-cache-request-prefix*)
     (funcall *provider-cache-prefix-function*
              (append *provider-cache-request-prefix*
-                     (list :wire (provider-cache-wire-plan request)))))
+                     (list :wire
+                           (provider-cache-wire-plan
+                            request
+                            :volatile-items
+                            (getf *provider-cache-request-prefix* :volatile-items 0))))))
   nil)
 
 (defmethod provider-request-object :around
     ((provider model-provider) (projection cl-llm-provider-api:wire-request)
      (tool-namespaces vector) &key goal-context compaction-p)
-  "Capture reusable fingerprints before encoding; observe wire fields at transport."
+  "Capture reusable fingerprints before encoding; observe wire fields at transport.
+
+The encoder's second value, the count of trailing sequence items that change
+on every request, joins the fingerprints as :VOLATILE-ITEMS so the final wire
+plan can bound the prefix the next request may reuse."
   (declare (ignore goal-context))
-  (unless compaction-p
-    (when *provider-cache-prefix-function*
-      (setf *provider-cache-request-prefix*
-            (provider-cache-prefix-create projection tool-namespaces))))
-  (call-next-method))
+  (if (or compaction-p (null *provider-cache-prefix-function*))
+      (call-next-method)
+      (multiple-value-bind (request volatile-items)
+          (progn
+            (setf *provider-cache-request-prefix*
+                  (provider-cache-prefix-create projection tool-namespaces))
+            (call-next-method))
+        (setf *provider-cache-request-prefix*
+              (append *provider-cache-request-prefix*
+                      (list :volatile-items (or volatile-items 0))))
+        (values request volatile-items))))
 
 (defgeneric provider-prepare-stream-request (provider request credentials)
   (:documentation
@@ -149,30 +163,33 @@ establish shared history growth, never the provider's token boundary."
           (provider-cache-prefix-characters previous))
        t))
 
-(-> provider-cache-wire-plan (json-object) list)
-(defun provider-cache-wire-plan (request)
+(-> provider-cache-wire-plan (json-object &key (:volatile-items (integer 0))) list)
+(defun provider-cache-wire-plan (request &key (volatile-items 0))
   "Fingerprint the final encoded REQUEST as the provider receives it.
 
 Return a property list. :FIELDS pairs each other top-level field name with its
 digest and serialized character count, sorted by name. :ITEMS fingerprints the
-ordered conversation sequence. :BREAKPOINTS lists each explicit cache marker's
-path and requested lifetime, NIL for the service default. A request wrapped in
-a Code Assist envelope is measured through its inner request. No prompt text
-is retained."
+ordered conversation sequence. :PREFIX-ITEMS counts the leading items before
+the VOLATILE-ITEMS trailing ones that change on every request, so a later
+request may reuse them. :BREAKPOINTS lists each explicit cache marker's path
+and requested lifetime, NIL for the service default. A request wrapped in a
+Code Assist envelope is measured through its inner request. No prompt text is
+retained."
   (let* ((inner    (json-get request "request"))
          (body     (if (json-object-p inner) inner request))
          (sequence (find-if (lambda (name)
                               (provider-cache-wire--array-p (json-get body name)))
-                            *provider-cache-wire-sequence-fields*)))
+                            *provider-cache-wire-sequence-fields*))
+         (items    (and sequence
+                        (map 'list #'provider-cache-prefix--entry (json-get body sequence)))))
     (list :fields
           (sort (loop for name being the hash-keys of body using (hash-value value)
                       unless (equal name sequence)
                         collect (cons name (provider-cache-prefix--entry value)))
                 #'string< :key #'first)
-          :items
-          (and sequence (map 'list #'provider-cache-prefix--entry (json-get body sequence)))
-          :breakpoints
-          (provider-cache-wire--breakpoints body nil))))
+          :items        items
+          :prefix-items (max 0 (- (length items) volatile-items))
+          :breakpoints  (provider-cache-wire--breakpoints body nil))))
 
 (-> provider-cache-wire-change (list list) list)
 (defun provider-cache-wire-change (previous current)
@@ -180,14 +197,19 @@ is retained."
 
 Both arguments are wire plans. Return a property list: :FIELDS names the
 top-level fields that changed, appeared or disappeared; :FIRST-CHANGED-ITEM is
-the index of the first conversation item that differs, or NIL when CURRENT
-repeats all of PREVIOUS's items; :ITEMS is CURRENT's item count; and
+the index of the first item of PREVIOUS's reusable prefix that CURRENT changes
+or lacks, or NIL when CURRENT repeats that whole prefix, so appended history
+and a changed volatile tail are no change; :ITEMS is CURRENT's item count; and
 :BREAKPOINTS-MOVED-P is true when marker positions or lifetimes differ.
 Return NIL when either plan is missing."
   (when (and previous current)
     (let* ((old-fields (getf previous :fields))
            (new-fields (getf current :fields))
            (old-items  (getf previous :items))
+           (reusable   (subseq old-items
+                               0
+                               (min (getf previous :prefix-items (length old-items))
+                                    (length old-items))))
            (new-items  (getf current :items))
            (names      (remove-duplicates (mapcar #'first (append old-fields new-fields))
                                           :test #'string=)))
@@ -198,12 +220,12 @@ Return NIL when either plan is missing."
                              names)
                   #'string<)
             :first-changed-item
-            (or (loop for old in old-items
+            (or (loop for old in reusable
                       for new in new-items
                       for index from 0
                       unless (equal old new)
                         return index)
-                (and (< (length new-items) (length old-items))
+                (and (< (length new-items) (length reusable))
                      (length new-items)))
             :items               (length new-items)
             :breakpoints-moved-p (not (equal (getf previous :breakpoints)

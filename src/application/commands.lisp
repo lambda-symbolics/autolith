@@ -310,18 +310,24 @@ transcript renderer, including in fullscreen."
 
 (-> application--wire-change-description (list) (option string))
 (defun application--wire-change-description (change)
-  "Describe the final-request CHANGE behind a cache notice, or NIL when nothing changed."
-  (let ((parts
-          (remove nil
-                  (list (and (getf change :fields)
-                             (format nil "~{~A~^, ~} changed" (getf change :fields)))
-                        (and (getf change :first-changed-item)
-                             (format nil "item ~D of ~D changed"
-                                     (1+ (getf change :first-changed-item))
-                                     (getf change :items)))
-                        (and (getf change :breakpoints-moved-p)
-                             "cache markers moved")))))
-    (and parts (format nil "~{~A~^, ~}" parts))))
+  "Describe the final-request CHANGE behind a cache notice, or NIL without a comparison.
+
+A request that repeats the previous reusable prefix with the same fields and
+markers reads as intact, which points at the provider rather than the prompt."
+  (and change
+       (let ((parts
+               (remove nil
+                       (list (and (getf change :fields)
+                                  (format nil "~{~A~^, ~} changed" (getf change :fields)))
+                             (and (getf change :first-changed-item)
+                                  (format nil "item ~D of ~D changed"
+                                          (1+ (getf change :first-changed-item))
+                                          (getf change :items)))
+                             (and (getf change :breakpoints-moved-p)
+                                  "cache markers moved")))))
+         (if parts
+             (format nil "~{~A~^, ~}" parts)
+             "prefix intact"))))
 
 (-> application-note-prompt-cache-request-started (application) null)
 (defun application-note-prompt-cache-request-started (application)

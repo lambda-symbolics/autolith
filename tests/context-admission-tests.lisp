@@ -318,7 +318,9 @@
                          "the caller's original request is not changed")
             (unless native-p
               (test-assert (equal (getf observed :wire)
-                                  (provider-cache-wire-plan final-request))
+                                  (provider-cache-wire-plan
+                                   final-request
+                                   :volatile-items (getf observed :volatile-items 0)))
                            "cache observation fingerprints the finalized wire request")))))))
   nil)
 

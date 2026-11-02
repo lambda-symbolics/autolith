@@ -392,7 +392,29 @@
                             (eq (getf change :breakpoints-moved-p) moved-p))
                        (format nil "the change describes ~A" description)))))
     (test-assert (null (provider-cache-wire-change nil base))
-                 "a request without a previous plan reports no change"))
+                 "a request without a previous plan reports no change")
+    (flet ((plain (texts &key (volatile-items 0))
+             "Return the plan of a marker-free request with one message per text."
+             (provider-cache-wire-plan
+              (json-object "model"    "claude-test"
+                           "messages" (map 'vector
+                                           (lambda (text)
+                                             (json-object "role" "user" "content" text))
+                                           texts))
+              :volatile-items volatile-items)))
+      (let ((bounded (plain '("a" "b" "c") :volatile-items 1)))
+        (test-assert (and (= (getf base :prefix-items) 3)
+                          (= (getf bounded :prefix-items) 2))
+                     "a volatile tail shortens the reusable prefix")
+        (dolist (case '((("a" "b" "c" "d") nil "a new item behind the volatile tail")
+                        (("a" "b" "x")     nil "a changed volatile item")
+                        (("a" "y" "c")     1   "a changed reusable item")
+                        (("a")             1   "a prefix cut short")))
+          (destructuring-bind (texts first-changed description) case
+            (test-assert (eql (getf (provider-cache-wire-change bounded (plain texts))
+                                    :first-changed-item)
+                              first-changed)
+                         (format nil "the bounded change describes ~A" description)))))))
   nil)
 
 (-> test-prompt-cache-miss-notices () null)
@@ -479,6 +501,17 @@
                                                     :items 9 :breakpoints-moved-p t))))))
                      " · request tools changed, item 5 of 9 changed, cache markers moved")
               "the notice names what changed in the request as sent")
+             (test-assert
+              (and (equal (terminal-span-text
+                           (first (last (application--prompt-cache-miss-notice
+                                         '(:kind :stalled :cached-tokens 16384
+                                           :prompt-tokens 37566
+                                           :history-growth-characters 16900
+                                           :wire-change (:fields nil :first-changed-item nil
+                                                         :items 46 :breakpoints-moved-p nil))))))
+                          " · request prefix intact")
+                   (null (application--wire-change-description nil)))
+              "a repeated reusable prefix reads as intact, and no comparison says nothing")
              (setf (application-prompt-cache-baseline application)
                    (make-instance 'prompt-cache-baseline
                                   :prompt-tokens 72000
