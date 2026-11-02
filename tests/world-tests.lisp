@@ -522,6 +522,72 @@
                      "an unknown explicit mention is refused"))))
   nil)
 
+(-> test-world-message-outbox () null)
+(defun test-world-message-outbox ()
+  "Test a send is recorded before fan-out, resumes under its identifier, and reaches each inbox once."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+      (declare (ignore first-agent))
+      (world-participant-subscribe configuration (participant-identifier second-agent) "bfirst1")
+      (flet ((delivery (identifier target)
+               "Return a post IDENTIFIER from the person to TARGET."
+               (make-instance 'world-delivery
+                              :identifier  identifier
+                              :time        1
+                              :sender      (participant-identifier human)
+                              :sender-name "user"
+                              :source      "bfirst1"
+                              :target      target
+                              :text        identifier
+                              :mentions    nil
+                              :kind        ':post)))
+        (let ((*world-inbox-limit* 1))
+          (world-inbox-append configuration "bsecnd2" (list (delivery "filler" "bsecnd2")))
+          (let* ((result (world-message-send configuration
+                                             :sender   (participant-identifier human)
+                                             :channel  "bfirst1"
+                                             :text     "hello"
+                                             :notify-p nil))
+                 (id     (getf result :id)))
+            (test-assert (and id
+                              (equal (getf result :channels) '("bfirst1"))
+                              (equal (getf result :pending) '("bsecnd2")))
+                         "the target receives the post while a full subscriber inbox leaves its copy pending")
+            (test-assert (equal (mapcar #'first (world-outbox-pending configuration id))
+                                '("bsecnd2"))
+                         "the pending copy waits in the outbox under the send's identifier")
+            (test-assert (and (null (world-message-resume configuration :notify-p nil))
+                              (= 1 (length (world-inbox-deliveries configuration "bfirst1"))))
+                         "a retry against the full inbox delivers nothing and repeats nothing")
+            (world-inbox-settle configuration "bfirst1" (list id))
+            (world-inbox-settle configuration "bsecnd2" '("filler"))
+            (test-assert (equal (world-message-resume configuration :notify-p nil) '("bsecnd2"))
+                         "once the inbox drains the pending copy is delivered")
+            (let ((copy (first (world-inbox-deliveries configuration "bsecnd2"))))
+              (test-assert (and copy
+                                (string= (world-delivery-identifier copy) id)
+                                (eq (world-delivery-kind copy) ':subscription))
+                           "the copy keeps the send's identifier and its reason"))
+            (test-assert (and (null (world-inbox-deliveries configuration "bfirst1"))
+                              (not (probe-file (world-outbox-pathname configuration id)))
+                              (null (world-outbox-identifiers configuration)))
+                         "a recipient that read its copy gets no second one, and the record is gone")))
+        (world-outbox-write configuration "crash11"
+                            (list (cons "bfirst1" (delivery "crash11" "bfirst1"))
+                                  (cons "bsecnd2" (delivery "crash11" "bsecnd2"))))
+        (world-inbox-append configuration "bfirst1" (list (delivery "crash11" "bfirst1")))
+        (test-assert (equal (world-message-resume configuration :notify-p nil) '("bfirst1" "bsecnd2"))
+                     "a send cut off between two inboxes resumes")
+        (test-assert (and (= 1 (count "crash11" (world-inbox-deliveries configuration "bfirst1")
+                                      :key #'world-delivery-identifier :test #'string=))
+                          (= 1 (count "crash11" (world-inbox-deliveries configuration "bsecnd2")
+                                      :key #'world-delivery-identifier :test #'string=))
+                          (null (world-outbox-identifiers configuration)))
+                     "the inbox that had the copy keeps one, the other gets one, the record is gone"))))
+  nil)
+
 (-> test-world-channel-tools () null)
 (defun test-world-channel-tools ()
   "Test the channel tools act as the conversation's participant."

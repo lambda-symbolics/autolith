@@ -3128,9 +3128,10 @@ the world knows no such channel."
                                         :text    (format nil "~{~A~^ ~}" words))))
     (application-present
      application
-     (format nil "Sent to ~{~A~^, ~}~@[; reached live: ~{~A~^, ~}~]."
+     (format nil "Sent to ~{~A~^, ~}~@[; reached live: ~{~A~^, ~}~]~@[; waiting for a full inbox: ~{~A~^, ~}~]."
              (mapcar #'conversation-identifier-display (getf result :channels))
-             (mapcar #'conversation-identifier-display (getf result :notified)))))
+             (mapcar #'conversation-identifier-display (getf result :notified))
+             (mapcar #'conversation-identifier-display (getf result :pending)))))
   ':continue)
 
 (define-application-command application--builtin-history-command
