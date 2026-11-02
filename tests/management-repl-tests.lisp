@@ -186,7 +186,7 @@
              (close stream)
              (setf stream nil)
              (test-assert
-              (eq (application-call-with-management-repl-quiesced
+              (eq (management-repl-call-quiesced
                    application
                    (lambda ()
                      (and (null (application-management-repl-endpoint application))

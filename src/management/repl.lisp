@@ -21,55 +21,76 @@
 
 ;;; The management REPL is image-daemon's evaluation endpoint, configured from
 ;;; the :MANAGEMENT-REPL-* settings, evaluating in the AUTOLITH package, and
-;;; owned by one application at a time.
+;;; owned by one application or one world server at a time.
 
-(-> management-repl-start (application) (option eval-endpoint))
-(defun management-repl-start (application)
-  "Start APPLICATION's configured management endpoint when enabled and return it."
-  (let ((configuration (application-configuration application)))
+(defgeneric management-repl-owner-configuration (owner)
+  (:documentation "Return the configuration OWNER's management endpoint is configured from."))
+
+(defgeneric management-repl-owner-endpoint (owner)
+  (:documentation "Return OWNER's running management endpoint, or NIL."))
+
+(defgeneric (setf management-repl-owner-endpoint) (endpoint owner)
+  (:documentation "Record ENDPOINT, or NIL, as OWNER's running management endpoint."))
+
+(defmethod management-repl-owner-configuration ((owner application))
+  "An application configures the endpoint from its own configuration."
+  (application-configuration owner))
+
+(defmethod management-repl-owner-endpoint ((owner application))
+  "An application keeps its endpoint in its own slot."
+  (application-management-repl-endpoint owner))
+
+(defmethod (setf management-repl-owner-endpoint) (endpoint (owner application))
+  "An application keeps its endpoint in its own slot."
+  (setf (application-management-repl-endpoint owner) endpoint))
+
+(-> management-repl-start (t) (option eval-endpoint))
+(defun management-repl-start (owner)
+  "Start OWNER's configured management endpoint when enabled and return it."
+  (let ((configuration (management-repl-owner-configuration owner)))
     (cond
       ((not (config :management-repl-enabled-p configuration))
        nil)
-      ((application-management-repl-endpoint application))
+      ((management-repl-owner-endpoint owner))
       (t
        (let ((endpoint (management-repl--call
                         (lambda ()
                           (eval-endpoint-start (management-repl--endpoint configuration))))))
-         (setf (application-management-repl-endpoint application) endpoint))))))
+         (setf (management-repl-owner-endpoint owner) endpoint))))))
 
-(-> management-repl-stop (application) null)
-(defun management-repl-stop (application)
-  "Stop APPLICATION's management endpoint, signaling when its threads do not quiesce."
-  (let ((endpoint (application-management-repl-endpoint application)))
+(-> management-repl-stop (t) null)
+(defun management-repl-stop (owner)
+  "Stop OWNER's management endpoint, signaling when its threads do not quiesce."
+  (let ((endpoint (management-repl-owner-endpoint owner)))
     (when endpoint
       (management-repl--call (lambda () (eval-endpoint-stop endpoint)))
-      (setf (application-management-repl-endpoint application) nil)))
+      (setf (management-repl-owner-endpoint owner) nil)))
   nil)
 
-(-> management-repl-transfer (application application) null)
-(defun management-repl-transfer (old-application new-application)
-  "Move the running management endpoint from OLD-APPLICATION to NEW-APPLICATION."
-  (let ((endpoint (application-management-repl-endpoint old-application)))
+(-> management-repl-transfer (t t) null)
+(defun management-repl-transfer (old-owner new-owner)
+  "Move the running management endpoint from OLD-OWNER to NEW-OWNER."
+  (let ((endpoint (management-repl-owner-endpoint old-owner)))
     (when endpoint
-      (setf (application-management-repl-endpoint new-application) endpoint
-            (application-management-repl-endpoint old-application) nil)))
+      (setf (management-repl-owner-endpoint new-owner) endpoint
+            (management-repl-owner-endpoint old-owner) nil)))
   nil)
 
-(-> application-call-with-management-repl-quiesced (application function) t)
-(defun application-call-with-management-repl-quiesced (application function)
-  "Call FUNCTION with APPLICATION's management endpoint stopped, then restart it."
-  (let ((endpoint (application-management-repl-endpoint application)))
+(-> management-repl-call-quiesced (t function) t)
+(defun management-repl-call-quiesced (owner function)
+  "Call FUNCTION with OWNER's management endpoint stopped, then restart it."
+  (let ((endpoint (management-repl-owner-endpoint owner)))
     (when (and endpoint (eq (current-thread) (eval-endpoint-evaluator-thread endpoint)))
       (error 'management-repl-error
              :message   "A management evaluation cannot checkpoint its own evaluator."
              :operation ':checkpoint
              :reason    ':evaluator))
     (when endpoint
-      (management-repl-stop application))
+      (management-repl-stop owner))
     (unwind-protect
          (funcall function)
       (when endpoint
-        (management-repl-start application)))))
+        (management-repl-start owner)))))
 
 (-> management-repl--endpoint (configuration) eval-endpoint)
 (defun management-repl--endpoint (configuration)
