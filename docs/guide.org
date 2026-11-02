@@ -160,13 +160,33 @@ children, compaction and recursive inference, including mapped and nested frames
 Reported billable tokens use the provider API's usage normalization and exclude
 known prompt-cache reads. Admissions and settlements are serialized within a
 mission; provider requests execute concurrently. Each admission reserves a turn
-and an output ceiling from the unspent, unreserved tokens. The default ceiling
-divides those tokens among the remaining turns; an explicit provider output cap
-replaces that division. Reviewer requests reserve from both allowances. Settlement
-releases the ceiling and charges reported input and output usage, so a request
-can exhaust the token allowance. Missing usage is recorded as unknown and blocks
-new mission work. Already-running children may finish within the existing hard
-budgets. Install a new explicit budget to admit new work after unknown usage.
+and an output accounting allocation from the unspent, unreserved tokens. The
+allocation normally divides those tokens among the remaining turns; an explicit
+provider output cap replaces that division. Reviewer requests reserve from both
+allowances. Settlement releases the reservation and charges reported input and
+output usage, so measured usage can exhaust the token allowance.
+
+When an exactly identified admitted child settles without usage, charge its full
+finite reservation once, including for length failures, HTTP 429, cancellation or
+an interrupted dispatch. Retain the child's failure and UNKNOWN audit. Record
+=:reservation-charged-tokens= as part of =:tokens-used=, not additional spend, and
+=:reservation-charges-by-child= with request counts and token charges. Child
+terminal results retain =:unknown-usage=, =:reservation-charged-tokens= and
+=:reservation-charge-requests=; =:usage= contains only provider-reported usage.
+The shared mission gains no unresolved UNKNOWN from this bounded settlement.
+Subsequent primary inference, new children and native scheduled continuations
+use the same mission and ordinary remaining budget, deadline and identity checks.
+
+This allocation is an accounting policy charge, not measured usage or a bound on
+actual provider billing. Input and repeated generations can exceed it; Codex does
+not enforce a wire output ceiling at the current library pin. Retry success uses
+only final returned usage and does not reconcile earlier unreported attempts.
+Without proven finite exact-child ownership, retain unresolved shared UNKNOWN.
+Exact-child unresolved usage quarantines further inference and new child work
+before dispatch; non-spending continuation and already-reserved requests may
+finish. Root or unproven ownership keeps conservative blocked behavior. Recovery
+cannot infer per-request child bounds from aggregate outstanding reservations.
+Existing unresolved UNKNOWN is never reclassified by restore or continuation.
 
 The wall-clock deadline includes gate execution, delegated tools, pauses and
 time away. Work runs under cl-jobpond supervision. Use =(goal :pause)= and

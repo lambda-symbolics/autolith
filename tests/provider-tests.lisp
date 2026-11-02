@@ -3148,3 +3148,216 @@
                                               conversation (provider-family provider))))
                "projection and omission leave durable history untouched")))))))
   nil)
+
+(defclass test-error-body-character-stream (test-character-input-stream)
+  ((reads :initform 0 :accessor test-error-body-reads
+          :documentation "Number of character reads, including EOF probes.")
+   (closes :initform 0 :accessor test-error-body-closes
+           :documentation "Number of attempted closes.")
+   (abort-p :initform nil :accessor test-error-body-abort-p
+            :documentation "Whether cleanup requested an abortive close.")
+   (failure :initarg :failure :initform nil :reader test-error-body-failure
+            :documentation "Synthetic read failure or nonlocal exit.")
+   (close-failure :initarg :close-failure :initform nil
+                  :reader        test-error-body-close-failure
+                  :documentation "Synthetic cleanup failure."))
+  (:documentation "An optional diagnostic body with observable read and cleanup behavior."))
+
+(defmethod trivial-gray-streams:stream-read-char
+    ((stream test-error-body-character-stream))
+  "Count a body read and optionally leave it by a synthetic failure or throw."
+  (incf (test-error-body-reads stream))
+  (unless (open-stream-p stream) (error "Synthetic body is already closed."))
+  (case (test-error-body-failure stream)
+    (:error
+     (error "Synthetic diagnostic read failure."))
+    (:throw
+     (throw 'test-error-body-exit :cancelled))
+    (:deadline
+     (error 'sb-sys:deadline-timeout :seconds 2)))
+  (call-next-method))
+
+(defmethod close ((stream test-error-body-character-stream) &key abort)
+  "Record abort-close independently of the optional cleanup failure."
+  (incf (test-error-body-closes stream))
+  (setf (test-error-body-abort-p stream) (not (null abort)))
+  (call-next-method)
+  (case (test-error-body-close-failure stream)
+    (:error
+     (error "Synthetic diagnostic close failure."))
+    (:deadline
+     (error 'sb-sys:deadline-timeout :seconds 2))))
+
+(defclass test-error-body-binary-stream
+    (trivial-gray-streams:fundamental-binary-input-stream)
+  ((source :initarg :source :reader test-error-body-binary-source
+           :documentation "Synthetic UTF-8 or invalid diagnostic octets.")
+   (position :initform 0 :accessor test-error-body-binary-position
+             :documentation "The next unread byte offset.")
+   (closes :initform 0 :accessor test-error-body-binary-closes
+           :documentation "Number of attempted closes.")
+   (abort-p :initform nil :accessor test-error-body-binary-abort-p
+            :documentation "Whether cleanup requested an abortive close."))
+  (:documentation "An undecoded diagnostic body for the existing bounded UTF-8 drain."))
+
+(defmethod stream-element-type ((stream test-error-body-binary-stream))
+  "Declare the undecoded diagnostic body's byte element type."
+  '(unsigned-byte 8))
+
+(defmethod trivial-gray-streams:stream-read-byte
+    ((stream test-error-body-binary-stream))
+  "Return the next byte or the Gray EOF marker."
+  (let ((position (test-error-body-binary-position stream))
+        (source   (test-error-body-binary-source stream)))
+    (if (< position (length source))
+        (prog1 (aref source position)
+          (incf (test-error-body-binary-position stream)))
+        :eof)))
+
+(defmethod close ((stream test-error-body-binary-stream) &key abort)
+  "Record the binary diagnostic body's abort-close."
+  (incf (test-error-body-binary-closes stream))
+  (setf (test-error-body-binary-abort-p stream) (not (null abort)))
+  (call-next-method))
+
+(-> test-provider-usage-limit-streams () null)
+(defun test-provider-usage-limit-streams ()
+  "Classify genuine HTTP conditions through Codex and its unchanged retry boundary.
+
+Transport is synthetic. Only retry sleeps are suppressed in this component test;
+the separately retained local HTTP proof uses ordinary transport and delays."
+  (with-test-configuration (configuration)
+    (let ((provider                       (provider-create configuration))
+          (*bounded-retry-sleep-function* (lambda (seconds) (declare (ignore seconds))))
+          (quota                          "{\"error\":{\"type\":\"usage_limit_reached\",\"code\":\"insufficient_quota\",\"message\":\"Synthetic local quota exhausted\",\"plan_type\":\"stub\"}}")
+          (rate                           "{\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"synthetic rate detail\"}}"))
+      (labels ((body (text representation)
+                 (ecase representation
+                   (:string
+                    text)
+                   (:octets
+                    (sb-ext:string-to-octets text :external-format :utf-8))
+                   (:character
+                    (make-instance 'test-error-body-character-stream :source text))
+                   (:binary
+                    (make-instance 'test-error-body-binary-stream
+                                   :source (sb-ext:string-to-octets text :external-format :utf-8)))))
+
+               (failure (content &optional (status 429))
+                 (handler-case
+                     (provider-signal-transport-failure
+                      provider (make-condition 'http-request-failed
+                                               :status status :body content :uri nil :method :post
+                                               :headers '(("x-request-id" . "synthetic-body-id")
+                                                          ("retry-after" . "1"))))
+                   (provider-error (condition) condition)))
+
+               (check (condition class)
+                 (test-assert (typep condition class) "the original HTTP status selects its typed failure")
+                 (test-assert (string= (provider-error-request-id condition) "synthetic-body-id")
+                              "body normalization retains request attribution"))
+
+               (closed (stream)
+                 (when (streamp stream)
+                   (test-assert (not (open-stream-p stream)) "diagnostic body is closed")
+                   (etypecase stream
+                     (test-error-body-character-stream
+                      (test-assert (and (= (test-error-body-closes stream) 1)
+                                        (test-error-body-abort-p stream))
+                                   "the raw character body is abort-closed once"))
+                     (test-error-body-binary-stream
+                      (test-assert (and (= (test-error-body-binary-closes stream) 1)
+                                        (test-error-body-binary-abort-p stream))
+                                   "the raw binary body is abort-closed once"))))))
+        (dolist (representation '(:string :octets :character :binary))
+          (dolist (text (list quota rate))
+            (let ((attempts 0) (streams nil)
+                  (quota-p (eq text quota)))
+              (let ((condition
+                      (handler-case
+                          (provider--call-with-bounded-retries
+                           provider
+                           (lambda (refresh callback)
+                             (declare (ignore callback))
+                             (test-assert (not refresh) "quota and rate failures do not refresh credentials")
+                             (incf attempts)
+                             (let ((content (body text representation)))
+                               (when (streamp content) (push content streams))
+                               (error (failure content))))
+                           (lambda (event) (declare (ignore event))))
+                        (provider-error (condition) condition))))
+                (check condition 'provider-error)
+                (test-assert (= (provider-error-status condition) 429) "the status survives the body drain")
+                (test-assert (eq (not (null (typep condition 'provider-retryable-error))) (not quota-p))
+                             "only the recognized allowance is terminal")
+                (test-assert (= attempts (if quota-p 1 7)) "the original bounded retry counts are retained")
+                (unless quota-p
+                  (test-assert (search "synthetic rate detail" (autolith-error-message condition))
+                               "fallback retains the normalized body after quota inspection")))
+              (dolist (stream streams)
+                (closed stream)
+                (when (typep stream 'test-error-body-character-stream)
+                  (test-assert (<= (test-error-body-reads stream) (+ 2 (length text)))
+                               "quota miss never drains the raw stream a second time"))))))
+        (dolist (representation '(:octets :character :binary))
+          (let* ((text      "{\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"synthetic café\"}}")
+                 (content   (body text representation))
+                 (condition (failure content)))
+            (check condition 'provider-retryable-error)
+            (test-assert (search "café" (autolith-error-message condition)) "UTF-8 diagnostic detail is retained")
+            (closed content)))
+        (dolist (content (list nil "" "{" "[]" "null" "{\"error\":42}"
+                               "{\"error\":{\"type\":42}}" "usage_limit_reached" 42
+                               (make-array 1 :element-type '(unsigned-byte 8) :initial-element 255)))
+          (check (failure content) 'provider-retryable-error))
+        (dolist (mode '(:error :deadline))
+          (let* ((stream    (make-instance 'test-error-body-character-stream :source quota :failure mode))
+                 (condition (failure stream)))
+            (check condition 'provider-retryable-error)
+            (closed stream)))
+        (dolist (mode '(:error))
+          (let* ((stream    (make-instance 'test-error-body-character-stream :source quota :close-failure mode))
+                 (condition (failure stream)))
+            (check condition 'provider-error)
+            (test-assert (not (typep condition 'provider-retryable-error))
+                         "cleanup failure does not mask the terminal allowance classification")
+            (closed stream)))
+        (let ((stream    (make-instance 'test-error-body-character-stream :source quota :close-failure :deadline))
+              (attempts  0)
+              (escaped-p nil))
+          (handler-case
+              (provider--call-with-bounded-retries
+               provider
+               (lambda (refresh callback)
+                 (declare (ignore refresh callback))
+                 (incf attempts)
+                 (failure stream))
+               (lambda (event) (declare (ignore event))))
+            (sb-sys:deadline-timeout () (setf escaped-p t)))
+          (test-assert escaped-p "a native CLOSE deadline escapes before provider classification")
+          (test-assert (= attempts 1) "a native CLOSE deadline is not retried")
+          (closed stream))
+        (let ((stream (make-instance 'test-error-body-character-stream :source quota :failure :throw)))
+          (test-assert (eq (catch 'test-error-body-exit (failure stream)) :cancelled)
+                       "a nonlocal body exit is preserved")
+          (closed stream))
+        (let ((stream (make-instance 'test-error-body-character-stream
+                                     :source (concatenate 'string (make-string 4500 :initial-element #\Space) quota))))
+          (check (failure stream) 'provider-retryable-error)
+          (test-assert (= (test-character-input-stream-position stream) 4000)
+                       "optional body drain is bounded")
+          (closed stream))
+        (let ((stream (make-instance 'test-error-body-binary-stream
+                                     :source (make-array 1 :element-type '(unsigned-byte 8) :initial-element 255))))
+          (check (failure stream) 'provider-retryable-error)
+          (closed stream))
+        (let ((stream (make-instance 'test-error-body-character-stream :source quota)))
+          (close stream :abort t)
+          (check (failure stream) 'provider-retryable-error)
+          (test-assert (= (test-error-body-closes stream) 1) "an already closed body is not closed again"))
+        (dolist (status '(500 401))
+          (let* ((stream (body rate :character)) (condition (failure stream status)))
+            (check condition (if (= status 401) 'provider-unauthorized 'provider-retryable-error))
+            (test-assert (= (provider-error-status condition) status) "normalization retains nonquota status")
+            (closed stream))))))
+  nil)

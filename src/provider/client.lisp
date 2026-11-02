@@ -696,10 +696,11 @@ and codes follow the Codex reference at commit 6f51c65958."
      provider
      (dexador.error:response-status condition)
      :headers  headers
-     :raw-body (handler-case
-                   (dexador.error:response-body condition)
-                 (error ()
-                   nil)))))
+     :raw-body (provider--error-body-text
+                (handler-case
+                    (dexador.error:response-body condition)
+                  (error ()
+                    nil))))))
 
 
 ;;;; -- SSE Decoding --

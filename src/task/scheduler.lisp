@@ -29,7 +29,8 @@
                   '(:id :name :agent :agent-source :assignment :status
                     :output :error :yielded-p
                     :structured-output-present-p :structured-output :label
-                    :request-count :usage :duration-ms :model
+                    :request-count :usage :unknown-usage :duration-ms :model
+                    :reservation-charged-tokens :reservation-charge-requests
                     :conversation-file :detached :output-path
                     :undelivered-prompt-count :agent-definition
                     :worktree :worktree-artifact-path :worktree-error)
@@ -215,6 +216,8 @@ that a body returned. An artifact that cannot be written downgrades the state to
                                  (or final-report "The child produced no result."))
             final-state
             (if (eq final-state :completed) :failed final-state)))
+    (loop for (key value) on (mission-task-job-accounting-summary job) by (lambda (tail) (rest (rest tail)))
+          do (setf (getf final-result key) value))
     (when (plusp undelivered-prompt-count)
       (setf (getf final-result :undelivered-prompt-count)
             undelivered-prompt-count))
