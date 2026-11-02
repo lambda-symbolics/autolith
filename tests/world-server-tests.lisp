@@ -283,7 +283,7 @@
        (test-assert (and (string= (getf (rest (localgroup-query-record
                                                entry ':open
                                                (list :channel id
-                                                     :launch '(:permission-mode :full-access)
+                                                     :launch  '(:permission-mode :full-access)
                                                      :rows 30 :columns 90 :styled-p nil)))
                                         :session-id)
                                   id)
@@ -358,67 +358,131 @@
 
 (-> test-world-server-checkpoint-quiescence () null)
 (defun test-world-server-checkpoint-quiescence ()
-  "Test checkpoint work running on the main thread with every channel quiesced."
-  (world-server-tests--call
-   (lambda (server configuration root)
-     (let* ((entry       (world-client-entry configuration))
-            (workspace-a (world-tests--workspace root "a"))
-            (workspace-b (world-tests--workspace root "b"))
-            (id-a        (getf (rest (world-server-tests--open entry workspace-a)) :session-id))
-            (id-b        (getf (rest (world-server-tests--open entry workspace-b)) :session-id))
-            (host-a      (world-server--find-host server id-a))
-            (host-b      (world-server--find-host server id-b))
-            (application (world-host-application host-a))
-            (session-a   (world-server-tests--session server id-a))
-            (session-b   (world-server-tests--session server id-b))
-            (observed    nil))
-       (setf observed
-             (world-server-call-quiesced
-              server application
-              (lambda ()
-                (list (eq *active-application* application)
-                      (application-localgroup-session application)
-                      (application-localgroup-session (world-host-application host-b))
-                      (sb-thread:thread-name (current-thread))))))
-       (test-assert (and (first observed)
-                         (null (second observed))
-                         (null (third observed))
-                         (string= (fourth observed) "Autolith world server test main"))
-                    "checkpoint work runs on the main thread with every endpoint stopped")
-       (test-assert (and (null *active-application*)
-                         (world-host-live-p host-a)
-                         (world-host-live-p host-b))
-                    "the active application is cleared and the channels serve again")
-       (let ((restarted-a (world-server-tests--session server id-a))
-             (restarted-b (world-server-tests--session server id-b)))
-         (test-assert (and (not (eq restarted-a session-a))
-                           (not (eq restarted-b session-b))
-                           (string= (image-daemon:daemon-runtime-token restarted-a)
-                                    (image-daemon:daemon-runtime-token session-a))
-                           (localgroup-session-linger-p restarted-a))
-                      "every endpoint restarts under its token and keeps lingering"))
-       (let ((controller (application-input-controller (world-host-application host-b))))
-         (application-input-controller-begin-external-work controller)
-         (unwind-protect
-              (test-assert
-               (handler-case
-                   (progn
-                     (world-server-call-quiesced server application (lambda () t))
-                     nil)
-                 (checkpoint-error (condition)
-                   (search "is working" (autolith-error-message condition))))
-               "a working channel refuses another channel's checkpoint")
-           (application-input-controller-finish-external-work controller)))
-       (test-assert (handler-case
-                        (progn
-                          (world-server-call-quiesced server application
-                                                      (lambda () (error "injected")))
-                          nil)
-                      (simple-error (condition)
-                        (search "injected" (format nil "~A" condition))))
-                    "a failing checkpoint reaches the requesting channel")
-       (test-assert (and (world-host-live-p host-a) (world-host-live-p host-b))
-                    "a failed checkpoint leaves the channels serving"))))
+  "Test a checkpoint pauses every channel until only the server's thread lives, then serves them again."
+  (let ((baseline (sb-thread:list-all-threads)))
+    (world-server-tests--call
+     (lambda (server configuration root)
+       (let* ((entry       (world-client-entry configuration))
+              (workspace-a (world-tests--workspace root "a"))
+              (workspace-b (world-tests--workspace root "b"))
+              (id-a        (getf (rest (world-server-tests--open entry workspace-a)) :session-id))
+              (id-b        (getf (rest (world-server-tests--open entry workspace-b)) :session-id))
+              (host-a      (world-server--find-host server id-a))
+              (host-b      (world-server--find-host server id-b))
+              (application (world-host-application host-a))
+              (terminal-a  (terminal-ui-terminal (application-ui application)))
+              (terminal-b  (terminal-ui-terminal (application-ui (world-host-application host-b))))
+              (session-a   (world-server-tests--session server id-a))
+              (attachment  (make-instance 'image-daemon:attachment
+                                          :socket nil
+                                          :stream (make-broadcast-stream)
+                                          :mode   ':control))
+              (finished    nil)
+              (observed    nil))
+         (image-daemon:relay-attach terminal-a attachment :rows 24 :columns 80 :styled-p nil
+                                                          :session-id id-a)
+         (test-call-with-function-replacements
+          (list (list 'image-daemon:attachment-finish
+                      (let ((finish (symbol-function 'image-daemon:attachment-finish)))
+                        (lambda (candidate packet)
+                          (push packet finished)
+                          (funcall finish candidate packet)))))
+          (lambda ()
+            (setf observed
+                  (world-server-call-quiesced
+                   server application
+                   (lambda ()
+                     (funcall *checkpoint-thread-quiescer*
+                              (lambda ()
+                                (list (eq *active-application* application)
+                                      (remove-if-not #'thread-alive-p
+                                                     (set-difference (sb-thread:list-all-threads)
+                                                                     baseline))
+                                      (world-server-runtime server)
+                                      (application-localgroup-session application)
+                                      (world-host-paused-p host-a)
+                                      (world-host-paused-p host-b)
+                                      (sb-thread:thread-name (current-thread))))))))))
+         (destructuring-bind (active-p threads runtime session paused-a paused-b name) observed
+           (test-assert (and active-p (null runtime) (null session) paused-a paused-b
+                             (string= name "Autolith world server test main"))
+                        "inside the fork boundary every channel is paused and the endpoints are stopped")
+           (test-assert (and (= (length threads) 1)
+                             (string= (sb-thread:thread-name (first threads))
+                                      "Autolith world server test main"))
+                        (format nil "only the server's own thread outlives the pause: ~S"
+                                (mapcar #'sb-thread:thread-name threads))))
+         (test-assert (some (lambda (packet) (eq (first packet) ':checkpoint-reconnect)) finished)
+                      "an attached terminal is told to reconnect")
+         (test-assert (task-tests--wait-until
+                       (lambda () (and (world-host-live-p host-a) (world-host-live-p host-b))) 30)
+                      "both channels are served again")
+         (test-assert (and (null *active-application*)
+                           (world-server-runtime server)
+                           (not (world-server-checkpointing-p server))
+                           (world-client-entry configuration))
+                      "the active application is cleared and the endpoint answers again")
+         (let ((restarted-a (world-server-tests--session server id-a)))
+           (test-assert (and (not (eq restarted-a session-a))
+                             (string= (image-daemon:daemon-runtime-token restarted-a)
+                                      (image-daemon:daemon-runtime-token session-a))
+                             (localgroup-session-linger-p restarted-a))
+                        "every endpoint restarts under its token and keeps lingering"))
+         (let ((controller (application-input-controller (world-host-application host-b))))
+           (application-input-controller-begin-external-work controller)
+           (unwind-protect
+                (test-assert
+                 (handler-case
+                     (progn
+                       (world-server-call-quiesced
+                        server application
+                        (lambda () (funcall *checkpoint-thread-quiescer* (lambda () t))))
+                       nil)
+                   (checkpoint-error (condition)
+                     (search "is working" (autolith-error-message condition))))
+                 "a working channel refuses another channel's checkpoint")
+             (application-input-controller-finish-external-work controller)))
+         (test-assert (and (world-host-live-p host-a) (world-host-live-p host-b))
+                      "a refused checkpoint leaves the channels serving")
+         (setf (world-server-checkpointing-p server) t)
+         (test-assert (handler-case
+                          (progn (world-server-tests--open (world-client-entry configuration)
+                                                           workspace-a)
+                                 nil)
+                        (localgroup-error (condition)
+                          (localgroup-error-retry-p condition)))
+                      "an open during a checkpoint is told to come back")
+         (setf (world-server-checkpointing-p server) nil)
+         (test-call-with-function-replacements
+          (list (list 'checkpoint-backend-create
+                      (lambda (&rest arguments)
+                        (declare (ignore arguments))
+                        ':test-backend))
+                (list 'checkpoint-create
+                      (lambda (backend)
+                        (declare (ignore backend))
+                        (funcall *checkpoint-thread-quiescer* (lambda () nil))
+                        (error 'checkpoint-error
+                               :message  "synthetic fork failure"
+                               :stage    ':fork
+                               :pathname nil))))
+          (lambda ()
+            (application-checkpoint application)
+            (test-assert (search "Checkpoint scheduled"
+                                 (image-daemon:relay-history-text terminal-a))
+                         "the channel is told its checkpoint is scheduled")
+            (test-assert (task-tests--wait-until
+                          (lambda ()
+                            (and (search "Checkpoint failed: synthetic fork failure"
+                                         (image-daemon:relay-history-text terminal-a))
+                                 (search "A checkpoint of the world server failed"
+                                         (image-daemon:relay-history-text terminal-b))))
+                          30)
+                         "each channel learns the outcome once it is served again")
+            (test-assert (task-tests--wait-until
+                          (lambda () (and (world-host-live-p host-a) (world-host-live-p host-b)))
+                          30)
+                         "both channels serve again after a failed checkpoint")))))))
   nil)
 
 (-> test-world-server-stop () null)

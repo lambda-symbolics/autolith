@@ -42,8 +42,21 @@
     :initform      nil
     :accessor      world-host-exit-reason
     :type          (option keyword)
-    :documentation "The session's exit reason once it ended, or NIL while it runs."))
-  (:documentation "One channel's application and the thread serving it."))
+    :documentation "The session's exit reason once it ended, or NIL while it runs.")
+   (paused-p
+    :initform      nil
+    :accessor      world-host-paused-p
+    :type          boolean
+    :documentation "Whether the session ended for a checkpoint and waits to be served again.")
+   (identity
+    :initform      nil
+    :accessor      world-host-identity
+    :type          list
+    :documentation "The :TOKEN and :CREATED-AT of the endpoint a paused session's clients wait for."))
+  (:documentation "One channel's application and the thread serving it.
+
+A host paused for a checkpoint keeps its application; its thread ended so
+the process could fork, and a new thread serves the application again."))
 
 (defclass world-server ()
   ((configuration
@@ -66,6 +79,26 @@
     :reader        world-server-mutation-replay-failures
     :type          list
     :documentation "The private image replay failures every hosted application reports.")
+   (checkpointing-p
+    :initform      nil
+    :accessor      world-server-checkpointing-p
+    :type          boolean
+    :documentation "Whether a checkpoint pauses the channels; opens are refused until it is over.")
+   (lease
+    :initform      nil
+    :accessor      world-server-lease
+    :type          t
+    :documentation "The process lease on the world, held while this server runs.")
+   (token
+    :initform      nil
+    :accessor      world-server-token
+    :type          (option string)
+    :documentation "The endpoint token clients hold, kept when the endpoint is published again.")
+   (created-at
+    :initform      nil
+    :accessor      world-server-created-at
+    :type          (option integer)
+    :documentation "The endpoint creation time clients know, kept when the endpoint is published again.")
    (lock
     :initform      (make-lock "Autolith world server")
     :reader        world-server-lock
@@ -162,20 +195,9 @@ the management REPL and Slynk, start with the server."
          (completed-p  nil))
     (unwind-protect
          (progn
-           (setf (world-server-runtime server)
-                 (image-daemon:daemon-runtime-create
-                  :directory        (localgroup-world-directory bootstrapped)
-                  :identifier       *world-server-identifier*
-                  :token            token
-                  :created-at       created-at
-                  :class            'world-endpoint
-                  :initargs         (list :server server)
-                  :request-function #'world-server--handle-request
-                  :error-function   (lambda (condition)
-                                      (format *error-output*
-                                              "~&World endpoint failed: ~A~%" condition))))
+           (setf (world-server-lease server) (world-server--lease-acquire bootstrapped))
            (localgroup-handoff-assert-startup-active)
-           (image-daemon:daemon-runtime-start (world-server-runtime server))
+           (world-server--runtime-start server :token token :created-at created-at)
            (localgroup-handoff-finish-startup nil)
            (management-repl-start server)
            (slynk-start bootstrapped :background-p t)
@@ -183,6 +205,62 @@ the management REPL and Slynk, start with the server."
            server)
       (unless completed-p
         (world-server--shutdown server)))))
+
+(-> world-server-lock-pathname (configuration) pathname)
+(defun world-server-lock-pathname (configuration)
+  "Return the file whose process lease says a world server runs for CONFIGURATION's data root."
+  (merge-pathnames "server.lock" (localgroup-world-directory configuration)))
+
+(-> world-server--lease-acquire (configuration) t)
+(defun world-server--lease-acquire (configuration)
+  "Take the process lease on CONFIGURATION's world, or signal that another server holds it."
+  (let ((pathname (world-server-lock-pathname configuration)))
+    (ensure-directories-exist pathname)
+    (handler-case
+        (lease-acquire pathname)
+      (file-lock-busy ()
+        (error 'world-error
+               :message   "Another world server already runs for this data root."
+               :pathname  pathname
+               :operation ':start)))))
+
+(-> world-server-running-p (configuration) boolean)
+(defun world-server-running-p (configuration)
+  "Return true while a process holds the world's lease: a server runs, whether or not its endpoint answers.
+
+A server publishes its endpoint again after a checkpoint, so a client that
+finds the lease held waits for the endpoint instead of starting a second
+server."
+  (let ((pathname (world-server-lock-pathname configuration)))
+    (and (probe-file pathname)
+         (handler-case
+             (progn
+               (lease-release (lease-acquire pathname))
+               nil)
+           (file-lock-busy ()
+             t)))))
+
+(-> world-server--runtime-start
+    (world-server &key (:token (option string)) (:created-at (option integer)))
+    null)
+(defun world-server--runtime-start (server &key token created-at)
+  "Publish SERVER's endpoint under TOKEN and CREATED-AT, or under the ones clients already hold."
+  (let ((runtime (image-daemon:daemon-runtime-create
+                  :directory        (localgroup-world-directory (world-server-configuration server))
+                  :identifier       *world-server-identifier*
+                  :token            (or token (world-server-token server))
+                  :created-at       (or created-at (world-server-created-at server))
+                  :class            'world-endpoint
+                  :initargs         (list :server server)
+                  :request-function #'world-server--handle-request
+                  :error-function   (lambda (condition)
+                                      (format *error-output*
+                                              "~&World endpoint failed: ~A~%" condition)))))
+    (image-daemon:daemon-runtime-start runtime)
+    (setf (world-server-runtime server) runtime
+          (world-server-token server) (image-daemon:daemon-runtime-token runtime)
+          (world-server-created-at server) (image-daemon:daemon-runtime-created-at runtime)))
+  nil)
 
 (-> world-server-run
     (configuration &key (:permission-mode (member :ask :auto :sandboxed :full-access))
@@ -256,6 +334,10 @@ Return the launcher status a hosted session asked for, or NIL."
   ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every service
   (ignore-errors (rlm-environment-pool-flush))
   (telemetry--call-safely #'telemetry-shutdown)
+  (let ((lease (shiftf (world-server-lease server) nil)))
+    (when lease
+      ; mallet:suppress no-ignore-errors -- the lease dies with the process anyway
+      (ignore-errors (lease-release lease))))
   nil)
 
 (-> world-server--hosts (world-server) list)
@@ -287,7 +369,10 @@ Return the launcher status a hosted session asked for, or NIL."
            (handler-case
                (world-server--dispatch server operation arguments)
              (error (condition)
-               (list :error :message (bounded-string (princ-to-string condition) :limit 1000))))))
+               (append (list :error :message (bounded-string (princ-to-string condition) :limit 1000))
+                       (when (and (typep condition 'world-error)
+                                  (eq (world-error-operation condition) ':checkpointing))
+                         (list :retry-p t)))))))
     (daemon-write-packet stream response))
   nil)
 
@@ -342,6 +427,10 @@ endpoint is published, so the client can attach at once."
     (error 'world-error
            :message   "The world server is stopping."
            :operation ':open))
+  (when (world-server-checkpointing-p server)
+    (error 'world-error
+           :message   "The world server is checkpointing; the channel opens once it resumes."
+           :operation ':checkpointing))
   (multiple-value-bind (host started-p)
       (with-lock-held ((world-server-open-lock server))
         (world-server--host-for server arguments))
@@ -628,19 +717,15 @@ forgotten again when no thread could start."
                                                          :columns  (getf arguments :columns)
                                                          :styled-p (getf arguments :styled-p))))
          (host          (make-instance 'world-host :application application)))
+    (setf (application-world-server application) server)
     (with-lock-held ((world-server-lock server))
       (push host (world-server-hosts server)))
     (handler-case
-        (setf (world-host-thread host)
-              (make-thread
-               (lambda ()
-                 (world-server--host server host
-                                     :initial-command    (and (getf arguments :resume-command-p)
-                                                              "(resume)")
-                                     :recovery-diagnosis (getf arguments :recovery-diagnosis)
-                                     :resume-offer-p     (not (null (getf arguments :resume-command-p)))))
-               :name (format nil "Autolith channel ~A"
-                             (conversation-identifier-display (world-host-channel host)))))
+        (world-server--serve-host server host
+                                  :initial-command    (and (getf arguments :resume-command-p)
+                                                           "(resume)")
+                                  :recovery-diagnosis (getf arguments :recovery-diagnosis)
+                                  :resume-offer-p     (not (null (getf arguments :resume-command-p))))
       (error (condition)
         (application--discard-connection-resources application
                                                    (application-tool-registry application)
@@ -649,6 +734,31 @@ forgotten again when no thread could start."
         (world-server--release-host server host)
         (error condition)))
     host))
+
+(-> world-server--serve-host
+    (world-server world-host &key (:initial-command (option string))
+                                  (:recovery-diagnosis (option string))
+                                  (:resume-offer-p boolean)
+                                  (:resume-p boolean)
+                                  (:reconnect-id (option string))
+                                  (:notice (option string)))
+    null)
+(defun world-server--serve-host (server host &key initial-command recovery-diagnosis
+                                                  resume-offer-p resume-p reconnect-id notice)
+  "Start the thread serving HOST's application, serving it again after a checkpoint with RESUME-P."
+  (setf (world-host-thread host)
+        (make-thread
+         (lambda ()
+           (world-server--host server host
+                               :initial-command    initial-command
+                               :recovery-diagnosis recovery-diagnosis
+                               :resume-offer-p     resume-offer-p
+                               :resume-p           resume-p
+                               :reconnect-id       reconnect-id
+                               :notice             notice))
+         :name (format nil "Autolith channel ~A"
+                       (conversation-identifier-display (world-host-channel host)))))
+  nil)
 
 (-> world-server--thread-bindings (application) list)
 (defun world-server--thread-bindings (application)
@@ -667,14 +777,20 @@ itself so that threads those threads start inherit it too."
 (-> world-server--host
     (world-server world-host &key (:initial-command (option string))
                                   (:recovery-diagnosis (option string))
-                                  (:resume-offer-p boolean))
+                                  (:resume-offer-p boolean)
+                                  (:resume-p boolean)
+                                  (:reconnect-id (option string))
+                                  (:notice (option string)))
     null)
-(defun world-server--host (server host &key initial-command recovery-diagnosis resume-offer-p)
+(defun world-server--host (server host &key initial-command recovery-diagnosis resume-offer-p
+                                            resume-p reconnect-id notice)
   "Serve HOST's application on this thread until its session ends.
 
 A launcher exit condition reaches the attached clients with its status, as a
 direct session's would; an update or rollback then stops the whole server,
-because the image is shared, while a fatal error ends this channel alone."
+because the image is shared, while a fatal error ends this channel alone. A
+session that ends for a checkpoint leaves HOST paused, to be served again on
+another thread with RESUME-P, RECONNECT-ID for its clients and NOTICE."
   (let* ((application                 (world-host-application host))
          (configuration               (application-configuration application))
          (bordeaux-threads:*default-special-bindings*
@@ -699,9 +815,18 @@ because the image is shared, while a fatal error ends this channel alone."
                           :recovery-diagnosis recovery-diagnosis
                           :resume-offer-p     resume-offer-p
                           :hosted-p           t
+                          :resume-p           resume-p
+                          :notice             notice
+                          :localgroup-identity
+                          (and reconnect-id
+                               (append (world-host-identity host)
+                                       (list :checkpoint-reconnect-id reconnect-id)))
                           :quiescer           (lambda (function)
-                                                (world-server-call-quiesced
-                                                 server application function))
+                                                (declare (ignore function))
+                                                (error 'checkpoint-error
+                                                       :message  "A hosted channel checkpoints through its world server."
+                                                       :stage    ':validation
+                                                       :pathname nil))
                           :ready-function     (lambda (served)
                                                 (declare (ignore served))
                                                 (world-server--note-ready server host)))
@@ -710,7 +835,11 @@ because the image is shared, while a fatal error ends this channel alone."
              (world-server--note-launcher-exit server host condition))
            (error (condition)
              (world-server--note-failure server host condition)))
-      (world-server--release-host server host)))
+      (if (eq (world-host-exit-reason host) ':checkpoint)
+          (with-lock-held ((world-server-lock server))
+            (setf (world-host-paused-p host) t)
+            (sb-thread:condition-broadcast (world-server-condition-variable server)))
+          (world-server--release-host server host))))
   nil)
 
 (-> world-server--note-ready (world-server world-host) null)
@@ -802,66 +931,234 @@ because the image is shared, while a fatal error ends this channel alone."
 
 ;;;; -- Checkpoints --
 
+;;; A fork checkpoint needs the forking thread to be the only live thread.
+;;; The server's main thread takes it: every channel's session ends, its
+;;; clients told to reconnect, its thread joined, then the endpoints, the
+;;; management REPL and Slynk stop around the fork, and every channel is
+;;; served again on a new thread. A channel asks for a checkpoint and lets
+;;; its turn end, since its own thread is among those that must end.
+
+(defparameter *world-server-checkpoint-idle-seconds* 10
+  "How long a checkpoint waits for every channel to finish its turn before it gives up.")
+
+(defparameter *world-server-checkpoint-join-seconds* 60
+  "How long a checkpoint waits for a pausing channel's thread to end before it gives up.")
+
+(-> world-server-checkpoint (application t) string)
+(defun world-server-checkpoint (application backend)
+  "Schedule a checkpoint of the world server hosting APPLICATION with BACKEND, and say so.
+
+The checkpoint runs on the server's main thread once this channel's turn has
+ended, pausing every channel; the outcome is presented in each channel when
+it is served again."
+  (let ((server       (application-world-server application))
+        (reconnect-id (make-identifier)))
+    (unless (typep server 'world-server)
+      (error 'checkpoint-error
+             :message  "This session is not hosted by a world server."
+             :stage    ':validation
+             :pathname nil))
+    (world-server--enqueue server
+                           (lambda ()
+                             (world-server--checkpoint-job server
+                                                           :application  application
+                                                           :backend      backend
+                                                           :reconnect-id reconnect-id)))
+    "Checkpoint scheduled: every channel of the world server pauses while it saves, and resumes here with the outcome."))
+
+(-> world-server--enqueue (world-server function) null)
+(defun world-server--enqueue (server job)
+  "Run JOB on SERVER's main thread after the jobs before it."
+  (with-lock-held ((world-server-lock server))
+    (setf (world-server-jobs server) (append (world-server-jobs server) (list job)))
+    (sb-thread:condition-broadcast (world-server-condition-variable server)))
+  nil)
+
 (-> world-server-call-quiesced (world-server application function) t)
 (defun world-server-call-quiesced (server application function)
-  "Run FUNCTION on SERVER's main thread with every hosted session stopped.
+  "Run FUNCTION on SERVER's main thread with APPLICATION's checkpoint quiescer bound, and return its values.
 
-APPLICATION is the channel checkpointing, whose hosting thread waits here.
-Return FUNCTION's values, or signal what it or the quiescence signaled."
+FUNCTION may call the quiescer with a thunk, which then runs with every
+channel paused and the process services stopped, as a checkpoint backend
+does; the channels are served again once FUNCTION returns. The caller must
+not be a channel's thread, which could not end for the pause."
   (let ((lock    (world-server-lock server))
         (done-p  nil)
         (results nil)
         (failure nil))
+    (world-server--enqueue
+     server
+     (lambda ()
+       (handler-case
+           (setf results
+                 (multiple-value-list
+                  (world-server--call-with-quiescer server
+                                                    :application  application
+                                                    :function     function
+                                                    :reconnect-id (make-identifier))))
+         (serious-condition (condition)
+           (setf failure condition)))
+       (with-lock-held (lock)
+         (setf done-p t)
+         (sb-thread:condition-broadcast (world-server-condition-variable server)))))
     (with-lock-held (lock)
-      (setf (world-server-jobs server)
-            (append (world-server-jobs server)
-                    (list (lambda ()
-                            (handler-case
-                                (setf results
-                                      (multiple-value-list
-                                       (world-server--run-quiesced server application function)))
-                              (serious-condition (condition)
-                                (setf failure condition)))
-                            (with-lock-held (lock)
-                              (setf done-p t)
-                              (sb-thread:condition-broadcast
-                               (world-server-condition-variable server)))))))
-      (sb-thread:condition-broadcast (world-server-condition-variable server))
       (loop until done-p
             do (condition-wait (world-server-condition-variable server) lock)))
     (if failure
         (error failure)
         (values-list results))))
 
-(-> world-server--run-quiesced (world-server application function) t)
-(defun world-server--run-quiesced (server application function)
-  "Quiesce every hosted session, the management REPL and Slynk around FUNCTION.
+(-> world-server--checkpoint-job
+    (world-server &key (:application application) (:backend t) (:reconnect-id string))
+    null)
+(defun world-server--checkpoint-job (server &key application backend reconnect-id)
+  "Take the checkpoint APPLICATION asked for with BACKEND, pausing every channel for the fork."
+  (let ((outcome nil))
+    (flet ((notice (served)
+             "Return what channel SERVED is told about the outcome."
+             (cond
+               ((typep outcome 'condition)
+                (format nil "~:[A checkpoint of the world server~;Checkpoint~] failed: ~A"
+                        (eq served application)
+                        (bounded-string (princ-to-string outcome) :limit 400)))
+               ((eq served application)
+                (format nil "Checkpoint ~A is publishing in process ~D."
+                        (generation-identifier outcome)
+                        (generation-coordinator-pid outcome)))
+               (t
+                (format nil "The world server saved checkpoint ~A."
+                        (generation-identifier outcome))))))
+      (world-server--call-with-quiescer
+       server
+       :application     application
+       :function        (lambda ()
+                          (handler-case
+                              (setf outcome (checkpoint-create backend))
+                            (serious-condition (condition)
+                              (setf outcome condition))))
+       :reconnect-id    reconnect-id
+       :notice-function #'notice)))
+  nil)
 
-The process saves its heap with APPLICATION as the active application, so a
-rollback into the checkpoint resumes that channel. Another channel mid-turn
-refuses the checkpoint, since its request would be cut in half."
-  (let ((hosts (world-server--hosts server)))
-    (dolist (host hosts)
-      (let* ((other      (world-host-application host))
-             (controller (application-input-controller other)))
-        (when (and (not (eq other application))
-                   controller
-                   (application-input-controller-turn-active-p controller))
-          (error 'checkpoint-error
-                 :message  (format nil "Channel ~A is working; checkpoint when every channel is idle."
-                                   (conversation-identifier-display (world-host-channel host)))
-                 :stage    ':validation
-                 :pathname nil))))
-    (setf *active-application* application)
+(-> world-server--call-with-quiescer
+    (world-server &key (:application application) (:function function) (:reconnect-id string)
+                       (:notice-function (option function)))
+    t)
+(defun world-server--call-with-quiescer (server &key application function reconnect-id
+                                                     notice-function)
+  "Call FUNCTION with the checkpoint quiescer bound, then serve every paused channel again.
+
+The quiescer pauses the channels, telling their clients to reconnect under
+RECONNECT-ID, and stops the process services around its thunk. The process
+saves its heap with APPLICATION as the active application, so a rollback
+into the checkpoint resumes that channel. NOTICE-FUNCTION, given an
+application, returns what its channel is told once served again."
+  (with-lock-held ((world-server-lock server))
+    (setf (world-server-checkpointing-p server) t))
+  (setf *active-application* application)
+  (unwind-protect
+       (let ((*checkpoint-thread-quiescer*
+               (lambda (thunk)
+                 (world-server--pause-channels server reconnect-id)
+                 (world-server--call-with-services-stopped server thunk))))
+         (funcall function))
+    (setf *active-application* nil)
+    (world-server--resume-channels server application reconnect-id
+                                   :notice-function notice-function)))
+
+(-> world-server--pause-channels (world-server string) null)
+(defun world-server--pause-channels (server reconnect-id)
+  "End every channel's session for a checkpoint and join its thread.
+
+Each session's clients are told to reconnect under RECONNECT-ID first. A
+channel still working refuses the checkpoint, since its turn would be cut
+in half; one that does not end in time refuses it too."
+  (let ((hosts    (world-server--hosts server))
+        (deadline (+ (get-internal-real-time)
+                     (* *world-server-checkpoint-idle-seconds* internal-time-units-per-second))))
+    (flet ((controller (host)
+             "Return HOST's input controller, or NIL."
+             (application-input-controller (world-host-application host)))
+           (busy-p (host)
+             "Return true while HOST is starting or its channel works."
+             (let ((controller (application-input-controller (world-host-application host))))
+               (or (and (null controller)
+                        (null (world-host-failure host))
+                        (null (world-host-exit-reason host)))
+                   (and controller
+                        (application-input-controller-turn-active-p controller))))))
+      (loop
+        (let ((busy (remove-if-not #'busy-p hosts)))
+          (cond
+            ((null busy)
+             (return))
+            ((>= (get-internal-real-time) deadline)
+             (error 'checkpoint-error
+                    :message  (format nil "Channel ~A is working; checkpoint when every channel is idle."
+                                      (conversation-identifier-display
+                                       (world-host-channel (first busy))))
+                    :stage    ':validation
+                    :pathname nil))
+            (t
+             (sleep 0.05)))))
+      (dolist (host hosts)
+        (let ((session (application-localgroup-session (world-host-application host))))
+          (when (and session (controller host) (null (world-host-exit-reason host)))
+            (setf (world-host-identity host)
+                  (list :token      (image-daemon:daemon-runtime-token session)
+                        :created-at (image-daemon:daemon-runtime-created-at session)))
+            (localgroup--finish-checkpoint-attachments session reconnect-id)
+            (application-input-controller--request-exit (controller host) ':checkpoint))))
+      (dolist (host hosts)
+        (let ((thread (world-host-thread host)))
+          (when (and thread
+                     (world-host-identity host)
+                     (not (eq thread (current-thread)))
+                     (eq (sb-thread:join-thread thread
+                                                :default ':timeout
+                                                :timeout *world-server-checkpoint-join-seconds*)
+                         ':timeout))
+            (error 'checkpoint-error
+                   :message  (format nil "Channel ~A did not pause in time."
+                                     (conversation-identifier-display (world-host-channel host)))
+                   :stage    ':fork
+                   :pathname nil))))))
+  nil)
+
+(-> world-server--call-with-services-stopped (world-server function) t)
+(defun world-server--call-with-services-stopped (server thunk)
+  "Call THUNK with the world endpoint, the management REPL and Slynk stopped, then publish them again."
+  (let ((runtime (shiftf (world-server-runtime server) nil)))
+    (when runtime
+      (image-daemon:daemon-runtime-stop runtime))
     (unwind-protect
-         (labels ((quiesce (remaining)
-                    "Stop the sessions of REMAINING hosts, then the process services."
-                    (if remaining
-                        (application-call-with-session-quiesced
-                         (world-host-application (first remaining))
-                         (lambda () (quiesce (rest remaining))))
-                        (management-repl-call-quiesced
-                         server
-                         (lambda () (slynk-call-quiesced function))))))
-           (quiesce hosts))
-      (setf *active-application* nil))))
+         (management-repl-call-quiesced server (lambda () (slynk-call-quiesced thunk)))
+      (world-server--runtime-start server))))
+
+(-> world-server--resume-channels
+    (world-server application string &key (:notice-function (option function)))
+    null)
+(defun world-server--resume-channels (server application reconnect-id &key notice-function)
+  "Serve every paused channel of SERVER again, each told its notice, and let opens through.
+
+APPLICATION, the channel that asked, is told its notice directly when it
+never paused, as when the checkpoint was refused before the pause."
+  (dolist (host (world-server--hosts server))
+    (let ((served (world-host-application host)))
+      (cond
+        ((world-host-paused-p host)
+         (with-lock-held ((world-server-lock server))
+           (setf (world-host-paused-p host) nil
+                 (world-host-ready-p host) nil
+                 (world-host-exit-reason host) nil))
+         (world-server--serve-host server host
+                                   :resume-p     t
+                                   :reconnect-id reconnect-id
+                                   :notice       (and notice-function
+                                                      (funcall notice-function served))))
+        ((and notice-function (eq served application))
+         (application-present served (funcall notice-function served))))))
+  (with-lock-held ((world-server-lock server))
+    (setf (world-server-checkpointing-p server) nil)
+    (sb-thread:condition-broadcast (world-server-condition-variable server)))
+  nil)

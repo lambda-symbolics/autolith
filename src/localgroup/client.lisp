@@ -53,7 +53,9 @@
              :message    (or (getf (rest response) :message)
                              "The localgroup endpoint rejected the request.")
              :operation  operation
-             :session-id session-id))
+             :session-id session-id
+             :retry-p    (and (proper-list-p response)
+                              (not (null (getf (rest response) :retry-p))))))
     response))
 
 (-> localgroup-owner-reachability (pathname string (integer 1)) keyword)
