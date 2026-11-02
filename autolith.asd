@@ -294,6 +294,7 @@
                                           (:file "terminal/layout")
                                           (:file "terminal/stream")
                                           (:file "localgroup/terminal")
+                                          (:file "localgroup/screen")
                                           (:file "terminal/path-completion")
                                           (:file "terminal/ui")
                                           (:file "terminal/clipboard")

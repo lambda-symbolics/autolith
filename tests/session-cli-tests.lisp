@@ -338,7 +338,7 @@
                         (multiple-value-bind (ignored errors missing-status)
                             (run '("resume" "--detached"))
                           (declare (ignore ignored))
-                          (test-assert (and (= missing-status 64) (search "prefix" errors))
+                          (test-assert (and (= missing-status 64) (search "conversation ID" errors))
                                        "a detached resume without an ID fails at the process boundary"))
                        (let ((saved (conversation-create configuration :identifier "b6uouHJ")))
                          (conversation-append-user-message saved "Saved resume fixture")

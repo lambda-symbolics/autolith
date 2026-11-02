@@ -476,6 +476,7 @@ session, one a world server hosts, stays for its next client instead."
                (unless attached-p
                  (return-from localgroup--serve-attachment nil))
                (application-sync-window-title application)
+               (localgroup-terminal-replay-screen terminal attachment)
                (unless (eq mode ':read-only)
                  (localgroup--note-controller-attached session))
                (image-daemon:relay-read-attachment
