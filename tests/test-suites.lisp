@@ -1479,6 +1479,18 @@
   test-pending-publication-lock-boundaries
   test-pending-input-persistence)
 
+(define-test-suite application-tool-outcomes
+  test-application-tool-outcomes-interleaved
+  test-application-tool-outcomes-scoped-identities
+  test-application-tool-outcomes-compact-and-prominent
+  test-application-tool-outcomes-background-lifecycle
+  test-application-tool-outcomes-inline-compatibility
+  test-application-tool-outcomes-transient
+  test-application-tool-outcomes-history-replay
+  test-application-tool-outcomes-history-bounded
+  test-application-tool-outcomes-startup-history
+  test-application-tool-outcomes-history-job-alias)
+
 (define-test-suite pending-native-work
   test-pending-snapshot-readable-by-pre-native-readers
   test-pending-native-work-form-rejections

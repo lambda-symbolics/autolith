@@ -536,6 +536,11 @@ model about that exact call. Arrays are spelled as =(vector ...)= and objects
 as =(dict ...)=, and argument names with uppercase letters keep their case as
 =:|filePath|= or a string key.
 
+In fullscreen mode, a pending tool call starts with =▸=. When it finishes, the
+same header shows a green =✓= for success or a red =!= for failure. Errors
+appear beneath the original invocation and arguments. Background handoffs keep
+=▸= until completion. Thanks to @rgbcube for suggesting these outcome markers.
+
 Interactive sessions report their root status with the
 [[https://www.superlogical.com/rex/docs/build/program-status][OSC 7501 Program Status Protocol]], with =app=autolith=. Reports use =idle=
 at startup, =working= during foreground input and resumed model turns, =done=

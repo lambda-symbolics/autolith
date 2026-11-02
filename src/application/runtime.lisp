@@ -2651,7 +2651,7 @@ has no faithful invocation."
      (let* ((*application-tool-presentation-label* (getf (rest record) :tool-label))
             (canonical-name                        (getf (rest record) :tool))
             (tool                                  (application--find-tool application canonical-name)))
-       (when (application--record-visible-p application record)
+       (when (application--tool-result-visible-p application record)
          (application-tool-result-entry tool application record))))
     (:summary
      (application--compaction-rule application))
@@ -2796,6 +2796,15 @@ rows."
       (t
        nil))))
 
+(-> application--tool-result-visible-p (application list) boolean)
+(defun application--tool-result-visible-p (application record)
+  "Return true when tool RECORD has a visible standalone result."
+  (or (not (application-compact-view-p application))
+      (not (eq (getf (rest record) :status) ':ok))
+      (not (null (application--tool-execution-handoff record)))
+      (application--compact-tool-result-visible-p
+       application (getf (rest record) :tool))))
+
 (-> application--record-visible-p (application list) boolean)
 (defun application--record-visible-p (application record)
   "Return true when RECORD produces a visible transcript entry."
@@ -2810,12 +2819,7 @@ rows."
                    (application--response-item-visible-p
                     application item))))))
     (:tool-result
-     (let ((canonical-name (getf (rest record) :tool)))
-       (or (not (application-compact-view-p application))
-           (not (eq (getf (rest record) :status) ':ok))
-           (not (null (application--tool-execution-handoff record)))
-           (application--compact-tool-result-visible-p
-            application canonical-name))))
+     (application--tool-result-visible-p application record))
     (:assistant-yield
      (typep (getf (rest record) :job-count) '(integer 1)))
     ((:summary :side-status)
@@ -2832,14 +2836,29 @@ rows."
         (list :cancellation-warning owner (getf completion :id))
         (list :conversation owner (application--record-sequence record)))))
 
+(-> application--record-presentation
+    (application list &key (:outcomes (option hash-table))) (option list))
+(defun application--record-presentation (application record &key outcomes)
+  "Return RECORD's identity, entry and optional semantic fullscreen outcome."
+  (let* ((entry    (conversation-record-entry application record))
+         (metadata (when (terminal-ui-fullscreen-p (application-ui application))
+                     (application--record-tool-outcome application record entry)))
+         (resolved (and outcomes metadata
+                        (gethash (getf metadata :call-key) outcomes))))
+    (when resolved
+      (let ((kind (getf metadata :kind)))
+        (setf metadata (copy-list resolved)
+              (getf metadata :kind) kind)))
+    (when (or entry metadata)
+      (list (application--record-presentation-identifier application record)
+            entry metadata))))
+
 (-> application--present-conversation-record
-    (application list
-     &key (:suppress-assistant-p boolean)
-          (:suppress-reasoning-p boolean))
+    (application list &key (:suppress-assistant-p boolean)
+                          (:suppress-reasoning-p boolean))
     boolean)
 (defun application--present-conversation-record
-    (application record
-     &key (suppress-assistant-p nil) (suppress-reasoning-p nil))
+    (application record &key (suppress-assistant-p nil) (suppress-reasoning-p nil))
   "Present one sequenced RECORD unless its streamed form is already visible."
   (let ((sequence (application--record-sequence record)))
     (when sequence
@@ -2853,23 +2872,23 @@ rows."
         (if (or (and suppress-assistant-p assistant-text)
                 (and suppress-reasoning-p reasoning-text))
             (terminal-ui-mark-finalized ui identifier)
-            (let ((entry (conversation-record-entry application record)))
-              (and entry
-                   (terminal-ui-append-finalized ui identifier entry))))))))
+            (let ((presentation (application--record-presentation application record)))
+              (and presentation
+                   (plusp (terminal-ui-present-records ui (list presentation))))))))))
 
 (-> application--present-conversation-records
-    (application list)
+    (application list &key (:outcomes (option hash-table)))
     (integer 0))
-(defun application--present-conversation-records (application records)
+(defun application--present-conversation-records (application records &key outcomes)
   "Present ordered RECORDS with one terminal-region update."
-  (terminal-ui-append-finalized-batch
+  (terminal-ui-present-records
    (application-ui application)
    (loop for record in records
-         for sequence = (application--record-sequence record)
-         for entry = (and sequence (conversation-record-entry application record))
-         when entry
-           collect (list (application--record-presentation-identifier application record)
-                         entry))))
+         when (application--record-sequence record)
+           append (let ((presentation
+                          (application--record-presentation application record
+                                                             :outcomes outcomes)))
+                    (when presentation (list presentation))))))
 
 (-> application--render-position-invalidate (application) null)
 (defun application--render-position-invalidate (application)
@@ -2912,39 +2931,98 @@ rows."
           nil))))
 
 (-> application--history-segment-records
-    (application pathname &key (:after-sequence (integer 0))
-                               (:limit (integer 1)))
-    (values list (integer 0) (integer 0) (integer 0)))
+      (application pathname &key (:after-sequence (integer 0))
+                                 (:limit (integer 1))
+                                 (:outcomes (option hash-table))
+                                 (:collect-p boolean))
+  (values list (integer 0) (integer 0) (integer 0) hash-table))
 (defun application--history-segment-records
-    (application pathname &key after-sequence limit)
-  "Return one validated segment's newest visible records and scan metadata.
+    (application pathname &key after-sequence limit outcomes (collect-p t))
+  "Return one segment's visible page data and bounded lifecycle outcomes.
 
-The values are the newest LIMIT visible records after AFTER-SEQUENCE, the
-unbounded visible candidate count, the newest durable sequence, and the next
-readable byte position."
+The OUTCOMES table may seed calls selected by an older segment.  Calls selected
+in this segment are removed from the table when the bounded page evicts them.
+With COLLECT-P false, update only seeded outcomes without selecting records."
   (let ((records         (make-deque :maximum-count limit))
         (candidate-count 0)
         (latest-sequence 0)
-        (conversation    (application-conversation application)))
-    (multiple-value-bind
-        (position incomplete-tail-p record-count start-sequence next-sequence)
-        (conversation--map-segment-records
-         (conversation-pathname conversation)
-         pathname
-         (lambda (record)
-           (let ((sequence (application--record-sequence record)))
-             (when sequence
-               (setf latest-sequence (max latest-sequence sequence))
-               (when (and (> sequence after-sequence)
-                          (application--record-visible-p application record))
-                  (deque-push-back records record)
-                  (incf candidate-count))))))
-      (declare (ignore incomplete-tail-p record-count
-                       start-sequence next-sequence))
-      (values (coerce (deque->vector records) 'list)
-              candidate-count
-              latest-sequence
-              position))))
+        (conversation    (application-conversation application))
+        (outcomes        (or outcomes (make-hash-table :test #'equal)))
+        (owned-calls     (make-hash-table :test #'equal))
+        (jobs            (make-hash-table :test #'equal)))
+    (labels ((call-metadata (record)
+               (when (and (terminal-ui-fullscreen-p (application-ui application))
+                          (eq (first record) ':provider-item))
+                 (application--record-tool-outcome application record nil)))
+
+             (remember-job (call-key metadata)
+               (let ((job-key (getf metadata :job-key)))
+                 (when job-key
+                   (setf (gethash job-key jobs) call-key))))
+
+             (forget-call (record)
+               (let* ((metadata (call-metadata record))
+                      (call-key (getf metadata :call-key))
+                      (job-key  (getf (gethash call-key outcomes) :job-key)))
+                 (when (and call-key (gethash call-key owned-calls))
+                   (remhash call-key owned-calls)
+                   (when job-key (remhash job-key jobs))
+                   (remhash call-key outcomes))))
+
+             (remember-outcome (call-key record)
+               (when (and call-key (gethash call-key outcomes))
+                 (let ((metadata
+                         (application--record-tool-outcome
+                          application record
+                          (conversation-record-entry application record))))
+                   (when metadata
+                    (let ((old-job (getf (gethash call-key outcomes) :job-key)))
+                      (when (and old-job (not (equal old-job (getf metadata :job-key))))
+                        (remhash old-job jobs)))
+                    (setf (getf metadata :kind) ':call
+                          (getf metadata :call-key) call-key
+                          (gethash call-key outcomes) metadata)
+                    (remember-job call-key metadata))))))
+
+      (maphash (lambda (call-key metadata)
+                 (remember-job call-key metadata)) outcomes)
+      (multiple-value-bind
+          (position incomplete-tail-p record-count start-sequence next-sequence)
+          (conversation--map-segment-records
+           (conversation-pathname conversation)
+           pathname
+           (lambda (record)
+             (let ((sequence (application--record-sequence record)))
+               (when sequence
+                 (setf latest-sequence (max latest-sequence sequence))
+                 (when (and collect-p (> sequence after-sequence)
+                            (application--record-visible-p application record))
+                   (multiple-value-bind (ignored evicted)
+                       (deque-push-back records record)
+                     (declare (ignore ignored))
+                     (loop for old across (or evicted #()) do
+                       (forget-call old)))
+                   (incf candidate-count)
+                   (let ((metadata (call-metadata record)))
+                     (when metadata
+                       (let ((call-key (getf metadata :call-key)))
+                         (setf (gethash call-key outcomes) metadata
+                               (gethash call-key owned-calls) t)
+                         (remember-job call-key metadata)))))
+                 (case (first record)
+                   (:tool-result
+                    (remember-outcome
+                     (application--tool-outcome-key
+                      application ':call (getf (rest record) :call-id))
+                     record))
+                   (:message
+                    (let* ((completion (getf (rest record) :job-completion))
+                           (job-key    (application--tool-outcome-key
+                                        application ':job (getf completion :job-id))))
+                     (remember-outcome (gethash job-key jobs) record))))))))
+        (declare (ignore incomplete-tail-p record-count start-sequence next-sequence))
+        (values (coerce (deque->vector records) 'list)
+                candidate-count latest-sequence position outcomes)))))
 
 (-> application--render-startup-history
     (application (integer 0))
@@ -2977,13 +3055,14 @@ may fill the remainder."
                          application 0 generation)
                     (return))))
             (multiple-value-bind
-                (active-records active-count latest-sequence position)
+                (active-records active-count latest-sequence position active-outcomes)
                 (application--history-segment-records
                  application active :after-sequence after-sequence
-                                    :limit          limit)
+                 :limit                             limit)
               (if (/= generation (conversation-log-generation conversation))
                   (application--render-position-invalidate application)
                   (let ((records         active-records)
+                        (outcomes        active-outcomes)
                         (older-history-p (> active-count limit)))
                     (when (and (not (application-recovery-startup-p application))
                                (zerop after-sequence)
@@ -2992,15 +3071,30 @@ may fill the remainder."
                       (let ((remaining (- limit active-count)))
                         (multiple-value-bind
                             (previous-records previous-count
-                             previous-latest-sequence previous-position)
+                             previous-latest-sequence previous-position
+                             previous-outcomes)
                             (application--history-segment-records
                              application previous :after-sequence 0
-                                                  :limit          remaining)
+                             :limit                               remaining)
                           (declare (ignore previous-latest-sequence
                                            previous-position))
                           (setf records (append previous-records active-records)
-                                older-history-p
-                                (> previous-count remaining)))))
+                                older-history-p (> previous-count remaining))
+                          (when (plusp (hash-table-count previous-outcomes))
+                            (maphash (lambda (call-key metadata)
+                                       (setf (gethash call-key previous-outcomes) metadata))
+                                     active-outcomes)
+                            ;; Resolve selected older calls from the bounded active segment.
+                            (multiple-value-bind
+                                (rescanned-records rescanned-count
+                                 rescanned-latest rescanned-position rescanned-outcomes)
+                                (application--history-segment-records
+                                 application active :after-sequence after-sequence
+                                                   :limit limit :outcomes previous-outcomes
+                                                   :collect-p       nil)
+                              (declare (ignore rescanned-records rescanned-count rescanned-latest
+                                               rescanned-position))
+                              (setf outcomes rescanned-outcomes))))))
                     (when (and records older-history-p)
                       (application-present
                        application
@@ -3015,7 +3109,8 @@ may fill the remainder."
                                      (if (= (length records) 1)
                                          "transcript entry"
                                          "transcript entries")))))))
-                    (application--present-conversation-records application records)
+                    (application--present-conversation-records
+                     application records :outcomes outcomes)
                     (setf (application-history-floor-sequence application)
                           (cond
                             ((or (zerop after-sequence)
@@ -3032,8 +3127,8 @@ may fill the remainder."
                           latest-sequence)
                     (when (application--finish-render-scan
                            application position generation)
-                      (return)))))))))
-  nil)
+                      (return))))))
+       nil))))
 
 (-> application--render-unread-records (application) null)
 (defun application--render-unread-records (application)
@@ -3166,22 +3261,65 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
 
 (-> application--history-page-records
     (application integer integer)
-    (values list integer))
+    (values list integer hash-table))
 (defun application--history-page-records (application floor limit)
-  "Return the newest LIMIT replay candidates before sequence FLOOR."
+  "Return the newest LIMIT candidates before FLOOR, their count, and selected call outcomes.
+
+The existing chronological scan resolves selected calls from later results and job
+notices. Outcome storage follows the bounded page, not the conversation's length."
   (let ((records         (make-deque :maximum-count limit))
-        (candidate-count 0))
-    (conversation-map-records
-     (application-conversation application)
-     (lambda (record)
-       (let ((sequence (application--record-sequence record)))
-         (when (and sequence
-                    (< sequence floor)
-                    (application--record-visible-p application record))
-            (deque-push-back records record)
-            (incf candidate-count)))))
-    (values (coerce (deque->vector records) 'list)
-            candidate-count)))
+        (candidate-count 0)
+        (fullscreen-p    (terminal-ui-fullscreen-p (application-ui application)))
+        (outcomes        (make-hash-table :test #'equal))
+        (jobs            (make-hash-table :test #'equal)))
+    (labels ((call-metadata (record)
+               (when (and fullscreen-p (eq (first record) ':provider-item))
+                 (application--record-tool-outcome application record nil)))
+
+             (forget-call (record)
+               (let* ((call-key (getf (call-metadata record) :call-key))
+                      (job-key  (getf (gethash call-key outcomes) :job-key)))
+                 (remhash job-key jobs)
+                 (remhash call-key outcomes)))
+
+             (remember-outcome (call-key record)
+               (when (gethash call-key outcomes)
+                 (let ((metadata (application--record-tool-outcome
+                                  application record (conversation-record-entry application record))))
+                   (when metadata
+                    (let ((old-job (getf (gethash call-key outcomes) :job-key)))
+                      (when (and old-job (not (equal old-job (getf metadata :job-key))))
+                        (remhash old-job jobs)))
+                    (setf (getf metadata :kind) ':call
+                          (getf metadata :call-key) call-key
+                          (gethash call-key outcomes) metadata)
+                    (when (getf metadata :job-key)
+                      (setf (gethash (getf metadata :job-key) jobs) call-key)))))))
+      (conversation-map-records
+       (application-conversation application)
+       (lambda (record)
+         (let ((sequence (application--record-sequence record)))
+           (when sequence
+             (when (and (< sequence floor) (application--record-visible-p application record))
+               (multiple-value-bind (ignored evicted) (deque-push-back records record)
+                 (declare (ignore ignored))
+                 (loop for old across (or evicted #()) do (forget-call old)))
+               (incf candidate-count)
+               (let ((metadata (call-metadata record)))
+                 (when metadata
+                   (setf (gethash (getf metadata :call-key) outcomes) metadata))))
+             (when fullscreen-p
+               (case (first record)
+                 (:tool-result
+                  (remember-outcome
+                   (application--tool-outcome-key application ':call (getf (rest record) :call-id))
+                   record))
+                 (:message
+                  (let* ((completion (getf (rest record) :job-completion))
+                         (job-key    (application--tool-outcome-key
+                                      application ':job (getf completion :job-id))))
+                    (remember-outcome (gethash job-key jobs) record)))))))))
+      (values (coerce (deque->vector records) 'list) candidate-count outcomes))))
 
 (-> application--history-floor-ensure
     (application (integer 1))
@@ -3228,36 +3366,36 @@ A fullscreen transcript evicts its oldest output; those records page in again."
     (let* ((limit (application--history-page-size))
            (floor (application--history-floor-after-eviction
                    application (application--history-floor-ensure application limit))))
-      (multiple-value-bind (records candidate-count)
-          (application--history-page-records
-           application floor limit)
-        (if records
-            (let ((presented-count
-                    (application--present-conversation-records
-                     application records)))
-              (setf (application-history-floor-sequence application)
-                    (application--record-sequence (first records)))
-              (when (plusp presented-count)
-                (application-present
-                 application
-                 (list
-                  (terminal-span
-                   :hint
-                   (format nil
-                           "∙ loaded ~D earlier transcript entr~:@P"
-                           presented-count)))))
-              (when (> candidate-count limit)
-                (application-present
-                 application
-                 (list
-                  (terminal-span
-                   :hint
-                   "∙ more earlier history remains; run (history) again"))))
-              (when (and (zerop presented-count)
-                         (<= candidate-count limit))
-                (application-present
-                 application
-                 "No earlier transcript history remains.")))
+        (multiple-value-bind (records candidate-count outcomes)
+            (application--history-page-records
+             application floor limit)
+          (if records
+              (let ((presented-count
+                      (application--present-conversation-records
+                       application records :outcomes outcomes)))
+               (setf (application-history-floor-sequence application)
+                     (application--record-sequence (first records)))
+               (when (plusp presented-count)
+                 (application-present
+                  application
+                  (list
+                   (terminal-span
+                    :hint
+                    (format nil
+                            "∙ loaded ~D earlier transcript entr~:@P"
+                            presented-count)))))
+               (when (> candidate-count limit)
+                 (application-present
+                  application
+                  (list
+                   (terminal-span
+                    :hint
+                    "∙ more earlier history remains; run (history) again"))))
+               (when (and (zerop presented-count)
+                          (<= candidate-count limit))
+                 (application-present
+                  application
+                  "No earlier transcript history remains.")))
             (application-present application
                                  "No earlier transcript history remains.")))))
   (application-publish-recovery-session application)
@@ -3501,19 +3639,29 @@ does turning the activity line setting off."
 
 (-> application--present-transient-tool-result (application list) boolean)
 (defun application--present-transient-tool-result (application details)
-  "Present one tool result carried only through observer DETAILS."
+  "Present one transient tool result and reconcile its original fullscreen call."
   (let* ((tool-name (getf details :tool))
          (tool      (and (stringp tool-name)
                          (application--find-tool application tool-name)))
-         (record
-           (list :tool-result
-                 :tool tool-name
-                 :status (if (getf details :success-p) ':ok ':error)
-                 :output (or (getf details :output) ""))))
-    (and tool
-         (application-present
-          application
-          (application-tool-result-entry tool application record)))))
+         (call-id   (getf details :call-id))
+         (record    (list :tool-result
+                          :call-id call-id
+                          :tool   tool-name
+                          :status (if (getf details :success-p) ':ok ':error)
+                          :output (or (getf details :output) ""))))
+    (when tool
+      (if (and (terminal-ui-fullscreen-p (application-ui application))
+               (non-empty-string-p call-id))
+          (let ((presentation (application--record-presentation application record)))
+            (when presentation
+              (setf (first presentation)
+                    (list :transient-tool-result
+                          (conversation-identifier (application-conversation application))
+                          call-id))
+              (plusp (terminal-ui-present-records
+                      (application-ui application) (list presentation)))))
+          (application-present
+           application (application-tool-result-entry tool application record))))))
 
 (-> application--skill-load-result-details
     (t)
