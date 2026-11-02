@@ -52,3 +52,121 @@ conversations and never blocks a session."
                                                           (channel-resource--participants-text
                                                            (world-channel-subscribers world identifier)))))))
         (list (terminal-span ':hint "No channels exist yet.")))))
+
+
+;;;; -- Channel Delivery --
+
+(-> application-world--served-channel (application) (option string))
+(defun application-world--served-channel (application)
+  "Return the identifier of the channel APPLICATION serves, or NIL before its conversation persists."
+  (let ((conversation (and (slot-boundp application 'conversation)
+                           (application-conversation application))))
+    (and conversation
+         (conversation-persisted-p conversation)
+         (conversation-identifier conversation))))
+
+(-> application-world--unsettled (application string) list)
+(defun application-world--unsettled (application channel)
+  "Return CHANNEL's deliveries APPLICATION's conversation has not received, settling the rest."
+  (let ((configuration (application-configuration application))
+        (conversation  (application-conversation application)))
+    (multiple-value-bind (pending settled)
+        (with-recursive-lock-held ((conversation-append-lock conversation))
+          (world-inbox-unsettled configuration channel conversation))
+      (when settled
+        (world-inbox-settle configuration channel settled)
+        (dolist (identifier settled)
+          (remhash (format nil "channel:~A" identifier)
+                   (application-world-deliveries application))))
+      pending)))
+
+(-> application-world-deliver (application) (integer 0))
+(defun application-world-deliver (application)
+  "Queue every unread message of APPLICATION's channel as an automatic turn and return the count.
+
+A message queued while a turn runs is taken as steering first; the queued
+turn then finds its receipt and is skipped. Without an input controller, as
+in a headless job, messages wait in the inbox."
+  (let ((channel    (application-world--served-channel application))
+        (controller (application-input-controller application))
+        (queued     0))
+    (when (and channel controller)
+      (dolist (delivery (application-world--unsettled application channel))
+        (let ((identifier (world-delivery-pending-identifier delivery))
+              (table      (application-world-deliveries application)))
+          (unless (gethash identifier table)
+            (when (application-input-controller-enqueue-operation-request
+                   controller
+                   (world-delivery-label delivery)
+                   (world-delivery-request delivery)
+                   :pending-input-identifier identifier)
+              (setf (gethash identifier table) ':queued)
+              (incf queued))))))
+    queued))
+
+(-> application-world-steering-take (application) list)
+(defun application-world-steering-take (application)
+  "Return the unread messages of APPLICATION's channel as labeled steering input.
+
+Each message is taken once; a message already queued as a turn is taken as
+well, since the steer persists first and the queued turn then skips."
+  (let ((channel (application-world--served-channel application))
+        (entries nil))
+    (when channel
+      (dolist (delivery (application-world--unsettled application channel))
+        (let ((identifier (world-delivery-pending-identifier delivery))
+              (table      (application-world-deliveries application)))
+          (unless (eq (gethash identifier table) ':taken)
+            (setf (gethash identifier table) ':taken)
+            (push (agent-steering-input-create :identifier identifier
+                                               :content    (world-delivery-label delivery))
+                  entries)))))
+    (nreverse entries)))
+
+(-> application-world-steering-ack (application string) boolean)
+(defun application-world-steering-ack (application identifier)
+  "Settle the channel delivery IDENTIFIER names after its durable record, or return NIL for other input."
+  (when (world-delivery-pending-identifier-p identifier)
+    (let ((channel (application-world--served-channel application)))
+      (when channel
+        (world-inbox-settle (application-configuration application) channel
+                            (list (subseq identifier (length "channel:"))))
+        (remhash identifier (application-world-deliveries application))))
+    t))
+
+(-> application-world-send
+    (application &key (:channel string) (:text string) (:mentions list))
+    list)
+(defun application-world-send (application &key channel text mentions)
+  "Send TEXT to CHANNEL as the human participant and deliver it locally when this process serves it."
+  (let* ((configuration (application-configuration application))
+         (person        (world-human-participant
+                         (values (world-reconcile-sessions configuration))))
+         (result        (progn
+                          (unless person
+                            (error 'world-error
+                                   :message   "No human participant exists yet; a channel appears with the first durable conversation."
+                                   :pathname  nil
+                                   :operation ':send))
+                          (world-message-send configuration
+                                              :sender   (participant-identifier person)
+                                              :channel  channel
+                                              :text     text
+                                              :mentions mentions)))
+         (served        (application-world--served-channel application)))
+    (when (and served (member served (getf result :channels) :test #'string=))
+      (application-world-deliver application))
+    result))
+
+(-> application--channel-message-entry (application list (option timestamp)) list)
+(defun application--channel-message-entry (application request timestamp)
+  "Return the transcript entry showing a channel message with its sender and channel."
+  (let* ((message        (getf request :message))
+         (name           (sanitize-text (or (getf message :sender-name) "participant")
+                                        :single-line-p t))
+         (channel        (conversation-identifier-display (or (getf message :target) "?")))
+         (timestamp-text (application--timestamp-text timestamp)))
+    (append (list (terminal-span ':brand "● ")
+                  (terminal-span ':agent-name name)
+                  (terminal-span ':dim (format nil " [channel ~A]~@[ ~A~]~%" channel timestamp-text)))
+            (application--markdown-body application (or (getf request :summary) "")))))

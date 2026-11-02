@@ -202,6 +202,22 @@ resident the migration created, so a session never gets a second agent."
                (sort (world-channel-residents world channel-identifier) #'<
                      :key #'participant-created-at))))
 
+(-> world-session-participant (configuration conversation) (option participant))
+(defun world-session-participant (configuration conversation)
+  "Return the agent participant CONVERSATION was migrated onto, or NIL before it has one.
+
+A persisted conversation is reconciled first, so a fresh session that has
+its first message finds its participant on the first call."
+  (when (conversation-persisted-p conversation)
+    (world-reconcile-sessions configuration
+                              :identities (list (conversation-pathname conversation))))
+  (let ((mapping (find (conversation-identifier conversation)
+                       (world-session-mappings configuration)
+                       :key #'world-session-mapping-conversation :test #'string=)))
+    (and mapping
+         (world-participant-find (world-load configuration)
+                                 (world-session-mapping-participant mapping)))))
+
 
 ;;;; -- Reconciliation --
 

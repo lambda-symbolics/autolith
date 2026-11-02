@@ -3010,6 +3010,25 @@ The current value and its source sit in aligned columns of their own."
                        (application-channels-entry application))
   ':continue)
 
+(define-application-command application--builtin-tell-command
+    (:name              "/tell"
+     :argument          "CHANNEL MESSAGE"
+     :description       "send a message to a channel as yourself"
+     :tip               "reaches the channel's residents and subscribers and wakes their agents."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application channel &rest words)
+  (let ((result (application-world-send application
+                                        :channel (princ-to-string channel)
+                                        :text    (format nil "~{~A~^ ~}" words))))
+    (application-present
+     application
+     (format nil "Sent to ~{~A~^, ~}~@[; reached live: ~{~A~^, ~}~]."
+             (mapcar #'conversation-identifier-display (getf result :channels))
+             (mapcar #'conversation-identifier-display (getf result :notified)))))
+  ':continue)
+
 (define-application-command application--builtin-history-command
     (:name              "/history"
      :argument          nil

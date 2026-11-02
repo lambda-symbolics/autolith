@@ -613,7 +613,10 @@
   test-world-session-reconciliation
   test-world-application-sync
   test-world-channel-resource
-  test-world-channels-command)
+  test-world-channels-command
+  test-world-message-send
+  test-world-channel-tools
+  test-world-message-presentation)
 
 (define-test-suite preferences
   test-preferences

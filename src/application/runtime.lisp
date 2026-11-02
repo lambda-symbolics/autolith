@@ -16,6 +16,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-configuration
     :type          configuration
     :documentation "The current paths, model, and provider choices.")
+   (world-deliveries
+    :initform      (make-hash-table :test #'equal :synchronized t)
+    :reader        application-world-deliveries
+    :type          hash-table
+    :documentation "Channel delivery receipts this process has queued or taken as steering.")
    (conversation
     :initarg       :conversation
     :accessor      application-conversation
@@ -2576,13 +2581,17 @@ has no faithful invocation."
 
 (-> application--operation-request-entry (application list t) list)
 (defun application--operation-request-entry (application request timestamp)
-  "Show the operation that generated a model request instead of its text."
-  (application--transcript-entry
-   application
-   :style     ':notice
-   :header    (format nil "▸ ~A" (getf request :operation))
-   :timestamp timestamp
-   :body      (getf request :summary)))
+  "Show the operation that generated a model request instead of its text.
+
+A channel message shows its sender and channel instead of an operation."
+  (if (getf request :message)
+      (application--channel-message-entry application request timestamp)
+      (application--transcript-entry
+       application
+       :style     ':notice
+       :header    (format nil "▸ ~A" (getf request :operation))
+       :timestamp timestamp
+       :body      (getf request :summary))))
 
 (-> application--job-completion-entry (application list) list)
 (defun application--job-completion-entry (application properties)

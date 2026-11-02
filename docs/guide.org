@@ -1583,6 +1583,17 @@ and agent. The world lives in =world/= below the data root.
 =(channels)= lists every channel with its residents and subscribers, newest
 change first.
 
+Messages travel between channels through the same path for people and agents.
+=(tell "ID" "text")= sends a message to channel =ID= as yourself; the agent
+tools =channel.send=, =channel.subscribe= and =channel.unsubscribe= do the same
+for an agent. A message reaches the channel's residents, every subscriber of
+the channel and every participant it mentions as =@name= or =@id=, wherever
+they reside. An idle agent wakes with the message; a working one receives it
+as a steer labeled with the sender and the channel. The transcript shows the
+sender's name and the channel. Messages wait in the channel's inbox under
+=world/inbox/= until a process serves the channel, and a crash between
+delivery and the durable record repeats nothing.
+
 Conversation leases, Localgroup endpoint records, and recovery state live under
 =${XDG_STATE_HOME:-~/.local/state}/autolith/= rather than =XDG_RUNTIME_DIR=.
 They must survive logout so detached sessions, handoffs, and crash recovery can
