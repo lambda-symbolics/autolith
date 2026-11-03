@@ -1779,3 +1779,12 @@
 (define-test-suite async-lisp-presentation
   test-application-async-lisp-readable-results
   test-application-async-lisp-styled-reports)
+
+(define-test-suite unknown-usage-policy
+  test-mission-unknown-usage-policy-validation
+  test-mission-inference-unknown-usage-policy-settlement
+  test-mission-inference-unknown-usage-policy-limits
+  test-mission-inference-unknown-usage-policy-restore
+  test-mission-inference-unknown-usage-policy-fail-closed
+  test-mission-inference-unknown-usage-policy-review
+  test-job-completion-controller-unknown-usage-policy)

@@ -248,7 +248,7 @@ NEW-WORK-P always requires an active mission. Hard budgets apply to both paths."
                      (mission--operation-draining-p context *mission-admitted-operation*)))
       (mission--reject (getf goal :status) "The mission is not active."))
     (when (and (eq (getf goal :status) ':active)
-               (plusp (getf goal :unknown-usage 0))
+               (mission--unknown-usage-blocks-p goal)
                (or inference-p new-work-p))
       (mission--reject ':mission-usage-quarantine
                        "Mission usage is unknown; inference and new work require explicit spending authority."))
@@ -343,6 +343,12 @@ The calling thread preserves provider bindings and authorization callbacks."
                                  :function #'call-next-method :usage-function #'second)
         (call-next-method))))
 
+(-> mission--unknown-usage-blocks-p (list) boolean)
+(defun mission--unknown-usage-blocks-p (goal)
+  "Require a new budget for unknown usage unless GOAL explicitly records it only."
+  (and (plusp (getf goal :unknown-usage 0))
+       (not (eq (getf goal :unknown-usage-policy) ':record))))
+
 (-> mission--validate-specification (list) list)
 (defun mission--validate-specification (specification)
   "Validate user acceptance policy and return a new durable goal."
@@ -351,6 +357,8 @@ The calling thread preserves provider bindings and authorization callbacks."
                (every (lambda (key) (typep (getf specification key) '(integer 1)))
                       '(:turn-limit :token-limit :wall-seconds)))
     (mission--reject ':invalid "A mission requires objective, criteria and positive turn-limit, token-limit and wall-seconds."))
+  (unless (member (getf specification :unknown-usage-policy ':block) '(:block :record))
+    (mission--reject ':invalid "Unknown usage policy must be :block or :record."))
   (let* ((gates                 (mapcar #'mission-gate-normalize (getf specification :gates)))
          (gate-identifiers      (mapcar (lambda (gate) (getf gate :id)) gates))
          (criteria              (loop for criterion in (getf specification :criteria)
@@ -372,9 +380,10 @@ The calling thread preserves provider bindings and authorization callbacks."
       (mission--reject ':invalid "Gate IDs must be unique."))
     (list :kind ':mission :version 1 :objective (getf specification :objective)
           :status ':active :continuations 0 :created-at (get-universal-time)
-          :deadline    (+ (get-universal-time) (getf specification :wall-seconds))
-          :turn-limit  (getf specification :turn-limit)
-          :token-limit (getf specification :token-limit)
+          :deadline             (+ (get-universal-time) (getf specification :wall-seconds))
+          :turn-limit           (getf specification :turn-limit)
+          :token-limit          (getf specification :token-limit)
+          :unknown-usage-policy (getf specification :unknown-usage-policy ':block)
           :turns-used 0 :tokens-used 0 :tokens-reserved 0 :unknown-usage 0 :requests-outstanding 0
           :unknown-usage-by-child nil :reservation-charged-tokens 0 :reservation-charges-by-child nil
           :model-complete-p nil :criteria criteria :gates gates :evidence nil)))
@@ -429,7 +438,7 @@ The calling thread preserves provider bindings and authorization callbacks."
     (unless (and context (mission-goal-p goal)
                  (member (getf goal :status) '(:paused :blocked)))
       (mission--reject ':invalid "Only paused or blocked missions can resume."))
-    (when (plusp (getf goal :unknown-usage))
+    (when (mission--unknown-usage-blocks-p goal)
       (mission--reject ':unknown-usage "Unknown token usage requires a new mission budget, not resume."))
     (mission--transition context ':active "User resumed the mission without resetting budgets.")
     (mission--admit context :inference-p nil))
@@ -463,9 +472,15 @@ The calling thread preserves provider bindings and authorization callbacks."
               (setf (getf gate :status) ':failed
                     (getf gate :fingerprint) nil
                     (getf gate :evidence) "Interrupted gate execution; no passing evidence recorded.")))
+          (when (and (plusp outstanding)
+                     (not (mission--unknown-usage-blocks-p goal)))
+            (mission--evidence context ':unknown-usage
+                               (format nil "~D interrupted inference request~:P had no reported usage; recorded by mission policy."
+                                       outstanding)))
           (cond
             ((and (member (getf goal :status) '(:active :paused :blocked))
-                  (plusp outstanding))
+                  (plusp outstanding)
+                  (mission--unknown-usage-blocks-p goal))
              (mission--transition context ':blocked
                                   "Interrupted inference has unknown token usage; resume requires a new budget."))
             ((and (member (getf goal :status) '(:active :paused :blocked))
@@ -524,7 +539,7 @@ Report identity relative to the guarded goal, never arbitrary goal evidence."
                             ((eq (getf goal :status) ':cancelled)
                              ':mission-cancelled)
                             ((and (eq (getf goal :status) ':blocked)
-                                  (integerp unknown) (plusp unknown))
+                                  (integerp unknown) (mission--unknown-usage-blocks-p goal))
                              ':mission-usage-quarantine)
                             (t
                              ':mission-stopped)))

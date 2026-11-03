@@ -182,11 +182,34 @@ actual provider billing. Input and repeated generations can exceed it; Codex doe
 not enforce a wire output ceiling at the current library pin. Retry success uses
 only final returned usage and does not reconcile earlier unreported attempts.
 Without proven finite exact-child ownership, retain unresolved shared UNKNOWN.
-Exact-child unresolved usage quarantines further inference and new child work
-before dispatch; non-spending continuation and already-reserved requests may
-finish. Root or unproven ownership keeps conservative blocked behavior. Recovery
-cannot infer per-request child bounds from aggregate outstanding reservations.
-Existing unresolved UNKNOWN is never reclassified by restore or continuation.
+By default, exact-child unresolved usage quarantines further inference and new
+child work before dispatch; non-spending continuation and already-reserved
+requests may finish. Root or unproven ownership blocks new work. Recovery cannot
+infer per-request child bounds from aggregate outstanding reservations. Existing
+unresolved UNKNOWN is never reclassified by restore or continuation.
+
+To continue despite missing provider usage, explicitly select
+=:unknown-usage-policy :record= when starting a mission:
+
+#+BEGIN_SRC lisp
+(mission :start
+ '(:objective "Run the periodic checks"
+   :turn-limit 10000 :token-limit 10000000 :wall-seconds 86400
+   :unknown-usage-policy :record
+   :criteria ((:id "checks" :description "The user accepts the checks"))))
+#+END_SRC
+
+With =:record=, unbounded failed requests and interrupted requests recovered
+after restart increase the durable =:unknown-usage= counter without blocking
+solely for missing usage. Exact-child finite reservation charges still apply.
+Turn and wall-clock limits apply exactly; token accounting includes reported
+usage and conservative reservation charges, not all unreported provider tokens.
+Independent reviewers still require reported usage. The default =:block= also
+applies to older mission records without a policy. Choose the policy once at
+mission start; an existing blocked mission is not changed or resumed automatically.
+To opt in for existing work, start a new mission with its acceptance criteria and
+budgets and add the policy key. Large integer limits are finite, not an
+unlimited-mode switch.
 
 The wall-clock deadline includes gate execution, delegated tools, pauses and
 time away. Work runs under cl-jobpond supervision. Use =(goal :pause)= and

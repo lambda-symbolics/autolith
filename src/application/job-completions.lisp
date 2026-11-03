@@ -17,7 +17,7 @@
               (and (mission-goal-p goal)
                    (equal mission-id (getf goal :completion-id))
                    (eq (getf goal :status) ':active)
-                   (zerop (getf goal :unknown-usage 0))
+                   (not (mission--unknown-usage-blocks-p goal))
                    (< (getf goal :turns-used) (getf goal :turn-limit))
                    (< (+ (getf goal :tokens-used) (getf goal :tokens-reserved 0))
                       (getf goal :token-limit))
