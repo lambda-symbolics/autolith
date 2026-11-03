@@ -90,7 +90,11 @@
 
 (defmethod provider-prompt-cache-retention-estimate
     ((provider openrouter-chat-completions-provider))
-  "Estimate OpenRouter Claude cache lifetime from the requested TTL only."
+  "Schedule idle compaction using OpenRouter Claude's requested cache lifetime."
+  (provider-prompt-cache-lifetime provider))
+
+(defmethod provider-prompt-cache-lifetime ((provider openrouter-chat-completions-provider))
+  "Return the declared wire lifetime for OpenRouter Claude, or NIL for other routes."
   (let ((configuration (provider-configuration provider))
         (model         (config :model (provider-configuration provider))))
     (when (and (stringp model)

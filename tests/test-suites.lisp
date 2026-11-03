@@ -723,6 +723,9 @@
   test-conversation-cache-write-failures)
 
 (define-test-suite precompaction
+  test-precompaction-estimate-alone-keeps-served-output
+  test-precompaction-known-lifetime-expiry
+  test-precompaction-unknown-lifetime-resume
   test-precompaction-retains-failed-exchanges
   test-precompaction-retention-policy
   test-precompaction-cold-requests

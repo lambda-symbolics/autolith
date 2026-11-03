@@ -2,6 +2,24 @@
 
 ;;;; -- Prompt Cache Retention --
 
+(defgeneric provider-prompt-cache-lifetime (provider)
+  (:documentation "Return PROVIDER's declared inactive cache lifetime, or NIL when unknown.
+
+Unlike a scheduling estimate, this lifetime may permit rewriting served history."))
+
+(defmethod provider-prompt-cache-lifetime ((provider model-provider))
+  "Keep served history stable when PROVIDER declares no cache lifetime."
+  (declare (ignore provider))
+  nil)
+
+(-> provider-prompt-cache-lifetime-seconds (model-provider configuration) (option real))
+(defun provider-prompt-cache-lifetime-seconds (provider configuration)
+  "Return CONFIGURATION's user-declared lifetime or PROVIDER's known lifetime."
+  (let ((override (config :prompt-cache-retention-seconds configuration)))
+    (if (plusp override)
+        override
+        (provider-prompt-cache-lifetime provider))))
+
 (defgeneric provider-prompt-cache-retention-estimate (provider)
   (:documentation "Return PROVIDER's estimated inactive cache lifetime, or NIL when unknown.
 
@@ -32,7 +50,7 @@ The public OpenAI API retention contract does not establish this route's TTL."
   "Return CONFIGURATION's requested wire cache lifetime, or NIL for the service default.
 
 The lifetime asks the provider to keep cache entries; it is separate from the
-local retention estimate, which only schedules pruning and idle compaction."
+local retention estimate, which only schedules idle compaction."
   (let ((ttl (config :prompt-cache-ttl configuration)))
     (if (string= ttl "5m")
         nil

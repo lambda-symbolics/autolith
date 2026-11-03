@@ -1938,16 +1938,16 @@ Appends are synchronous and serialized across processes; export errors do not
 abort a completed provider call.
 
 Mechanical precompaction bounds oversized old tool output before a request after
-estimated cache expiry or a provider/model change. Excerpts include the head and
-tail, known failure status, uncertainty about external effects, and a retrievable
-conversation/call reference. Calls, reasoning, and distinct or repeated failed
+an explicitly declared cache lifetime expires or the provider/model changes.
+A retention estimate alone never permits rewriting served history. Excerpts
+include the head and tail, failure status, uncertainty about external effects,
+and a retrievable conversation/call reference. Calls, reasoning, and failed
 attempts are retained. Full outputs are available in the durable transcript;
 the latest user turn is untouched. Each precompaction is recorded and replayed
-on resume. The first request after resume bounds old output only when the latest
-completed response used another provider or model, is older than the retention
-estimate, or no estimate exists. Conversations last answered before 0.67.15
-prepare once on resume. Precompaction runs before ordinary requests and native
-or portable compaction, using the retention estimate described below.
+on resume. A same-provider/model resume preserves its prefix unless a known
+lifetime elapsed. Conversations without a recorded response identity prepare
+once on resume. Manual, context-threshold, and scheduled idle compaction can
+still replace history with a summary, including when its cache lifetime is unknown.
 
 Idle cache compaction is enabled by default. After a completed request with at
 least 32,768 prompt tokens and 131,072 characters of summarizable history, an
@@ -1960,17 +1960,21 @@ before scheduling one.
 Use =(settings :idle-compaction-p nil)= to disable it. The ChatGPT subscription
 route uses a conservative five-minute inactivity estimate. For Anthropic and
 OpenRouter Claude, the requested cache lifetime supplies the estimate. Other
-providers need an explicit estimate, for example
-=(settings :prompt-cache-retention-seconds 1800)= for thirty minutes. Set it to
-zero to use the provider estimate. Both settings persist across restarts.
+providers need an explicit estimate for idle compaction, for example
+=(settings :prompt-cache-retention-seconds 1800)= for thirty minutes. A positive
+value also declares a lifetime for precompaction; this is a user declaration,
+not evidence from the provider. Set it to zero to use the provider policy.
+Both settings persist across restarts. The ChatGPT estimate alone never
+permits idle precompaction; that route has no declared lifetime by default.
 
 =(settings :prompt-cache-ttl "1h")= asks the Anthropic API and OpenRouter
 Claude models to keep cache entries for one hour instead of five minutes. A
 one-hour cache write costs twice the base input price, against 1.25 times for
 five minutes, so it pays when a conversation often pauses for between five
-minutes and an hour. Other routes ignore the setting. The requested lifetime also
-supplies the local estimate for precompaction and idle compaction; an explicit
-=:prompt-cache-retention-seconds= setting takes precedence. OpenRouter requests
+minutes and an hour. Other routes ignore the setting. The requested lifetime
+supplies both the declared lifetime for precompaction and the estimate for idle
+compaction. An explicit =:prompt-cache-retention-seconds= setting takes
+precedence for both local policies. OpenRouter requests
 carry the conversation's cache key as their session identifier for upstream
 routing affinity from the first request.
 
