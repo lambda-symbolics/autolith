@@ -968,6 +968,9 @@ pkgs.writeShellApplication {
 
       home="''${HOME:-/home/user}"
       data_home=$(xdg_base_directory "''${XDG_DATA_HOME:-}" "$home/.local/share")
+      cache_home=$(xdg_base_directory "''${XDG_CACHE_HOME:-}" "$home/.cache")
+      # ASDF reads this variable before project initialization can validate it.
+      export XDG_CACHE_HOME="$cache_home"
     export AUTOLITH_SBCL="${runtime}/bin/sbcl"
     export AUTOLITH_SBCL_SOURCE_ROOT="${sbclSource}"
     export COLORLISP_NATIVE_LIBRARY="${colorlispNativeLibrary}/lib/libcolorlisp-tree-sitter${sharedLibrary}"
@@ -983,14 +986,14 @@ pkgs.writeShellApplication {
     export GIT_CONFIG_VALUE_1="${autolithSystem}/.git"
     export GIT_OPTIONAL_LOCKS=0
 
-    # Keep Nix-managed image and ASDF state separate from source installs while
-    # retaining the user's conversations and private mutation history.
+    # Keep durable Nix images under data and regenerable ASDF output under cache.
     nix_root="$data_home/autolith/nix"
     identity_name="${builtins.baseNameOf (toString imageIdentity)}"
     image_root="$nix_root/images"
     image_directory="$image_root/$identity_name"
-    asdf_cache="$nix_root/asdf-cache/$identity_name"
-    (umask 077; mkdir -p "$data_home/autolith" "$image_root" "$asdf_cache")
+    asdf_cache="$cache_home/autolith/nix/asdf-cache/$identity_name"
+    (umask 077; mkdir -p "$data_home/autolith" "$cache_home/autolith" \
+      "$image_root" "$asdf_cache")
     export AUTOLITH_ASDF_CACHE="$asdf_cache"
     export AUTOLITH_NIX_SOURCE_ROOT="${autolithSystem}/"
     export AUTOLITH_INSTALLATION_KIND=nix
