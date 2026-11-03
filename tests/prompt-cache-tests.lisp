@@ -345,6 +345,91 @@
                    "agent completion carries the plan of the final request")))
   nil)
 
+(-> test-prompt-cache-one-response-prefix () null)
+(defun test-prompt-cache-one-response-prefix ()
+  "Measure reusable prefixes through real product projections with one-response exchanges."
+  (with-test-configuration (configuration)
+    (test-call-with-function-replacements
+     (list (list 'context-resolve-request
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   nil)))
+     (lambda ()
+       (dolist (provider
+                (list (provider-create configuration)
+                      (openai-compatible-provider-create
+                       configuration :name                "cache-chat"
+                                     :family              ':openai
+                                     :headers             nil
+                                     :reasoning-parameter nil
+                                     :stream-usage-p      t)
+                      (anthropic-provider-create configuration)
+                      (gemini-code-assist-provider-create
+                       configuration :credential-manager
+                       (credential-manager-create configuration))))
+         (let ((conversation (conversation-create configuration)))
+           (labels ((project ()
+                      "Return the observed prefix and actual request for this conversation."
+                      (let* ((prefix                          nil)
+                             (*provider-cache-request-prefix* nil)
+                             (*provider-cache-prefix-function*
+                               (lambda (value) (setf prefix value)))
+                             (request                         (provider-request-object
+                                                               provider conversation #() :goal-context "temporary")))
+                        (provider-cache-prefix-observe request)
+                        (values prefix request)))
+
+                    (request-text (request)
+                      "Serialize REQUEST without Code Assist's generated envelope identifier."
+                      (let ((copy (json-object-copy request)))
+                        (remhash "user_prompt_id" copy)
+                        (json-encode copy)))
+
+                    (assistant (text)
+                      "Append a durable assistant message that may merge with a tool call."
+                      (conversation-append-provider-item
+                       conversation
+                       (json-object "type" "message" "role" "assistant"
+                                    "content" (json-array
+                                               (json-object "type" "output_text" "text" text))))))
+             (conversation-append-user-message conversation "Durable history.")
+             (assistant "Working.")
+             (conversation-append-provider-item
+              conversation (json-object "type" "function_call" "call_id" "temporary-call"
+                                        "name" "inspect" "arguments" "{}")
+              :persistence ':next-response)
+             (conversation-append-provider-item
+              conversation (json-object "type" "function_call_output" "call_id" "temporary-call"
+                                        "output" "temporary result")
+              :persistence ':next-response)
+              ;; Repeated text belongs to distinct durable history items.
+             (assistant "Working.")
+             (let ((expected (request-text (provider-request-object
+                                            provider conversation #() :goal-context "temporary"))))
+               (multiple-value-bind (previous observed-request) (project)
+                 (test-assert
+                  (and (string= expected (request-text observed-request))
+                       (string= expected
+                                (request-text (provider-request-object
+                                               provider conversation #() :goal-context "temporary"))))
+                  (format nil "~A cache measurement preserves the payload and conversation input"
+                          (class-name (class-of provider))))
+                 (test-assert
+                  (and (= (length (getf previous :items)) 2)
+                       (plusp (getf previous :volatile-items)))
+                  "the reusable history ends before the one-response exchange")
+                 (conversation-clear-ephemeral-input-items conversation)
+                 (let* ((current (project))
+                        (change  (provider-cache-wire-change (getf previous :wire)
+                                                            (getf current :wire))))
+                   (test-assert
+                    (and (provider-cache-prefix-extends-p previous current)
+                         (null (getf change :fields))
+                         (null (getf change :first-changed-item)))
+                    (format nil "~A omits one-response exchanges without mutating its reusable prefix"
+                            (class-name (class-of provider)))))))))))))
+  nil)
+
 (-> prompt-cache-tests--wire-request (&key (:tools string) (:texts list) (:ttl (option string)))
     json-object)
 (defun prompt-cache-tests--wire-request (&key (tools "read") (texts '("a" "b" "c")) ttl)

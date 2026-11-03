@@ -50,6 +50,19 @@ local retention estimate, which only schedules pruning and idle compaction."
 (defparameter *provider-cache-request-prefix* nil
   "Request-local fingerprints captured before final provider encoding.")
 
+(defparameter *provider-cache-volatile-history* nil
+  "Projected history from the first one-response item onward, scoped to one request.")
+
+(defmethod provider-request-object :around
+    ((provider model-provider) (conversation conversation)
+     (tool-namespaces vector) &key goal-context compaction-p)
+  "Locate one-response history before the product projection and wire encoding."
+  (declare (ignore goal-context))
+  (let ((*provider-cache-volatile-history*
+          (unless (or compaction-p (null *provider-cache-prefix-function*))
+            (provider-cache-prefix--volatile-history provider conversation))))
+    (call-next-method)))
+
 (-> provider-cache-prefix-observe (json-object) null)
 (defun provider-cache-prefix-observe (request)
   "Report the final transport REQUEST alongside its reusable prefix fingerprints."
@@ -68,9 +81,9 @@ local retention estimate, which only schedules pruning and idle compaction."
      (tool-namespaces vector) &key goal-context compaction-p)
   "Capture reusable fingerprints before encoding; observe wire fields at transport.
 
-The encoder's second value, the count of trailing sequence items that change
-on every request, joins the fingerprints as :VOLATILE-ITEMS so the final wire
-plan can bound the prefix the next request may reuse."
+The encoder's second value counts its volatile suffix. One-response history
+may also change an earlier merged message, so compare its durable projection
+before bounding the prefix the next request may reuse."
   (declare (ignore goal-context))
   (if (or compaction-p (null *provider-cache-prefix-function*))
       (call-next-method)
@@ -79,10 +92,14 @@ plan can bound the prefix the next request may reuse."
             (setf *provider-cache-request-prefix*
                   (provider-cache-prefix-create projection tool-namespaces))
             (call-next-method))
-        (setf *provider-cache-request-prefix*
-              (append *provider-cache-request-prefix*
-                      (list :volatile-items (or volatile-items 0))))
-        (values request volatile-items))))
+        (let ((volatile-items
+                (max (or volatile-items 0)
+                     (provider-cache-prefix--volatile-count
+                      provider projection tool-namespaces :request request))))
+          (setf *provider-cache-request-prefix*
+                (append *provider-cache-request-prefix*
+                        (list :volatile-items volatile-items)))
+          (values request volatile-items)))))
 
 (defgeneric provider-prepare-stream-request (provider request credentials)
   (:documentation
@@ -136,8 +153,66 @@ establish shared history growth, never the provider's token boundary."
                     (getf options :reasoning-effort))))
           :items
           (map 'list #'provider-cache-prefix--entry
-               (append (getf options :shared-items)
-                       (cl-llm-provider-api:wire-request-items projection))))))
+               (provider-cache-prefix--durable-items
+                (append (getf options :shared-items)
+                        (cl-llm-provider-api:wire-request-items projection)))))))
+
+(-> provider-cache-prefix--volatile-history (model-provider conversation) list)
+(defun provider-cache-prefix--volatile-history (provider conversation)
+  "Return projected history from the first difference without one-response items."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (when (conversation-ephemeral-input-entries conversation)
+      (let* ((history (conversation-input-items-for-family conversation (provider-family provider)))
+             (durable (conversation-input-items-for-family conversation (provider-family provider)
+                                                           :include-ephemeral-p nil))
+             (shared  (loop for item in history
+                            for stable in durable
+                            while (eq item stable)
+                            count t)))
+        (nthcdr shared history)))))
+
+(-> provider-cache-prefix--durable-items (list) list)
+(defun provider-cache-prefix--durable-items (items)
+  "Return ITEMS before the first request-local exchange, including anchored context."
+  (if *provider-cache-volatile-history*
+      (loop for item in items
+            until (member item *provider-cache-volatile-history* :test #'eq)
+            collect item)
+      items))
+
+(-> provider-cache-prefix--volatile-count
+    (model-provider cl-llm-provider-api:wire-request vector &key (:request json-object))
+    (integer 0))
+(defun provider-cache-prefix--volatile-count (provider projection tool-namespaces &key request)
+  "Count REQUEST's items after the wire prefix unaffected by one-response exchanges.
+
+Encode the durable source prefix separately because Chat and Gemini can merge
+adjacent source items into one message. Do not move items in the sent request."
+  (let* ((options (cl-llm-provider-api:wire-request-options projection))
+         (shared  (getf options :shared-items))
+         (items   (append shared (cl-llm-provider-api:wire-request-items projection)))
+         (durable (provider-cache-prefix--durable-items items)))
+    (if (= (length items) (length durable))
+        0
+        (let* ((options                          (copy-list options))
+               (count                            (min (length shared) (length durable)))
+               (*provider-cache-prefix-function* nil))
+          (setf (getf options :shared-items) (subseq durable 0 count)
+                (getf options :ephemeral-items) nil)
+          (let* ((projection
+                   (make-instance 'cl-llm-provider-api:wire-request
+                                  :model   (cl-llm-provider-api:wire-request-model projection)
+                                  :items   (nthcdr count durable)
+                                  :prefix  (cl-llm-provider-api:wire-request-prefix projection)
+                                  :options options))
+                 (stable (provider-request-object provider projection tool-namespaces))
+                 (old    (getf (provider-cache-wire-plan stable) :items))
+                 (new    (getf (provider-cache-wire-plan request) :items)))
+            (- (length new)
+               (loop for stable in old
+                     for item in new
+                     while (equal stable item)
+                     count t)))))))
 
 (-> provider-cache-prefix-characters (list) (integer 0))
 (defun provider-cache-prefix-characters (prefix)
