@@ -267,18 +267,29 @@ and =event= names an external event instead of a time policy. For example:
 #+END_SRC
 
 For recurring wakeups, choose =missed-policy= =latest= (the default), =all= or
-=skip= to select the newest missed occurrence, every missed occurrence or none.
-Use =mission-schedule.event= with an event name and stable external event =id=;
-repeated delivery of that ID is deduplicated. The local daemon listener hosts time
-wakeups. Due work enters the ordinary primary command queue as a persisted
-=(mission-wakeup ticket)= command with a structured ticket and executes as a
-mission continuation under the existing turn, token and wall-clock budgets.
+=skip= to select the newest missed occurrence, every missed occurrence or only
+an occurrence due at exactly the current time. Use =mission-schedule.event= with
+an event name and stable external event =id=; repeated delivery of that ID is
+deduplicated. The local daemon listener hosts time wakeups. Due work enters the
+ordinary primary command queue as a persisted =(mission-wakeup ticket)= command
+with a structured ticket and executes as a mission continuation under the
+existing turn, token and wall-clock budgets.
 
 Only the primary agent may use the =mission-schedule= tools. Each wakeup retains
-its exact mission identity and version, checked at admission and execution;
-replaced or inactive mission work is cancelled. Use =mission-schedule.inspect=
-to read schedules, occurrence IDs and claim tokens, and =mission-schedule.cancel=
-with the schedule =id= to cancel future and pending work.
+its exact mission identity and version, checked at admission and execution.
+While that mission is paused or blocked, due occurrences selected by the missed
+policy are skipped without running. The interval advances, and after resuming
+the mission you get the next due occurrence without recreating the schedule.
+Skipped occurrences are not replayed, including one-shot wakeups and deduplicated
+events. Unknown usage still prevents mission resume until resolved.
+
+Replacement, a version change, or a terminal mission (verified, exhausted,
+cancelled, failed or legacy complete) cancels the schedule. Skips and automatic
+cancellations produce persisted user notices. Use =mission-schedule.inspect= to
+read schedules, occurrence IDs, claim tokens and outcomes: skipped occurrences
+have =state= =cancelled= with =result= =(:skipped <mission-status>)=; obsolete
+mission work has =result= =:stale-mission= and a cancelled schedule. Use
+=mission-schedule.cancel= with the schedule =id= to cancel future and pending work.
 
 Interrupted admissions and executions restore as uncertain outcomes. Inspect the
 external effects before calling =mission-schedule.resolve= with the readable

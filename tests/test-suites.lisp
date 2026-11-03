@@ -236,6 +236,12 @@
   test-shell-log-command-gates)
 
 (define-test-suite mission-schedule
+  test-mission-schedule-paused-and-blocked-baseline
+  test-mission-schedule-suspension-resume
+  test-mission-schedule-suspension-execute-race
+  test-mission-schedule-stale-lifecycle
+  test-mission-schedule-suspension-events-and-recovery
+  test-mission-schedule-unrecognized-status
   test-mission-schedule-missed-and-dedup
   test-mission-schedule-version-and-cancel
   test-mission-schedule-recovery
