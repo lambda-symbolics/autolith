@@ -1525,13 +1525,20 @@ sessions. In a script, =(settings)= prints every setting grouped by area.
 Settings live in one of four scopes. Durable settings, such as the model,
 reasoning effort, Fast mode, reasoning traces, compact view, timestamps, the
 transcript style, the activity line, cache miss notices, Simple Technical
-English, generated titles, fullscreen, and the saved permission mode, persist in =preferences.sexp= under the state
-directory. Session settings, such as hurry-up mode, last until exit. Process
-settings, such as the immutable flag, the management endpoint, and the roots,
-come from the command line, the environment, or defaults at startup and stay
-fixed. Derived settings, such as the context window and provider endpoint,
-follow the model. The window uses a declared model value, else the catalog
-value, else the default.
+English, generated titles, fullscreen, and the saved permission mode, persist in
+=preferences.sexp= under the config directory. Session settings, such as hurry-up
+mode, last until exit. Process settings, such as the immutable flag, the management
+endpoint, and the roots, come from the command line, the environment, or startup
+defaults and are fixed for the process. Derived settings, such as the context window
+and provider endpoint, follow the model. The window uses a declared model value,
+else the catalog value, else the default.
+
+On upgrade, Autolith copies the old state-directory =preferences.sexp= into the
+config directory if no config copy exists. The old file is retained for rollback;
+subsequent settings changes use the config copy. If copying fails, Autolith warns
+and continues reading and saving the old file, retrying migration on a later
+startup. Session records, pending inputs, and other session state use the state
+directory. This compatibility path is scheduled for removal in 0.68.0.
 
 Enable the session's private context-pressure reminder with =(relax t)=, or
 =(settings :relax-p t)=. Use =(relax nil)= to disable it and =(relax)= to inspect

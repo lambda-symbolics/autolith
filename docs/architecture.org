@@ -206,9 +206,12 @@ change), =:session= (forgotten at exit), and =:derived= (computed on read).
 inference frames; listeners stay with the original.
 
 =preferences.lisp= reads and atomically writes version 8 records of durable
-settings, preserving unknown keys across rewrites. Unsupported or malformed
-records are reported through =preferences-load-warning= during configuration
-creation.
+setting choices under the config root, preserving unknown keys across rewrites.
+It copies an existing state-root preferences file once without replacing config
+preferences or deleting the rollback source. Failed publication warns and uses
+the legacy file until migration succeeds. Remove this compatibility path at
+0.68.0. Unsupported or malformed records are reported through
+=preferences-load-warning= during configuration creation.
 
 * Provider and tools
 

@@ -572,7 +572,11 @@
   test-agenda-tools)
 
 (define-test-suite preferences
-  test-preferences)
+  test-preferences
+  test-preferences-xdg-migration
+  test-preferences-xdg-migration-failure
+  test-preferences-xdg-malformed-legacy
+  test-legacy-xdg-migration-removal)
 
 (define-test-suite prompt-cache
   test-prompt-cache-miss-detection

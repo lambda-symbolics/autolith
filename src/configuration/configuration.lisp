@@ -855,17 +855,21 @@ selects its own registration, rather than inheriting the previous provider."
                :stage              ':validation
                :cause              condition)))))
 
-(-> configuration-ensure-directories (configuration) configuration)
-(defun configuration-ensure-directories (configuration)
-  "Create CONFIGURATION's private config, data, state, and cache directories."
-  (dolist (directory (list (config :config-root configuration)
-                           (config :data-root configuration)
-                           (config :state-root configuration)
-                           (config :cache-root configuration)))
+(-> configuration-ensure-root-directory (configuration keyword) pathname)
+(defun configuration-ensure-root-directory (configuration root)
+  "Create CONFIGURATION's ROOT privately, preserving an existing directory's mode."
+  (let ((directory (config root configuration)))
     (multiple-value-bind (pathname created-p)
         (ensure-directories-exist directory)
       (when created-p
-        (platform-make-private *platform* pathname))))
+        (platform-make-private *platform* pathname)))
+    directory))
+
+(-> configuration-ensure-directories (configuration) configuration)
+(defun configuration-ensure-directories (configuration)
+  "Create CONFIGURATION's private config, data, state, and cache directories."
+  (dolist (root '(:config-root :data-root :state-root :cache-root))
+    (configuration-ensure-root-directory configuration root))
   configuration)
 
 (-> configuration-conversation-root (configuration) pathname)
@@ -939,8 +943,8 @@ selects its own registration, rather than inheriting the previous provider."
 
 (-> configuration-preferences-path (configuration) pathname)
 (defun configuration-preferences-path (configuration)
-  "Return the atomic global preferences pathname."
-  (merge-pathnames "preferences.sexp" (config :state-root configuration)))
+  "Return the atomic user configuration preferences pathname."
+  (merge-pathnames "preferences.sexp" (config :config-root configuration)))
 
 (-> configuration-project-adaptation-offers-path (configuration) pathname)
 (defun configuration-project-adaptation-offers-path (configuration)
