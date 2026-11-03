@@ -1461,6 +1461,30 @@ caches below =${XDG_CONFIG_HOME:-~/.config}/autolith/=,
 nonempty absolute paths; invalid values use these defaults. Newly created
 Autolith roots have mode =0700=.
 
+POSIX XDG directory values are native filesystem names, including literal brackets,
+asterisks, and backslashes. Before 0.68.0, an installation written under a path
+whose backslashes an older release stripped is detected automatically. Autolith
+uses that populated legacy root with a warning when the native root is empty,
+including trees containing only launcher-created directories. If both roots contain
+files, choose one explicitly rather than merging installations. The warning or
+conflict names both paths. Compatibility choices are local to each configuration.
+Explicit root settings bypass this compatibility lookup.
+
+Provider discovery metadata uses =CACHE/provider-models.sexp=. On upgrade, the old
+state-directory cache is copied when no new cache exists. Existing cache metadata
+takes precedence; failed copying warns and loads the old metadata so saved model
+choices work offline. The old file is retained for rollback. Remove this legacy
+lookup in 0.68.0.
+
+Generated conversation picker, search, and input-history indexes use
+=CACHE/conversation-picker/<source-directory-hash>/=. Missing indexes rebuild from
+authoritative conversation records, including retired segments. Context anchors,
+source locks, and source-invalidation revisions use their original data-directory
+paths. Old generated sidecars are retained for older releases; no whole-directory
+migration is performed. Nix ASDF output uses =CACHE/nix/asdf-cache/<identity>/=;
+durable images use the data directory. After upgrading, you may remove old
+=DATA/nix/asdf-cache/= compilation output.
+
 On Windows the same four roots are, unless an absolute XDG variable overrides
 one, =%APPDATA%\autolith\=, =%LOCALAPPDATA%\autolith\data\=,
 =%LOCALAPPDATA%\autolith\state\=, and =%LOCALAPPDATA%\autolith\cache\=.
@@ -1475,6 +1499,8 @@ They must survive logout so detached sessions, handoffs, and crash recovery can
 continue across login sessions. Autolith uses authenticated loopback TCP rather
 than filesystem sockets for its inference and Localgroup protocols, and cleans
 stale Localgroup records itself.
+The management REPL socket also defaults to the state directory, at
+=management/repl.sock=.
 
 * Configure Autolith
 
@@ -1496,6 +1522,7 @@ must already exist and be absolute. It may contain =init.lisp=, =mcp.sexp=,
 so it provides defaults without replacing the user's normal XDG tree. A site
 =init.lisp= has the same full privileges as user initialization and is not a
 security boundary.
+Site lookup uses this explicit root rather than =XDG_CONFIG_DIRS=.
 
 Executable initialization loads in this order:
 

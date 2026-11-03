@@ -147,6 +147,22 @@ Use =sexp-store= transactions for locked read/modify/publish operations. Caller
 state is published after durable records. Conversation sidecar reconstruction
 holds the same file lock as source invalidation and writes.
 
+Regenerable provider metadata uses =CACHE/provider-models.sexp=. Conversation picker,
+search, and input-history payloads use
+=CACHE/conversation-picker/<SHA256 of absolute source directory>/=. Pathname-only
+readers share a narrow source-root/cache-root registration; separate source roots
+receive separate namespaces even when identifiers coincide. Durable context anchors,
+source locks, and source-invalidation revisions retain their DATA paths so old and
+new writers coordinate through the same lock and revision counters.
+
+Before 0.68.0, provider cache loading copies absent cache metadata from the legacy
+state file under the same target transaction lock as new refreshes. Existing target
+metadata wins, and failed copying returns legacy metadata for offline validation.
+The source file is retained. At 0.68.0 remove that legacy read/copy branch, the
+preferences migration, legacy POSIX root selection, configuration-local choice cache
+and constructor bypass, and old conversation payload cleanup helpers; then remove
+=test-legacy-xdg-migration-removal=. The test fails for that version and every later version.
+
 | State         | Components                                               |
 |---------------+----------------------------------------------------------|
 | Conversations | headers, messages, provider items, model choices         |
@@ -179,17 +195,13 @@ holds the same file lock as source invalidation and writes.
   repairs before publishing a self-contained checkpoint, then installs the
   replacement projection. =:cutoff-seq= identifies the request snapshot;
   =:through-seq= covers every record before checkpoint publication.
-- Generated picker metadata, search text and editable-input indexes use
-  =CACHE/conversation-picker/<source-directory-hash>/=. Missing or invalid
-  payloads rebuild from authoritative records. If cache storage is unavailable,
-  picker and search reads return scans and input recall streams source records.
-  Compaction retains retired source segments without requiring cache publication.
-- Picker and search revision files are durable source-invalidation metadata,
-  not generated payloads. Revisions, source locks and context anchors use their
-  existing =DATA/conversation-picker/= paths. Writers publish invalidation under
-  the shared source lock before changing source bytes; old and new releases
-  coordinate through those same files. Checkpoints record the last editable-input
-  sequence, not input strings.
+- =src/conversation/input-history.lisp= maintains complete editable input recall
+  in the CACHE namespace above. Missing or invalid indexes rebuild from
+  authoritative records, including retired segments. Each new input appends one
+  indexed sequence. If cache storage is unavailable, picker and search reads
+  return scans and input recall streams source records. Compaction retains
+  retired source segments without requiring cache publication. Checkpoints carry
+  the last input sequence, not the input strings.
 
 ** Configuration
 

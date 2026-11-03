@@ -257,5 +257,5 @@ Source precedence, source recording, and value rejection belong to setinka."
 (defun test-legacy-xdg-migration-removal ()
   "Require removal of temporary XDG compatibility code at the 0.68.0 boundary."
   (test-assert (version< *autolith-version* "0.68.0")
-               "At 0.68.0 remove legacy XDG root selection, preferences/model-cache migration, conversation-cache legacy sidecars and revision bridges, then remove this test.")
+               "At 0.68.0 remove legacy XDG root selection and choice caches, preferences/model-cache migration and conversation-cache legacy sidecars, then remove this test.")
   nil)
