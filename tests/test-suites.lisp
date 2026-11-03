@@ -1660,6 +1660,7 @@
   test-platform-copy-file-permissions
   test-xdg-native-directory-roots
   test-xdg-legacy-backslash-roots
+  test-xdg-configuration-root-choices
   test-xdg-explicit-roots-bypass-legacy
   test-xdg-legacy-root-scan)
 

@@ -231,6 +231,7 @@ Never move or merge files. Conflicting installations require an explicit choice.
             ((not (posix--xdg-root-content-p (uiop:native-namestring legacy)))
              native)
             ((posix--xdg-root-content-p (uiop:native-namestring native))
+             (setf *legacy-xdg-root-choice-p* t)
              (restart-case
                  (error 'posix-legacy-xdg-root-conflict
                         :variable variable :native native :legacy legacy)
@@ -241,6 +242,7 @@ Never move or merge files. Conflicting installations require an explicit choice.
                 :report "Use the historical XDG root for this lookup."
                  legacy)))
             (t
+             (setf *legacy-xdg-root-choice-p* t)
              (warn "Using legacy XDG installation at ~S instead of ~S. Before 0.68.0, set ~A to ~S to keep using it, or relocate it while Autolith is stopped. No files were moved."
                    (uiop:native-namestring legacy) (uiop:native-namestring native)
                    variable (uiop:native-namestring (uiop:pathname-parent-directory-pathname legacy)))

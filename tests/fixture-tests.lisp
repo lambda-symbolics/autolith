@@ -425,6 +425,88 @@
                                            "native records are untouched"))))))))
   nil)
 
+(-> test-xdg-configuration-root-choices () null)
+(defun test-xdg-configuration-root-choices ()
+  "Keep compatibility choices local to one configuration without freezing native defaults."
+  (with-test-fixture (':wildcard-file-names "configuration-local legacy XDG choices")
+    (with-test-configuration (configuration root)
+      (labels ((new-configuration ()
+                 (configuration-create
+                  :source-root (config :source-root configuration)
+                  :working-directory root :durable-p nil :defer-provider-validation-p t)))
+        (loop for (variable kind key) in
+              '(("XDG_CONFIG_HOME" :config :config-root)
+                ("XDG_DATA_HOME" :data :data-root)
+                ("XDG_STATE_HOME" :state :state-root)
+                ("XDG_CACHE_HOME" :cache :cache-root))
+              do (dolist (scenario '(:fallback :use-native :use-legacy))
+                   (let* ((value    (concatenate 'string (uiop:native-namestring root)
+                                                 (format nil "~(~A-~A~)/back\\slash" kind scenario)))
+                          (native   (uiop:parse-native-namestring
+                                     (concatenate 'string value "/autolith/")))
+                          (legacy   (merge-pathnames "autolith/"
+                                                     (uiop:ensure-directory-pathname (pathname value))))
+                          (other    (merge-pathnames "fresh-environment/" root))
+                          (expected (if (eq scenario ':use-native) native legacy))
+                          (warnings 0)
+                          (choices  0))
+                     (let ((record (merge-pathnames "opaque.record" legacy)))
+                       (ensure-directories-exist record)
+                       (with-open-file (stream record :direction ':output)
+                         (write-string "legacy" stream)))
+                     (unless (eq scenario ':fallback)
+                       (let ((record (merge-pathnames "opaque.record" native)))
+                         (ensure-directories-exist record)
+                         (with-open-file (stream record :direction ':output)
+                           (write-string "native" stream))))
+                     (with-test-environment ((variable value))
+                       (let ((selected
+                               (handler-bind
+                                   ((warning (lambda (condition)
+                                               (incf warnings)
+                                               (with-test-environment
+                                                   ((variable (uiop:native-namestring other)))
+                                                 (test-assert
+                                                  (equal (merge-pathnames "autolith/" other)
+                                                         (config key (new-configuration)))
+                                                  "a warning handler can inspect another configuration"))
+                                               (muffle-warning condition)))
+                                    (posix-legacy-xdg-root-conflict
+                                      (lambda (condition)
+                                        (declare (ignore condition))
+                                        (incf choices)
+                                        (invoke-restart (if (eq scenario ':use-native)
+                                                            'use-native-root
+                                                            'use-legacy-root)))))
+                                 (let ((selected (new-configuration)))
+                                   (dotimes (read 3)
+                                     (test-assert (equal expected (config key selected))
+                                                  "repeated defaults use the chosen root"))
+                                   (let ((another (new-configuration)))
+                                     (dotimes (read 3)
+                                       (test-assert (equal expected (config key another))
+                                                    "another configuration makes its own choice")))
+                                   selected))))
+                        (test-assert (= warnings (if (eq scenario ':fallback) 2 0))
+                                     "warn only once per configuration")
+                        (test-assert (= choices (if (eq scenario ':fallback) 0 2))
+                                     "ask for one conflict choice per configuration")
+                        (with-test-environment ((variable (uiop:native-namestring other)))
+                          (test-assert (equal expected (config key selected))
+                                       "an established compatibility choice is stable")
+                          (let ((fresh (new-configuration)))
+                            (test-assert (equal (merge-pathnames "autolith/" other)
+                                                (config key fresh))
+                                         "new configurations ignore older configuration choices")
+                            (with-test-environment
+                                ((variable (uiop:native-namestring
+                                            (merge-pathnames "another-environment/" root))))
+                              (test-assert
+                               (equal (merge-pathnames "another-environment/autolith/" root)
+                                      (config key fresh))
+                               "ordinary native defaults still follow the environment"))))))))))))
+  nil)
+
 (-> test-xdg-explicit-roots-bypass-legacy () null)
 (defun test-xdg-explicit-roots-bypass-legacy ()
   "Do not evaluate conflicting XDG defaults when every root is explicitly configured."

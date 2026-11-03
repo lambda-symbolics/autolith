@@ -21,6 +21,10 @@
 Setinka evaluates the old default before storing an override. Remove this temporary
 constructor binding together with the legacy root bridge before 0.68.0.")
 
+(defparameter *legacy-xdg-root-choice-p* nil
+  "Dynamically report a compatibility root choice to its configuration default.
+Remove this temporary selection marker before 0.68.0.")
+
 (deftype platform-file-kind ()
   "The filesystem object kinds a platform file status distinguishes."
   '(member :file :directory :symbolic-link :socket :other))

@@ -112,6 +112,35 @@ exist yet, and is only put in directory form."
   nil)
 
 
+;;;; -- Temporary Legacy XDG Choices --
+
+(defparameter *configuration-legacy-xdg-root-choices*
+  (make-hash-table :test #'eq :weakness ':key)
+  "Compatibility choices keyed by configuration identity; remove before 0.68.0.
+Values contain only root kinds and pathnames, never configurations. New runtime
+configurations cannot inherit choices made while building a saved image.")
+
+(defparameter *configuration-legacy-xdg-root-lock*
+  (make-recursive-lock "configuration legacy XDG choices")
+  "Serialize compatibility selection, allowing condition handlers to read other roots.
+Remove this temporary lock before 0.68.0.")
+
+(-> configuration--legacy-xdg-root (configuration platform-root-kind) pathname)
+(defun configuration--legacy-xdg-root (configuration kind)
+  "Remember compatibility choices for this configuration until 0.68.0.
+Ordinary native defaults remain lazy and follow the current environment."
+  (with-recursive-lock-held (*configuration-legacy-xdg-root-lock*)
+    (let ((choice (assoc kind (gethash configuration *configuration-legacy-xdg-root-choices*))))
+      (if choice
+          (rest choice)
+          (let* ((*legacy-xdg-root-choice-p* nil)
+                 (root                       (platform-application-root *platform* kind)))
+            (when *legacy-xdg-root-choice-p*
+              (push (cons kind root)
+                    (gethash configuration *configuration-legacy-xdg-root-choices*)))
+            root)))))
+
+
 ;;;; -- Settings --
 
 (define-setting :source-root (directory-setting)
@@ -138,8 +167,7 @@ exist yet, and is only put in directory form."
   :documentation             "The root for user-editable Autolith configuration."
   :visible-p                 nil
   :default                   (lambda (configuration)
-                               (declare (ignore configuration))
-                               (platform-application-root *platform* ':config)))
+                               (configuration--legacy-xdg-root configuration ':config)))
 
 (define-setting :site-config-root (site-config-directory-setting)
   :label                          "Site config root"
@@ -155,8 +183,7 @@ exist yet, and is only put in directory form."
   :documentation           "The root for durable user data such as conversations."
   :visible-p               nil
   :default                 (lambda (configuration)
-                             (declare (ignore configuration))
-                             (platform-application-root *platform* ':data)))
+                             (configuration--legacy-xdg-root configuration ':data)))
 
 (define-setting :active-image-core (absolute-file-setting)
   :label                           "Active image core"
@@ -174,8 +201,7 @@ exist yet, and is only put in directory form."
   :documentation            "The root for mutable runtime state such as queues and journals."
   :visible-p                nil
   :default                  (lambda (configuration)
-                              (declare (ignore configuration))
-                              (platform-application-root *platform* ':state)))
+                              (configuration--legacy-xdg-root configuration ':state)))
 
 (define-setting :cache-root (directory-setting)
   :label                    "Cache root"
@@ -183,8 +209,7 @@ exist yet, and is only put in directory form."
   :documentation            "The root for replaceable caches and temporary artifacts."
   :visible-p                nil
   :default                  (lambda (configuration)
-                              (declare (ignore configuration))
-                              (platform-application-root *platform* ':cache)))
+                              (configuration--legacy-xdg-root configuration ':cache)))
 
 (define-setting :codex-auth-path (pathname-setting)
   :label                         "Codex auth file"
