@@ -71,6 +71,9 @@
             #'provider-http--close-stream)
          (unless (and (streamp stream) (integerp status))
            (parent-web--reject ':invalid-web-response))
+         (when (= status 401)
+           (error 'cl-llm-provider-api:provider-unauthorized
+                  :message "Web authentication was rejected."))
          (unless (or (<= 200 status 299)
                      (and redirect-p (member status '(301 302 303 307 308))))
            (parent-web--reject ':web-http-failed))
@@ -135,9 +138,9 @@
 
 (serapeum/types:-> parent-web--history (string) vector)
 (defun parent-web--history (text)
-  "Accept only inert user and assistant text context, with no tool or provider state."
+  "Validate inert text context and retain at most the latest 128 messages."
   (let ((history (cl-rfc8628:json-decode text)))
-    (unless (and (vectorp history) (not (stringp history)) (<= (length history) 128)
+    (unless (and (vectorp history) (not (stringp history))
                  (every (lambda (item)
                           (and (hash-table-p item)
                                (parent-web--fields-p item '("type" "role" "content"))
@@ -152,7 +155,7 @@
                                              (stringp (gethash "text" part))))
                                       (gethash "content" item)))) history))
       (parent-web--reject ':invalid-request))
-    history))
+    (subseq history (max 0 (- (length history) 128)))))
 
 (serapeum/types:-> parent-web--search
     (parent-application hash-table &key (:state provider-http-state) (:deadline real)) string)
@@ -198,23 +201,34 @@
            (invocation (make-instance 'model-invocation :deadline deadline)))
       (unless (uiop:string-suffix-p endpoint "/responses")
         (parent-web--reject ':web-unsupported))
-      (provider-executor-with-credentials
-       account :executor executor :state state :invocation invocation
-       :function
-       (lambda (credentials)
-         (let ((*provider-family-http-accept* "application/json"))
-           (multiple-value-bind (body status headers)
-               (parent-web--request
-                state (concatenate 'string (subseq endpoint 0 (- (length endpoint) 10)) "/alpha/search")
-                :method  ':post
-                :headers (provider-family--headers account credentials :session-id session-id
-                                                                     :user-agent "autolith" :request request)
-                :content (cl-rfc8628:json-encode request))
-             (declare (ignore status headers))
-             (let ((output (gethash "output" (cl-rfc8628:json-decode body))))
-               (unless (and (stringp output) (plusp (length output)))
-                 (parent-web--reject ':invalid-web-response))
-               output))))))))
+      (labels ((attempt (force-refresh)
+                 "Refresh only when requested, within the original cancellation and deadline scope."
+                 (provider-http--check-invocation state invocation #'session-runtime--clock)
+                 (provider-executor-with-credentials
+                  account :executor executor :state state :invocation invocation
+                  :force-refresh force-refresh
+                  :function
+                  (lambda (credentials)
+                    (provider-http--check-invocation state invocation #'session-runtime--clock)
+                    (let ((*provider-family-http-accept* "application/json"))
+                      (multiple-value-bind (body status headers)
+                          (parent-web--request
+                           state (concatenate 'string (subseq endpoint 0 (- (length endpoint) 10)) "/alpha/search")
+                           :method  ':post
+                           :headers (provider-family--headers account credentials :session-id session-id
+                                                                                :user-agent "autolith" :request request)
+                           :content (cl-rfc8628:json-encode request))
+                        (declare (ignore status headers))
+                        (let ((output (gethash "output" (cl-rfc8628:json-decode body))))
+                          (unless (and (stringp output) (plusp (length output)))
+                            (parent-web--reject ':invalid-web-response))
+                          output)))))))
+        (handler-case (attempt nil)
+          (cl-llm-provider-api:provider-unauthorized (condition)
+            (unless (cl-rfc8628:credential-manager-refreshable-p
+                     (provider-account-credential-manager account))
+              (error condition))
+            (attempt t)))))))
 
 (serapeum/types:-> parent-web--url (string) string)
 (defun parent-web--url (url)
