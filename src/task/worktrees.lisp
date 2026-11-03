@@ -57,13 +57,18 @@
 (-> task-worktree--environment (&key (:overrides list)) list)
 (defun task-worktree--environment (&key overrides)
   "Combine sandbox OVERRIDES with an allowlist excluding Git repository selectors.
-HOME supplies identity configuration; cl-worktree disables execution callbacks.
-Sandbox temporary paths take precedence without changing the host environment."
+HOME and absolute XDG_CONFIG_HOME supply identity, ignore and attribute configuration;
+cl-worktree disables execution callbacks. Sandbox temporary paths take precedence
+without changing the host environment."
   (append overrides
           (loop for name in '("PATH" "HOME" "USERPROFILE" "SYSTEMROOT" "WINDIR"
-                              "TMPDIR" "TMP" "TEMP" "LANG" "LC_ALL")
+                              "TMPDIR" "TMP" "TEMP" "LANG" "LC_ALL" "XDG_CONFIG_HOME")
                 for value = (uiop:getenv name)
                 when (and value
+                          (or (not (string= name "XDG_CONFIG_HOME"))
+                              (and (plusp (length value))
+                                   (uiop:absolute-pathname-p
+                                    (uiop:parse-native-namestring value))))
                           (not (some (lambda (binding)
                                        (uiop:string-prefix-p (format nil "~A=" name) binding))
                                      overrides)))

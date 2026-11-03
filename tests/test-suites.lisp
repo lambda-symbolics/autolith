@@ -283,6 +283,7 @@
 
 (define-test-suite task-worktree
   test-task-worktree-options
+  test-task-worktree-xdg-git-configuration
   test-task-worktree-isolation
   test-task-worktree-sandboxed-authorization
   test-task-worktree-artifacts
