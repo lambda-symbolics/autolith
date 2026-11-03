@@ -56,13 +56,13 @@ conversation record is unchanged. Return the number of bounded outputs."
     (integer 0))
 (defun conversation-prepare-provider-request
     (conversation &key identity (now (get-universal-time)) idle-seconds)
-  "Precompact cold or estimated-expired context, then note this request.
+  "Precompact cold or declared-expired context, then note this request.
 
-IDENTITY names the provider and model serving the request. Bound old output
-on a provider/model change or after IDLE-SECONDS since the last response.
-After resume, preserve a known warm prefix and replay recorded precompaction.
-Unknown retention disables idle expiry but treats a resumed cache as cold.
-Return how many outputs were bounded."
+IDENTITY names the provider and model serving the request. IDLE-SECONDS is a
+known inactive cache lifetime, not a scheduling estimate. Bound old output on
+an identity change or after that lifetime since the last response. On resume,
+keep a same-identity prefix unless its known lifetime elapsed; missing recorded
+identity is cold. Replay recorded precompaction. Return the bounded output count."
   (let ((previous-identity  (conversation-request-identity conversation))
         (previous-processed (conversation-prompt-processed-at conversation)))
     (prog1 (if (if previous-identity
@@ -114,18 +114,17 @@ records written before responses carried their identity are ignored."
     boolean)
 (defun conversation-precompaction--resume-cold-p
     (conversation &key identity now idle-seconds)
-  "Return true unless CONVERSATION's latest durable response shows a warm cache.
+  "Return true when CONVERSATION's durable response identity or lifetime is cold.
 
-A warm cache needs a response from the same IDENTITY less than IDLE-SECONDS
-before NOW. Unknown retention, a conversation whose latest response predates
-recorded identities, and a different provider or model all count as cold."
+A same-IDENTITY response stays warm unless its known IDLE-SECONDS lifetime
+elapsed before NOW. Unknown lifetime alone is not evidence of a cold cache."
   (destructuring-bind (&optional previous-identity previous-time)
       (conversation-last-response conversation)
     (not (and previous-identity
               (equal identity previous-identity)
-              idle-seconds
-              (plusp idle-seconds)
-              (< (- now previous-time) idle-seconds)))))
+              (or (null idle-seconds)
+                  (not (plusp idle-seconds))
+                  (< (- now previous-time) idle-seconds))))))
 
 (-> conversation-precompaction--oversized-output-p (t) boolean)
 (defun conversation-precompaction--oversized-output-p (item)

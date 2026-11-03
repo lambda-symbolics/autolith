@@ -14,7 +14,11 @@
 
 (defmethod provider-prompt-cache-retention-estimate
     ((provider anthropic-api-key-provider))
-  "Estimate Anthropic cache lifetime from the requested TTL only."
+  "Schedule idle compaction using Anthropic's requested cache lifetime."
+  (provider-prompt-cache-lifetime provider))
+
+(defmethod provider-prompt-cache-lifetime ((provider anthropic-api-key-provider))
+  "Return Anthropic's declared lifetime from the requested wire TTL."
   (let ((ttl (config :prompt-cache-ttl (provider-configuration provider))))
     (if (stringp ttl)
         (cond

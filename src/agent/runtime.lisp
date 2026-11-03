@@ -1652,13 +1652,13 @@ continues."
 
 (-> agent--prepare-provider-request (agent) (integer 0))
 (defun agent--prepare-provider-request (agent)
-  "Prune cold-cache history before capturing any request for AGENT."
+  "Bound cold-cache history for AGENT; a retention estimate alone never rewrites it."
   (let ((provider      (agent-provider agent))
         (configuration (agent-configuration agent)))
     (conversation-prepare-provider-request
      (agent-conversation agent)
      :identity     (list (provider-family provider) (config :model configuration))
-     :idle-seconds (provider-prompt-cache-retention-seconds provider configuration))))
+     :idle-seconds (provider-prompt-cache-lifetime-seconds provider configuration))))
 
 (-> agent--request-tool-choice (boolean boolean (integer 0)) (member :auto :none))
 (defun agent--request-tool-choice (tools-p tool-restriction-p tool-rounds)

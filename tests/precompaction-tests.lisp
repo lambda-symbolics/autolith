@@ -113,7 +113,7 @@
 (-> test-precompaction-survives-resume () null)
 (defun test-precompaction-survives-resume ()
   "Replay bounded output and preserve later evidence until a resumed cache is cold."
-  (dolist (case '((0 300 nil 0) (400 300 nil 1) (0 nil nil 1) (0 300 t 1)))
+  (dolist (case '((0 300 nil 0) (400 300 nil 1) (0 nil nil 0) (0 300 t 1)))
     (destructuring-bind (age retention switch-p expected) case
       (with-test-configuration (configuration)
         (let* ((identity     (list ':codex "model-b"))
@@ -219,7 +219,7 @@
 
 (-> test-precompaction-before-compaction () null)
 (defun test-precompaction-before-compaction ()
-  "Prune resumed history before native or portable threshold compaction captures it."
+  "Compact a served, warm prefix under threshold pressure with native or portable summaries."
   (dolist (native-p '(nil t))
     (with-test-configuration (configuration)
       (let* ((original (conversation-create configuration :identifier "precompaction-full"))
@@ -233,17 +233,22 @@
           (setf (native-scripted-provider-native-items provider)
                 (list (json-object "type" "compaction" "encrypted_content" "checkpoint"))))
         (conversation-append-user-message original "start")
-        (precompaction-tests--exchange original "failed-earlier")
-        (precompaction-tests--exchange original "succeeded" :success-p t)
+        (precompaction-tests--large-exchange original "failed-earlier" nil)
+        (precompaction-tests--large-exchange original "succeeded" t)
         (conversation-append-user-message original "continue")
         (precompaction-tests--exchange original "failed-current")
-        ;; Exercise publication independently of the estimator's tests.
+        (conversation-append-provider-metadata
+         original (list :request-number   1
+                        :request-identity (list (provider-family provider) (config :model configuration))))
+        ;; Force threshold pressure independently of token estimation.
         (let* ((conversation (conversation-load-by-id configuration "precompaction-full"))
                (agent        (agent-create :configuration configuration
                                            :provider      provider
                                            :conversation  conversation
                                            :tool-registry (agent-test-registry)
                                            :worker        nil)))
+          (test-assert (zerop (agent--prepare-provider-request agent))
+                       "a served unknown-lifetime prefix stays unbounded before threshold compaction")
           (test-call-with-function-replacements
            (list (list 'agent-should-compact-p
                        (lambda (agent)
@@ -260,17 +265,26 @@
                               when (clinker-transcript:function-call-item-p item)
                                 collect (json-get item "call_id"))))
             (test-assert (equal '("failed-earlier" "succeeded" "failed-current") calls)
-                         "compaction receives every failed and successful exchange"))))))
+                         "compaction receives every failed and successful exchange")
+            (test-assert (find-if (lambda (item)
+                                    (let ((output (json-get item "output")))
+                                      (and (stringp output) (= 10000 (length output)))))
+                                  items)
+                         "threshold compaction receives the intact served oversized evidence")
+            (test-assert (find (if native-p :native-compaction :summary)
+                               (conversation--read-records (conversation-pathname conversation))
+                               :key #'first)
+                         "threshold compaction publishes a durable native or portable checkpoint"))))))
   nil)
 
 (-> test-precompaction-retention-policy () null)
 (defun test-precompaction-retention-policy ()
-  "Use configured or provider retention for idle pruning; skip unknown retention."
+  "Use declared lifetimes for idle pruning; a scheduling estimate alone cannot expire history."
   (dolist (case '((scripted-provider 0 10000 0)
                   (codex-subscription-provider 0 1000 0)
                   (codex-subscription-provider 1800 1000 0)
-                  (codex-subscription-provider 1800 2000 0)
-                  (scripted-provider 1800 2000 0)))
+                  (codex-subscription-provider 1800 2000 1)
+                  (scripted-provider 1800 2000 1)))
     (destructuring-bind (provider-class override age expected) case
       (with-test-configuration (configuration)
         (setf (config :prompt-cache-retention-seconds configuration) override)
@@ -282,9 +296,129 @@
                                            :worker        nil)))
           (conversation-append-user-message conversation "start")
           (agent--prepare-provider-request agent)
-          (precompaction-tests--exchange conversation "failed")
+          (precompaction-tests--large-exchange conversation "failed" nil)
           (conversation-append-user-message conversation "again")
           (setf (conversation-prompt-processed-at conversation) (- (get-universal-time) age))
           (test-assert (= expected (agent--prepare-provider-request agent))
                        "idle pruning follows the effective retention policy")))))
+  nil)
+
+(-> precompaction-tests--large-exchange (conversation string boolean) null)
+(defun precompaction-tests--large-exchange (conversation call-id success-p)
+  "Append oversized durable evidence named CALL-ID with SUCCESS-P to CONVERSATION."
+  (conversation-append-provider-item conversation (precompaction-tests--call call-id))
+  (conversation-append-tool-result conversation call-id :tool-name "shell.run"
+                                   :output                         (make-string 10000 :initial-element #\x)
+                                   :success-p                      success-p)
+  nil)
+
+(-> test-precompaction-estimate-alone-keeps-served-output () null)
+(defun test-precompaction-estimate-alone-keeps-served-output ()
+  "Keep served successful and failed output despite an elapsed retention estimate."
+  (dolist (age '(301 7200))
+    (with-test-configuration (configuration)
+      (let* ((conversation (conversation-create configuration))
+             (agent        (agent-create :configuration configuration
+                                         :provider      (make-instance 'codex-subscription-provider)
+                                         :conversation  conversation
+                                         :tool-registry (agent-test-registry) :worker nil)))
+        (conversation-append-user-message conversation "start")
+        (agent--prepare-provider-request agent)
+        (precompaction-tests--large-exchange conversation "success" t)
+        (precompaction-tests--large-exchange conversation "failure" nil)
+        (conversation-append-user-message conversation "next")
+        (agent--prepare-provider-request agent)
+        (let ((items   (mapcar #'json-encode (conversation-input-items conversation)))
+              (records (conversation--read-records (conversation-pathname conversation))))
+          (setf (conversation-prompt-processed-at conversation) (- (get-universal-time) age))
+          (test-assert (zerop (agent--prepare-provider-request agent))
+                       "an estimate alone cannot bound two served outputs")
+          (test-assert (equal items (mapcar #'json-encode (conversation-input-items conversation)))
+                       "served successful and failed output stays byte-stable")
+          (test-assert (equal records (conversation--read-records (conversation-pathname conversation)))
+                       "estimate expiry writes no precompaction record")))))
+  nil)
+
+(-> test-precompaction-known-lifetime-expiry () null)
+(defun test-precompaction-known-lifetime-expiry ()
+  "Expire declared lifetimes while keeping unknown routes stable through real agent preparation."
+  (dolist (case '((anthropic-api-key-provider "claude-sonnet-5" "5m" 0 300)
+                  (anthropic-api-key-provider "claude-sonnet-5" "1h" 0 3600)
+                  (openrouter-chat-completions-provider "openrouter/anthropic/claude-sonnet-4.5" "5m" 0 300)
+                  (openrouter-chat-completions-provider "openrouter/anthropic/claude-sonnet-4.5" "1h" 0 3600)
+                  (codex-subscription-provider "test" "5m" 1800 1800)
+                  (openrouter-chat-completions-provider "openrouter/openai/gpt-test" "5m" 0 nil)
+                  (scripted-provider "test" "5m" 0 nil)))
+    (destructuring-bind (class model ttl override lifetime) case
+      (with-test-configuration (configuration)
+        (setf (configuration-validation-deferred-p configuration) t
+              (config :model configuration) model
+              (config :prompt-cache-ttl configuration) ttl
+              (config :prompt-cache-retention-seconds configuration) override)
+        (let* ((provider     (case class
+                               (anthropic-api-key-provider
+                                (anthropic-provider-create configuration))
+                               (openrouter-chat-completions-provider
+                                (openrouter-provider-create configuration))
+                               (otherwise
+                                (make-instance class))))
+               (conversation (conversation-create configuration))
+               (agent        (agent-create :configuration configuration :provider provider
+                                           :conversation conversation
+                                           :tool-registry (agent-test-registry) :worker nil)))
+          (conversation-append-user-message conversation "start")
+          (agent--prepare-provider-request agent)
+          (precompaction-tests--large-exchange conversation "large" nil)
+          (conversation-append-user-message conversation "next")
+          (agent--prepare-provider-request agent)
+          (let ((records (conversation--read-records (conversation-pathname conversation))))
+            (setf (conversation-prompt-processed-at conversation)
+                  (- (get-universal-time) (if lifetime (1- lifetime) 10000)))
+            (test-assert (zerop (agent--prepare-provider-request agent))
+                         "before declared expiry or without a lifetime the prefix is warm")
+            (when lifetime
+              (setf (conversation-prompt-processed-at conversation)
+                    (- (get-universal-time) (1+ lifetime)))
+              (test-assert (= 1 (agent--prepare-provider-request agent))
+                           "declared lifetime expiry bounds one oversized output")
+              (let* ((item   (find "large" (conversation-input-items conversation)
+                                   :key  (lambda (item)
+                                           (and (clinker-transcript:function-call-output-item-p item)
+                                                (json-get item "call_id")))
+                                   :test #'equal))
+                     (output (json-get item "output")))
+                (test-assert (and (< (length output) 10000) (search "large" output))
+                             "bounded output includes its retrievable call reference"))
+              (test-assert (equal records (butlast (conversation--read-records
+                                                    (conversation-pathname conversation))))
+                           "expiry appends a projection record without replacing durable evidence")))))))
+  nil)
+
+(-> test-precompaction-unknown-lifetime-resume () null)
+(defun test-precompaction-unknown-lifetime-resume ()
+  "Preserve same-identity served history without a lifetime, retaining cold resume controls."
+  (dolist (record-identity-p '(t nil))
+    (with-test-configuration (configuration)
+      (let* ((conversation (conversation-create configuration))
+             (identity     '(:scripted "test")))
+        (conversation-append-user-message conversation "start")
+        (precompaction-tests--large-exchange conversation "large" nil)
+        (conversation-append-user-message conversation "next")
+        (when record-identity-p
+          (conversation-append-provider-metadata
+           conversation (list :request-number 1 :request-identity identity)))
+        (let* ((loaded  (conversation-load (conversation-pathname conversation)))
+               (items   (mapcar #'json-encode (conversation-input-items loaded)))
+               (records (conversation--read-records (conversation-pathname loaded))))
+          (test-assert (= (if record-identity-p 0 1)
+                          (conversation-prepare-provider-request loaded :identity identity
+                                                                 :now             (+ (get-universal-time) 7200)))
+                       "only a legacy resume without recorded identity is cold by default")
+          (when record-identity-p
+            (test-assert (equal items (mapcar #'json-encode (conversation-input-items loaded)))
+                         "unknown-lifetime resume preserves served bytes")
+            (test-assert (equal records (conversation--read-records (conversation-pathname loaded)))
+                         "unknown-lifetime resume writes no projection record")
+            (test-assert (= 1 (conversation-prepare-provider-request loaded :identity '(:scripted "other")))
+                         "a provider or model change still bounds oversized history"))))))
   nil)
