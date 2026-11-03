@@ -9774,3 +9774,34 @@
       (tool-registry-close-runtime-state registry)
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+(-> test-provider-exhaustion-presentation () null)
+(defun test-provider-exhaustion-presentation ()
+  "Test exhausted retries present the count and provider reason immediately."
+  (with-test-configuration (configuration)
+    (let* ((terminal    (make-instance 'recording-terminal :columns 100))
+           (application
+             (make-instance 'application
+                            :configuration configuration
+                            :conversation  (conversation-create configuration :identifier "exhaustion")
+                            :ui            (terminal-ui-create :terminal terminal)))
+           (observer    (application-agent-observer application))
+           (send-status (callback-agent-observer-status-callback observer)))
+      (unwind-protect
+           (progn
+             (terminal-ui-start (application-ui application))
+             (funcall send-status :provider-request-started nil)
+             (recording-terminal-reset terminal)
+             (funcall send-status :provider-retries-exhausted
+                      (list :attempts 7 :code "service_unavailable_error"))
+             (let ((output (recording-terminal-output terminal)))
+               (test-assert (and (search "7" output)
+                                 (search "service_unavailable_error" output))
+                            "retry exhaustion visibly includes attempts and reason"))
+             (recording-terminal-reset terminal)
+             (funcall send-status :provider-request-started nil)
+             (test-assert (not (search "service_unavailable_error"
+                                      (recording-terminal-output terminal)))
+                          "a later request does not inherit an exhaustion notice"))
+        (terminal-ui-stop (application-ui application)))))
+  nil)

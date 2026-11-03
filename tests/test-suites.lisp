@@ -835,6 +835,8 @@
   test-provider-qualified-model-application)
 
 (define-test-suite provider
+  test-provider-exhaustion-boundaries
+  test-provider-transient-event-retries
   test-codex-context-request
   test-codex-reasoning-context
   test-codex-rendered-context-request
@@ -1405,6 +1407,7 @@
     test-release-server))
 
 (define-test-suite application
+  test-provider-exhaustion-presentation
   test-presentation-configuration-isolation
   test-operation-request-turn
   test-application-transcript-actions
