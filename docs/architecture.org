@@ -155,13 +155,14 @@ receive separate namespaces even when identifiers coincide. Durable context anch
 source locks, and source-invalidation revisions retain their DATA paths so old and
 new writers coordinate through the same lock and revision counters.
 
-Before 0.68.0, provider cache loading copies absent cache metadata from the legacy
-state file under the same target transaction lock as new refreshes. Existing target
-metadata wins, and failed copying returns legacy metadata for offline validation.
-The source file is retained. At 0.68.0 remove that legacy read/copy branch, the
-preferences migration, legacy POSIX root selection, configuration-local choice cache
-and constructor bypass, and old conversation payload cleanup helpers; then remove
-=test-legacy-xdg-migration-removal=. The test fails for that version and every later version.
+Before 0.68.0, provider cache loading moves legacy state metadata into CACHE under
+both source and target locks. Existing target metadata wins. Successful atomic
+publication is followed by source removal; failed publication uses legacy metadata
+offline. Interrupted removal retries cleanup, not import. At 0.68.0 remove this
+migration, the preferences migration, legacy POSIX root compatibility,
+configuration-local choice cache and constructor bypass, and old conversation
+payload cleanup helpers; then remove =test-legacy-xdg-migration-removal=.
+The test fails for that version and every later version.
 
 | State         | Components                                               |
 |---------------+----------------------------------------------------------|
@@ -225,10 +226,11 @@ inference frames; listeners stay with the original.
 
 =preferences.lisp= reads and atomically writes version 8 records of durable
 setting choices under the config root, preserving unknown keys across rewrites.
-It copies an existing state-root preferences file once without replacing config
-preferences or deleting the rollback source. Failed publication warns and uses
-the legacy file until migration succeeds. Remove this compatibility path at
-0.68.0. Unsupported or malformed records are reported through
+It moves state-root preferences once, removing the source only after atomic
+publication under both writer locks. Existing config preferences win. Failed
+publication warns and uses the legacy file until migration succeeds. Failed
+source removal retries cleanup without reimporting old values. Remove this
+compatibility path at 0.68.0. Unsupported or malformed records are reported through
 =preferences-load-warning= during configuration creation.
 
 * Provider and tools

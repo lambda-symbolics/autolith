@@ -1471,10 +1471,10 @@ conflict names both paths. Compatibility choices are local to each configuration
 Explicit root settings bypass this compatibility lookup.
 
 Provider discovery metadata uses =CACHE/provider-models.sexp=. On upgrade, the old
-state-directory cache is copied when no new cache exists. Existing cache metadata
-takes precedence; failed copying warns and loads the old metadata so saved model
-choices work offline. The old file is retained for rollback. Remove this legacy
-lookup in 0.68.0.
+state-directory cache moves there once. Publication is atomic; the old file is
+removed only after the target exists. Existing target metadata wins. Failed
+publication warns and loads the old metadata offline; interrupted source removal
+is retried without reimporting it. Remove this compatibility lookup in 0.68.0.
 
 Generated conversation picker, search, and input-history indexes use
 =CACHE/conversation-picker/<source-directory-hash>/=. Missing indexes rebuild from
@@ -1561,12 +1561,13 @@ defaults and are fixed for the process. Derived settings, such as the context wi
 and provider endpoint, follow the model. The window uses a declared model value,
 else the catalog value, else the default.
 
-On upgrade, Autolith copies the old state-directory =preferences.sexp= into the
-config directory if no config copy exists. The old file is retained for rollback;
-subsequent settings changes use the config copy. If copying fails, Autolith warns
-and continues reading and saving the old file, retrying migration on a later
-startup. Session records, pending inputs, and other session state use the state
-directory. This compatibility path is scheduled for removal in 0.68.0.
+On upgrade, Autolith moves the state-directory =preferences.sexp= into the config
+directory once, preserving unknown keys. Existing config preferences take
+precedence. The old file is removed under both writer locks after atomic
+publication. Failed publication warns and continues reading and saving the old
+file until migration succeeds. Interrupted source removal is retried using the
+config file, without importing stale values again. Session records and pending
+inputs use the state directory. Remove this compatibility path in 0.68.0.
 
 Enable the session's private context-pressure reminder with =(relax t)=, or
 =(settings :relax-p t)=. Use =(relax nil)= to disable it and =(relax)= to inspect

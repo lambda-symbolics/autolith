@@ -54,41 +54,55 @@ name; unknown keys survive rewrites so releases can share one file.")
 (-> preferences--migrate-legacy
     (configuration &key (:recover-read-error (or null function))) pathname)
 (defun preferences--migrate-legacy (configuration &key recover-read-error)
-  "Copy legacy state preferences into config once, returning the usable pathname.
+  "Move legacy state preferences into config once, returning the usable pathname.
 
-Keep the original file for rollback. Existing config preferences win. Hold the
-legacy writer lock through atomic publication, then use the config-local lock.
-If publication fails, warn and keep using the original. Remove at 0.68.0."
+Hold both writer locks until the target is published and the source is removed.
+Existing config preferences win, including after interrupted source cleanup.
+Failed publication keeps using legacy values; failed cleanup retries without
+importing them again. Remove at 0.68.0."
   (let ((target (configuration-preferences-path configuration))
         (legacy (merge-pathnames "preferences.sexp" (config :state-root configuration))))
     (flet ((target-present-p ()
              (handler-case (probe-file target)
                (file-error () nil))))
-      (if (and (not (target-present-p)) (probe-file legacy))
+      (if (and (probe-file legacy)
+               (not (or (uiop:pathname-equal target legacy)
+                        (handler-case
+                            (and (target-present-p)
+                                 (uiop:pathname-equal (platform-truename *platform* target)
+                                                      (platform-truename *platform* legacy)))
+                          (file-error () nil)))))
           (handler-case
               (progn
                 (configuration-ensure-root-directory configuration ':config-root)
-                (sexp-store:store-transact
-                 (preferences--store configuration :pathname legacy :recover-read-error recover-read-error)
-                 (lambda (old-values)
-                   (sexp-store:store-transact
-                    (preferences--store configuration)
-                    (lambda (current)
-                      (if (target-present-p)
-                          (values current nil nil)
-                          (values old-values nil t))))
-                   (values old-values nil nil)))
+                (call-with-file-lock
+                 (make-pathname :type "lock" :defaults legacy)
+                 (lambda ()
+                   (when (probe-file legacy)
+                     (sexp-store:store-transact
+                      (preferences--store configuration)
+                      (lambda (current)
+                        (if (target-present-p)
+                            (values current nil nil)
+                            (values
+                             (sexp-store:store-read
+                              (preferences--store configuration :pathname legacy
+                                                   :recover-read-error    recover-read-error)
+                              :lock-held-p t)
+                             nil t)))
+                      :publish (lambda (committed)
+                                 (declare (ignore committed))
+                                 (delete-file legacy))))))
                 target)
             (error (cause)
-              (cond
-                ((target-present-p)
-                 target)
-                ((and (typep cause 'sexp-store:store-error)
-                      (equal legacy (sexp-store:store-error-pathname cause)))
-                 (error cause))
-                (t
-                 (warn 'preferences-migration-warning :source legacy :target target :cause cause)
-                 legacy))))
+              (when (and (not (target-present-p))
+                         (typep cause 'sexp-store:store-error)
+                         (equal legacy (sexp-store:store-error-pathname cause)))
+                (error cause))
+              (warn 'preferences-migration-warning :source legacy :target target :cause cause)
+              (if (target-present-p)
+                  target
+                  legacy)))
           target))))
 
 (-> preferences--read (configuration) list)
@@ -171,16 +185,16 @@ return NIL. Reading never repairs or rewrites a corrupt file."
 (define-condition preferences-migration-warning (warning)
   ((source :initarg       :source
            :reader        preferences-migration-warning-source
-           :documentation "The retained legacy preferences pathname.")
+           :documentation "The legacy preferences pathname to remove after publication.")
    (target :initarg       :target
            :reader        preferences-migration-warning-target
            :documentation "The desired configuration preferences pathname.")
    (cause  :initarg       :cause
            :reader        preferences-migration-warning-cause
-           :documentation "The condition that prevented migration."))
-  (:documentation "Preferences could not migrate; the original file is still in use.")
+           :documentation "The condition that prevented publication or source cleanup."))
+  (:documentation "Preferences migration is incomplete and will be retried.")
   (:report (lambda (condition stream)
-             (format stream "Could not migrate preferences from ~A to ~A: ~A. Using the legacy file."
+             (format stream "Could not finish migrating preferences from ~A to ~A: ~A. Migration will be retried."
                      (preferences-migration-warning-source condition)
                      (preferences-migration-warning-target condition)
                      (preferences-migration-warning-cause condition)))))

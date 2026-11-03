@@ -188,30 +188,47 @@ are normalized after executable init and cache loading establish their provider.
 
 (-> provider--read-model-cache (configuration) t)
 (defun provider--read-model-cache (configuration)
-  "Read the cache, copying legacy state metadata once without overwriting a new cache.
+  "Move legacy metadata once, then read only the cache-root copy.
 
-Keep the legacy file for rollback and use its metadata if publication fails, so
-cached model choices work offline. Remove the legacy branch at 0.68.0."
-  (let ((target (configuration-provider-model-cache-path configuration))
-        (legacy (merge-pathnames "provider-models.sexp" (config :state-root configuration))))
-    (cond
-      ((handler-case (probe-file target)
-         (file-error () nil))
-       (read-portable-form target))
-      ((probe-file legacy)
-       (let ((form (read-portable-form legacy)))
-         (handler-case
-             (progn
-               (configuration-ensure-root-directory configuration ':cache-root)
-               (sexp-store:store-transact
-                (provider--model-cache-store configuration)
-                (lambda (current)
-                  (if (probe-file target)
-                      (values current current nil)
-                      (values form form t)))))
-           (error (cause)
-             (warn 'provider-model-cache-migration-warning :source legacy :target target :cause cause)
-             form)))))))
+Remove the source under both writer locks only after atomic publication. An
+existing target wins, including when retrying interrupted source cleanup.
+Failed publication uses legacy metadata offline. Remove the branch at 0.68.0."
+  (block nil
+    (let ((target (configuration-provider-model-cache-path configuration))
+          (legacy (merge-pathnames "provider-models.sexp" (config :state-root configuration))))
+      (flet ((target-present-p ()
+               (handler-case (probe-file target)
+                 (file-error () nil))))
+        (when (and (probe-file legacy)
+                   (not (or (uiop:pathname-equal target legacy)
+                            (handler-case
+                                (and (target-present-p)
+                                     (uiop:pathname-equal (platform-truename *platform* target)
+                                                          (platform-truename *platform* legacy)))
+                              (file-error () nil)))))
+          (handler-case
+              (progn
+                (configuration-ensure-root-directory configuration ':cache-root)
+                (call-with-file-lock
+                 (make-pathname :type "lock" :defaults legacy)
+                 (lambda ()
+                   (when (probe-file legacy)
+                     (sexp-store:store-transact
+                      (provider--model-cache-store configuration)
+                      (lambda (current)
+                        (if (target-present-p)
+                            (values current nil nil)
+                            (let ((form (read-portable-form legacy)))
+                              (values form nil t))))
+                      :publish (lambda (committed)
+                                 (declare (ignore committed))
+                                 (delete-file legacy)))))))
+            (error (cause)
+              (warn 'provider-model-cache-migration-warning :source legacy :target target :cause cause)
+              (unless (target-present-p)
+                (return (read-portable-form legacy))))))
+        (when (target-present-p)
+          (read-portable-form target))))))
 
 (-> provider--write-model-cache (configuration list) null)
 (defun provider--write-model-cache (configuration form)
@@ -227,16 +244,16 @@ cached model choices work offline. Remove the legacy branch at 0.68.0."
 (define-condition provider-model-cache-migration-warning (warning)
   ((source :initarg       :source
            :reader        provider-model-cache-migration-warning-source
-           :documentation "The retained legacy model cache pathname.")
+           :documentation "The legacy model cache pathname to remove after publication.")
    (target :initarg       :target
            :reader        provider-model-cache-migration-warning-target
            :documentation "The desired XDG cache pathname.")
    (cause  :initarg       :cause
            :reader        provider-model-cache-migration-warning-cause
-           :documentation "The condition that prevented cache publication."))
-  (:documentation "Legacy provider metadata was loaded without migrating its file.")
+           :documentation "The condition that prevented publication or source cleanup."))
+  (:documentation "Provider cache migration is incomplete and will be retried.")
   (:report (lambda (condition stream)
-             (format stream "Could not migrate model cache from ~A to ~A: ~A. Using legacy metadata."
+             (format stream "Could not finish migrating model cache from ~A to ~A: ~A. Migration will be retried."
                      (provider-model-cache-migration-warning-source condition)
                      (provider-model-cache-migration-warning-target condition)
                      (provider-model-cache-migration-warning-cause condition)))))

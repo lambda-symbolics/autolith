@@ -161,7 +161,7 @@ Source precedence, source recording, and value rejection belong to setinka."
 
 (-> test-preferences-xdg-migration () null)
 (defun test-preferences-xdg-migration ()
-  "Migrate durable choices without overwriting config or losing the rollback file."
+  "Move durable choices once, preserving unknown keys and existing config values."
   (preferences-tests--without-model-environment
    (lambda ()
      (with-test-configuration (configuration)
@@ -177,17 +177,22 @@ Source precedence, source recording, and value rejection belong to setinka."
                         "upgrade loads model, presentation and telemetry choices")
            (test-assert (equal (snapshot-read target) old)
                         "migration retains unknown configuration keys")
-           (test-assert (equal (snapshot-read legacy) old)
-                        "migration retains the original for rollback")
+           (test-assert (not (probe-file legacy))
+                        "successful migration consumes the legacy preferences")
            (setf (config :turn-timestamps-p created) t)
            (test-assert (and (getf (preferences-tests--file-plist configuration) :turn-timestamps-p)
-                             (equal (snapshot-read legacy) old))
-                        "later changes use config without rewriting legacy state"))
+                             (not (probe-file legacy)))
+                        "later changes write only to config"))
          (snapshot-write legacy '(:preferences :version 8 :model "stale"))
          (test-assert (string= (config :model (preferences-tests--create configuration)) "gpt-5.6-luna")
                       "existing config preferences take precedence over old state")
          (test-assert (= (getf (preferences-tests--file-plist configuration) :future-key) 7)
-                      "repeated startup preserves migrated unknown values")))))
+                      "repeated startup preserves migrated unknown values")
+         (test-assert (not (probe-file legacy)) "a superseded source is consumed too")
+         (delete-file target)
+         (test-assert (null (preferences-load-values configuration))
+                      "deleting config cannot resurrect legacy preferences")
+         (test-assert (not (probe-file target)) "a completed migration is not repeated")))))
   nil)
 
 (-> test-preferences-xdg-migration-failure () null)
@@ -229,7 +234,8 @@ Source precedence, source recording, and value rejection belong to setinka."
                      "failed publication warns and does not create an empty replacement")
         (test-assert (getf (preferences-load-values configuration) :turn-timestamps-p)
                      "a later successful migration carries forward fallback writes")
-        (test-assert (probe-file target) "a later startup retries migration"))))
+        (test-assert (and (probe-file target) (not (probe-file legacy)))
+                     "a later startup completes the move"))))
   nil)
 
 (-> test-preferences-xdg-malformed-legacy () null)
@@ -249,8 +255,78 @@ Source precedence, source recording, and value rejection belong to setinka."
         (preferences-store configuration :compact-view-p nil)
         (test-assert (equal (preferences-tests--file-plist configuration) '(:compact-view-p nil))
                      "an explicit choice can start a fresh config file")
-        (test-assert (string= bytes (uiop:read-file-string legacy))
-                     "the damaged rollback source is retained"))))
+        (test-assert (not (probe-file legacy))
+                     "an explicit fresh choice completes migration without stale fallback"))))
+  nil)
+
+(-> test-preferences-xdg-migration-cleanup () null)
+(defun test-preferences-xdg-migration-cleanup ()
+  "Retry interrupted source removal without reimporting stale preferences."
+  (with-test-configuration (configuration)
+    (let* ((legacy            (merge-pathnames "preferences.sexp" (config :state-root configuration)))
+           (target            (configuration-preferences-path configuration))
+           (original-transact (symbol-function 'sexp-store:store-transact))
+           (warnings          0))
+      (snapshot-write legacy '(:preferences :version 8 :future-key 7))
+      (test-call-with-function-replacements
+       (list (list 'sexp-store:store-transact
+                   (lambda (store update &key publish)
+                     (funcall original-transact store update
+                              :publish (lambda (committed)
+                                         (declare (ignore committed))
+                                         (when publish
+                                           (error 'file-error :pathname legacy)))))))
+       (lambda ()
+         (handler-bind ((preferences-migration-warning
+                          (lambda (condition)
+                            (incf warnings)
+                            (muffle-warning condition))))
+           (test-assert (= (getf (preferences-load-values configuration) :future-key) 7)
+                        "published preferences are usable after interrupted removal")
+           (preferences-store configuration :future-key 9))))
+      (test-assert (and (= warnings 2) (probe-file legacy) (probe-file target))
+                   "cleanup failure preserves the source and reports each retry")
+      (test-assert (= (getf (preferences-load-values configuration) :future-key) 9)
+                   "cleanup retry keeps changes made after publication")
+      (test-assert (not (probe-file legacy)) "retry removes the old file")
+      (delete-file target)
+      (test-assert (null (preferences-load-values configuration))
+                   "cache or config removal cannot repeat the import")))
+  (with-test-configuration (configuration)
+    (setf configuration (configuration-copy configuration :config-root (config :state-root configuration)))
+    (preferences-store configuration :future-key 7)
+    (test-assert (= (getf (preferences-load-values configuration) :future-key) 7)
+                 "identical roots do not delete preferences or reacquire the same lock"))
+  nil)
+
+(-> test-xdg-file-migration-concurrent () null)
+(defun test-xdg-file-migration-concurrent ()
+  "Serialize competing migration readers and return the published data to all."
+  (dolist (kind '(:preferences :provider-cache))
+    (with-test-configuration (configuration)
+      (let* ((preferences-p (eq kind ':preferences))
+             (legacy        (merge-pathnames (if preferences-p "preferences.sexp" "provider-models.sexp")
+                                             (config :state-root configuration)))
+             (reader        (if preferences-p #'preferences-load-values #'provider--read-model-cache))
+             (expected      (if preferences-p '(:future-key 7) '(:models :version 1)))
+             (threads       nil))
+        (snapshot-write legacy (if preferences-p
+                                   (preferences--plist->form expected)
+                                   expected))
+        (call-with-file-lock
+         (make-pathname :type "lock" :defaults legacy)
+         (lambda ()
+           (setf threads
+                 (loop repeat 8
+                       collect (bt:make-thread
+                                (lambda ()
+                                  (handler-case (funcall reader configuration)
+                                    (error (condition) condition)))
+                                :name "XDG file migration reader")))))
+        (test-assert (every (lambda (result) (equal result expected))
+                            (mapcar #'bt:join-thread threads))
+                     "all competing readers get the same complete data")
+        (test-assert (not (probe-file legacy)) "only the new location exists after the move"))))
   nil)
 
 (-> test-legacy-xdg-migration-removal () null)
