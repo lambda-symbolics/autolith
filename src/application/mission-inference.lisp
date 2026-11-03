@@ -77,14 +77,19 @@
           (mission--evidence context :inference-failure (princ-to-string failure)))
         (unless (integerp tokens)
           (unless bounded-p (incf (getf goal :unknown-usage)))
-          (if child
-              (mission--attribute-child-unknown context child
-                                               :reservation (when bounded-p reservation))
-              (when (eq (getf goal :status) ':active)
-                (mission--transition
-                 context ':blocked
-                 "An inference request settled without reported usage; started children may finish, new work needs a new budget."
-                 :cancel-p nil))))
+          (cond
+            (child
+             (mission--attribute-child-unknown context child
+                                               :reservation (when bounded-p reservation)))
+            ((mission--unknown-usage-blocks-p goal)
+             (when (eq (getf goal :status) ':active)
+               (mission--transition
+                context ':blocked
+                "An inference request settled without reported usage; started children may finish, new work needs a new budget."
+                :cancel-p nil)))
+            (t
+             (mission--evidence context ':unknown-usage
+                                "An inference request settled without reported usage; recorded by mission policy."))))
         (when (and (member (getf goal :status) '(:active :blocked))
                    (> (getf goal :tokens-used) (getf goal :token-limit)))
           (mission--transition context ':exhausted "Mission token budget exhausted."))

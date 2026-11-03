@@ -1158,3 +1158,240 @@
             (sb-thread:join-thread (mission-inference-test-thread-thread cell) :timeout 10 :default nil))
           (task-orchestrator-close orchestrator)))))
   nil)
+
+;;;; -- Explicit Unknown Usage Policy --
+
+(-> mission-inference-test--policy-specification (t &key (:limit integer)) list)
+(defun mission-inference-test--policy-specification (policy &key (limit 100))
+  "Build a finite policy fixture, omitting the new key for legacy behavior."
+  (append (mission-test--specification :turns limit :tokens limit)
+          (unless (eq policy ':missing) (list :unknown-usage-policy policy))))
+
+(-> mission-inference-test--policy-provider (&key (:failure (or null function)) (:unknown-p boolean)) model-provider)
+(defun mission-inference-test--policy-provider (&key failure unknown-p)
+  "Return a nonblocking provider for actual mission admission and settlement."
+  (make-instance 'mission-inference-test-provider
+                 :entered (bordeaux-threads:make-semaphore :count 0)
+                 :release (bordeaux-threads:make-semaphore :count 0)
+                 :blocked-p nil :failure failure
+                 :result  (if unknown-p
+                              (mission-test--result "unknown" :usage (json-object))
+                              (mission-test--result "known"))))
+
+(-> test-mission-unknown-usage-policy-validation () null)
+(defun test-mission-unknown-usage-policy-validation ()
+  "Only explicit supported policies are accepted; omission selects blocking."
+  (with-test-configuration (configuration)
+    (let ((application (mission-test--application configuration)))
+      (dolist (policy '(:missing :block :record))
+        (application-mission-start application (mission-inference-test--policy-specification policy))
+        (test-assert (eq (if (eq policy ':missing) ':block policy)
+                         (getf (application-goal application) :unknown-usage-policy))
+                     "the selected policy is present in the durable goal"))
+      (dolist (policy '(nil :ignore "record" (:record)))
+        (let ((before (application-goal application)))
+          (test-assert (handler-case
+                           (progn
+                             (application-mission-start application
+                                                        (mission-inference-test--policy-specification policy))
+                             nil)
+                         (mission-error (condition) (eq ':invalid (mission-error-reason condition))))
+                       "invalid policy is rejected")
+          (test-assert (eq before (application-goal application))
+                       "invalid input does not replace the current mission")))))
+  nil)
+
+(-> test-mission-inference-unknown-usage-policy-settlement () null)
+(defun test-mission-inference-unknown-usage-policy-settlement ()
+  "Count missing usage through successful, failed and interrupted provider calls."
+  (dolist (policy '(:missing :block :record))
+    (dolist (mode '(:result :error :nonlocal))
+      (dolist (limit (list 100 most-positive-fixnum))
+        (with-test-configuration (configuration)
+          (let* ((provider     (mission-inference-test--policy-provider
+                                :unknown-p t
+                                :failure   (case mode
+                                             (:error
+                                              (lambda () (error "Scripted transport failure.")))
+                                             (:nonlocal
+                                              (lambda () (throw 'policy-interruption ':interrupted))))))
+                 (application  (mission-inference-test--application configuration provider))
+                 (conversation (application-conversation application))
+                 (caught       nil))
+            (application-mission-start application
+                                       (mission-inference-test--policy-specification policy :limit limit))
+            (catch 'policy-interruption
+              (handler-case (mission-inference-test--call provider conversation)
+                (mission-error () (setf caught t))))
+            (test-assert (eq caught (eq mode ':error)) "provider errors still propagate")
+            (let ((goal (application-goal application)))
+              (test-assert (eq (if (eq policy ':record) ':active ':blocked) (getf goal :status))
+                           "only explicit recording avoids the unknown-usage block")
+              (test-assert (= 1 (getf goal :unknown-usage)) "every unknown request is counted")
+              (test-assert (zerop (getf goal :tokens-used)) "unknown tokens are not guessed")
+              (test-assert (and (= 1 (getf goal :turns-used))
+                                (zerop (getf goal :tokens-reserved))
+                                (zerop (getf goal :requests-outstanding)))
+                           "the admitted turn is charged and its reservation released")
+              (when (and (eq policy ':record) (eq (getf goal :status) ':active))
+                (test-assert (find ':unknown-usage (getf goal :evidence) :key (lambda (entry) (getf entry :kind)))
+                             "recording retains bounded evidence")
+                (let ((child (conversation-create configuration)))
+                  (mission-context-inherit conversation child)
+                  (test-assert (eq (mission-context-find child) (mission-context-find conversation))
+                               "children share the same policy and accounting")
+                  (mission-inference-test--call (mission-inference-test--policy-provider) child))
+                (test-assert (and (= 2 (getf goal :turns-used)) (= 5 (getf goal :tokens-used))
+                                  (= 1 (getf goal :unknown-usage)))
+                             "the next inherited request is admitted and known usage charged")
+                (mission--transition (mission-context-find conversation) ':paused "User paused the fixture.")
+                (application-mission-resume application)
+                (test-assert (eq ':active (getf goal :status)) "explicit resume retains recorded unknown usage")
+                (test-assert (= 1 (getf goal :unknown-usage)) "resume never clears unknown usage")
+                (mission--transition (mission-context-find conversation) ':blocked "An unrelated blocker.")
+                (test-assert (eq ':mission-stopped
+                                 (tool-result-error-code
+                                  (mission--stopped-tool-result (mission-context-find conversation))))
+                             "an unrelated blocker is not reported as unknown-usage quarantine"))))))))
+  nil)
+
+(-> test-mission-inference-unknown-usage-policy-limits () null)
+(defun test-mission-inference-unknown-usage-policy-limits ()
+  "Recording unknowns does not waive finite turns, reported tokens or deadlines."
+  (dolist (budget '(:turn :token :deadline))
+    (with-test-configuration (configuration)
+      (let* ((provider      (mission-inference-test--policy-provider :unknown-p t))
+             (application   (mission-inference-test--application configuration provider))
+             (conversation  (application-conversation application))
+             (specification (mission-inference-test--policy-specification ':record)))
+        (setf (getf specification :turn-limit) (if (eq budget ':turn) 1 10)
+              (getf specification :token-limit) (if (eq budget ':token) 5 100))
+        (application-mission-start application specification)
+        (mission-inference-test--call provider conversation)
+        (let ((goal (application-goal application)))
+          (test-assert (eq ':active (getf goal :status)) "recorded unknown usage alone is not exhaustion")
+          (when (eq (getf goal :status) ':active)
+            (when (eq budget ':token)
+              (mission-inference-test--call (mission-inference-test--policy-provider) conversation))
+            (when (eq budget ':deadline)
+              (setf (getf goal :deadline) (1- (get-universal-time))))
+            (let ((before (copy-tree goal)))
+              (test-assert (handler-case
+                               (progn (mission-inference-test--call provider conversation) nil)
+                             (mission-error (condition) (eq ':exhausted (mission-error-reason condition))))
+                           "the exhausted budget refuses the next request")
+              (test-assert (= (getf before :turns-used) (getf goal :turns-used))
+                           "refusal does not dispatch or charge another turn")
+              (test-assert (= 1 (getf goal :unknown-usage)) "refusal does not invent unknown usage")))))))
+  nil)
+
+(-> test-mission-inference-unknown-usage-policy-restore () null)
+(defun test-mission-inference-unknown-usage-policy-restore ()
+  "Reload an actual persisted in-flight admission, then reload again without double charge."
+  (dolist (policy '(:missing :block :record))
+    (dolist (status '(:active :paused :blocked :failed))
+      (with-test-configuration (configuration)
+        (let* ((application  (mission-test--application configuration))
+               (conversation (application-conversation application))
+               (restored     nil)
+               (provider
+                 (mission-inference-test--policy-provider
+                  :failure
+                  (lambda ()
+                    ;; Admission has already persisted one outstanding request.
+                    (unless (eq status ':active)
+                      (mission--transition (mission-context-find conversation) status "Unrelated fixture stop."
+                                           :cancel-p nil))
+                    (setf restored (mission-test--application configuration))
+                    (setf (application-conversation restored)
+                          (conversation-load-by-id configuration (conversation-identifier conversation)))
+                    (application--load-goal restored)
+                    ;; Model process death: do not let the superseded request write again.
+                    (setf (application-goal application) nil)
+                    (throw 'policy-restart ':restarted)))))
+          (application-mission-start application (mission-inference-test--policy-specification policy))
+          (catch 'policy-restart (mission-inference-test--call provider conversation))
+          (let* ((goal     (application-goal restored))
+                 (expected (if (and (not (eq policy ':record))
+                                    (member status '(:active :paused :blocked)))
+                               ':blocked status)))
+            (test-assert (eq expected (getf goal :status)) "startup recovery follows policy without reactivating stopped work")
+            (test-assert (= 1 (getf goal :unknown-usage)) "the durable outstanding request becomes one unknown")
+            (test-assert (and (= 1 (getf goal :turns-used))
+                              (zerop (getf goal :tokens-reserved))
+                              (zerop (getf goal :requests-outstanding)))
+                         "startup preserves the admitted turn and clears its reservation")
+            (when (and (eq policy ':record) (eq (getf goal :status) ':active))
+              (mission-inference-test--call (mission-inference-test--policy-provider)
+                                            (application-conversation restored))
+              (test-assert (and (= 2 (getf goal :turns-used)) (= 5 (getf goal :tokens-used)))
+                           "a subsequent request uses the restored budget"))
+            (setf (application-conversation restored)
+                  (conversation-load-by-id configuration (conversation-identifier conversation)))
+            (application--load-goal restored)
+            (test-assert (= 1 (getf (application-goal restored) :unknown-usage))
+                         "a second disk reload does not charge the interruption twice")
+            (test-assert (eq expected (getf (application-goal restored) :status))
+                         "recovery status is persisted"))))))
+  nil)
+
+(-> test-mission-inference-unknown-usage-policy-fail-closed () null)
+(defun test-mission-inference-unknown-usage-policy-fail-closed ()
+  "Legacy and malformed persisted policies cannot opt in to unbounded unknown spend."
+  (dolist (policy '(:missing nil :ignore "record"))
+    (dolist (restore-p '(nil t))
+      (with-test-configuration (configuration)
+        (let* ((application  (mission-test--application configuration))
+               (conversation (application-conversation application)))
+          (application-mission-start application (mission-test--specification))
+          ;; Simulate an old or malformed goal record, never alter usage counters.
+          (let ((goal (application-goal application)))
+            (if (eq policy ':missing)
+                (remf goal :unknown-usage-policy)
+                (progn
+                  (unless (member :unknown-usage-policy goal)
+                    (nconc goal (list :unknown-usage-policy ':block)))
+                  (setf (getf goal :unknown-usage-policy) policy))))
+          (application--record-goal application)
+          (let ((provider (mission-inference-test--policy-provider
+                           :unknown-p t
+                           :failure   (when restore-p
+                                        (lambda ()
+                                          (application--load-goal application)
+                                          (throw 'legacy-restart ':restarted))))))
+            (catch 'legacy-restart (mission-inference-test--call provider conversation)))
+          (test-assert (eq ':blocked (getf (application-goal application) :status))
+                       "only the exact record keyword can bypass unknown-usage quarantine")
+          (test-assert (= 1 (getf (application-goal application) :unknown-usage))
+                       "fail-closed recovery retains the unknown count")
+          (test-assert (handler-case (progn (application-mission-resume application) nil)
+                         (mission-error (condition) (eq ':unknown-usage (mission-error-reason condition))))
+                       "legacy and malformed policy cannot resume unknown spend")))))
+  nil)
+
+(-> test-mission-inference-unknown-usage-policy-review () null)
+(defun test-mission-inference-unknown-usage-policy-review ()
+  "Opt-in missions still refuse independent reviews with missing usage."
+  (with-test-configuration (configuration)
+    (let* ((application (mission-test--application configuration))
+           (allowance   (list :turn-limit 10 :token-limit 100 :turns-used 0 :tokens-used 0
+                              :tokens-reserved 0 :requests-outstanding 0)))
+      (application-mission-start application (mission-inference-test--policy-specification ':record))
+      (test-assert (handler-case
+                       (progn
+                         (mission--account-inference
+                          (mission-context-find (application-conversation application))
+                          (lambda () (mission-test--result "unknown" :usage (json-object)))
+                          (lambda (results) (provider-result-usage (first results)))
+                          :allowance allowance)
+                         nil)
+                     (mission-error (condition) (eq ':review-budget (mission-error-reason condition))))
+                   "review usage remains mandatory")
+      (test-assert (eq ':active (getf (application-goal application) :status))
+                   "review refusal does not replace the mission unknown-usage policy")
+      (test-assert (and (= 1 (getf allowance :turns-used))
+                        (zerop (getf allowance :tokens-reserved))
+                        (zerop (getf allowance :requests-outstanding))
+                        (= 1 (getf (application-goal application) :unknown-usage)))
+                   "both allowances release reservations while retaining uncertainty")))
+  nil)
