@@ -459,6 +459,103 @@
         (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
   nil)
 
+(-> test-provider-model-cache-xdg-migration () null)
+(defun test-provider-model-cache-xdg-migration ()
+  "Preserve discovered model choices offline across cache relocation and failures."
+  (let ((registry-snapshot (provider--registry-snapshot)))
+    (unwind-protect
+         (with-test-environment (("AUTOLITH_MODEL" nil) ("AUTOLITH_REASONING_EFFORT" nil))
+           (with-test-configuration (configuration)
+             (let* ((provider-name "xdg-cache-test")
+                    (target        (configuration-provider-model-cache-path configuration))
+                    (legacy        (merge-pathnames "provider-models.sexp" (config :state-root configuration)))
+                    (requests      0))
+               (labels ((register ()
+                          "Register a fresh discovery-only provider without retained models."
+                          (unregister-provider provider-name :source ':runtime)
+                          (register-openai-compatible-provider
+                           :name            provider-name
+                           :endpoint        "https://provider.invalid/v1/chat/completions"
+                           :models-endpoint "https://provider.invalid/v1/models")))
+                 (register)
+                 (openai-compatible-provider-tests--save-key configuration provider-name "synthetic-xdg-key")
+                 (test-call-with-function-replacements
+                  (list (list 'dexador:get
+                              (lambda (&rest arguments)
+                                (declare (ignore arguments))
+                                (incf requests)
+                                (values "{\"data\":[{\"id\":\"xdg/offline\"}]}" 200 nil nil))))
+                  (lambda ()
+                    (test-assert (null (provider-refresh-models configuration :provider-name provider-name))
+                                 "discovery creates a real portable cache fixture")))
+                 (test-assert (equal target (merge-pathnames "provider-models.sexp" (config :cache-root configuration)))
+                              "new discovery metadata uses the cache root")
+                 (preferences-store configuration :model "xdg/offline")
+                 (let* ((form           (read-portable-form target))
+                        (original-root  (symbol-function 'configuration-ensure-root-directory))
+                        (original-store (symbol-function 'provider--model-cache-store)))
+                   (snapshot-write legacy form)
+                   (let ((legacy-bytes (uiop:read-file-string legacy)))
+                     (dolist (stage '(:success :root-creation :publication))
+                       (delete-file target)
+                       (register)
+                       (let ((warnings 0))
+                         (test-call-with-function-replacements
+                          (list
+                           (list 'configuration-ensure-root-directory
+                                 (lambda (configuration root)
+                                   (if (and (eq stage ':root-creation) (eq root ':cache-root))
+                                       (error 'file-error :pathname target)
+                                       (funcall original-root configuration root))))
+                           (list 'provider--model-cache-store
+                                 (lambda (configuration)
+                                   (if (eq stage ':publication)
+                                       (error 'file-error :pathname target)
+                                       (funcall original-store configuration))))
+                           (list 'dexador:get
+                                 (lambda (&rest arguments)
+                                   (declare (ignore arguments))
+                                   (incf requests)
+                                   (error "Unexpected network discovery during offline startup."))))
+                          (lambda ()
+                            (handler-bind ((provider-model-cache-migration-warning
+                                             (lambda (warning)
+                                               (incf warnings)
+                                               (muffle-warning warning))))
+                              (let ((created
+                                      (apply #'configuration-create
+                                             :defer-provider-validation-p t
+                                             (loop for root in '(:config-root :data-root :state-root :cache-root)
+                                                   append (list root (config root configuration))))))
+                                (provider-bootstrap-configuration created)
+                                (test-assert (string= (config :model created) "xdg/offline")
+                                             "upgrade validates the persisted discovered model while offline")))))
+                         (test-assert (= warnings (if (eq stage ':success) 0 1))
+                                      "failed publication reports the retained metadata")
+                         (test-assert (eq (not (null (probe-file target))) (eq stage ':success))
+                                      "failure does not publish an empty cache"))
+                       (test-assert (equal (provider--read-model-cache configuration) form)
+                                    "a later read retries publication successfully")
+                       (test-assert (string= legacy-bytes (uiop:read-file-string legacy))
+                                    "upgrade retains the exact legacy cache for rollback"))
+                     (let ((new-form (copy-tree form)))
+                       (setf (getf (first (getf (rest new-form) :providers)) :models) '("xdg/new"))
+                       (provider--write-model-cache configuration new-form)
+                       (test-assert (equal (provider--read-model-cache configuration) new-form)
+                                    "a new cache takes precedence over legacy metadata")
+                       (delete-file target)
+                       (test-call-with-function-replacements
+                        (list (list 'provider--model-cache-store
+                                    (lambda (configuration)
+                                      (snapshot-write target new-form)
+                                      (funcall original-store configuration))))
+                        (lambda ()
+                          (test-assert (equal (provider--read-model-cache configuration) new-form)
+                                       "a cache published during migration wins without being overwritten"))))
+                     (test-assert (= requests 1) "startup never performs remote discovery")))))))
+      (provider--registry-restore registry-snapshot)))
+  nil)
+
 (define-condition test-provider-model-discovery-interrupt (serious-condition)
   ()
   (:documentation "A synthetic non-error interrupt during provider model discovery."))

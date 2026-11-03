@@ -173,20 +173,73 @@ are normalized after executable init and cache loading establish their provider.
                               :provider-validation-p nil)))
   (configuration-validate-deferred configuration))
 
+(-> provider--model-cache-store (configuration) sexp-store:snapshot-store)
+(defun provider--model-cache-store (configuration)
+  "Return the transactional cache store shared by refresh and upgrade publication."
+  (let ((pathname (configuration-provider-model-cache-path configuration)))
+    (make-instance 'sexp-store:snapshot-store
+                   :pathname           pathname
+                   :lock-pathname      (make-pathname :type "lock" :defaults pathname)
+                   :initial-state      #'list
+                   :validator          #'listp
+                   :decoder            #'identity
+                   :encoder            #'identity
+                   :recover-read-error (constantly nil))))
+
 (-> provider--read-model-cache (configuration) t)
 (defun provider--read-model-cache (configuration)
-  "Return the model cache form in CONFIGURATION's private cache file, or NIL."
-  (let ((pathname (configuration-provider-model-cache-path configuration)))
-    (and (probe-file pathname)
-         (read-portable-form pathname))))
+  "Read the cache, copying legacy state metadata once without overwriting a new cache.
+
+Keep the legacy file for rollback and use its metadata if publication fails, so
+cached model choices work offline. Remove the legacy branch at 0.68.0."
+  (let ((target (configuration-provider-model-cache-path configuration))
+        (legacy (merge-pathnames "provider-models.sexp" (config :state-root configuration))))
+    (cond
+      ((handler-case (probe-file target)
+         (file-error () nil))
+       (read-portable-form target))
+      ((probe-file legacy)
+       (let ((form (read-portable-form legacy)))
+         (handler-case
+             (progn
+               (configuration-ensure-root-directory configuration ':cache-root)
+               (sexp-store:store-transact
+                (provider--model-cache-store configuration)
+                (lambda (current)
+                  (if (probe-file target)
+                      (values current current nil)
+                      (values form form t)))))
+           (error (cause)
+             (warn 'provider-model-cache-migration-warning :source legacy :target target :cause cause)
+             form)))))))
 
 (-> provider--write-model-cache (configuration list) null)
 (defun provider--write-model-cache (configuration form)
   "Atomically replace CONFIGURATION's private model cache file with FORM."
-  (let ((pathname (configuration-provider-model-cache-path configuration)))
-    (ensure-directories-exist pathname)
-    (snapshot-write pathname form :mode #o600))
+  (configuration-ensure-root-directory configuration ':cache-root)
+  (sexp-store:store-transact
+   (provider--model-cache-store configuration)
+   (lambda (current)
+     (declare (ignore current))
+     (values form nil t)))
   nil)
+
+(define-condition provider-model-cache-migration-warning (warning)
+  ((source :initarg       :source
+           :reader        provider-model-cache-migration-warning-source
+           :documentation "The retained legacy model cache pathname.")
+   (target :initarg       :target
+           :reader        provider-model-cache-migration-warning-target
+           :documentation "The desired XDG cache pathname.")
+   (cause  :initarg       :cause
+           :reader        provider-model-cache-migration-warning-cause
+           :documentation "The condition that prevented cache publication."))
+  (:documentation "Legacy provider metadata was loaded without migrating its file.")
+  (:report (lambda (condition stream)
+             (format stream "Could not migrate model cache from ~A to ~A: ~A. Using legacy metadata."
+                     (provider-model-cache-migration-warning-source condition)
+                     (provider-model-cache-migration-warning-target condition)
+                     (provider-model-cache-migration-warning-cause condition)))))
 
 
 ;;;; -- Effective Registry Views --

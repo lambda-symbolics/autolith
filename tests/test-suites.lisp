@@ -874,6 +874,7 @@
   test-openai-api-responses
   test-openai-compatible-provider-discovery-is-on-demand
   test-openai-compatible-provider-model-cache-boundary
+  test-provider-model-cache-xdg-migration
   test-openai-compatible-provider-authentication-bootstrap
   test-openai-compatible-provider-discovery
   test-openai-compatible-provider-registration-identity

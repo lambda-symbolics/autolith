@@ -1034,7 +1034,7 @@ selects its own registration, rather than inheriting the previous provider."
 (-> configuration-provider-model-cache-path (configuration) pathname)
 (defun configuration-provider-model-cache-path (configuration)
   "Return the private cache of successful provider model discovery results."
-  (merge-pathnames "provider-models.sexp" (config :state-root configuration)))
+  (merge-pathnames "provider-models.sexp" (config :cache-root configuration)))
 
 (-> configuration-journal-path (configuration) pathname)
 (defun configuration-journal-path (configuration)
