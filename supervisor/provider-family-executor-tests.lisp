@@ -68,11 +68,57 @@
                                :wire-id 1 :request-id "fixture-request" :turn-id "fixture-turn"
                                :deadline (+ (session-runtime--clock) 30)))))))
 
+(declaim (ftype (function () (integer 0)) provider-family-test--reasoning-options))
+
+(defun provider-family-test--reasoning-options ()
+  "Check account defaults, profile defaults, and serialized overrides in real JSON encoders."
+  (let ((checks 0))
+    (dolist (family '(:codex :openai-api :grok))
+      (multiple-value-bind (unused account invocation)
+          (provider-family-test--binding
+           (list family "fixture" ':responses)
+           :options '(:wire-options (:reasoning-effort "low" :reasoning-summary "concise")))
+        (declare (ignore unused invocation))
+        (let* ((profile  (make-model-profile
+                          :id "reasoning" :model "fixture" :family ':responses
+                          :options             '(:reasoning-effort "high" :reasoning-summary "auto")
+                          :reasoning-efforts   '("low" "high")
+                          :reasoning-summaries '("auto" "concise" "detailed")))
+               (registry (make-model-profile-registry (list profile)))
+               (provider (provider-family--wire-provider account)))
+          (dolist (case '((nil "high" "auto")
+                          ((:reasoning-effort "low" :reasoning-summary "detailed") "low" "detailed")
+                          ((:reasoning-effort "" :reasoning-summary "") nil nil)
+                          ((:reasoning-summary "") "high" nil)))
+            (destructuring-bind (settings effort summary) case
+              (let* ((start      (apply #'parent-proto:make-model-start
+                                       :profile-id "reasoning" :turn-id "turn" :kind ':generate settings))
+                     (roundtrip  (cl-protobufs:deserialize-from-bytes
+                                  'parent-proto:model-start (cl-protobufs:serialize-to-bytes start)))
+                     (projection (model-start->wire-request roundtrip registry))
+                     (request    (provider-family--request account :provider provider
+                                                          :projection projection :tools #()
+                                                          :session-id        "fixture"))
+                     (reasoning  (gethash "reasoning" request)))
+                (assert (equal effort (and reasoning (gethash "effort" reasoning))))
+                (assert (equal summary (and reasoning (gethash "summary" reasoning))))
+                (incf checks 2))))
+          (let* ((projection (make-instance 'cl-llm-provider-api:wire-request :model "fixture"))
+                 (request    (provider-family--request account :provider provider
+                                                       :projection projection :tools #()
+                                                       :session-id       "fixture"))
+                 (reasoning  (gethash "reasoning" request)))
+            (assert (equal "low" (gethash "effort" reasoning)))
+            (assert (equal "concise" (gethash "summary" reasoning)))
+            (incf checks 2)))))
+    checks))
+
 (declaim (ftype (function () (integer 0)) provider-family-test--projections))
 
 (defun provider-family-test--projections ()
   "Check every account projection, public profile mapping, summary, and header policy."
   (let ((checks 0))
+    (incf checks (provider-family-test--reasoning-options))
     (dolist (case *provider-family-test-cases*)
       (multiple-value-bind (profile account invocation)
           (provider-family-test--binding case)

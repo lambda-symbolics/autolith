@@ -101,21 +101,18 @@
                          cl-llm-provider-api:wire-request) provider-family--projection))
 
 (defun provider-family--projection (account projection summary-p)
-  "Apply trusted account options before the shared encoder. Preserve opaque history."
+  "Apply account defaults beneath projected request options. Preserve opaque history."
   (let* ((family  (provider-account-family account))
          (policy  (provider-account-options account))
          (model   (cl-llm-provider-api:wire-request-model projection))
-         (options (copy-tree (cl-llm-provider-api:wire-request-options projection))))
-    (loop for (key value) on (getf policy :wire-options) by (lambda (tail) (rest (rest tail)))
+         (options (copy-tree (getf policy :wire-options))))
+    (loop for (key value) on (cl-llm-provider-api:wire-request-options projection)
+          by (lambda (tail) (rest (rest tail)))
           do (setf (getf options key) value))
     (case family
-      (:grok
-       (setf (getf options :reasoning-summary) "concise"))
       (:fireworks
        (when (string= model "accounts/fireworks/models/qwen3p7-plus")
          (remf options :reasoning-effort)))
-      (:openai-api
-       (remf options :reasoning-effort))
       (:openrouter
        (setf model (provider-family--strip-model-prefix model "openrouter/"))
        (setf (getf options :output-ceiling-field) "max_tokens")

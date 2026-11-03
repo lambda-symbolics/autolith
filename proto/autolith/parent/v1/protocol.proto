@@ -107,6 +107,8 @@ message ModelStart {
     NATIVE_COMPACTION = 2;
   }
   Kind kind = 11;
+  // For reasoning settings, absence inherits the parent default. A present
+  // empty string clears that default; other values must be profile choices.
   optional string reasoning_effort = 12;
   optional string reasoning_summary = 13;
   repeated HostedTool hosted_tools = 14;

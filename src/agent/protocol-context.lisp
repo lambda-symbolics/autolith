@@ -223,8 +223,9 @@ provider items without a parent handle are rejected."
 (defun agent-context-project
     (configuration conversation tool-namespaces
      &key profile-id turn-id goal-context summary-p (kind ':generate) stable-prefix
-       max-output-tokens temperature reasoning-effort reasoning-summary
-       continuation-handle turn-state-handle)
+        max-output-tokens temperature
+        (reasoning-effort nil effort-p) (reasoning-summary nil summary-setting-p)
+        continuation-handle turn-state-handle)
   "Assemble an optional credential-free ModelStart using current context delivery.
 Read the existing logical conversation projection, not provider requests. The caller
 selects an opaque parent profile ID. Summary generation omits tools, ephemeral input,
@@ -264,10 +265,10 @@ Keep the returned delivery unconsumed on send failure, retries, and terminal fai
           (setf (agent-wire:model-start.max-output-tokens start) max-output-tokens))
         (when temperature
           (setf (agent-wire:model-start.temperature start) temperature))
-        (when reasoning-effort
-          (setf (agent-wire:model-start.reasoning-effort start) reasoning-effort))
-        (when reasoning-summary
-          (setf (agent-wire:model-start.reasoning-summary start) reasoning-summary))
+        (when effort-p
+          (setf (agent-wire:model-start.reasoning-effort start) (or reasoning-effort "")))
+        (when summary-setting-p
+          (setf (agent-wire:model-start.reasoning-summary start) (or reasoning-summary "")))
         (when continuation-handle
           (setf (agent-wire:model-start.continuation-handle start) continuation-handle))
         (when turn-state-handle

@@ -478,16 +478,25 @@
          (multiple-value-bind (unused account invocation)
              (autolith-supervisor::provider-family-test--binding
               (list family "fixture" protocol)
-              :options (when (and supported-p (eq protocol ':chat-completions))
-                         '(:wire-options (:reasoning-parameter "reasoning_effort"))))
+              :options (list :wire-options
+                             (append (when (and supported-p (not limited-p))
+                                       '(:reasoning-effort "low"))
+                                     (when (and supported-p (not limited-p) (eq protocol ':responses))
+                                       '(:reasoning-summary "concise"))
+                                     (when (and supported-p (eq protocol ':chat-completions))
+                                       '(:reasoning-parameter "reasoning_effort")))))
            (declare (ignore unused invocation))
            (when (eq protocol ':gemini)
              (setf (autolith-supervisor::provider-account-state account)
                    '(:setup-complete-p t :project "fixture-project")))
            (let ((profile (autolith-supervisor::make-model-profile
                            :id "reasoning" :model "fixture" :family protocol
-                           :options             (when (and supported-p (eq protocol ':chat-completions))
-                                                  '(:reasoning-parameter "reasoning_effort"))
+                            :options            (append (when (and supported-p (not limited-p))
+                                                          '(:reasoning-effort "low"))
+                                                        (when (and supported-p (not limited-p) (eq protocol ':responses))
+                                                          '(:reasoning-summary "concise"))
+                                                        (when (and supported-p (eq protocol ':chat-completions))
+                                                          '(:reasoning-parameter "reasoning_effort")))
                            :reasoning-efforts   (when supported-p (if limited-p '("low") '("low" "high")))
                            :reasoning-summaries (if limited-p '("concise") '("auto" "concise" "detailed" "none")))))
              (agent-protocol-test--peers

@@ -313,6 +313,11 @@ still consumes context receipts, but cancellation prevents tool-result publicati
                       (not (loop for tail on parameters by (lambda (tail) (rest (rest tail)))
                                  thereis (eq (first tail) key))))
               do (setf (getf parameters key) value))
+      ;; Disabling effort also clears an inherited summary default.
+      (when (and (member :reasoning-effort parameters)
+                 (null (getf parameters :reasoning-effort))
+                 (not (member :reasoning-summary parameters)))
+        (setf (getf parameters :reasoning-summary) nil))
       (when *provider-maximum-output-tokens*
         (setf (getf parameters :max-output-tokens) *provider-maximum-output-tokens*))
       (when compaction-p (remf parameters :reasoning-summary))

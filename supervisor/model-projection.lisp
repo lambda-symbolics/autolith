@@ -363,16 +363,18 @@ provider. The trusted resolver owns all handle authority checks."
           (present-p value allowed key)
           setting
         (when present-p
-          (unless
-              (and (member family '(:responses :chat-completions))
-                   (or (not (eq key ':reasoning-summary)) (eq family ':responses))
-                   (member value allowed :test #'string=))
+          ;; A present empty value clears a default; absence inherits it.
+          (unless (or (string= value "")
+                      (and (member family '(:responses :chat-completions))
+                           (or (not (eq key ':reasoning-summary)) (eq family ':responses))
+                           (member value allowed :test #'string=)))
             (model-projection--fail key ':unsupported))
-          (setf (getf options key) (copy-seq value)))))
+          (setf (getf options key) (unless (string= value "") (copy-seq value))))))
     (when (and (getf options :reasoning-summary) (not (getf options :reasoning-effort)))
       (model-projection--fail ':reasoning-summary ':missing-effort))
     (when
-        (and (parent-proto:model-start.has-reasoning-effort start) (eq family ':chat-completions)
+        (and (parent-proto:model-start.has-reasoning-effort start)
+             (getf options :reasoning-effort) (eq family ':chat-completions)
              (not (getf options :reasoning-parameter)))
       (model-projection--fail ':reasoning-effort ':unsupported))
     (dolist (message messages)
