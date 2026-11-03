@@ -226,7 +226,17 @@ Failed publication uses legacy metadata offline. Remove the branch at 0.68.0."
             (error (cause)
               (warn 'provider-model-cache-migration-warning :source legacy :target target :cause cause)
               (unless (target-present-p)
-                (return (read-portable-form legacy))))))
+                (return
+                  (handler-case (read-portable-form legacy)
+                    ((or sexp-store:store-error file-error) (condition)
+                      ;; Publication may have consumed the source before it opened.
+                      (cond
+                        ((target-present-p)
+                         (read-portable-form target))
+                        ((probe-file legacy)
+                         (error condition))
+                        (t
+                         nil)))))))))
         (when (target-present-p)
           (read-portable-form target))))))
 

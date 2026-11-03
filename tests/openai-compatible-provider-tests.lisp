@@ -605,6 +605,54 @@
                  "identical state and cache roots do not remove the cache"))
   nil)
 
+(-> test-provider-model-cache-xdg-fallback-handoff () null)
+(defun test-provider-model-cache-xdg-fallback-handoff ()
+  "Read offline metadata when migration cannot lock or another reader consumes it."
+  (dolist (stage '(:lock-unavailable :published :evicted))
+    (with-test-configuration (configuration)
+      (let* ((legacy        (merge-pathnames "provider-models.sexp" (config :state-root configuration)))
+             (target        (configuration-provider-model-cache-path configuration))
+             (original-root (symbol-function 'configuration-ensure-root-directory))
+             (original-lock (symbol-function 'call-with-file-lock))
+             (original-read (symbol-function 'read-portable-form)))
+        (snapshot-write legacy '(:old-models))
+        (test-call-with-function-replacements
+         (list
+          (list 'configuration-ensure-root-directory
+                (lambda (configuration root)
+                  (if (eq stage ':lock-unavailable)
+                      (funcall original-root configuration root)
+                      (error 'file-error :pathname target))))
+          (list 'call-with-file-lock
+                (lambda (pathname function)
+                  (if (eq stage ':lock-unavailable)
+                      (error 'file-error :pathname pathname)
+                      (funcall original-lock pathname function))))
+          (list 'read-portable-form
+                (lambda (pathname)
+                  (when (and (not (eq stage ':lock-unavailable))
+                             (uiop:pathname-equal pathname legacy))
+                    (snapshot-write target '(:new-models))
+                    (delete-file legacy)
+                    (when (eq stage ':evicted)
+                      (delete-file target)))
+                  (funcall original-read pathname))))
+         (lambda ()
+           (handler-bind ((provider-model-cache-migration-warning #'muffle-warning))
+             (test-assert
+              (equal (provider--read-model-cache configuration)
+                     (case stage
+                       (:lock-unavailable
+                        '(:old-models))
+                       (:published
+                        '(:new-models))
+                       (:evicted
+                        nil)))
+              "fallback reads the surviving snapshot without requiring a writable source"))))
+        (test-assert (eq (not (null (probe-file legacy))) (eq stage ':lock-unavailable))
+                     "fallback never recreates a source consumed by migration"))))
+  nil)
+
 (define-condition test-provider-model-discovery-interrupt (serious-condition)
   ()
   (:documentation "A synthetic non-error interrupt during provider model discovery."))

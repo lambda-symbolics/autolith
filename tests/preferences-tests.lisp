@@ -329,6 +329,37 @@ Source precedence, source recording, and value rejection belong to setinka."
         (test-assert (not (probe-file legacy)) "only the new location exists after the move"))))
   nil)
 
+(-> test-preferences-xdg-fallback-handoff () null)
+(defun test-preferences-xdg-fallback-handoff ()
+  "Follow a competing completed migration before using a selected fallback file."
+  (dolist (operation '(:read :write))
+    (with-test-configuration (configuration)
+      (let* ((legacy (merge-pathnames "preferences.sexp" (config :state-root configuration)))
+             (target (configuration-preferences-path configuration))
+             (result nil))
+        (snapshot-write legacy (preferences--plist->form '(:future-key 7)))
+        (test-call-with-function-replacements
+         (list (list 'preferences--migrate-legacy
+                     (lambda (configuration &key recover-read-error)
+                       (declare (ignore configuration recover-read-error))
+                       ;; A competing migrator finishes after this caller selects fallback.
+                       (snapshot-write target (preferences--plist->form '(:future-key 7)))
+                       (delete-file legacy)
+                       legacy)))
+         (lambda ()
+           (setf result (if (eq operation ':read)
+                            (preferences-load-values configuration)
+                            (preferences-store configuration :new-key 9)))))
+        (if (eq operation ':read)
+            (test-assert (equal result '(:future-key 7))
+                         "a delayed fallback reader follows the published file")
+            (test-assert (= (getf (preferences-load-values configuration) :new-key) 9)
+                         "a delayed fallback writer merges into the published file"))
+        (test-assert (= (getf (preferences-load-values configuration) :future-key) 7)
+                     "concurrent publication preserves unknown keys")
+        (test-assert (not (probe-file legacy)) "fallback cannot recreate the consumed file"))))
+  nil)
+
 (-> test-legacy-xdg-migration-removal () null)
 (defun test-legacy-xdg-migration-removal ()
   "Require removal of temporary XDG compatibility code at the 0.68.0 boundary."

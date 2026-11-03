@@ -109,8 +109,17 @@ importing them again. Remove at 0.68.0."
 (defun preferences--read (configuration)
   "Read CONFIGURATION's durable values from its version 8 preferences file."
   (handler-case
-      (sexp-store:store-read
-       (preferences--store configuration :pathname (preferences--migrate-legacy configuration)))
+      (let* ((target   (configuration-preferences-path configuration))
+             (pathname (preferences--migrate-legacy configuration)))
+        (if (uiop:pathname-equal pathname target)
+            (sexp-store:store-read (preferences--store configuration))
+            (call-with-file-lock
+             (make-pathname :type "lock" :defaults pathname)
+             (lambda ()
+               (let ((redirect-p (or (probe-file target) (not (probe-file pathname)))))
+                 (sexp-store:store-read
+                  (preferences--store configuration :pathname (if redirect-p target pathname))
+                  :lock-held-p (not redirect-p)))))))
     ((or sexp-store:store-error file-error) (cause)
       (let ((pathname (or (etypecase cause
                             (sexp-store:store-error
@@ -166,12 +175,27 @@ return NIL. Reading never repairs or rewrites a corrupt file."
            (if (equal pathname (configuration-preferences-path configuration))
                ':config-root
                ':state-root))
-          (sexp-store:store-transact
-           (preferences--store configuration :pathname pathname :recover-read-error recover)
-           (lambda (current)
-             (let ((replacement (copy-list current)))
-               (setf (getf replacement name) value)
-               (values replacement nil t)))))
+          (flet ((replace-value (current)
+                   (let ((replacement (copy-list current)))
+                     (setf (getf replacement name) value)
+                     (values replacement nil t))))
+            (sexp-store:store-transact
+             (preferences--store configuration :pathname pathname :recover-read-error recover)
+             (lambda (current)
+               (let ((target (configuration-preferences-path configuration)))
+                 (if (and (not (uiop:pathname-equal pathname target))
+                          (or (probe-file target) (not (probe-file pathname))))
+                     (progn
+                       (configuration-ensure-root-directory configuration ':config-root)
+                       (sexp-store:store-transact
+                        (preferences--store configuration :recover-read-error recover)
+                        #'replace-value
+                        :publish (lambda (committed)
+                                   (declare (ignore committed))
+                                   (when (probe-file pathname)
+                                     (delete-file pathname))))
+                       (values current nil nil))
+                     (replace-value current)))))))
       ((or sexp-store:store-error file-error) (cause)
         (error 'preferences-error
                :message   (format nil "Could not persist preferences at ~A: ~A" pathname cause)

@@ -578,6 +578,7 @@
   test-preferences-xdg-migration-failure
   test-preferences-xdg-migration-cleanup
   test-xdg-file-migration-concurrent
+  test-preferences-xdg-fallback-handoff
   test-preferences-xdg-malformed-legacy
   test-legacy-xdg-migration-removal)
 
@@ -880,6 +881,7 @@
   test-openai-compatible-provider-model-cache-boundary
   test-provider-model-cache-xdg-migration
   test-provider-model-cache-xdg-cleanup
+  test-provider-model-cache-xdg-fallback-handoff
   test-openai-compatible-provider-authentication-bootstrap
   test-openai-compatible-provider-discovery
   test-openai-compatible-provider-registration-identity
