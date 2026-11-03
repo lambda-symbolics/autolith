@@ -1656,7 +1656,10 @@
   test-function-replacement-fixture-restoration
   test-long-symbolic-link-fixture
   test-platform-copy-file-permissions
-  test-xdg-native-directory-roots)
+  test-xdg-native-directory-roots
+  test-xdg-legacy-backslash-roots
+  test-xdg-explicit-roots-bypass-legacy
+  test-xdg-legacy-root-scan)
 
 (define-test-suite test-runner
   test-runner-selection

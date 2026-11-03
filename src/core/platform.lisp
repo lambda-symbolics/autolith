@@ -16,6 +16,11 @@
 (defvar *platform* nil
   "The host platform adapter installed by the loaded implementation file.")
 
+(defparameter *legacy-xdg-root-bypass* nil
+  "XDG variables whose legacy bridge is bypassed while applying explicit root settings.
+Setinka evaluates the old default before storing an override. Remove this temporary
+constructor binding together with the legacy root bridge before 0.68.0.")
+
 (deftype platform-file-kind ()
   "The filesystem object kinds a platform file status distinguishes."
   '(member :file :directory :symbolic-link :socket :other))

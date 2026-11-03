@@ -336,3 +336,187 @@
                        (test-assert (equal expected (funcall script-root kind))
                                     "standalone helpers ignore invalid XDG roots"))))))))
   nil)
+
+(-> test-xdg-legacy-backslash-roots () null)
+(defun test-xdg-legacy-backslash-roots ()
+  "Preserve backslash-misparsed installations without moving or merging their files."
+  (with-test-fixture (':wildcard-file-names "legacy XDG backslash roots")
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let ((*package* (find-package :autolith)))
+        (load (asdf:system-relative-pathname :autolith "script/roots.lisp")))
+      (let ((script-root     (symbol-function
+                              (find-symbol "AUTOLITH-APPLICATION-ROOT" :autolith)))
+            (script-conflict (find-symbol "AUTOLITH-SCRIPT-LEGACY-XDG-ROOT-CONFLICT"
+                                          :autolith)))
+        (loop for (variable kind) in
+              '(("XDG_CONFIG_HOME" :config) ("XDG_DATA_HOME" :data)
+                ("XDG_STATE_HOME" :state) ("XDG_CACHE_HOME" :cache))
+              do (loop for scenario in '(:fresh :empty :legacy :precreated :native :conflict)
+                       do (let* ((value         (concatenate 'string (uiop:native-namestring root)
+                                                            (format nil "~(~A-~A~)/back\\slash"
+                                                                    kind scenario)))
+                                 (native        (uiop:parse-native-namestring
+                                                 (concatenate 'string value "/autolith/")))
+                                 (legacy        (merge-pathnames
+                                                 "autolith/" (uiop:ensure-directory-pathname
+                                                              (pathname value))))
+                                 (native-record (merge-pathnames "nested/opaque.record" native))
+                                 (legacy-record (merge-pathnames "unknown/opaque.record" legacy)))
+                            (when (member scenario '(:empty :precreated))
+                              (ensure-directories-exist
+                               (merge-pathnames "crash-pointers/empty/deeper/" native))
+                              (ensure-directories-exist
+                               (merge-pathnames "empty/deeper/" legacy)))
+                            (when (member scenario '(:legacy :precreated :conflict))
+                              (ensure-directories-exist legacy-record)
+                              (with-open-file (stream legacy-record :direction ':output)
+                                (write-string "legacy opaque fixture" stream)))
+                            (when (member scenario '(:native :conflict))
+                              (ensure-directories-exist native-record)
+                              (with-open-file (stream native-record :direction ':output)
+                                (write-string "native opaque fixture" stream)))
+                            (with-test-environment ((variable value))
+                              (loop for (resolve conflict) in
+                                    (list (list (lambda ()
+                                                  (platform-application-root *platform* kind))
+                                                'posix-legacy-xdg-root-conflict)
+                                          (list (lambda () (funcall script-root kind))
+                                                script-conflict))
+                                    do (if (eq scenario :conflict)
+                                           (progn
+                                             (test-assert
+                                              (handler-case (progn (funcall resolve) nil)
+                                                (error (condition)
+                                                  (typep condition conflict)))
+                                              "two populated roots require an explicit choice")
+                                             (dolist (choice '(use-native-root use-legacy-root))
+                                               (test-assert
+                                                (equal
+                                                 (handler-bind
+                                                     ((error (lambda (condition)
+                                                               (when (typep condition conflict)
+                                                                 (invoke-restart choice)))))
+                                                   (funcall resolve))
+                                                 (if (eq choice 'use-native-root) native legacy))
+                                                "each conflict restart selects exactly one root")))
+                                           (let ((warnings 0)
+                                                 (expected (if (member scenario '(:legacy :precreated))
+                                                               legacy
+                                                               native)))
+                                             (test-assert
+                                              (equal expected
+                                                     (handler-bind
+                                                         ((warning (lambda (condition)
+                                                                     (incf warnings)
+                                                                     (muffle-warning condition))))
+                                                       (funcall resolve)))
+                                              "choose existing legacy content or a fresh literal root")
+                                             (test-assert
+                                              (= warnings (if (member scenario '(:legacy :precreated)) 1 0))
+                                              "legacy fallback warns before its removal boundary")))))
+                            (when (member scenario '(:legacy :precreated :conflict))
+                              (test-assert (string= "legacy opaque fixture"
+                                                    (uiop:read-file-string legacy-record))
+                                           "legacy records are untouched"))
+                            (when (member scenario '(:native :conflict))
+                              (test-assert (string= "native opaque fixture"
+                                                    (uiop:read-file-string native-record))
+                                           "native records are untouched"))))))))
+  nil)
+
+(-> test-xdg-explicit-roots-bypass-legacy () null)
+(defun test-xdg-explicit-roots-bypass-legacy ()
+  "Do not evaluate conflicting XDG defaults when every root is explicitly configured."
+  (with-test-fixture (':wildcard-file-names "explicit roots with legacy XDG conflicts")
+    (with-test-configuration (configuration root)
+      (let* ((value  (concatenate 'string (uiop:native-namestring root) "back\\slash"))
+             (native (uiop:parse-native-namestring (concatenate 'string value "/autolith/")))
+             (legacy (merge-pathnames "autolith/"
+                                      (uiop:ensure-directory-pathname (pathname value))))
+             (base   (uiop:native-namestring (merge-pathnames "defaults/" root)))
+             (defaults
+               (with-test-environment (("XDG_CONFIG_HOME" base)
+                                       ("XDG_DATA_HOME" base)
+                                       ("XDG_STATE_HOME" base)
+                                       ("XDG_CACHE_HOME" base))
+                 (configuration-create :source-root       (config :source-root configuration)
+                                       :working-directory root
+                                       :durable-p nil :defer-provider-validation-p t))))
+        (dolist (directory (list native legacy))
+          (let ((record (merge-pathnames "opaque.record" directory)))
+            (ensure-directories-exist record)
+            (with-open-file (stream record :direction ':output)
+              (write-string "opaque fixture" stream))))
+        (with-test-environment (("XDG_CONFIG_HOME" value)
+                                ("XDG_DATA_HOME" value)
+                                ("XDG_STATE_HOME" value)
+                                ("XDG_CACHE_HOME" value))
+          (dolist (explicit
+                   (list
+                    (configuration-create
+                     :source-root       (config :source-root configuration)
+                     :working-directory root
+                     :config-root       (config :config-root configuration)
+                     :data-root         (config :data-root configuration)
+                     :state-root        (config :state-root configuration)
+                     :cache-root        (config :cache-root configuration)
+                     :durable-p nil :defer-provider-validation-p t)
+                    (make-configuration
+                     :source-root           (config :source-root configuration)
+                     :working-directory     root
+                     :config-root           (config :config-root configuration)
+                     :data-root             (config :data-root configuration)
+                     :state-root            (config :state-root configuration)
+                     :cache-root            (config :cache-root configuration)
+                     :provider-validation-p nil)
+                    (configuration-copy
+                     defaults
+                     :config-root           (config :config-root configuration)
+                     :data-root             (config :data-root configuration)
+                     :state-root            (config :state-root configuration)
+                     :cache-root            (config :cache-root configuration)
+                     :provider-validation-p nil)))
+            (dolist (key '(:config-root :data-root :state-root :cache-root))
+              (test-assert (equal (config key configuration) (config key explicit))
+                           "explicit roots bypass conflicting XDG defaults")))))))
+  nil)
+
+(-> test-xdg-legacy-root-scan () null)
+(defun test-xdg-legacy-root-scan ()
+  "Count links as content and propagate directory inspection failures."
+  (with-test-fixture (':posix-adapter "legacy XDG directory inspection")
+    (with-test-fixture (':symbolic-links "legacy XDG directory cycles")
+      (with-test-configuration (configuration root)
+        (declare (ignore configuration))
+        (let ((*package* (find-package :autolith)))
+          (load (asdf:system-relative-pathname :autolith "script/roots.lisp")))
+        (let* ((directory (merge-pathnames "scan/" root))
+               (link      (merge-pathnames "empty/cycle" directory))
+               (scan-functions
+                 (list #'posix--xdg-root-content-p
+                       (symbol-function
+                        (find-symbol "AUTOLITH-SCRIPT-XDG-ROOT-CONTENT-P" :autolith)))))
+          (ensure-directories-exist (merge-pathnames "empty/" directory))
+          (dolist (scan scan-functions)
+            (test-assert (not (funcall scan (uiop:native-namestring directory)))
+                         "a directory-only tree has no installation content"))
+          (test-fixture-make-symbolic-link *platform* ".." (uiop:native-namestring link))
+          (dolist (scan scan-functions)
+            (test-assert (funcall scan (uiop:native-namestring directory))
+                         "a directory symlink is content, not a recursive traversal"))
+          (test-fixture-remove-link *platform* (uiop:native-namestring link))
+          (let ((blocker (merge-pathnames "not-a-directory" directory)))
+            (with-open-file (stream blocker :direction ':output)
+              (write-string "opaque fixture" stream))
+            (dolist (scan scan-functions)
+              (test-assert
+               (handler-case
+                   (progn
+                     (funcall scan (concatenate 'string (uiop:native-namestring blocker)
+                                                "/child/"))
+                     nil)
+                 (sb-posix:syscall-error ()
+                   t))
+               "inspection errors propagate instead of reporting an empty root")))))))
+  nil)

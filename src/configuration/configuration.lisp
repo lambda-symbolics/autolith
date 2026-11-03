@@ -703,9 +703,10 @@ the result deterministic for tests and child agents. Overrides apply in
 setting definition order, so a model override precedes its reasoning effort.
 PROVIDER-VALIDATION-P NIL defers model checks until the provider registry is
 known."
-  (setinka:make-configuration
-   :overrides             (configuration--overrides overrides '(:provider-validation-p))
-   :validation-deferred-p (not provider-validation-p)))
+  (let ((*legacy-xdg-root-bypass* (configuration--legacy-xdg-root-bypass overrides)))
+    (setinka:make-configuration
+     :overrides             (configuration--overrides overrides '(:provider-validation-p))
+     :validation-deferred-p (not provider-validation-p))))
 
 (-> configuration-copy
     (configuration &rest t &key (:provider-validation-p t) &allow-other-keys)
@@ -720,10 +721,11 @@ known."
 PROVIDER-VALIDATION-P defaults to the original's; passing NIL lets a copy name
 a model the registry does not serve. Listeners stay with the original; a child
 or frame reacts to its own changes."
-  (setinka:configuration-copy
-   configuration
-   :overrides             (configuration--overrides overrides '(:provider-validation-p) configuration)
-   :validation-deferred-p (not provider-validation-p)))
+  (let ((*legacy-xdg-root-bypass* (configuration--legacy-xdg-root-bypass overrides)))
+    (setinka:configuration-copy
+     configuration
+     :overrides             (configuration--overrides overrides '(:provider-validation-p) configuration)
+     :validation-deferred-p (not provider-validation-p))))
 
 (-> configuration-create (&rest t) configuration)
 (defun configuration-create
@@ -736,11 +738,30 @@ then its default. A durable value that no longer validates is dropped rather
 than applied. DEFER-PROVIDER-VALIDATION-P leaves model checks to
 CONFIGURATION-VALIDATE-DEFERRED once executable user initialization has
 registered providers. DURABLE-P NIL skips the preferences file."
-  (setinka:configuration-load
-   :overrides             (configuration--overrides
-                           overrides '(:defer-provider-validation-p :durable-p))
-   :validation-deferred-p defer-provider-validation-p
-   :durable-p             durable-p))
+  (let ((*legacy-xdg-root-bypass* (configuration--legacy-xdg-root-bypass overrides)))
+    (setinka:configuration-load
+     :overrides             (configuration--overrides
+                             overrides '(:defer-provider-validation-p :durable-p))
+     :validation-deferred-p defer-provider-validation-p
+     :durable-p             durable-p)))
+
+(-> configuration--legacy-xdg-root-bypass (list) list)
+(defun configuration--legacy-xdg-root-bypass (overrides)
+  "Bypass legacy XDG selection for explicitly supplied roots until removal at 0.68.0.
+Setinka evaluates an old default before storing an override, even during construction."
+  (append
+   (loop for tail on overrides by (partial #'nthcdr 2)
+         for variable = (case (first tail)
+                          (:config-root
+                           "XDG_CONFIG_HOME")
+                          (:data-root
+                           "XDG_DATA_HOME")
+                          (:state-root
+                           "XDG_STATE_HOME")
+                          (:cache-root
+                           "XDG_CACHE_HOME"))
+         when variable collect variable)
+   *legacy-xdg-root-bypass*))
 
 (-> configuration--overrides (list list &optional (option configuration)) list)
 (defun configuration--overrides (arguments options &optional configuration)
