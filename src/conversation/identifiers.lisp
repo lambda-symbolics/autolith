@@ -202,9 +202,49 @@ would let a second allocation in the same second choose the same identifier."
 
 ;;;; -- Conversation Picker Sidecar Paths --
 
-(-> conversation-picker-metadata-pathname (pathname) pathname)
-(defun conversation-picker-metadata-pathname (conversation-pathname)
-  "Return the compact picker-cache pathname for CONVERSATION-PATHNAME."
+(defvar *conversation-cache-roots* (make-hash-table :test #'equal)
+  "Configured cache directories keyed by absolute conversation storage directory.")
+
+(defvar *conversation-cache-roots-lock* (make-lock "Conversation cache roots")
+  "Protect the pathname-only cache directory registry.")
+
+(-> conversation-cache--root-key (pathname) string)
+(defun conversation-cache--root-key (root)
+  "Return the absolute directory identity used to namespace ROOT's caches."
+  (namestring (uiop:ensure-absolute-pathname
+               (uiop:ensure-directory-pathname root))))
+
+(-> conversation-cache-register-root (pathname pathname) pathname)
+(defun conversation-cache-register-root (storage-root cache-root)
+  "Associate STORAGE-ROOT with CACHE-ROOT for pathname-only cache operations.
+
+Different storage directories receive distinct namespaces even when their
+conversation identifiers coincide. Reconfiguring a source's cache directory
+only changes replaceable output; its source lock and anchors never move."
+  (with-lock-held (*conversation-cache-roots-lock*)
+    (setf (gethash (conversation-cache--root-key storage-root)
+                   *conversation-cache-roots*)
+          (uiop:ensure-directory-pathname cache-root)))
+  storage-root)
+
+(-> conversation-cache--directory (pathname) pathname)
+(defun conversation-cache--directory (conversation-pathname)
+  "Return the namespaced cache directory for CONVERSATION-PATHNAME's source root."
+  (let* ((identity (conversation-storage-identity-pathname conversation-pathname))
+         (key      (conversation-cache--root-key
+                    (uiop:pathname-directory-pathname identity)))
+         (cache-root
+           (or (with-lock-held (*conversation-cache-roots-lock*)
+                 (gethash key *conversation-cache-roots*))
+               (platform-application-root *platform* ':cache)))
+         (namespace
+           (ironclad:byte-array-to-hex-string
+            (ironclad:digest-sequence ':sha256 (utf8-string-to-octets key)))))
+    (merge-pathnames (format nil "conversation-picker/~A/" namespace) cache-root)))
+
+(-> conversation-sidecar-data-pathname (pathname) pathname)
+(defun conversation-sidecar-data-pathname (conversation-pathname)
+  "Return the historical DATA sidecar base used permanently by anchors and locks."
   (let* ((identity
            (conversation-storage-identity-pathname conversation-pathname))
          (conversation-root
@@ -214,6 +254,14 @@ would let a second allocation in the same second choose the same identifier."
     (merge-pathnames
      (make-pathname :name (pathname-name identity) :type "sexp")
      (merge-pathnames "conversation-picker/" data-root))))
+
+(-> conversation-picker-metadata-pathname (pathname) pathname)
+(defun conversation-picker-metadata-pathname (conversation-pathname)
+  "Return the replaceable picker-cache pathname for CONVERSATION-PATHNAME."
+  (let ((identity (conversation-storage-identity-pathname conversation-pathname)))
+    (merge-pathnames
+     (make-pathname :name (pathname-name identity) :type "sexp")
+     (conversation-cache--directory conversation-pathname))))
 
 (-> conversation-input-history-pathname (pathname) pathname)
 (defun conversation-input-history-pathname (conversation-pathname)
@@ -228,7 +276,7 @@ would let a second allocation in the same second choose the same identifier."
 (defun conversation-context-anchors-pathname (conversation-pathname)
   "Return the request-context anchor sidecar owned by CONVERSATION-PATHNAME."
   (let ((metadata-pathname
-          (conversation-picker-metadata-pathname conversation-pathname)))
+          (conversation-sidecar-data-pathname conversation-pathname)))
     (make-pathname :name     (format nil "~A.anchors" (pathname-name metadata-pathname))
                    :type     "sexp"
                    :defaults metadata-pathname)))
@@ -237,7 +285,7 @@ would let a second allocation in the same second choose the same identifier."
 (defun conversation-picker-source-lock-pathname (conversation-pathname)
   "Return the persistent lock shared by source appends and picker reconstruction."
   (make-pathname :type     "lock"
-                 :defaults (conversation-picker-metadata-pathname conversation-pathname)))
+                 :defaults (conversation-sidecar-data-pathname conversation-pathname)))
 
 (-> conversation-picker-revision-pathname (pathname) pathname)
 (defun conversation-picker-revision-pathname (conversation-pathname)
@@ -263,6 +311,32 @@ would let a second allocation in the same second choose the same identifier."
                  :defaults
                  (conversation-picker-search-pathname conversation-pathname)))
 
+;;; Remove the legacy revision bridge and cleanup helpers at 0.68.0.
+;;; Old releases write these revisions under the unchanged source lock.
+;;; Never remove that lock or the neighboring authoritative anchor sidecars.
+
+(-> conversation-cache-legacy-revision-pathname (pathname boolean) pathname)
+(defun conversation-cache-legacy-revision-pathname (conversation-pathname search-p)
+  "Return the pre-0.68 revision shared with old releases during cache relocation."
+  (let ((base (conversation-sidecar-data-pathname conversation-pathname)))
+    (make-pathname :name     (if search-p
+                                (format nil "~A.search" (pathname-name base))
+                                (pathname-name base))
+                   :type     "revision"
+                   :defaults base)))
+
+(-> conversation-cache-legacy-pathnames (pathname) list)
+(defun conversation-cache-legacy-pathnames (conversation-pathname)
+  "Return individually removable pre-0.68 generated sidecars, excluding anchors."
+  (let ((base (conversation-sidecar-data-pathname conversation-pathname)))
+    (list base
+          (conversation-cache-legacy-revision-pathname conversation-pathname nil)
+          (make-pathname :name     (format nil "~A.search" (pathname-name base))
+                         :defaults base)
+          (conversation-cache-legacy-revision-pathname conversation-pathname t)
+          (make-pathname :name     (format nil "~A.inputs" (pathname-name base))
+                         :defaults base))))
+
 (-> conversation-picker-sidecar-pathnames (pathname) list)
 (defun conversation-picker-sidecar-pathnames (conversation-pathname)
   "Return every picker and input-history sidecar owned by CONVERSATION-PATHNAME."
@@ -276,6 +350,7 @@ would let a second allocation in the same second choose the same identifier."
 (defun conversation-sidecar-pathnames (conversation-pathname)
   "Return every sidecar CONVERSATION-PATHNAME may own, including its context anchors."
   (append (conversation-picker-sidecar-pathnames conversation-pathname)
+          (conversation-cache-legacy-pathnames conversation-pathname)
           (list (conversation-context-anchors-pathname conversation-pathname))))
 
 (-> conversation-sidecars-delete (pathname) null)

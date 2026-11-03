@@ -422,3 +422,210 @@ match a new library version is never the correct repair."
                  "a repeated migration safely completes every remaining phase"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+
+;;;; -- Conversation Cache Relocation --
+
+(-> test-conversation-cache--with-legacy-paths (function) t)
+(defun test-conversation-cache--with-legacy-paths (function)
+  "Call FUNCTION with the complete pre-relocation cache pathname protocol."
+  (test-call-with-function-replacements
+   (list
+    (list 'conversation-picker-metadata-pathname
+          #'conversation-sidecar-data-pathname)
+    (list 'conversation-picker-revision-pathname
+          (lambda (pathname)
+            (conversation-cache-legacy-revision-pathname pathname nil)))
+    (list 'conversation-picker-search-pathname
+          (lambda (pathname)
+            (third (conversation-cache-legacy-pathnames pathname))))
+    (list 'conversation-picker-search-revision-pathname
+          (lambda (pathname)
+            (conversation-cache-legacy-revision-pathname pathname t)))
+    (list 'conversation-input-history-pathname
+          (lambda (pathname)
+            (fifth (conversation-cache-legacy-pathnames pathname)))))
+   function))
+
+(-> test-conversation-cache-relocation () null)
+(defun test-conversation-cache-relocation ()
+  "Reconstruct relocated indexes from archived records without touching anchors or sources."
+  (with-test-configuration (configuration)
+    (let ((conversation nil))
+      (test-conversation-cache--with-legacy-paths
+       (lambda ()
+         (setf conversation (conversation-create configuration))
+         (conversation-append-user-message conversation "archived input")
+         (conversation-append-summary conversation "checkpoint")
+         (conversation-append-user-message conversation "active input")
+         (conversation-append-user-operation
+          conversation :kind ':lisp :source "(+ 1 2)" :status ':ok :result "3")
+         (conversation-picker-search-find (conversation-pathname conversation))
+         (conversation-input-history conversation)))
+      (let* ((identity (conversation-pathname conversation))
+             (anchor   (conversation-context-anchors-pathname identity))
+             (sources  (conversation-storage-pathnames identity))
+             (contents (mapcar #'uiop:read-file-string sources))
+             (legacy   (conversation-cache-legacy-pathnames identity))
+             (old-data (mapcar #'uiop:read-file-string legacy)))
+        (with-open-file (stream anchor :direction ':output :if-exists ':supersede
+                                       :if-does-not-exist ':create)
+          (write-string "(:authoritative-context-anchor)" stream))
+        (test-assert
+         (notany #'probe-file (conversation-picker-sidecar-pathnames identity))
+         "an old installation has no new cache files")
+        (test-assert (member identity (conversation-list configuration) :test #'equal)
+                     "conversation discovery uses authoritative data, not cache files")
+        (test-assert (conversation-picker-metadata-find identity)
+                     "picker metadata reconstructs in the new cache root")
+        (test-assert
+         (equal (conversation-picker-search-index-messages
+                 (conversation-picker-search-find identity))
+                '("archived input" "active input"))
+         "search reconstructs complete retired and active conversation text")
+        (test-assert
+         (equal (conversation-input-history (conversation-load identity))
+                '("archived input" "active input" "(+ 1 2)"))
+         "input recall reconstructs user messages and operations across rotation")
+        (test-assert
+         (every (lambda (pathname)
+                  (uiop:subpathp pathname (config :cache-root configuration)))
+                (conversation-picker-sidecar-pathnames identity))
+         "all generated index and revision paths use the independent cache root")
+        (test-assert
+         (equal anchor
+                (merge-pathnames
+                 (make-pathname :name (format nil "~A.anchors" (pathname-name identity))
+                                :type "sexp")
+                 (merge-pathnames "conversation-picker/" (config :data-root configuration))))
+         "anchors retain their exact historical data location")
+        (test-assert
+         (equal (conversation-picker-source-lock-pathname identity)
+                (make-pathname :type     "lock"
+                               :defaults (conversation-sidecar-data-pathname identity)))
+         "old and new releases retain the identical source lock")
+        (test-assert
+         (and (equal contents (mapcar #'uiop:read-file-string sources))
+              (equal old-data (mapcar #'uiop:read-file-string legacy))
+              (string= "(:authoritative-context-anchor)" (uiop:read-file-string anchor)))
+         "reconstruction preserves every source, old cache file and authoritative anchor")
+        (dolist (pathname (conversation-picker-sidecar-pathnames identity))
+          (when (probe-file pathname)
+            (delete-file pathname)))
+        (test-assert
+         (and (conversation-picker-search-find identity)
+              (equal (conversation-input-history (conversation-load identity))
+                     '("archived input" "active input" "(+ 1 2)")))
+         "clearing all new caches permits complete reconstruction again"))))
+  nil)
+
+(-> test-conversation-cache-namespaces () null)
+(defun test-conversation-cache-namespaces ()
+  "Keep identical identifiers in independently configured and custom roots distinct."
+  (with-test-configuration (configuration root)
+    (let* ((identifier  "K8vQ2mp")
+           (first       (conversation-create configuration :identifier identifier))
+           (custom      (merge-pathnames "archived/conversations/" root))
+           (second      (conversation-create configuration :identifier  identifier
+                                                          :storage-root custom))
+           (other       (configuration-copy configuration))
+           (other-data  (merge-pathnames "other-data/" root))
+           (other-cache (merge-pathnames "independent-cache/" root)))
+      (setf (config :data-root other) other-data
+            (config :cache-root other) other-cache)
+      (let ((third (conversation-create other :identifier identifier)))
+        (loop for conversation in (list first second third)
+              for input in '("first" "second" "third")
+              do (conversation-append-user-message conversation input))
+        (test-assert
+         (= 3 (length (remove-duplicates
+                       (mapcar (lambda (conversation)
+                                 (conversation-picker-metadata-pathname
+                                  (conversation-pathname conversation)))
+                               (list first second third))
+                       :test #'equal)))
+         "complete source-directory namespaces isolate repeated identifiers")
+        (test-assert
+         (uiop:subpathp (conversation-picker-metadata-pathname (conversation-pathname third))
+                       other-cache)
+         "data and cache configuration roots are independent")
+        (loop for conversation in (list first second third)
+              for input in '("first" "second" "third")
+              do (test-assert
+                  (and (equal (conversation-input-history conversation) (list input))
+                       (equal (conversation-picker-search-index-messages
+                               (conversation-picker-search-find
+                                (conversation-pathname conversation)))
+                              (list input)))
+                  "equal identifiers never share another source's search or input index")))))
+  nil)
+
+(-> test-conversation-cache-old-writer () null)
+(defun test-conversation-cache-old-writer ()
+  "Honor old-release invalidation under the common source lock and survive publication failure."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration))
+           (identity     (conversation-pathname conversation)))
+      (conversation-append-user-message conversation "before")
+      (conversation-picker-search-find identity)
+      (let ((stamp (multiple-value-list (conversation--file-identity identity))))
+        (call-with-file-lock
+         (conversation-picker-source-lock-pathname identity)
+         (lambda ()
+           (sexp-store:revision-write
+            (conversation-cache-legacy-revision-pathname identity nil)
+            (1+ (conversation-picker-revision-read identity))
+            :tag ':conversation-picker-revision)
+           (sexp-store:revision-write
+            (conversation-cache-legacy-revision-pathname identity t)
+            (1+ (conversation-picker-search-revision-read identity))
+            :tag ':conversation-picker-search-revision)))
+        (test-assert
+         (and (equal stamp (multiple-value-list (conversation--file-identity identity)))
+              (null (conversation-picker-metadata-read identity))
+              (null (conversation-picker-search-read identity)))
+         "old revision publication invalidates new caches even with identical source size and time"))
+      (test-conversation-cache--with-legacy-paths
+       (lambda ()
+         (let ((old (conversation-load identity)))
+           (conversation-append-user-message old "old writer")
+           (conversation-picker-search-close old))))
+      (test-assert
+       (and (equal (conversation-picker-search-index-messages
+                    (conversation-picker-search-find identity))
+                   '("before" "old writer"))
+            (equal (conversation-input-history (conversation-load identity))
+                   '("before" "old writer")))
+       "new releases observe old-release appends and rebuild complete caches")
+      (let ((new (conversation-load identity)))
+        (conversation-append-user-message new "new writer"))
+      (test-conversation-cache--with-legacy-paths
+       (lambda ()
+         (test-assert
+          (and (equal (conversation-picker-search-index-messages
+                       (conversation-picker-search-find identity))
+                      '("before" "old writer" "new writer"))
+               (equal (conversation-input-history (conversation-load identity))
+                      '("before" "old writer" "new writer")))
+          "legacy readers observe new-release invalidation and retain all inputs")))
+      (let ((source-before
+              (mapcar #'uiop:read-file-string (conversation-storage-pathnames identity)))
+            (revision-write (symbol-function 'sexp-store:revision-write))
+            (new            (conversation-load identity)))
+        (test-call-with-function-replacements
+         (list (list 'sexp-store:revision-write
+                     (lambda (pathname revision &rest options)
+                       (when (equal pathname (conversation-picker-revision-pathname identity))
+                         (error "Simulated cache revision publication failure."))
+                       (apply revision-write pathname revision options))))
+         (lambda ()
+           (test-assert
+            (handler-case
+                (progn (conversation-append-user-message new "not written") nil)
+              (conversation-invariant-error () t))
+            "failed new cache invalidation prevents durable source mutation")))
+        (test-assert
+         (equal source-before
+                (mapcar #'uiop:read-file-string (conversation-storage-pathnames identity)))
+         "publication failure loses and appends no authoritative records"))))
+  nil)

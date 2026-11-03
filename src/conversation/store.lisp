@@ -1099,14 +1099,23 @@ a crash may leave one that a later lease acquisition can reuse safely."
 
 (-> conversation-picker-revision-read (pathname) (integer 0))
 (defun conversation-picker-revision-read (conversation-pathname)
-  "Return the durable cache revision, treating malformed revisions as misses."
-  (sexp-store:revision-read
-   (conversation-picker-revision-pathname conversation-pathname)
-   :tag ':conversation-picker-revision))
+  "Return the newest cache revision, including pre-0.68 source-writer invalidation."
+  (max (sexp-store:revision-read
+        (conversation-picker-revision-pathname conversation-pathname)
+        :tag ':conversation-picker-revision)
+       (sexp-store:revision-read
+        (conversation-cache-legacy-revision-pathname conversation-pathname nil)
+        :tag ':conversation-picker-revision)))
 
 (-> conversation-picker-revision-write (pathname (integer 0)) (integer 0))
 (defun conversation-picker-revision-write (conversation-pathname revision)
-  "Publish the cache revision before mutating conversation data."
+  "Invalidate old releases first, then publish the cache revision before source writes.
+
+Remove the legacy revision mirror at 0.68.0, together with its read bridge.
+Callers hold the unchanged DATA source lock throughout source publication."
+  (sexp-store:revision-write
+   (conversation-cache-legacy-revision-pathname conversation-pathname nil)
+   revision :tag ':conversation-picker-revision)
   (sexp-store:revision-write
    (conversation-picker-revision-pathname conversation-pathname)
    revision :tag ':conversation-picker-revision))
@@ -1268,16 +1277,24 @@ a crash may leave one that a later lease acquisition can reuse safely."
 
 (-> conversation-picker-search-revision-read (pathname) (integer 0))
 (defun conversation-picker-search-revision-read (conversation-pathname)
-  "Return the durable cache revision, treating malformed revisions as misses."
-  (sexp-store:revision-read
-   (conversation-picker-search-revision-pathname conversation-pathname)
-   :tag ':conversation-picker-search-revision))
+  "Return the newest search revision, including pre-0.68 source-writer invalidation."
+  (max (sexp-store:revision-read
+        (conversation-picker-search-revision-pathname conversation-pathname)
+        :tag ':conversation-picker-search-revision)
+       (sexp-store:revision-read
+        (conversation-cache-legacy-revision-pathname conversation-pathname t)
+        :tag ':conversation-picker-search-revision)))
 
 (-> conversation-picker-search-revision-write
     (pathname (integer 0))
     (integer 0))
 (defun conversation-picker-search-revision-write (conversation-pathname revision)
-  "Publish the cache revision before mutating conversation data."
+  "Invalidate old search readers before cache readers and source mutation.
+
+Remove the legacy mirror at 0.68.0. Callers hold the shared DATA source lock."
+  (sexp-store:revision-write
+   (conversation-cache-legacy-revision-pathname conversation-pathname t)
+   revision :tag ':conversation-picker-search-revision)
   (sexp-store:revision-write
    (conversation-picker-search-revision-pathname conversation-pathname)
    revision :tag ':conversation-picker-search-revision))
@@ -1386,9 +1403,11 @@ a crash may leave one that a later lease acquisition can reuse safely."
     (configuration &key identifier prompt-cache-key storage-root created-at)
   "Create an in-memory conversation that persists under optional STORAGE-ROOT."
   (let* ((created-at       (or created-at (get-universal-time)))
-         (root             (uiop:ensure-directory-pathname
-                            (or storage-root
-                                (configuration-conversation-root configuration))))
+         (root             (conversation-cache-register-root
+                            (uiop:ensure-directory-pathname
+                             (or storage-root
+                                 (configuration-conversation-root configuration)))
+                            (config :cache-root configuration)))
          (conversation-id
            (conversation-identifier-validate-path-component
             (or identifier

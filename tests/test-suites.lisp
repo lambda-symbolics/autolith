@@ -712,7 +712,10 @@
   test-conversation-identifier-allocation
   test-conversation-identifier-migration
   test-conversation-identifier-migration-validation
-  test-conversation-identifier-migration-resumption)
+  test-conversation-identifier-migration-resumption
+  test-conversation-cache-relocation
+  test-conversation-cache-namespaces
+  test-conversation-cache-old-writer)
 
 (define-test-suite precompaction
   test-precompaction-retains-failed-exchanges

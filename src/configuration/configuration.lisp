@@ -874,8 +874,10 @@ selects its own registration, rather than inheriting the previous provider."
 
 (-> configuration-conversation-root (configuration) pathname)
 (defun configuration-conversation-root (configuration)
-  "Return the directory containing conversation identities and chunk logs."
-  (merge-pathnames "conversations/" (config :data-root configuration)))
+  "Return conversation storage and register its independently configured cache root."
+  (conversation-cache-register-root
+   (merge-pathnames "conversations/" (config :data-root configuration))
+   (config :cache-root configuration)))
 
 (-> configuration-inference-root (configuration) pathname)
 (defun configuration-inference-root (configuration)
