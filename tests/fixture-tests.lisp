@@ -339,7 +339,7 @@
 
 (-> test-xdg-legacy-backslash-roots () null)
 (defun test-xdg-legacy-backslash-roots ()
-  "Preserve backslash-misparsed installations without moving or merging their files."
+  "Move backslash-misparsed installations once without merging conflicting roots."
   (with-test-fixture (':wildcard-file-names "legacy XDG backslash roots")
     (with-test-configuration (configuration root)
       (declare (ignore configuration))
@@ -401,9 +401,7 @@
                                                  (if (eq choice 'use-native-root) native legacy))
                                                 "each conflict restart selects exactly one root")))
                                            (let ((warnings 0)
-                                                 (expected (if (member scenario '(:legacy :precreated))
-                                                               legacy
-                                                               native)))
+                                                 (expected native))
                                              (test-assert
                                               (equal expected
                                                      (handler-bind
@@ -411,18 +409,267 @@
                                                                      (incf warnings)
                                                                      (muffle-warning condition))))
                                                        (funcall resolve)))
-                                              "choose existing legacy content or a fresh literal root")
+                                              "successful migration selects the literal native root")
                                              (test-assert
-                                              (= warnings (if (member scenario '(:legacy :precreated)) 1 0))
-                                              "legacy fallback warns before its removal boundary")))))
+                                              (zerop warnings)
+                                              "successful migration needs no fallback warning")))))
                             (when (member scenario '(:legacy :precreated :conflict))
                               (test-assert (string= "legacy opaque fixture"
-                                                    (uiop:read-file-string legacy-record))
-                                           "legacy records are untouched"))
+                                                    (uiop:read-file-string
+                                                     (if (eq scenario ':conflict)
+                                                         legacy-record
+                                                         (merge-pathnames "unknown/opaque.record" native))))
+                                           "legacy records survive at the selected root")
+                              (unless (eq scenario ':conflict)
+                                (test-assert (not (probe-file legacy))
+                                             "successful migration removes the old application root")))
                             (when (member scenario '(:native :conflict))
                               (test-assert (string= "native opaque fixture"
                                                     (uiop:read-file-string native-record))
                                            "native records are untouched"))))))))
+  (fixture--check-xdg-root-migration)
+  (fixture--check-xdg-root-links)
+  nil)
+
+(-> fixture--check-xdg-root-migration () null)
+(defun fixture--check-xdg-root-migration ()
+  "Exercise failed publication, retry, and simultaneous runtime/standalone moves."
+  (with-test-fixture (':wildcard-file-names "one-time XDG root migration")
+    (with-test-configuration (configuration root)
+      (let ((*package* (find-package :autolith)))
+        (load (asdf:system-relative-pathname :autolith "script/roots.lisp")))
+      (let ((script-root (symbol-function (find-symbol "AUTOLITH-APPLICATION-ROOT" :autolith)))
+            (script-move (find-symbol "AUTOLITH-SCRIPT-MOVE-XDG-ROOT" :autolith)))
+        (loop for (resolve move-name) in
+              (list (list (lambda () (platform-application-root *platform* ':data))
+                          'posix--move-xdg-root)
+                    (list (lambda () (funcall script-root ':data)) script-move))
+              for index from 0
+              do (let* ((value                (concatenate 'string (uiop:native-namestring root)
+                                                           (format nil "failure-~D/back\\slash" index)))
+                        (native               (uiop:parse-native-namestring
+                                               (concatenate 'string value "/autolith/")))
+                        (legacy               (merge-pathnames "autolith/"
+                                                               (uiop:ensure-directory-pathname (pathname value))))
+                        (record               (merge-pathnames "unknown.record" legacy))
+                        (invalid              (merge-pathnames "descendant/" legacy))
+                        (move                 (symbol-function move-name))
+                        (failed-configuration nil)
+                        (warnings             0))
+                   (ensure-directories-exist (merge-pathnames "empty/" invalid))
+                   (with-open-file (stream record :direction ':output)
+                     (write-string "opaque legacy data" stream))
+                   (with-test-environment (("XDG_DATA_HOME" value))
+                     (test-call-with-function-replacements
+                      (list (list move-name
+                                  (lambda (source target)
+                                    (declare (ignore target))
+                                    ;; A real rename of a parent into its child fails.
+                                    (funcall move source invalid))))
+                      (lambda ()
+                        (handler-bind ((warning (lambda (condition)
+                                                  (incf warnings)
+                                                  (muffle-warning condition))))
+                          (test-assert (equal legacy (funcall resolve))
+                                       "failed publication uses the intact legacy root")
+                          (when (eq move-name 'posix--move-xdg-root)
+                            (setf failed-configuration
+                                  (configuration-create
+                                   :source-root                 (config :source-root configuration)
+                                   :working-directory root :durable-p nil
+                                   :defer-provider-validation-p t))
+                            (dotimes (read 3)
+                              (test-assert (equal legacy (config :data-root failed-configuration))
+                                           "a failed migration selects one stable configuration root"))))))
+                     (test-assert (= warnings (if failed-configuration 2 1))
+                                  "each uncached failed move warns")
+                     (when failed-configuration
+                       (test-assert (equal legacy (config :data-root failed-configuration))
+                                    "restoring rename does not change an established fallback"))
+                     (test-assert (string= "opaque legacy data" (uiop:read-file-string record))
+                                  "rename failure preserves the source bytes")
+                     (test-assert (probe-file (merge-pathnames "empty/" invalid))
+                                  "failed publication restores a displaced empty scaffold")
+                     (test-assert (equal native (funcall resolve))
+                                  "a later lookup retries and completes the move")
+                     (test-assert (not (probe-file legacy)) "retry consumes the legacy root")
+                     (test-assert (equal native (funcall resolve))
+                                  "another lookup does not repeat the migration"))))
+        (let* ((value            (concatenate 'string (uiop:native-namestring root)
+                                              "concurrent/back\\slash"))
+               (native           (uiop:parse-native-namestring (concatenate 'string value "/autolith/")))
+               (legacy           (merge-pathnames "autolith/"
+                                                  (uiop:ensure-directory-pathname (pathname value))))
+               (record           (merge-pathnames "unknown.record" legacy))
+               (entered          (sb-thread:make-semaphore :count 0))
+               (release          (sb-thread:make-semaphore :count 0))
+               (attempted        (sb-thread:make-semaphore :count 0))
+               (move             #'posix--move-xdg-root)
+               (script-lock-name (find-symbol "AUTOLITH-SCRIPT-CALL-WITH-XDG-MIGRATION-LOCK"
+                                              :autolith))
+               (script-lock      (symbol-function script-lock-name))
+               (platform         *platform*)
+               (moves            0))
+          (ensure-directories-exist record)
+          (with-open-file (stream record :direction ':output)
+            (write-string "concurrent legacy data" stream))
+          (with-test-environment (("XDG_DATA_HOME" value))
+            (test-call-with-function-replacements
+             (list (list 'posix--move-xdg-root
+                         (lambda (source target)
+                           (incf moves)
+                           (sb-thread:signal-semaphore entered)
+                           (sb-thread:wait-on-semaphore release)
+                           (funcall move source target)))
+                   (list script-lock-name
+                         (lambda (source function)
+                           (sb-thread:signal-semaphore attempted)
+                           (funcall script-lock source function))))
+             (lambda ()
+               (let ((runtime-thread (make-thread
+                                      (lambda () (platform-application-root platform ':data))))
+                     (script-thread  nil))
+                 (unwind-protect
+                      (progn
+                        (test-assert (sb-thread:wait-on-semaphore entered :timeout 10)
+                                     "runtime acquired the migration lock")
+                        (setf script-thread (make-thread (lambda () (funcall script-root ':data))))
+                        (test-assert (sb-thread:wait-on-semaphore attempted :timeout 10)
+                                     "standalone resolution competes for the same lock")
+                        (sb-thread:signal-semaphore release)
+                        (test-assert (equal native (join-thread runtime-thread))
+                                     "runtime publishes the native root")
+                        (test-assert (equal native (join-thread script-thread))
+                                     "standalone rechecks after lock acquisition"))
+                   (sb-thread:signal-semaphore release)
+                   (join-thread runtime-thread)
+                   (when script-thread
+                     (join-thread script-thread))))))
+            (test-assert (= moves 1) "only one contender moves the legacy root")
+            (test-assert (not (probe-file legacy)) "concurrent migration consumes the source")
+            (test-assert (string= "concurrent legacy data"
+                                  (uiop:read-file-string (merge-pathnames "unknown.record" native)))
+                         "concurrent publication preserves the record")
+            (let ((fresh (configuration-create
+                          :source-root (config :source-root configuration)
+                          :working-directory root :durable-p nil :defer-provider-validation-p t)))
+              (test-assert (equal native (config :data-root fresh))
+                           "a new configuration sees the native root without another move")))))))
+  nil)
+
+(-> fixture--check-xdg-root-links () null)
+(defun fixture--check-xdg-root-links ()
+  "Preserve entry links and modes, and refuse to replace linked native roots."
+  (with-test-fixture (':wildcard-file-names "XDG root link migration")
+    (with-test-fixture (':symbolic-links "XDG root link migration")
+      (with-test-configuration (configuration root)
+        (declare (ignore configuration))
+        (let ((script-root     (symbol-function (find-symbol "AUTOLITH-APPLICATION-ROOT" :autolith)))
+              (script-conflict (find-symbol "AUTOLITH-SCRIPT-LEGACY-XDG-ROOT-CONFLICT" :autolith)))
+          (loop for (resolve conflict) in
+                (list (list (lambda () (platform-application-root *platform* ':data))
+                            'posix-legacy-xdg-root-conflict)
+                      (list (lambda () (funcall script-root ':data)) script-conflict))
+                for index from 0
+                do (dolist (scenario '(:entries :native-link :absolute-link :relative-link))
+                     (let* ((value         (concatenate 'string (uiop:native-namestring root)
+                                                        (format nil "~D-~(~A~)/back\\slash" index scenario)))
+                            (native        (uiop:parse-native-namestring
+                                            (concatenate 'string value "/autolith/")))
+                            (legacy        (merge-pathnames "autolith/"
+                                                            (uiop:ensure-directory-pathname (pathname value))))
+                            (linked-root-p (member scenario '(:absolute-link :relative-link)))
+                            (target        (merge-pathnames "sibling/"
+                                                            (uiop:pathname-parent-directory-pathname legacy)))
+                            (record-root   (if linked-root-p target legacy))
+                            (record        (merge-pathnames
+                                            (uiop:parse-native-namestring "literal\\[x]*?.record") record-root))
+                            (link          nil))
+                       (ensure-directories-exist record)
+                       (with-open-file (stream record :direction ':output)
+                         (write-string "literal symlink fixture" stream))
+                       (case scenario
+                         (:entries
+                          (setf link (merge-pathnames "cycle" legacy))
+                          (test-fixture-make-symbolic-link *platform* "." (uiop:native-namestring link))
+                          (ensure-directories-exist (merge-pathnames "keep/empty/" native))
+                          (with-test-fixture (':file-modes "XDG directory metadata")
+                            (setf (platform-file-permissions *platform* legacy) #o751)
+                            (setf (platform-file-permissions *platform* record) #o640)
+                            (setf (platform-file-permissions *platform* native) #o750)))
+                         (:native-link
+                          (ensure-directories-exist target)
+                          (setf link (uiop:parse-native-namestring
+                                      (string-right-trim "/" (uiop:native-namestring native))))
+                          (ensure-directories-exist (uiop:pathname-parent-directory-pathname native))
+                          (test-fixture-make-symbolic-link *platform* (uiop:native-namestring target)
+                                                           (uiop:native-namestring link)))
+                         ((:absolute-link :relative-link)
+                          (setf link (uiop:parse-native-namestring
+                                      (string-right-trim "/" (uiop:native-namestring legacy))))
+                          (test-fixture-make-symbolic-link
+                           *platform* (if (eq scenario ':absolute-link)
+                                          (uiop:native-namestring target)
+                                          "sibling/")
+                           (uiop:native-namestring link))))
+                       (unwind-protect
+                            (with-test-environment (("XDG_DATA_HOME" value))
+                              (case scenario
+                                (:native-link
+                                 (test-assert
+                                  (handler-case (progn (funcall resolve) nil)
+                                    (error (condition) (typep condition conflict)))
+                                  "a native root symlink requires an explicit conflict choice")
+                                 (test-assert (equal (platform-truename *platform* target)
+                                                     (platform-truename *platform* native))
+                                              "the native root symlink is untouched"))
+                                (:relative-link
+                                 (let ((warnings 0))
+                                   (handler-bind ((warning (lambda (condition)
+                                                             (incf warnings)
+                                                             (muffle-warning condition))))
+                                     (test-assert (equal legacy (funcall resolve))
+                                                  "relative root symlinks retain their referents"))
+                                   (test-assert (= warnings 1) "an unsupported relative-root move warns"))
+                                 (test-assert (not (probe-file native)) "no replacement root is published"))
+                                (otherwise
+                                 (test-assert (equal native (funcall resolve))
+                                              "supported root migration publishes native")
+                                 (setf link (if linked-root-p
+                                                (uiop:parse-native-namestring
+                                                 (string-right-trim "/" (uiop:native-namestring native)))
+                                                (merge-pathnames "cycle" native)))
+                                 (test-assert (not (probe-file legacy)) "the old root is consumed")
+                                 (test-assert
+                                  (string= "literal symlink fixture"
+                                           (uiop:read-file-string
+                                            (merge-pathnames
+                                             (uiop:parse-native-namestring "literal\\[x]*?.record") native)))
+                                  "literal file names and link targets survive the move")
+                                 (when (eq scenario ':entries)
+                                   (test-assert (probe-file (merge-pathnames "cycle/cycle/" native))
+                                                "the directory cycle is preserved without traversal")
+                                   (with-test-fixture (':file-modes "XDG directory metadata")
+                                     (test-assert (= #o751 (platform-file-permissions *platform* native))
+                                                  "the migrated root keeps its permissions")
+                                     (test-assert
+                                      (= #o640 (platform-file-permissions
+                                                *platform* (merge-pathnames
+                                                            (uiop:parse-native-namestring
+                                                             "literal\\[x]*?.record") native)))
+                                      "the migrated file keeps its permissions"))
+                                   (let* ((parent  (uiop:pathname-parent-directory-pathname native))
+                                          (backups (remove-if-not
+                                                    (lambda (path)
+                                                      (search ".autolith-xdg-precreated-"
+                                                              (uiop:native-namestring path)))
+                                                    (uiop:subdirectories parent))))
+                                     (test-assert (= 1 (length backups)) "one scaffold is retained")
+                                     (test-assert
+                                      (probe-file (merge-pathnames "autolith/keep/empty/" (first backups)))
+                                      "directory-only native content is preserved intact"))))))
+                         (when link
+                           (test-fixture-remove-link *platform* (uiop:native-namestring link)))))))))))
   nil)
 
 (-> test-xdg-configuration-root-choices () null)
@@ -447,7 +694,7 @@
                           (legacy   (merge-pathnames "autolith/"
                                                      (uiop:ensure-directory-pathname (pathname value))))
                           (other    (merge-pathnames "fresh-environment/" root))
-                          (expected (if (eq scenario ':use-native) native legacy))
+                          (expected (if (eq scenario ':use-legacy) legacy native))
                           (warnings 0)
                           (choices  0))
                      (let ((record (merge-pathnames "opaque.record" legacy)))
@@ -487,12 +734,15 @@
                                        (test-assert (equal expected (config key another))
                                                     "another configuration makes its own choice")))
                                    selected))))
-                        (test-assert (= warnings (if (eq scenario ':fallback) 2 0))
-                                     "warn only once per configuration")
+                        (test-assert (zerop warnings)
+                                     "successful migration and explicit choices need no warning")
                         (test-assert (= choices (if (eq scenario ':fallback) 0 2))
                                      "ask for one conflict choice per configuration")
                         (with-test-environment ((variable (uiop:native-namestring other)))
-                          (test-assert (equal expected (config key selected))
+                          (test-assert (equal (if (eq scenario ':fallback)
+                                                 (merge-pathnames "autolith/" other)
+                                                 expected)
+                                             (config key selected))
                                        "an established compatibility choice is stable")
                           (let ((fresh (new-configuration)))
                             (test-assert (equal (merge-pathnames "autolith/" other)

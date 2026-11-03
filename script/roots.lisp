@@ -125,79 +125,160 @@ next build performs."
              (uiop/filesystem:native-namestring
               (autolith-script-legacy-xdg-root-legacy condition))))))
 
+(define-condition autolith-script-legacy-xdg-root-relative-link (file-error)
+  ()
+  (:documentation "A relative root symlink cannot be moved without changing its referent.")
+  (:report (lambda (condition stream)
+             (format stream "The legacy root ~S is a relative symlink; relocating it would change its target. Set an explicit root or resolve the link while Autolith is stopped."
+                     (uiop:native-namestring (file-error-pathname condition))))))
+
+#-win32
 (defun autolith-script-xdg-root-content-p (path)
   "Inspect entries without opening files or following links; directory-only trees are empty."
-  (let ((stat
-         (handler-case (sb-posix:lstat (string-right-trim "/" path))
-                       (sb-posix:syscall-error (condition)
-                                               (if (= (sb-posix:syscall-errno condition)
-                                                      sb-posix:enoent)
-                                                   nil
-                                                   (error condition))))))
-    (cond ((null stat)
-           nil)
+  (handler-case
+      (let ((stat (sb-posix:lstat (string-right-trim "/" path))))
+        (cond
           ((not (sb-posix:s-isdir (sb-posix:stat-mode stat)))
            t)
           (t
            (let ((directory (sb-posix:opendir path)))
              (unwind-protect
-                 (loop for entry = (sb-posix:readdir directory)
-                       until (sb-alien:null-alien entry)
-                       for name = (sb-posix:dirent-name entry)
-                       thereis (and (not (member name '("." "..") :test #'string=))
-                                    (autolith-script-xdg-root-content-p
-                                     (concatenate 'string path "/" name))))
-               (sb-posix:closedir directory)))))))
+                  (loop for entry = (sb-posix:readdir directory)
+                        until (sb-alien:null-alien entry)
+                        for name = (sb-posix:dirent-name entry)
+                        thereis (and (not (member name '("." "..") :test #'string=))
+                                     (autolith-script-xdg-root-content-p
+                                      (concatenate 'string path "/" name))))
+               (sb-posix:closedir directory))))))
+    (sb-posix:syscall-error (condition)
+      (if (= (sb-posix:syscall-errno condition) sb-posix:enoent)
+          nil
+          (error condition)))))
 
+#-win32
 (defun autolith-script-xdg-root-stat (path)
-  "Return the root's identity, or NIL when it does not exist."
-  (handler-case (sb-posix:stat (uiop/filesystem:native-namestring path))
-                (sb-posix:syscall-error (condition)
-                                        (if (= (sb-posix:syscall-errno condition)
-                                               sb-posix:enoent)
-                                            nil
-                                            (error condition)))))
+  "Return the root entry's identity without following links, or NIL when absent."
+  (handler-case (sb-posix:lstat (string-right-trim "/" (uiop:native-namestring path)))
+    (sb-posix:syscall-error (condition)
+      (if (= (sb-posix:syscall-errno condition) sb-posix:enoent)
+          nil
+          (error condition)))))
 
+#-win32
+(defun autolith-script-call-with-xdg-migration-lock (legacy function)
+  "Serialize runtime and standalone migration with a persistent source-sibling flock."
+  (let* ((parent (uiop:pathname-parent-directory-pathname legacy))
+         (lock   (merge-pathnames ".autolith-xdg-migration.lock" parent)))
+    (ensure-directories-exist parent)
+    (let ((descriptor (sb-posix:open (uiop:native-namestring lock)
+                                     (logior sb-posix:o-creat sb-posix:o-rdwr
+                                             sb-posix:o-nofollow)
+                                     #o600)))
+      (unwind-protect
+           (progn
+             ;; FD_CLOEXEC is 1 on the supported POSIX hosts.
+             (sb-posix:fcntl descriptor sb-posix:f-setfd 1)
+             (loop for result = (sb-alien:alien-funcall
+                                 (sb-alien:extern-alien "flock"
+                                   (function sb-alien:int sb-alien:int sb-alien:int))
+                                 descriptor 2)
+                   until (zerop result)
+                   do (unless (= (sb-alien:get-errno) sb-posix:eintr)
+                        (error 'sb-posix:syscall-error :name "flock"
+                               :errno                        (sb-alien:get-errno))))
+             (funcall function))
+        (sb-posix:close descriptor)))))
+
+#-win32
+(defun autolith-script-move-xdg-root (legacy native)
+  "Atomically rename LEGACY to NATIVE, retaining any directory-only scaffold.
+The caller holds the sibling migration lock and has checked both roots. Failed
+publication leaves LEGACY intact; a displaced scaffold is restored when possible."
+  (let ((source      (string-right-trim "/" (uiop:native-namestring legacy)))
+        (target      (string-right-trim "/" (uiop:native-namestring native)))
+        (backup      nil)
+        (container   nil)
+        (displaced-p nil)
+        (published-p nil))
+    (let ((stat (autolith-script-xdg-root-stat legacy)))
+      (when (and stat (sb-posix:s-islnk (sb-posix:stat-mode stat))
+                 (not (char= (char (sb-posix:readlink source) 0) #\/)))
+        (error 'autolith-script-legacy-xdg-root-relative-link :pathname legacy)))
+    (ensure-directories-exist (uiop:pathname-parent-directory-pathname native))
+    (unwind-protect
+         (progn
+           (when (autolith-script-xdg-root-content-p target)
+             (error 'sb-posix:syscall-error :name "rename" :errno sb-posix:enotempty))
+           (when (autolith-script-xdg-root-stat native)
+             ;; Keep empty directories and their metadata rather than deleting them.
+             (setf container
+                   (sb-posix:mkdtemp
+                    (concatenate 'string
+                                 (uiop:native-namestring
+                                  (uiop:pathname-parent-directory-pathname native))
+                                 ".autolith-xdg-precreated-XXXXXX"))
+                   backup (concatenate 'string container "/autolith"))
+             (sb-posix:rename target backup)
+             (setf displaced-p t)
+             (when (autolith-script-xdg-root-content-p backup)
+               (error 'sb-posix:syscall-error :name "rename" :errno sb-posix:enotempty)))
+           (sb-posix:rename source target)
+           (setf published-p t)
+           native)
+      (unless published-p
+        (when (and displaced-p (not (autolith-script-xdg-root-stat native)))
+          (sb-posix:rename backup target))
+        (when container
+          (sb-posix:rmdir container))))))
+
+#-win32
 (defun autolith-script-legacy-xdg-root (variable native)
-  "Keep an existing backslash-misparsed installation accessible until 0.68.0.
-Never move or merge files. Conflicting installations require an explicit choice."
-  (let* ((value (uiop/os:getenv variable))
-         (legacy
-          (and value (find #\\ value) (plusp (length value)) (char= (char value 0) #\/)
-               (handler-case
-                (let ((base (uiop/pathname:ensure-directory-pathname (pathname value))))
-                  (when
-                      (and (uiop/pathname:absolute-pathname-p base)
-                           (not (wild-pathname-p base)))
-                    (merge-pathnames "autolith/" base)))
-                (error nil nil)))))
-    (if (or (null legacy) (equal native legacy))
+  "Move a backslash-misparsed installation once, before 0.68.0.
+Conflicts require an explicit choice. Rename failures warn and retry next lookup."
+  (let* ((value  (uiop:getenv variable))
+         (legacy (and value (find #\\ value) (plusp (length value))
+                      (char= (char value 0) #\/)
+                      (handler-case
+                          (let ((base (uiop:ensure-directory-pathname (pathname value))))
+                            (when (and (uiop:absolute-pathname-p base)
+                                       (not (wild-pathname-p base)))
+                              (merge-pathnames "autolith/" base)))
+                        (error () nil)))))
+    (if (or (null legacy) (equal native legacy)
+            (not (autolith-script-xdg-root-content-p (uiop:native-namestring legacy))))
         native
-        (let ((native-stat (autolith-script-xdg-root-stat native))
-              (legacy-stat (autolith-script-xdg-root-stat legacy)))
-          (cond
-           ((and native-stat legacy-stat
-                 (= (sb-posix:stat-dev native-stat) (sb-posix:stat-dev legacy-stat))
-                 (= (sb-posix:stat-ino native-stat) (sb-posix:stat-ino legacy-stat)))
-            native)
-           ((not
-             (autolith-script-xdg-root-content-p (uiop/filesystem:native-namestring legacy)))
-            native)
-           ((autolith-script-xdg-root-content-p (uiop/filesystem:native-namestring native))
-            (restart-case (error 'autolith-script-legacy-xdg-root-conflict :variable variable
-                                 :native native :legacy legacy)
-              (use-native-root nil :report
-                "Use the literal native XDG root for this lookup." native)
-              (use-legacy-root nil :report "Use the historical XDG root for this lookup."
-               legacy)))
-           (t
-            (warn
-             "Using legacy XDG installation at ~S instead of ~S. Before 0.68.0, set ~A to ~S to keep using it, or relocate it while Autolith is stopped. No files were moved."
-             (uiop/filesystem:native-namestring legacy)
-             (uiop/filesystem:native-namestring native) variable
-             (uiop/filesystem:native-namestring
-              (uiop/pathname:pathname-parent-directory-pathname legacy)))
-            legacy))))))
+        (handler-case
+            (autolith-script-call-with-xdg-migration-lock
+             legacy
+             (lambda ()
+               ;; Another process may have completed the move while we waited.
+               (let ((native-stat (autolith-script-xdg-root-stat native))
+                     (legacy-stat (autolith-script-xdg-root-stat legacy)))
+                 (cond
+                   ((and native-stat legacy-stat
+                         (= (sb-posix:stat-dev native-stat) (sb-posix:stat-dev legacy-stat))
+                         (= (sb-posix:stat-ino native-stat) (sb-posix:stat-ino legacy-stat)))
+                    native)
+                   ((not (autolith-script-xdg-root-content-p (uiop:native-namestring legacy)))
+                    native)
+                   ((autolith-script-xdg-root-content-p (uiop:native-namestring native))
+
+                    (restart-case
+                        (error 'autolith-script-legacy-xdg-root-conflict
+                               :variable variable :native native :legacy legacy)
+                      (use-native-root ()
+                        :report "Use the literal native XDG root for this lookup."
+                        native)
+                      (use-legacy-root ()
+                        :report "Use the historical XDG root for this lookup."
+                        legacy)))
+                   (t
+                    (autolith-script-move-xdg-root legacy native))))))
+          ((or sb-posix:syscall-error file-error) (condition)
+
+            (warn "Could not move legacy XDG root ~S to ~S: ~A. Using the legacy root; migration will retry."
+                  (uiop:native-namestring legacy) (uiop:native-namestring native) condition)
+            legacy)))))
 
 (defun autolith-application-root (kind)
   "Return Autolith's per-user directory of KIND, one of :config, :data, :state, or :cache."
@@ -214,9 +295,8 @@ Never move or merge files. Conflicting installations require an explicit choice.
     (cond
       (xdg
        (let ((native (merge-pathnames "autolith/" xdg)))
-         (if (uiop:os-windows-p)
-             native
-             (autolith-script-legacy-xdg-root variable native))))
+         #+win32 native
+         #-win32 (autolith-script-legacy-xdg-root variable native)))
       ((and (uiop:os-windows-p) (eq kind :config))
        (merge-pathnames "autolith/" (autolith-script-known-folder "APPDATA")))
       ((uiop:os-windows-p)

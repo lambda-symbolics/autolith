@@ -1462,13 +1462,14 @@ nonempty absolute paths; invalid values use these defaults. Newly created
 Autolith roots have mode =0700=.
 
 POSIX XDG directory values are native filesystem names, including literal brackets,
-asterisks, and backslashes. Before 0.68.0, an installation written under a path
-whose backslashes an older release stripped is detected automatically. Autolith
-uses that populated legacy root with a warning when the native root is empty,
-including trees containing only launcher-created directories. If both roots contain
-files, choose one explicitly rather than merging installations. The warning or
-conflict names both paths. Compatibility choices are local to each configuration.
-Explicit root settings bypass this compatibility lookup.
+asterisks, and backslashes. Before 0.68.0, a populated root written under a path
+whose backslashes an older release stripped moves to the native path once. Runtime
+and launcher migration use the same lock. An absent native root or one containing
+only directories can be replaced; precreated directory trees are preserved in a
+hidden sibling backup. If both roots contain files, choose one explicitly rather
+than merging installations. A failed move warns and uses the legacy root; a fresh
+configuration retries it. Warnings and conflicts name both paths. Explicit root
+settings bypass this compatibility lookup.
 
 Provider discovery metadata uses =CACHE/provider-models.sexp=. On upgrade, the old
 state-directory cache moves there once. Publication is atomic; the old file is
