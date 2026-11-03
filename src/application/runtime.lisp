@@ -3980,6 +3980,16 @@ checked."
             (application-note-prompt-cache-request-started application)
             (application-publish-recovery-session application)
             (application-set-activity application activity-label))
+           (:provider-retries-exhausted
+            (stream-flush)
+            (application-set-activity application nil)
+            (application-present
+             application
+             (list (terminal-span
+                    ':failure
+                    (format nil "∙ provider retries exhausted after ~D attempts (~A)"
+                            (getf details :attempts)
+                            (or (getf details :code) "transient provider error"))))))
            (:provider-retrying
             (let ((partial-output-p
                     (or stream-open-p

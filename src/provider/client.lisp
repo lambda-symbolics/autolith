@@ -2,6 +2,13 @@
 
 ;;;; -- Provider Protocol --
 
+;; These streamed error types carry no HTTP status in the pinned wire client.
+;; Use its existing bounded transient retry policy for the exact variants.
+(setf *provider-retryable-event-error-codes*
+      (union '("service_unavailable_error" "overloaded_error" "rate_limit_error")
+             *provider-retryable-event-error-codes*
+             :test #'string-equal))
+
 (defclass session-preserving-provider-mixin ()
   ()
   (:documentation
@@ -990,6 +997,10 @@ are request-scoped and included in transport and result redaction."))
                     :code       code
                     :request-id request-id)))
 
+(defclass provider-retries-exhausted-event (provider-attempt-failed-event)
+  ()
+  (:documentation "The final failed attempt after the transient retry budget was spent."))
+
 (-> provider--call-with-bounded-retries
     (subscription-provider function function)
     t)
@@ -998,22 +1009,52 @@ are request-scoped and included in transport and result redaction."))
   "Call ATTEMPT-FUNCTION with bounded authentication and persistent transport recovery.
 
 ATTEMPT-FUNCTION receives the credential refresh flag and the event callback
-each attempt must stream through."
-  (labels ((attempt-with-authentication (event-callback)
-             "Run one logical request with bounded credential recovery."
-             (let* ((manager       (provider-credential-manager provider))
-                    (refreshable-p (credential-manager-refreshable-p manager)))
-               (call-with-credential-refresh
-                (lambda (force-refresh)
-                  (provider--call-with-transport-normalization
-                   (lambda ()
-                     (funcall attempt-function force-refresh event-callback))))
-                :refreshable-p refreshable-p
-                :exhausted-function
-                (lambda (condition)
-                  (error (provider--authentication-condition
-                          provider condition :refreshable-p refreshable-p)))))))
-    (call-with-streaming-retries #'attempt-with-authentication event-callback)))
+each attempt must stream through. Report exhaustion without replacing the
+original condition or weakening the streaming safety limit."
+  (let ((last-failure       nil)
+        (retryable-failures 0)
+        (maximum-retries    *provider-maximum-transient-retries*))
+    (labels ((observe (event)
+               "Retain the current request's last failure before forwarding EVENT."
+               (when (typep event 'provider-attempt-failed-event)
+                 (setf last-failure event)
+                 (when (provider-attempt-failed-event-retryable-p event)
+                   (incf retryable-failures)))
+               (funcall event-callback event))
+
+             (attempt-with-authentication (event-callback)
+               "Run one logical request with bounded credential recovery."
+               (let* ((manager       (provider-credential-manager provider))
+                      (refreshable-p (credential-manager-refreshable-p manager)))
+                 (call-with-credential-refresh
+                  (lambda (force-refresh)
+                    (provider--call-with-transport-normalization
+                     (lambda ()
+                       (funcall attempt-function force-refresh event-callback))))
+                  :refreshable-p refreshable-p
+                  :exhausted-function
+                  (lambda (condition)
+                    (error (provider--authentication-condition
+                            provider condition :refreshable-p refreshable-p)))))))
+      (handler-case
+          (call-with-streaming-retries #'attempt-with-authentication #'observe
+                                      :maximum-retries maximum-retries)
+        (provider-retryable-error (condition)
+          ;; The same final attempt must escape the ladder. A callback failure,
+          ;; cancellation, or streaming safety stop is not transient exhaustion.
+          (when (and last-failure
+                     (eq condition (provider-attempt-failed-event-condition last-failure))
+                     (> retryable-failures maximum-retries))
+            (funcall event-callback
+                     (make-instance 'provider-retries-exhausted-event
+                                    :attempt     (provider-attempt-failed-event-attempt last-failure)
+                                    :elapsed-seconds
+                                    (provider-attempt-failed-event-elapsed-seconds last-failure)
+                                    :output-received-p
+                                    (provider-attempt-failed-event-output-received-p last-failure)
+                                    :retryable-p t
+                                    :condition   condition)))
+          (error condition))))))
 
 (defmethod provider-stream-turn
     ((provider subscription-provider)

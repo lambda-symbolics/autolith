@@ -3507,3 +3507,151 @@ the separately retained local HTTP proof uses ordinary transport and delays."
             (test-assert (= (provider-error-status condition) status) "normalization retains nonquota status")
             (closed stream))))))
   nil)
+
+(-> test-provider-transient-event-retries () null)
+(defun test-provider-transient-event-retries ()
+  "Exercise real SSE classification through the host retry ladder without waiting."
+  (with-test-configuration (configuration)
+    (let ((provider (test-codex-provider-create configuration nil)))
+      (dolist (code '("service_unavailable_error" "overloaded_error" "rate_limit_error"
+                      "invalid_request_error" "authentication_error" "invalid_prompt"))
+        (dolist (recover-p '(t nil))
+          (let* ((attempts                             0)
+                 (delays                               nil)
+                 (statuses                             nil)
+                 (failure                              nil)
+                 (result                               nil)
+                 (*provider-maximum-transient-retries* 2)
+                 (*bounded-retry-sleep-function*
+                   (lambda (delay) (push delay delays))))
+            (let* ((observer
+                     (make-instance 'callback-agent-observer
+                                    :status-callback
+                                    (lambda (kind details)
+                                      (push (cons kind details) statuses))))
+                   (callback (agent--provider-event-callback observer)))
+              (setf result
+                    (handler-case
+                        (provider--call-with-bounded-retries
+                         provider
+                         (lambda (refresh event-callback)
+                           (declare (ignore refresh))
+                           (incf attempts)
+                           (if (and recover-p (> attempts 1))
+                               :success
+                               (provider-consume-stream
+                                provider
+                                (make-string-input-stream
+                                 (test-sse-event-string
+                                  (json-object
+                                   "type" "error" "sequence_number" 3
+                                   "error" (json-object "type" code "code" :null
+                                                        "message" "Temporary provider failure"))))
+                                event-callback)))
+                         callback)
+                      (provider-error (condition)
+                        (setf failure condition)
+                        nil))))
+            (let* ((transient-p       (member code '("service_unavailable_error" "overloaded_error"
+                                                     "rate_limit_error") :test #'string=))
+                   (expected-attempts (if transient-p (if recover-p 2 3) 1))
+                   (exhausted         (assoc :provider-retries-exhausted statuses)))
+              (test-assert (= attempts expected-attempts)
+                           "only transient SSE errors enter the bounded retry ladder")
+              (test-assert (and (= (length delays) (1- expected-attempts))
+                                (every (lambda (delay) (<= 1 delay 60)) delays))
+                           "each retry sleeps once with bounded backoff")
+              (test-assert (if (and transient-p recover-p)
+                               (and (eq result :success) (null failure))
+                               (and (typep failure 'provider-error)
+                                    (string= (provider-error-code failure) code)
+                                    (search "Temporary provider failure" (princ-to-string failure))))
+                           "success ends recovery and terminal failures retain the provider reason")
+              (test-assert (if (and transient-p (not recover-p))
+                               (and exhausted (= (getf (rest exhausted) :attempts) 3)
+                                    (string= (getf (rest exhausted) :code) code))
+                               (null exhausted))
+                           "only true retry exhaustion emits a request-local notice")))))
+      (dolist (status '(503 429))
+        (test-assert
+         (handler-case (provider--signal-http-status-failure provider status)
+           (provider-retryable-error () t))
+         "HTTP service and rate-limit failures already permit retry"))))
+  nil)
+
+(-> test-provider-exhaustion-boundaries () null)
+(defun test-provider-exhaustion-boundaries ()
+  "Distinguish real exhaustion from streaming safety stops and interrupted backoff."
+  (with-test-configuration (configuration)
+    (let ((provider (test-codex-provider-create configuration nil)))
+      (dolist (mode '(:partial :abort :resample :fresh))
+        (let* ((attempts                             0)
+               (sleeps                               0)
+               (notices                              nil)
+               (last-condition                       nil)
+               (abort-condition                      (make-condition 'provider-retryable-error :message "Interrupted backoff"))
+               (*provider-maximum-transient-retries* 2)
+               (*provider-maximum-streaming-retries* 0)
+               (*bounded-retry-sleep-function*
+                 (lambda (delay)
+                   (declare (ignore delay))
+                   (incf sleeps)
+                   (when (eq mode ':abort) (error abort-condition))))
+               (observer
+                 (make-instance 'callback-agent-observer
+                                :status-callback
+                                (lambda (kind details)
+                                  (when (eq kind ':provider-retries-exhausted)
+                                    (push details notices)))))
+               (failure
+                 (handler-case
+                     (provider--call-with-bounded-retries
+                      provider
+                      (lambda (refresh callback)
+                        (declare (ignore refresh))
+                        (incf attempts)
+                        (when (and (eq mode ':resample) (= attempts 1))
+                          (error 'provider-resample-requested :message "Resample"
+                                 :attempt 1 :maximum-attempts 2))
+                        (unless (eq mode ':fresh)
+                          (when (eq mode ':partial)
+                            (funcall callback (make-instance 'assistant-delta-event :text "partial")))
+                          (setf last-condition
+                                (make-condition 'provider-retryable-error
+                                                :message "Service unavailable"
+                                                :code    "service_unavailable_error"))
+                          (error last-condition)))
+                      (agent--provider-event-callback observer))
+                   (provider-error (condition) condition))))
+          (ecase mode
+            (:partial
+             (test-assert (and (= attempts 1) (zerop sleeps)
+                               (typep failure 'provider-stream-abandoned) (null notices))
+                          "partial output obeys the safety cap without a false exhaustion notice"))
+            (:abort
+             (test-assert (and (= attempts 1) (= sleeps 1)
+                               (eq failure abort-condition) (null notices))
+                          "interrupted backoff preserves its condition without claiming exhaustion"))
+            (:resample
+             (test-assert (and (= attempts 4) (= sleeps 2)
+                               (eq failure last-condition) (= (length notices) 1)
+                               (= (getf (first notices) :attempts) 4))
+                          "independent resampling does not corrupt exhausted attempt counts"))
+            (:fresh
+             (test-assert (and (= attempts 1) (zerop sleeps) (null failure) (null notices))
+                          "a later request starts with no retry or notice state")))))
+      (let ((anthropic (make-instance 'anthropic-messages-provider)))
+        (dolist (code '("overloaded_error" "rate_limit_error"))
+          (test-assert
+           (handler-case
+               (provider-consume-stream
+                anthropic
+                (make-string-input-stream
+                 (test-sse-event-string
+                  (json-object "type" "error" "error"
+                               (json-object "type" code "message" "Temporary failure"))))
+                #'identity)
+             (provider-retryable-error (condition)
+               (string= (provider-error-code condition) code)))
+           "Anthropic error events use the same exact transient classification")))))
+  nil)
