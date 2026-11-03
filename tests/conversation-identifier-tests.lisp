@@ -433,18 +433,12 @@ match a new library version is never the correct repair."
    (list
     (list 'conversation-picker-metadata-pathname
           #'conversation-sidecar-data-pathname)
-    (list 'conversation-picker-revision-pathname
-          (lambda (pathname)
-            (conversation-cache-legacy-revision-pathname pathname nil)))
     (list 'conversation-picker-search-pathname
           (lambda (pathname)
-            (third (conversation-cache-legacy-pathnames pathname))))
-    (list 'conversation-picker-search-revision-pathname
-          (lambda (pathname)
-            (conversation-cache-legacy-revision-pathname pathname t)))
+            (second (conversation-cache-legacy-pathnames pathname))))
     (list 'conversation-input-history-pathname
           (lambda (pathname)
-            (fifth (conversation-cache-legacy-pathnames pathname)))))
+            (third (conversation-cache-legacy-pathnames pathname)))))
    function))
 
 (-> test-conversation-cache-relocation () null)
@@ -491,7 +485,7 @@ match a new library version is never the correct repair."
          (every (lambda (pathname)
                   (uiop:subpathp pathname (config :cache-root configuration)))
                 (conversation-picker-sidecar-pathnames identity))
-         "all generated index and revision paths use the independent cache root")
+         "all regenerable index payloads use the independent cache root")
         (test-assert
          (equal anchor
                 (merge-pathnames
@@ -504,6 +498,15 @@ match a new library version is never the correct repair."
                 (make-pathname :type     "lock"
                                :defaults (conversation-sidecar-data-pathname identity)))
          "old and new releases retain the identical source lock")
+        (test-assert
+         (and (equal (conversation-picker-revision-pathname identity)
+                     (make-pathname :type     "revision"
+                                    :defaults (conversation-sidecar-data-pathname identity)))
+              (equal (conversation-picker-search-revision-pathname identity)
+                     (make-pathname :name     (format nil "~A.search" (pathname-name identity))
+                                    :type     "revision"
+                                    :defaults (conversation-sidecar-data-pathname identity))))
+         "both durable source revisions retain their historical DATA paths")
         (test-assert
          (and (equal contents (mapcar #'uiop:read-file-string sources))
               (equal old-data (mapcar #'uiop:read-file-string legacy))
@@ -573,11 +576,11 @@ match a new library version is never the correct repair."
          (conversation-picker-source-lock-pathname identity)
          (lambda ()
            (sexp-store:revision-write
-            (conversation-cache-legacy-revision-pathname identity nil)
+            (conversation-picker-revision-pathname identity)
             (1+ (conversation-picker-revision-read identity))
             :tag ':conversation-picker-revision)
            (sexp-store:revision-write
-            (conversation-cache-legacy-revision-pathname identity t)
+            (conversation-picker-search-revision-pathname identity)
             (1+ (conversation-picker-search-revision-read identity))
             :tag ':conversation-picker-search-revision)))
         (test-assert
@@ -615,17 +618,185 @@ match a new library version is never the correct repair."
         (test-call-with-function-replacements
          (list (list 'sexp-store:revision-write
                      (lambda (pathname revision &rest options)
-                       (when (equal pathname (conversation-picker-revision-pathname identity))
-                         (error "Simulated cache revision publication failure."))
+                       (when (equal pathname
+                                    (conversation-picker-revision-pathname identity))
+                         (error "Simulated DATA revision publication failure."))
                        (apply revision-write pathname revision options))))
          (lambda ()
            (test-assert
             (handler-case
                 (progn (conversation-append-user-message new "not written") nil)
               (conversation-invariant-error () t))
-            "failed new cache invalidation prevents durable source mutation")))
+            "failed DATA invalidation prevents durable source mutation")))
         (test-assert
          (equal source-before
                 (mapcar #'uiop:read-file-string (conversation-storage-pathnames identity)))
          "publication failure loses and appends no authoritative records"))))
+  nil)
+
+(-> test-conversation-cache-unavailable () null)
+(defun test-conversation-cache-unavailable ()
+  "Keep upgrade reads, writes and rotation available without generated cache storage."
+  (dolist (existing-cache-p '(nil t))
+    (with-test-configuration (configuration)
+      (let ((conversation nil))
+        (test-conversation-cache--with-legacy-paths
+         (lambda ()
+           (setf conversation (conversation-create configuration))
+           (conversation-append-user-message conversation "archived")
+           (conversation-append-summary conversation "checkpoint")
+           (conversation-append-user-message conversation "active")
+           (conversation-picker-search-close conversation)))
+        (let* ((identity (conversation-pathname conversation))
+               (anchor   (conversation-context-anchors-pathname identity))
+               (lock     (conversation-picker-source-lock-pathname identity))
+               (cache    (merge-pathnames "conversation-picker/"
+                                          (config :cache-root configuration)))
+               (saved    (merge-pathnames "conversation-picker.saved/"
+                                          (config :cache-root configuration)))
+               (blocker  (merge-pathnames "conversation-picker"
+                                          (config :cache-root configuration))))
+          (with-open-file (stream anchor :direction ':output :if-exists ':supersede
+                                         :if-does-not-exist ':create)
+            (write-string "(:authoritative-context-anchor)" stream))
+          (when existing-cache-p
+            (conversation-picker-search-find identity)
+            (conversation-input-history (conversation-load identity))
+            (rename-file cache saved))
+          (ensure-directories-exist blocker)
+          (with-open-file (stream blocker :direction ':output :if-does-not-exist ':create)
+            (write-string "Cache storage unavailable." stream))
+          (unwind-protect
+               (progn
+                 (let ((sources (mapcar #'uiop:read-file-string
+                                        (conversation-storage-pathnames identity))))
+                   (test-assert
+                    (and (conversation-picker-metadata-find identity)
+                         (equal (conversation-picker-search-index-messages
+                                 (conversation-picker-search-find identity))
+                                '("archived" "active"))
+                         (equal (conversation-input-history (conversation-load identity))
+                                '("archived" "active")))
+                    "picker, search and input recall reconstruct without writable cache")
+                   (test-assert
+                    (equal sources (mapcar #'uiop:read-file-string
+                                           (conversation-storage-pathnames identity)))
+                    "cache fallback reads preserve every authoritative source byte"))
+                 (let ((new (conversation-load identity)))
+                   (conversation-append-user-message new "during outage")
+                   (conversation-append-summary new "outage checkpoint")
+                   (conversation-append-user-message new "after rotation")
+                   (test-assert
+                    (equal (conversation-input-history new)
+                           '("archived" "active" "during outage" "after rotation"))
+                    "rotation retains complete editable history while cache publication fails")
+                   (test-assert
+                    (block found
+                      (conversation-map-input-history
+                       new (lambda (input)
+                             (when (string= input "active")
+                               (return-from found t))))
+                      nil)
+                    "fallback history streaming permits early exit"))
+                 (test-conversation-cache--with-legacy-paths
+                  (lambda ()
+                    (let ((old (conversation-load identity)))
+                      (conversation-append-user-message old "old writer"))))
+                 (test-assert
+                  (equal (conversation-picker-search-index-messages
+                          (conversation-picker-search-find identity))
+                         '("archived" "active" "during outage" "after rotation" "old writer"))
+                  "new readers include mixed old and new writes during a cache outage"))
+            (delete-file blocker)
+            (when existing-cache-p
+              (rename-file saved cache)))
+          (test-assert
+           (and (null (conversation-picker-metadata-read identity))
+                (null (conversation-picker-search-read identity)))
+           "restored pre-outage caches are rejected rather than returned stale")
+          (let ((sources (mapcar #'uiop:read-file-string
+                                 (conversation-storage-pathnames identity))))
+            (test-assert
+             (and (equal (conversation-picker-search-index-messages
+                          (conversation-picker-search-find identity))
+                         '("archived" "active" "during outage" "after rotation" "old writer"))
+                  (equal (conversation-input-history (conversation-load identity))
+                         '("archived" "active" "during outage" "after rotation" "old writer"))
+                  (conversation-picker-metadata-read identity)
+                  (conversation-picker-search-read identity))
+             "restored cache storage supports complete reconstruction and persistent reuse")
+            (test-assert
+             (and (equal sources (mapcar #'uiop:read-file-string
+                                        (conversation-storage-pathnames identity)))
+                  (string= "(:authoritative-context-anchor)" (uiop:read-file-string anchor))
+                  (probe-file lock)
+                  (equal lock (conversation-picker-source-lock-pathname identity)))
+             "reconstruction preserves source bytes, anchor bytes and persistent DATA lock"))))))
+  nil)
+
+(-> test-conversation-cache-write-failures () null)
+(defun test-conversation-cache-write-failures ()
+  "Reject readable stale payloads while read-only or full cache storage refuses writes."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration))
+           (identity     (conversation-pathname conversation))
+           (cache-root   (config :cache-root configuration))
+           (failures     0))
+      (conversation-append-user-message conversation "before")
+      (conversation-picker-search-find identity)
+      (conversation-input-history conversation)
+      (let ((payloads (mapcar #'uiop:read-file-string
+                              (conversation-picker-sidecar-pathnames identity))))
+        (flet ((refuse-cache-write (name)
+                 (let ((original (symbol-function name)))
+                   (list name
+                         (lambda (pathname &rest arguments)
+                           (when (uiop:subpathp pathname cache-root)
+                             (incf failures)
+                             (error "Simulated read-only or full cache storage."))
+                           (apply original pathname arguments))))))
+          (test-call-with-function-replacements
+           (mapcar #'refuse-cache-write '(snapshot-write log-write-streaming log-append))
+           (lambda ()
+             (conversation-append-user-message conversation "during failure")
+             (test-assert
+              (and (null (conversation-picker-metadata-read identity))
+                   (null (conversation-picker-search-read identity))
+                   (equal payloads
+                          (mapcar #'uiop:read-file-string
+                                  (conversation-picker-sidecar-pathnames identity))))
+              "writable DATA invalidates unchanged, still-readable CACHE payloads")
+             (test-assert
+              (and (conversation-picker-metadata-find identity)
+                   (equal (conversation-picker-search-index-messages
+                           (conversation-picker-search-find identity))
+                          '("before" "during failure"))
+                   (equal (conversation-input-history conversation)
+                          '("before" "during failure")))
+              "failed payload publication returns fresh scans, never readable stale cache")
+             (test-assert
+              (handler-case
+                  (progn
+                    (conversation-map-input-history
+                     conversation
+                     (lambda (input)
+                       (declare (ignore input))
+                       (error 'simple-error :format-control "Consumer failure.")))
+                    nil)
+                (simple-error () t))
+              "fallback history callbacks propagate their own errors")
+             (conversation-append-summary conversation "failure checkpoint")
+             (conversation-append-user-message conversation "after rotation")
+             (test-assert
+              (equal (conversation-input-history (conversation-load identity))
+                     '("before" "during failure" "after rotation"))
+              "readable stale history does not hide inputs retired during cache failure"))))
+        (test-assert (plusp failures) "the cache fault injection exercised publication failures")
+        (test-assert
+         (and (equal (conversation-picker-search-index-messages
+                      (conversation-picker-search-find identity))
+                     '("before" "during failure" "after rotation"))
+              (equal (conversation-input-history (conversation-load identity))
+                     '("before" "during failure" "after rotation")))
+         "restored writable cache storage rebuilds complete picker search and input indexes"))))
   nil)

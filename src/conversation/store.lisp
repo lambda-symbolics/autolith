@@ -1099,23 +1099,17 @@ a crash may leave one that a later lease acquisition can reuse safely."
 
 (-> conversation-picker-revision-read (pathname) (integer 0))
 (defun conversation-picker-revision-read (conversation-pathname)
-  "Return the newest cache revision, including pre-0.68 source-writer invalidation."
-  (max (sexp-store:revision-read
-        (conversation-picker-revision-pathname conversation-pathname)
-        :tag ':conversation-picker-revision)
-       (sexp-store:revision-read
-        (conversation-cache-legacy-revision-pathname conversation-pathname nil)
-        :tag ':conversation-picker-revision)))
+  "Return the durable DATA revision shared by source writers and cache readers."
+  (sexp-store:revision-read
+   (conversation-picker-revision-pathname conversation-pathname)
+   :tag ':conversation-picker-revision))
 
 (-> conversation-picker-revision-write (pathname (integer 0)) (integer 0))
 (defun conversation-picker-revision-write (conversation-pathname revision)
-  "Invalidate old releases first, then publish the cache revision before source writes.
+  "Publish DATA invalidation before source mutation under the shared source lock.
 
-Remove the legacy revision mirror at 0.68.0, together with its read bridge.
-Callers hold the unchanged DATA source lock throughout source publication."
-  (sexp-store:revision-write
-   (conversation-cache-legacy-revision-pathname conversation-pathname nil)
-   revision :tag ':conversation-picker-revision)
+Revisions coordinate source writes and are not regenerable payload caches. A
+failed invalidation prevents the source mutation; cache publication is optional."
   (sexp-store:revision-write
    (conversation-picker-revision-pathname conversation-pathname)
    revision :tag ':conversation-picker-revision))
@@ -1277,24 +1271,18 @@ Callers hold the unchanged DATA source lock throughout source publication."
 
 (-> conversation-picker-search-revision-read (pathname) (integer 0))
 (defun conversation-picker-search-revision-read (conversation-pathname)
-  "Return the newest search revision, including pre-0.68 source-writer invalidation."
-  (max (sexp-store:revision-read
-        (conversation-picker-search-revision-pathname conversation-pathname)
-        :tag ':conversation-picker-search-revision)
-       (sexp-store:revision-read
-        (conversation-cache-legacy-revision-pathname conversation-pathname t)
-        :tag ':conversation-picker-search-revision)))
+  "Return the durable DATA search revision shared with source writers."
+  (sexp-store:revision-read
+   (conversation-picker-search-revision-pathname conversation-pathname)
+   :tag ':conversation-picker-search-revision))
 
 (-> conversation-picker-search-revision-write
     (pathname (integer 0))
     (integer 0))
 (defun conversation-picker-search-revision-write (conversation-pathname revision)
-  "Invalidate old search readers before cache readers and source mutation.
+  "Publish DATA search invalidation before source mutation under the source lock.
 
-Remove the legacy mirror at 0.68.0. Callers hold the shared DATA source lock."
-  (sexp-store:revision-write
-   (conversation-cache-legacy-revision-pathname conversation-pathname t)
-   revision :tag ':conversation-picker-search-revision)
+The revision is durable source coordination, not a regenerable search payload."
   (sexp-store:revision-write
    (conversation-picker-search-revision-pathname conversation-pathname)
    revision :tag ':conversation-picker-search-revision))
@@ -1542,7 +1530,9 @@ this append's original EOF, including when publication failed after the write."
                                          (rest record)))
            (picker-search-message (conversation--record-preview sequenced)))
       (when (conversation--compaction-record-p sequenced)
-        (conversation-input-history--ensure-current conversation))
+        ;; Retired source segments remain authoritative if the cache is unavailable.
+        ; mallet:suppress no-ignore-errors -- pre-warming input history must not prevent durable compaction
+        (ignore-errors (conversation-input-history--ensure-current conversation)))
       ;; Invalidate under the shared source lock before changing durable bytes.
       ;; Cache reconstruction holds this same lock through publication.
       (when picker-search-message
@@ -2807,17 +2797,18 @@ test one."
   (or (conversation-picker-search-read pathname)
       (when (conversation-picker-metadata-find pathname)
         (or (conversation-picker-search-read pathname)
-            (progn
-              ; mallet:suppress no-ignore-errors -- a failed index rebuild falls back to rereading the sidecar
+            (let ((index nil))
+              ; mallet:suppress no-ignore-errors -- return the scanned index even when its cache publication fails
               (ignore-errors
                 (sexp-store:sidecar-rebuild
                  (conversation-picker-search-pathname pathname)
                  :lock-pathname (conversation-picker-source-lock-pathname pathname)
-                 :build         (lambda () (conversation-picker-search-scan pathname))
+                 :build         (lambda ()
+                                  (setf index (conversation-picker-search-scan pathname)))
                  :encode        #'conversation-picker-search-index-record
                  :source-token  (lambda () (conversation-picker-search-revision-read pathname))
                  :value-token   #'conversation-picker-search-index-source-revision))
-              (conversation-picker-search-read pathname))))))
+              index)))))
 
 (-> conversation-picker-search-close (conversation) null)
 (defun conversation-picker-search-close (conversation)

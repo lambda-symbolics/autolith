@@ -179,11 +179,17 @@ holds the same file lock as source invalidation and writes.
   repairs before publishing a self-contained checkpoint, then installs the
   replacement projection. =:cutoff-seq= identifies the request snapshot;
   =:through-seq= covers every record before checkpoint publication.
-- =src/conversation/input-history.lisp= maintains complete editable input recall in
-  =conversation-picker/<id>.inputs.sexp=. Missing or invalid indices rebuild from
-  authoritative records once. Each new input appends one indexed sequence;
-  compaction flushes the index before retiring the active segment. Checkpoints
-  carry the last input sequence, not the input strings.
+- Generated picker metadata, search text and editable-input indexes use
+  =CACHE/conversation-picker/<source-directory-hash>/=. Missing or invalid
+  payloads rebuild from authoritative records. If cache storage is unavailable,
+  picker and search reads return scans and input recall streams source records.
+  Compaction retains retired source segments without requiring cache publication.
+- Picker and search revision files are durable source-invalidation metadata,
+  not generated payloads. Revisions, source locks and context anchors use their
+  existing =DATA/conversation-picker/= paths. Writers publish invalidation under
+  the shared source lock before changing source bytes; old and new releases
+  coordinate through those same files. Checkpoints record the last editable-input
+  sequence, not input strings.
 
 ** Configuration
 

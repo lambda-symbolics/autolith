@@ -516,9 +516,10 @@ Input recall includes every user message, command, and Lisp submission in the
 conversation. Automatic messages and assistant output are excluded. On first use,
 the complete input-only sidecar is built from the conversation records; later
 submissions are appended to it. Resuming reads this sidecar instead of replaying
-archived transcript chunks. The editor keeps the newest 500 inputs, up to a
+archived transcript chunks. If cache storage is unavailable, recall streams the
+conversation records directly. The editor keeps the newest 500 inputs, up to a
 million characters, in memory. Moving past the oldest of them loads the
-next older page from the sidecar, and leaving history recall releases it again.
+next older page, and leaving history recall releases it again.
 
 Clicking a web address in the fullscreen transcript opens it in the default
 browser, and every fenced code block ends with a =⧉ copy= label that copies the

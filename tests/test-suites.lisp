@@ -715,7 +715,9 @@
   test-conversation-identifier-migration-resumption
   test-conversation-cache-relocation
   test-conversation-cache-namespaces
-  test-conversation-cache-old-writer)
+  test-conversation-cache-old-writer
+  test-conversation-cache-unavailable
+  test-conversation-cache-write-failures)
 
 (define-test-suite precompaction
   test-precompaction-retains-failed-exchanges

@@ -2,29 +2,46 @@
 
 ;;;; -- Complete Editable Input History --
 
-;;; Every editable input stays recallable through an input-only sidecar beside
-;;; the conversation. The sidecar is the index: nothing of it stays resident.
-;;; Reads stream it, keep only what the caller asked for, and rebuilding
-;;; streams durable records into a new sidecar.
+;;; Editable inputs stream from a regenerable input-only sidecar. If its cache
+;;; storage is unavailable, stream authoritative conversation records instead.
+;;; Neither path retains the history after the call.
 
 (-> conversation-map-input-history (conversation function) null)
 (defun conversation-map-input-history (conversation function)
   "Call FUNCTION with each editable input of CONVERSATION, oldest first.
 
-Inputs stream from the maintained sidecar. A missing or stale sidecar is built
-once from durable records. FUNCTION runs under the conversation's append and
+Inputs stream from the maintained sidecar, or from authoritative records when
+cache maintenance fails. FUNCTION runs under the conversation's append and
 source locks, so it must not append to CONVERSATION; it may leave early with
 a nonlocal exit."
   (with-recursive-lock-held ((conversation-append-lock conversation))
     (call-with-file-lock
      (conversation-picker-source-lock-pathname (conversation-pathname conversation))
      (lambda ()
-       (conversation-input-history--ensure-current conversation)
        (when (conversation-persisted-p conversation)
-         (log-map (lambda (record)
-                    (when (eq (first record) ':input)
-                      (funcall function (getf (rest record) :source))))
-                  (conversation-input-history-pathname (conversation-pathname conversation)))))))
+         (let* ((pathname (conversation-input-history-pathname
+                           (conversation-pathname conversation)))
+                (cached-p
+                  (handler-case
+                      (progn
+                        (conversation-input-history--ensure-current conversation)
+                        ;; A loaded index can become unreadable between history calls.
+                        (with-open-file (stream pathname :direction ':input)
+                          (declare (ignorable stream)))
+                        t)
+                    (error ()
+                      (setf (conversation-input-history-loaded-p conversation) nil)))))
+           (if cached-p
+               (log-map (lambda (record)
+                          (when (eq (first record) ':input)
+                            (funcall function (getf (rest record) :source))))
+                        pathname)
+               (conversation--map-storage-records
+                (conversation-pathname conversation)
+                (lambda (record)
+                  (let ((input (conversation-input-history--record-input record)))
+                    (when input
+                      (funcall function input)))))))))))
   nil)
 
 (-> conversation-input-history-page

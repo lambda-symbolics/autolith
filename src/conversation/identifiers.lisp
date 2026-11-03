@@ -244,7 +244,7 @@ only changes replaceable output; its source lock and anchors never move."
 
 (-> conversation-sidecar-data-pathname (pathname) pathname)
 (defun conversation-sidecar-data-pathname (conversation-pathname)
-  "Return the historical DATA sidecar base used permanently by anchors and locks."
+  "Return the DATA sidecar base for durable anchors, revisions and source locks."
   (let* ((identity
            (conversation-storage-identity-pathname conversation-pathname))
          (conversation-root
@@ -289,14 +289,13 @@ only changes replaceable output; its source lock and anchors never move."
 
 (-> conversation-picker-revision-pathname (pathname) pathname)
 (defun conversation-picker-revision-pathname (conversation-pathname)
-  "Return the durable picker-cache revision pathname for CONVERSATION-PATHNAME."
-  (make-pathname :type "revision"
-                 :defaults
-                 (conversation-picker-metadata-pathname conversation-pathname)))
+  "Return the durable DATA source revision, independent of generated cache placement."
+  (make-pathname :type     "revision"
+                 :defaults (conversation-sidecar-data-pathname conversation-pathname)))
 
 (-> conversation-picker-search-pathname (pathname) pathname)
 (defun conversation-picker-search-pathname (conversation-pathname)
-  "Return the durable message-search pathname for CONVERSATION-PATHNAME."
+  "Return the regenerable message-search payload path for CONVERSATION-PATHNAME."
   (let ((metadata-pathname
           (conversation-picker-metadata-pathname conversation-pathname)))
     (make-pathname :name     (format nil "~A.search"
@@ -306,44 +305,30 @@ only changes replaceable output; its source lock and anchors never move."
 
 (-> conversation-picker-search-revision-pathname (pathname) pathname)
 (defun conversation-picker-search-revision-pathname (conversation-pathname)
-  "Return the durable message-search revision path for CONVERSATION-PATHNAME."
-  (make-pathname :type "revision"
-                 :defaults
-                 (conversation-picker-search-pathname conversation-pathname)))
-
-;;; Remove the legacy revision bridge and cleanup helpers at 0.68.0.
-;;; Old releases write these revisions under the unchanged source lock.
-;;; Never remove that lock or the neighboring authoritative anchor sidecars.
-
-(-> conversation-cache-legacy-revision-pathname (pathname boolean) pathname)
-(defun conversation-cache-legacy-revision-pathname (conversation-pathname search-p)
-  "Return the pre-0.68 revision shared with old releases during cache relocation."
+  "Return the durable DATA search revision shared by old and new source writers."
   (let ((base (conversation-sidecar-data-pathname conversation-pathname)))
-    (make-pathname :name     (if search-p
-                                (format nil "~A.search" (pathname-name base))
-                                (pathname-name base))
+    (make-pathname :name     (format nil "~A.search" (pathname-name base))
                    :type     "revision"
                    :defaults base)))
 
+;;; Remove the legacy generated-payload cleanup helper at 0.68.0.
+;;; Durable revision, lock and anchor paths do not change during cache relocation.
+
 (-> conversation-cache-legacy-pathnames (pathname) list)
 (defun conversation-cache-legacy-pathnames (conversation-pathname)
-  "Return individually removable pre-0.68 generated sidecars, excluding anchors."
+  "Return individually removable pre-0.68 payload caches, excluding source coordination."
   (let ((base (conversation-sidecar-data-pathname conversation-pathname)))
     (list base
-          (conversation-cache-legacy-revision-pathname conversation-pathname nil)
           (make-pathname :name     (format nil "~A.search" (pathname-name base))
                          :defaults base)
-          (conversation-cache-legacy-revision-pathname conversation-pathname t)
           (make-pathname :name     (format nil "~A.inputs" (pathname-name base))
                          :defaults base))))
 
 (-> conversation-picker-sidecar-pathnames (pathname) list)
 (defun conversation-picker-sidecar-pathnames (conversation-pathname)
-  "Return every picker and input-history sidecar owned by CONVERSATION-PATHNAME."
+  "Return the regenerable picker, search and input-history payload cache paths."
   (list (conversation-picker-metadata-pathname conversation-pathname)
-        (conversation-picker-revision-pathname conversation-pathname)
         (conversation-picker-search-pathname conversation-pathname)
-        (conversation-picker-search-revision-pathname conversation-pathname)
         (conversation-input-history-pathname conversation-pathname)))
 
 (-> conversation-sidecar-pathnames (pathname) list)
@@ -351,7 +336,9 @@ only changes replaceable output; its source lock and anchors never move."
   "Return every sidecar CONVERSATION-PATHNAME may own, including its context anchors."
   (append (conversation-picker-sidecar-pathnames conversation-pathname)
           (conversation-cache-legacy-pathnames conversation-pathname)
-          (list (conversation-context-anchors-pathname conversation-pathname))))
+          (list (conversation-context-anchors-pathname conversation-pathname)
+                (conversation-picker-revision-pathname conversation-pathname)
+                (conversation-picker-search-revision-pathname conversation-pathname))))
 
 (-> conversation-sidecars-delete (pathname) null)
 (defun conversation-sidecars-delete (conversation-pathname)

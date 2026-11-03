@@ -229,7 +229,7 @@
 
 (-> test-conversation-input-history-rotation-failure () null)
 (defun test-conversation-input-history-rotation-failure ()
-  "Test compaction cannot retire an input whose sidecar append keeps failing."
+  "Retain authoritative inputs across rotation when sidecar appends fail."
   (with-test-configuration (configuration)
     (let* ((conversation (conversation-create configuration))
            (identity     (conversation-pathname conversation))
@@ -245,21 +245,15 @@
                            (apply original pathname arguments)))))
          (lambda ()
            (conversation-append-user-message conversation "second")
-           (let ((next (conversation-next-sequence conversation)))
-             (test-assert
-              (handler-case
-                  (progn (conversation-append-summary conversation "checkpoint") nil)
-                (conversation-invariant-error () t))
-              "compaction reports a typed failure while history cannot be flushed")
-             (test-assert
-              (and (= (conversation-next-sequence conversation) next)
-                   (equal (conversation-log-pathname conversation) active)
-                   (= (length (conversation-storage-pathnames identity)) 1))
-              "failed history publication leaves the active segment and sequence intact"))))
-        (conversation-append-summary conversation "checkpoint")
+           (conversation-append-summary conversation "checkpoint")
+           (test-assert
+            (and (not (equal (conversation-log-pathname conversation) active))
+                 (= (length (conversation-storage-pathnames identity)) 2)
+                 (probe-file active))
+            "rotation preserves the retired source even when its input cache cannot be flushed")))
         (test-assert
          (equal (conversation-input-history (conversation-load identity)) '("first" "second"))
-         "compaction succeeds after repair and preserves both inputs"))))
+         "history reconstructs both inputs from complete authoritative storage"))))
   nil)
 
 (-> test-conversation-input-history-recovery () null)
