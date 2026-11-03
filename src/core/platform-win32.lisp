@@ -1083,14 +1083,14 @@ System application directories are available through AppContainer's system acces
         (win32--release-mutex mutex))
       (win32--close-handle mutex))))
 
-(-> win32--sandbox-read-roots (win32-platform pathname) list)
-(defun win32--sandbox-read-roots (platform workspace)
-  "Return configured tool roots outside WORKSPACE and the AppContainer system surface."
+(-> win32--sandbox-read-roots (win32-platform pathname &key (:read-roots list)) list)
+(defun win32--sandbox-read-roots (platform workspace &key read-roots)
+  "Return explicit and configured read scopes outside WORKSPACE and system roots."
   (let ((system-roots
           (remove nil (mapcar #'win32--absolute-environment-directory
                               '("SystemRoot" "ProgramFiles" "ProgramFiles(x86)")))))
     (remove-duplicates
-     (loop for value in *win32-sandbox-read-roots*
+     (loop for value in (append read-roots *win32-sandbox-read-roots*)
            for path = (and (or (pathnamep value) (non-empty-string-p value))
                            (uiop:ensure-directory-pathname
                              (if (pathnamep value) value
@@ -1118,7 +1118,7 @@ System application directories are available through AppContainer's system acces
       (sb-ext:posix-environ)))))
 
 (defmethod platform-call-with-command-sandbox ((platform win32-platform) workspace function
-                                               &key writable-roots)
+                                               &key writable-roots read-roots)
   "Run FUNCTION with explicit workspace/tool scopes and a private Windows scratch directory."
   (unless (sandbox-supported-p ':network-isolated)
     (win32--unavailable ':command-sandbox
@@ -1136,7 +1136,8 @@ System application directories are available through AppContainer's system acces
                                                     '(".agents" ".codex")
                                                     '(".git" ".agents" ".codex"))
                       :read-roots               (append (list workspace)
-                                                        (win32--sandbox-read-roots platform workspace)))
+                                                        (win32--sandbox-read-roots
+                                                         platform workspace :read-roots read-roots)))
                      (win32--sandbox-environment temporary))
          (platform-delete-directory-tree platform temporary
                                          :validate t :if-does-not-exist ':ignore))))))

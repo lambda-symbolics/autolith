@@ -305,6 +305,9 @@ values retain source access state before ordered moves remove their source paths
   child-only temporary/cache environment paths. The release launcher selects the
   bundled native helper outside writable scopes. Both Windows authorization
   modes execute commands through native PowerShell.
+- Task-worktree Git commands request a read-only scope for the existing =git/=
+  subtree of a valid =XDG_CONFIG_HOME=. The platform adapter exposes that scope
+  for the command lifetime without granting access to sibling configuration.
 - Search is one supervised native helper per fff registry.
 - =lisp.*= operations run in named persistent SBCL subprocesses. A pristine
   worker, like the private replay probe, boots the installed active core when

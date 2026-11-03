@@ -457,18 +457,20 @@ validate that URL is an http or https URL before asking."))
   (:documentation
    "Return the argv that runs the repository check for SOURCE-ROOT on this host."))
 
-(defgeneric platform-call-with-command-sandbox (platform workspace function &key writable-roots)
+(defgeneric platform-call-with-command-sandbox (platform workspace function &key writable-roots read-roots)
   (:documentation
    "Call FUNCTION with a workspace sandbox policy and optional child environment.
 
 Own temporary scopes and serialize overlapping host ACL changes until FUNCTION
 returns or unwinds. Nonempty WRITABLE-ROOTS replace the default workspace write
-scope with explicit owned directories. FUNCTION accepts POLICY and ENVIRONMENT
-and must wait for its command and descendants before returning."))
+scope with explicit owned directories. READ-ROOTS add existing read-only directories
+on hosts that confine reads. FUNCTION accepts POLICY and ENVIRONMENT and must wait
+for its command and descendants before returning."))
 
 (defmethod platform-call-with-command-sandbox ((platform platform) workspace function
-                                               &key writable-roots)
+                                               &key writable-roots read-roots)
   "Use explicit POSIX write scopes and private scratch space for owned operations."
+  (declare (ignore read-roots))
   (if writable-roots
       (let ((temporary (platform-make-temporary-directory
                         platform (uiop:temporary-directory) "autolith-command-")))

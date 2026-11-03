@@ -86,12 +86,14 @@
 
 (-> test-task-worktree-xdg-git-configuration () null)
 (defun test-task-worktree-xdg-git-configuration ()
-  "Read real global Git identity, ignores and attributes through both runner policies."
+  "Read real global Git configuration with narrow, read-only sandbox scopes."
   (with-test-configuration (initial root)
     (let* ((source        (merge-pathnames "repository/" root))
            (home          (merge-pathnames "empty-home/" root))
            (xdg           (merge-pathnames "xdg config/" root))
-           (configuration (configuration-copy initial :working-directory source)))
+           (git-root      (merge-pathnames "git/" xdg))
+           (configuration (configuration-copy initial :working-directory source))
+           (sandbox       (fdefinition 'platform-call-with-command-sandbox)))
       (ensure-directories-exist source)
       (ensure-directories-exist home)
       (task-worktree-tests--write
@@ -104,36 +106,62 @@
       (task-worktree-tests--write
        (merge-pathnames ".config/git/config" home)
        (format nil "[user]~%name = Default Identity~%"))
-      (with-test-environment (("HOME" (uiop:native-namestring home))
-                              ("XDG_CONFIG_HOME" (uiop:native-namestring xdg)))
-        (task-worktree-tests--git configuration source '("init"))
-        (let ((authorizers (list #'task-worktree-tests--authorize)))
-          (if (application--command-sandbox-available-p)
-              (push #'task-worktree-tests--sandboxed authorizers)
-              (test-withheld ':command-sandbox "sandboxed XDG Git configuration"))
-          (dolist (authorize authorizers)
-            (flet ((git (&rest arguments)
-                     "Read Git output through one authorization policy."
-                     (string-trim '(#\Return #\Newline)
-                                  (task-worktree-tests--git
-                                   configuration source arguments :authorize authorize))))
-              (test-assert (string= "XDG Identity" (git "config" "--global" "--get" "user.name"))
-                           "Git reads global identity from the custom XDG config root")
-              (test-assert (search "XDG Identity <xdg@example.invalid>" (git "var" "GIT_AUTHOR_IDENT"))
-                           "Git uses the XDG identity for authorship")
-              (test-assert (string= "ignored.tmp" (git "check-ignore" "--no-index" "--" "ignored.tmp"))
-                           "Git reads the default global XDG ignore file")
-              (test-assert (string= "sample.fixture: fixture-attribute: xdg"
-                                   (git "check-attr" "fixture-attribute" "--" "sample.fixture"))
-                           "Git reads the default global XDG attributes file"))))
-        (dolist (value '(nil "" "relative" "relative["))
-          (with-test-environment (("XDG_CONFIG_HOME" value))
-            (test-assert
-             (string= "Default Identity"
-                      (string-trim '(#\Return #\Newline)
-                                   (task-worktree-tests--git
-                                    configuration source '("config" "--global" "--get" "user.name"))))
-             "Invalid XDG config roots are omitted so Git uses the home default"))))))
+      (test-call-with-function-replacements
+       (list (list 'platform-call-with-command-sandbox
+                   (lambda (platform workspace function &key writable-roots read-roots)
+                     (test-assert (equal (list git-root) read-roots)
+                                  "Git receives only its XDG subtree as an extra read scope")
+                     (funcall sandbox platform workspace function
+                              :writable-roots writable-roots :read-roots read-roots))))
+       (lambda ()
+         (with-test-environment (("HOME" (uiop:native-namestring home))
+                                 ("XDG_CONFIG_HOME" (uiop:native-namestring xdg)))
+           (task-worktree-tests--git configuration source '("init"))
+           (let ((authorizers (list #'task-worktree-tests--authorize)))
+             (if (application--command-sandbox-available-p)
+                 (push #'task-worktree-tests--sandboxed authorizers)
+                 (test-withheld ':command-sandbox "sandboxed XDG Git configuration"))
+             (dolist (authorize authorizers)
+               (flet ((git (&rest arguments)
+                        "Read Git output through one authorization policy."
+                        (string-trim '(#\Return #\Newline)
+                                     (task-worktree-tests--git
+                                      configuration source arguments :authorize authorize))))
+                 (test-assert (string= "XDG Identity" (git "config" "--global" "--get" "user.name"))
+                              "Git reads global identity from the custom XDG config root")
+                 (test-assert (search "XDG Identity <xdg@example.invalid>" (git "var" "GIT_AUTHOR_IDENT"))
+                              "Git uses the XDG identity for authorship")
+                 (test-assert (string= "ignored.tmp" (git "check-ignore" "--no-index" "--" "ignored.tmp"))
+                              "Git reads the default global XDG ignore file")
+                 (test-assert (string= "sample.fixture: fixture-attribute: xdg"
+                                      (git "check-attr" "fixture-attribute" "--" "sample.fixture"))
+                              "Git reads the default global XDG attributes file")))
+             (when (member #'task-worktree-tests--sandboxed authorizers)
+               (multiple-value-bind (output error-output status)
+                   (funcall (task-worktree--runner configuration #'task-worktree-tests--sandboxed)
+                            (list "git" "config" "--file"
+                                  (uiop:native-namestring (merge-pathnames "config" git-root))
+                                  "user.name" "Forbidden")
+                            :directory source)
+                 (declare (ignore output error-output))
+                 (test-assert (not (zerop status))
+                              "The XDG Git read scope does not permit configuration writes"))
+               (test-assert
+                (string= "XDG Identity"
+                         (string-trim '(#\Return #\Newline)
+                                      (task-worktree-tests--git
+                                       configuration source '("config" "--global" "--get" "user.name"))))
+                "The sandbox cannot change the host Git identity")))
+           (dolist (value '(nil "" "relative" "relative["))
+             (with-test-environment (("XDG_CONFIG_HOME" value))
+               (test-assert (null (task-worktree--git-read-roots))
+                            "Invalid XDG config roots grant no read scopes")
+               (test-assert
+                (string= "Default Identity"
+                         (string-trim '(#\Return #\Newline)
+                                      (task-worktree-tests--git
+                                       configuration source '("config" "--global" "--get" "user.name"))))
+                "Invalid XDG config roots are omitted so Git uses the home default"))))))))
   nil)
 
 (-> test-task-worktree-options () null)

@@ -74,6 +74,18 @@ without changing the host environment."
                                      overrides)))
                   collect (format nil "~A=~A" name value))))
 
+(-> task-worktree--git-read-roots () list)
+(defun task-worktree--git-read-roots ()
+  "Expose only Git's existing subtree of the forwarded XDG configuration root."
+  (loop for binding in (task-worktree--environment)
+        when (uiop:string-prefix-p "XDG_CONFIG_HOME=" binding)
+          append (let ((directory (merge-pathnames
+                                   "git/" (uiop:ensure-directory-pathname
+                                           (uiop:parse-native-namestring
+                                            (subseq binding (length "XDG_CONFIG_HOME=")))))))
+                   (when (uiop:directory-exists-p directory)
+                     (list directory)))))
+
 (-> task-worktree--runner (configuration function &key (:writable-roots list)) function)
 (defun task-worktree--runner (configuration authorize &key writable-roots)
   "Return an argv runner using AUTHORIZE and the ordinary command execution policy."
@@ -106,6 +118,7 @@ without changing the host environment."
           (:sandboxed
            (platform-call-with-command-sandbox
             *platform* (config :working-directory configuration) #'run
+             :read-roots (task-worktree--git-read-roots)
             :writable-roots
             (remove-duplicates
              (append writable-roots
