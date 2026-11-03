@@ -317,15 +317,13 @@ if [[ "$recovery_requested" == true ]]; then
 fi
 
 crash_pointer_directory="$state_home/autolith/crash-pointers"
-mkdir -p -- "$crash_pointer_directory"
-chmod 700 "$crash_pointer_directory"
+(umask 077; mkdir -p -- "$state_home/autolith" "$crash_pointer_directory") || exit 1
 crash_pointer="$crash_pointer_directory/launcher-$$.path"
 rm -f -- "$crash_pointer"
 export AUTOLITH_CRASH_POINTER="$crash_pointer"
 
 recovery_session_pointer_directory="$state_home/autolith/recovery-session-pointers"
-mkdir -p -- "$recovery_session_pointer_directory"
-chmod 700 "$recovery_session_pointer_directory"
+(umask 077; mkdir -p -- "$recovery_session_pointer_directory") || exit 1
 recovery_session_pointer="$recovery_session_pointer_directory/launcher-$$.sexp"
 rm -f -- "$recovery_session_pointer"
 export AUTOLITH_RECOVERY_SESSION_POINTER="$recovery_session_pointer"

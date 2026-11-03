@@ -846,13 +846,31 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
                    (format nil "AUTOLITH_TEST_LOG=~A" (namestring log))))
            (source-output
              (release-script-tests--run
-              (list (namestring launcher) "--from-source" "fixture-argument")
+              (list "sh" "-c" "umask 022; exec \"$@\"" "sh"
+                    (namestring launcher) "--from-source" "fixture-argument")
               :environment environment)))
       (test-assert
        (and (search "SOURCE" source-output)
             (not (search "fast startup image" source-output))
             (not (search "--from-source" (uiop:read-file-string log))))
        "--from-source quietly bypasses images and is not forwarded")
+      (dolist (relative '("autolith/" "autolith/crash-pointers/"
+                          "autolith/recovery-session-pointers/"))
+        (let ((directory (merge-pathnames relative state-home)))
+          (test-assert
+           (= #o700 (test-fixture-file-mode *platform* directory))
+           "the launcher creates state roots and pointer directories privately under umask 022")
+          (release-script-tests--chmod "750" directory)))
+      (release-script-tests--run
+       (list "sh" "-c" "umask 022; exec \"$@\"" "sh"
+             (namestring launcher) "--from-source")
+       :environment environment)
+      (dolist (relative '("autolith/" "autolith/crash-pointers/"
+                          "autolith/recovery-session-pointers/"))
+        (test-assert
+         (= #o750 (test-fixture-file-mode
+                   *platform* (merge-pathnames relative state-home)))
+         "the launcher preserves modes on pre-existing state directories"))
       (let* ((recorded-command
                (merge-pathnames "autolith/runtimes/command" data-home))
              (missing-runtime       (merge-pathnames "missing-sbcl" fixture-root))
@@ -1414,7 +1432,8 @@ esac
               (format nil "AUTOLITH_BIN_DIR=~A"
                       (string-right-trim "/" (namestring bin-directory))))))
       (release-script-tests--run
-       (list (namestring installer) "--version" tag)
+       (list "sh" "-c" "umask 022; exec \"$@\"" "sh"
+             (namestring installer) "--version" tag)
        :environment base-environment
        :output      nil)
       (test-assert
@@ -1451,7 +1470,8 @@ esac
                               (namestring bin-directory))))))
         (uiop:ensure-all-directories-exist (list fallback-home))
         (release-script-tests--run
-         (list (namestring installer) "--version" tag)
+         (list "sh" "-c" "umask 022; exec \"$@\"" "sh"
+               (namestring installer) "--version" tag)
          :environment fallback-environment
          :output      nil)
         (test-assert
@@ -1459,7 +1479,27 @@ esac
           (merge-pathnames
            (format nil "releases/~A-x86_64-linux/bin/autolith" tag)
            fallback-root))
-         "the installer falls back from a relative XDG data home"))
+         "the installer falls back from a relative XDG data home")
+        (dolist (relative '(".local/share/autolith/"
+                            ".local/share/autolith/installation/"
+                            ".local/share/autolith/installation/releases/"))
+          (let ((directory (merge-pathnames relative fallback-home)))
+            (test-assert
+             (= #o700 (test-fixture-file-mode *platform* directory))
+             "the installer creates application roots privately under umask 022")
+            (release-script-tests--chmod "750" directory)))
+        (release-script-tests--run
+         (list "sh" "-c" "umask 022; exec \"$@\"" "sh"
+               (namestring installer) "--version" tag)
+         :environment fallback-environment
+         :output      nil)
+        (dolist (relative '(".local/share/autolith/"
+                            ".local/share/autolith/installation/"
+                            ".local/share/autolith/installation/releases/"))
+          (test-assert
+           (= #o750 (test-fixture-file-mode
+                     *platform* (merge-pathnames relative fallback-home)))
+           "the installer preserves modes on pre-existing application roots")))
       (release-script-tests--run
        (list (namestring installer) "--version" tag)
        :environment base-environment

@@ -990,7 +990,7 @@ pkgs.writeShellApplication {
     image_root="$nix_root/images"
     image_directory="$image_root/$identity_name"
     asdf_cache="$nix_root/asdf-cache/$identity_name"
-    mkdir -p "$image_root" "$asdf_cache"
+    (umask 077; mkdir -p "$data_home/autolith" "$image_root" "$asdf_cache")
     export AUTOLITH_ASDF_CACHE="$asdf_cache"
     export AUTOLITH_NIX_SOURCE_ROOT="${autolithSystem}/"
     export AUTOLITH_INSTALLATION_KIND=nix

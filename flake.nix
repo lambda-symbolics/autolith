@@ -65,6 +65,7 @@
                 pkgs.gnugrep
               ];
             } ''
+              umask 022
               export HOME="$TMPDIR/home"
               export XDG_CONFIG_HOME="$TMPDIR/config"
               export XDG_DATA_HOME="$TMPDIR/data"
@@ -105,6 +106,7 @@
               printf '%s\n' '(:RECOVERY-IMAGE :VERSION 2)' > \
                 "$image_directory/recovery/manifest.sexp"
 
+              chmod 750 "$XDG_DATA_HOME/autolith" "$XDG_STATE_HOME/autolith"
               first_output="$TMPDIR/first-output"
               concurrent_output="$TMPDIR/concurrent-output"
               second_output="$TMPDIR/second-output"
@@ -135,6 +137,8 @@
               test -d "$old_identity"
               test -f "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core"
               test "$(cat "$XDG_STATE_HOME/autolith/private-state")" = preserved
+              test "$(stat -c %a "$XDG_DATA_HOME/autolith")" = 750
+              test "$(stat -c %a "$XDG_STATE_HOME/autolith")" = 750
               test -d "$runtime_root/source"
               test ! -L "$runtime_root/source"
               test -e "$runtime_root/source/generate-version.sh"
@@ -159,12 +163,15 @@
 
               # Relative XDG bases are invalid and must use the HOME fallback.
               fallback_output="$TMPDIR/fallback-output"
-              XDG_DATA_HOME=relative/data autolith --version > "$fallback_output"
+              XDG_DATA_HOME=relative/data XDG_STATE_HOME=relative/state \
+                autolith --version > "$fallback_output"
               test "$(tail -n 1 "$fallback_output")" = \
                 "autolith version ${autolith.autolithSystem.version}"
               fallback_image="$HOME/.local/share/autolith/nix/images/${imageIdentity}"
               test -f "$fallback_image/active/autolith-active.core"
               test ! -e "$TMPDIR/relative/data/autolith/nix"
+              test "$(stat -c %a "$HOME/.local/share/autolith")" = 700
+              test "$(stat -c %a "$HOME/.local/state/autolith")" = 700
 
               # A second package identity sharing the same XDG roots must build
               # and select its own complete pair without touching package A or

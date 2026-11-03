@@ -355,8 +355,14 @@ releases_root=$install_root/releases
 qualified_target=$releases_root/$requested_tag-$platform
 legacy_target=$releases_root/$requested_tag
 target=$qualified_target
-mkdir -p -- "$releases_root"
-chmod 700 "$install_root" "$releases_root"
+(
+  umask 077
+  case $install_root in
+    "$data_home/autolith"|"$data_home/autolith/"*)
+      mkdir -p -- "$data_home/autolith" ;;
+  esac
+  mkdir -p -- "$install_root" "$releases_root"
+)
 
 if release_installed_p "$qualified_target" "$requested_tag" "$platform"; then
   target=$qualified_target
