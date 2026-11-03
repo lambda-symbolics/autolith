@@ -410,6 +410,12 @@
   test-job-completion-headless-owner)
 
 (define-test-suite job-completion-controller
+  test-job-completion-terminal-visibility
+  test-job-completion-terminal-boundaries
+  test-job-completion-terminal-admission-control
+  test-job-completion-terminal-mixed-replay
+  test-job-completion-terminal-admission-race
+  test-job-completion-terminal-coalescing
   test-job-completion-controller-coalescing
   test-job-completion-controller-continuation-notice
   test-job-completion-controller-ticket-delivery

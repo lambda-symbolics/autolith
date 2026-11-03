@@ -634,3 +634,283 @@
           (task-orchestrator-close runtime)
           (terminal-ui-stop (application-ui application))))))
   nil)
+
+(-> job-completion-controller-tests--ready (agent) list)
+(defun job-completion-controller-tests--ready (parent)
+  "Wait boundedly for genuine persisted completion deadlines, without rewriting them."
+  (loop with deadline = (+ (get-internal-real-time) (* 5 internal-time-units-per-second))
+        for notices = (task-completion-pending parent)
+        when (and notices (every (lambda (notice) (<= (getf notice :ready-at) (get-universal-time))) notices))
+          return notices
+        when (>= (get-internal-real-time) deadline)
+          do (error "The real completion did not become ready: ~S" notices)
+        do (sleep 0.01)))
+
+(-> job-completion-controller-tests--terminal-fixture
+    (function &key (:operation function) (:coalescing integer) (:unknown-usage integer)
+                  (:wait-ready-p boolean) (:response string)) null)
+(defun job-completion-controller-tests--terminal-fixture
+    (function &key (operation (lambda () (tool-success "terminal fixture result"))) (coalescing 0)
+                  (unknown-usage 1) (wait-ready-p t) (response "reviewed"))
+  "Publish one real mission-owned outcome, then block its scratch mission."
+  (with-test-configuration (configuration root)
+    (setf configuration (configuration-copy configuration :working-directory root))
+    (let* ((*task-completion-coalescing-seconds* coalescing)
+           (application                          (mission-test--application configuration :results (list (mission-test--result response))))
+           (parent                               (application-agent application))
+           (registry                             (task-augment-tool-registry (application-tool-registry application)))
+           (runtime                              (task-completion--runtime parent))
+           (controller                           (application-input-controller-create application :start-reader-p nil :load-pending-p nil)))
+      (declare (ignore registry))
+      (setf (application-localgroup-session application) (make-instance 'localgroup-session :application application))
+      (unwind-protect
+           (progn
+             (application-mission-start application (mission-test--specification))
+             (let ((job (job-completion-tests--start parent runtime :operation operation)))
+               (application-mission-stop application ':blocked "Scratch mission needs a decision.")
+               (when (plusp unknown-usage)
+                 (setf (getf (application-goal application) :unknown-usage) unknown-usage))
+               (application--record-goal application)
+               (when wait-ready-p (job-completion-controller-tests--ready parent))
+               (application-render-records application)
+               (recording-terminal-reset (terminal-ui-terminal (application-ui application)))
+               (funcall function application controller parent job)))
+        (setf (application-input-controller-stopping-p controller) nil
+              (application-input-controller-failure controller) nil
+              (application-input-controller-localgroup-handoff-p controller) nil
+              (application-input-controller-follow-up-edit-index controller) nil
+              (application-input-controller-queued-work-paused-p controller) nil)
+        (application-localgroup-resume application)
+        (application-input-controller-stop controller)
+        (setf (application-input-controller application) nil)
+        (task-orchestrator-close runtime)
+        (terminal-ui-stop (application-ui application)))))
+  nil)
+
+(-> test-job-completion-terminal-visibility () null)
+(defun test-job-completion-terminal-visibility ()
+  "Show real success, failure, cancellation and timeout outcomes once without inference."
+  (dolist (reason '(nil :failed :cancelled :timeout))
+    (job-completion-controller-tests--terminal-fixture
+     (lambda (application controller parent job)
+       (let* ((conversation  (application-conversation application))
+              (goal          (copy-tree (application-goal application)))
+              (ui            (application-ui application))
+              (terminal      (terminal-ui-terminal ui))
+              (present       (symbol-function 'application-present))
+              (presentations nil)
+              (work          (handler-case
+                                 (sb-ext:with-timeout 3 (application-input-controller--next-work controller))
+                               (sb-ext:timeout () nil))))
+         (test-assert (not (task-completion-maintenance-needed-p parent)) "one small result has no queue pressure")
+         (test-assert (eq (first work) ':job-completion-maintenance) "idle selection schedules display, not inference")
+         (test-call-with-function-replacements
+          (list (list 'application-present
+                      (lambda (owner entry &key identifier)
+                        (push (list identifier entry) presentations)
+                        (funcall present owner entry :identifier identifier))))
+          (lambda ()
+            (when work (application-input-controller--run-work controller work))))
+         (let* ((records  (remove-if-not
+                           (lambda (record) (getf (rest record) :job-completion))
+                           (conversation-records-newest conversation 20)))
+                (record   (first records))
+                (identity (and record (application--record-presentation-identifier application record))))
+           (test-assert (and (= 1 (length records)) (= 1 (length presentations))
+                             (equal identity (first (first presentations)))
+                             (gethash identity (terminal-ui-finalized-identifiers ui)))
+                        "actual terminal finalization and the sole durable outcome share identity")
+           (test-assert (and record
+                             (equal (getf (getf (rest record) :job-completion) :job-id) (session-job-identifier job))
+                             (eq (getf (getf (rest record) :job-completion) :state) (job-state job))
+                             (conversation-pending-input-identifier-p conversation
+                                                                      (getf (rest record) :pending-input-identifier)))
+                        "the genuine terminal state has a durable delivery receipt")
+           (test-assert (and (plusp (length (recording-terminal-output terminal)))
+                             (search (session-job-identifier job) (terminal--spans-text (second (first presentations)))))
+                        "the actual presentation identifies the completed child")
+           (test-assert (and (null (scripted-provider-input-snapshots (application-provider application)))
+                             (equal goal (application-goal application)))
+                        "display consumes no provider request and leaves all mission accounting unchanged")
+           (recording-terminal-reset terminal)
+           (when work (application-input-controller--run-work controller work))
+           (test-assert (and (null (application-job-completions--take-maintenance controller))
+                             (null (application-job-completions--next-time controller))
+                             (null (task-completion-deliver parent)))
+                        "acknowledgement removes repeat work and its deadline without a blocking next-work call")
+           (when record
+             (test-assert (not (application--present-conversation-record application record))
+                          "ordinary transcript rendering cannot finalize the same outcome twice"))
+           (conversation-append-user-message conversation "Review the result without resuming the mission.")
+           (test-assert (and (null (task-completion-deliver parent))
+                             (= 1 (count (getf (rest record) :pending-input-identifier)
+                                         (conversation--read-records (conversation-pathname conversation))
+                                         :key (lambda (entry) (getf (rest entry) :pending-input-identifier)) :test #'equal)))
+                        "ordinary manual input preserves the sole completion receipt")
+           (test-assert (zerop (length (recording-terminal-output terminal))) "replayed delivery and rendering produce no repeated output"))))
+     :operation (case reason
+                  (:failed
+                   (lambda () (error "Expected scratch execution failure.")))
+                  ((:cancelled :timeout)
+                   (lambda () (error 'job-aborted :identifier "terminal fixture" :reason reason :message "expected terminal outcome")))
+                  (otherwise
+                   (lambda () (tool-success "terminal fixture result"))))))
+  nil)
+
+(-> test-job-completion-terminal-boundaries () null)
+(defun test-job-completion-terminal-boundaries ()
+  "Defer queued and post-selection delivery across edit, pause, stop and ownership changes."
+  (dolist (boundary '(follow-up-edit-index queued-work-paused-p stopping-p failure localgroup-handoff-p session-pause owner))
+    (job-completion-controller-tests--terminal-fixture
+     (lambda (application controller parent job)
+       (declare (ignore job))
+       (let* ((work            (application-job-completions--take-maintenance controller))
+              (ticket          (second work))
+              (owner           (getf ticket :conversation))
+              (scan            (symbol-function 'task-cancellation-maintain))
+              (close-on-scan-p nil))
+         (labels ((close-boundary (closed-p)
+                    (case boundary
+                      (session-pause
+                       (if closed-p (application-localgroup-pause application) (application-localgroup-resume application)))
+                      (owner
+                       (setf (getf ticket :conversation) (if closed-p "foreign-conversation" owner)))
+                      (otherwise
+                       (setf (slot-value controller boundary)
+                             (when closed-p
+                               (case boundary (follow-up-edit-index
+                                               0)
+                                              (failure
+                                               (make-condition 'simple-error))
+                                              (otherwise
+                                               t))))))))
+           (test-assert (eq (first work) ':job-completion-maintenance) "a safe controller selects the real outcome")
+           (close-boundary t)
+           (unless (eq boundary 'owner)
+             (test-assert (null (application-job-completions--take-maintenance controller)) "closed selection leaves the outcome pending"))
+           (when work (application-input-controller--run-work controller work))
+           (test-assert (and (= 1 (length (task-completion-pending parent)))
+                             (zerop (length (recording-terminal-output (terminal-ui-terminal (application-ui application))))))
+                        "a stale ticket cannot consume or display across a closed boundary")
+           (close-boundary nil)
+           (setf close-on-scan-p t)
+           (test-call-with-function-replacements
+            (list (list 'task-cancellation-maintain
+                        (lambda (agent &key (now (get-internal-real-time)))
+                          (prog1 (funcall scan agent :now now)
+                            (when close-on-scan-p
+                              (setf close-on-scan-p nil)
+                              (close-boundary t))))))
+            (lambda () (when work (application-input-controller--run-work controller work))))
+           (test-assert (and (= 1 (length (task-completion-pending parent)))
+                             (null (scripted-provider-input-snapshots (application-provider application))))
+                        "closure during delivery setup is rechecked before the durable append")
+           (close-boundary nil)
+           (when work (application-input-controller--run-work controller work))
+           (test-assert (and (null (task-completion-pending parent))
+                             (plusp (length (recording-terminal-output (terminal-ui-terminal (application-ui application))))))
+                        "finishing the edit or resuming permits the deferred result exactly once"))))))
+  nil)
+
+(-> job-completion-controller-tests--admitted-turn (application application-input-controller) null)
+(defun job-completion-controller-tests--admitted-turn (application controller)
+  "Run ordinary admitted inference and let real verification block on unproven criteria."
+  (let ((automatic (application-job-completions--take-work controller)))
+    (test-assert (eq (first automatic) ':job-completion) "ordinary mission admission still selects inference")
+    (test-call-with-function-replacements
+     (list (list 'application-tool-context (lambda (app) (mission-test--context app))))
+     (lambda () (when automatic (application-input-controller--run-work controller automatic))))
+    (let ((goal     (application-goal application))
+          (requests (length (scripted-provider-input-snapshots (application-provider application)))))
+      (format t "~&HIGH177 admitted requests=~D goal=~S~%" requests goal)
+      (test-assert (= 1 requests) "the admitted result causes exactly one ordinary automatic provider turn")
+      (test-assert (and (eq (getf goal :status) ':blocked) (getf goal :model-complete-p)
+                        (= 1 (getf goal :turns-used)) (= 5 (getf goal :tokens-used))
+                        (zerop (getf goal :unknown-usage)) (zerop (getf goal :requests-outstanding)))
+                   "real verification blocks unproven scratch criteria after one fully accounted turn")))
+  nil)
+
+(-> test-job-completion-terminal-admission-control () null)
+(defun test-job-completion-terminal-admission-control ()
+  "Preserve an ordinary admitted mission continuation on baseline and candidate."
+  (job-completion-controller-tests--terminal-fixture
+   (lambda (application controller parent job)
+     (declare (ignore job))
+     (test-assert (= 1 (length (job-completion-controller-tests--ready parent))) "ordinary control has one persisted ready result")
+     (application-mission-resume application)
+     (job-completion-controller-tests--admitted-turn application controller))
+   :unknown-usage 0 :response "[GOAL-COMPLETE]")
+  nil)
+
+(-> test-job-completion-terminal-admission-race () null)
+(defun test-job-completion-terminal-admission-race ()
+  "Keep a newly admissible result for one automatic turn instead of consuming its display ticket."
+  (job-completion-controller-tests--terminal-fixture
+   (lambda (application controller parent job)
+     (declare (ignore job))
+     (let ((work (application-job-completions--take-maintenance controller)))
+       (test-assert (and (eq (first work) ':job-completion-maintenance)
+                         (getf (second work) :terminal-notice-p) (getf (second work) :events))
+                    "the race starts with a real ready terminal-notice ticket")
+       (application-mission-resume application)
+       (when work (application-input-controller--run-work controller work))
+       (test-assert (and (= 1 (length (task-completion-pending parent)))
+                         (null (scripted-provider-input-snapshots (application-provider application))))
+                    "ready-to-admissible change leaves the outcome unconsumed by maintenance")
+       (job-completion-controller-tests--admitted-turn application controller)))
+   :unknown-usage 0 :response "[GOAL-COMPLETE]")
+  nil)
+
+(-> test-job-completion-terminal-mixed-replay () null)
+(defun test-job-completion-terminal-mixed-replay ()
+  "Reject a partly stale batch without consuming its fresh owned result."
+  (job-completion-controller-tests--terminal-fixture
+   (lambda (application controller parent job)
+     (declare (ignore job))
+     (let ((old (application-job-completions--take-maintenance controller)))
+       (test-assert (getf (second old) :terminal-notice-p) "mixed replay starts from a real terminal ticket")
+       (when old
+         (application-input-controller--run-work controller old)
+         (application-mission-resume application)
+         (job-completion-tests--start parent (task-completion--runtime parent))
+         (application-mission-stop application ':blocked "Scratch second result needs a decision.")
+         (job-completion-controller-tests--ready parent)
+         (let* ((fresh    (application-job-completions--take-maintenance controller))
+                (mixed    (copy-tree fresh))
+                (terminal (terminal-ui-terminal (application-ui application))))
+           (test-assert (getf (second fresh) :terminal-notice-p) "second genuine result has a fresh terminal ticket")
+           (setf (getf (second mixed) :events)
+                 (append (getf (second old) :events) (getf (second fresh) :events)))
+           (recording-terminal-reset terminal)
+           (application-input-controller--run-work controller mixed)
+           (test-assert (and (= 1 (length (task-completion-pending parent)))
+                             (zerop (length (recording-terminal-output terminal))))
+                        "rejecting a partly stale ticket leaves the fresh outcome pending and undisplayed")
+           (let ((selected (application-job-completions--take-maintenance controller)))
+             (test-assert (equal fresh selected) "normal reselection retains precisely the fresh event")
+             (when selected (application-input-controller--run-work controller selected)))
+           (test-assert (and (null (task-completion-pending parent))
+                             (plusp (length (recording-terminal-output terminal)))
+                             (= 2 (length (conversation-pending-input-identifiers (application-conversation application)))))
+                        "normal selection delivers the fresh result once with its own receipt")
+           (recording-terminal-reset terminal)
+           (application-input-controller--run-work controller fresh)
+           (test-assert (zerop (length (recording-terminal-output terminal))) "fresh-ticket replay cannot repeat presentation")))))
+   :unknown-usage 0)
+  nil)
+
+(-> test-job-completion-terminal-coalescing () null)
+(defun test-job-completion-terminal-coalescing ()
+  "Wake the real idle controller when a low-pressure inadmissible batch becomes ready."
+  (job-completion-controller-tests--terminal-fixture
+   (lambda (application controller parent job)
+     (declare (ignore application job))
+     (test-assert (integerp (application-job-completions--next-time controller)) "a pending display has a wake deadline")
+     (let ((work (handler-case
+                     (sb-ext:with-timeout 5 (application-input-controller--next-work controller))
+                   (sb-ext:timeout () nil))))
+       (test-assert (eq (first work) ':job-completion-maintenance) "the actual idle wait selects display when the deadline matures")
+       (when work (application-input-controller--run-work controller work))
+       (test-assert (null (task-completion-pending parent)) "the ready outcome is consumed without queue pressure")))
+   :coalescing 1 :wait-ready-p nil)
+  nil)

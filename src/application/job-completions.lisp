@@ -125,16 +125,108 @@ snapshot cannot change the meaning of an already finalized transcript entry."
 (-> application-job-completions--next-time
     (application-input-controller) (option integer))
 (defun application-job-completions--next-time (controller)
-  "Return an admitted batch deadline, or NIL when automatic work must wait."
+  "Return the next inference or display batch deadline while the controller is safe."
   (when (application-job-completions--controller-admissible-p controller)
     (let* ((application (application-input-controller-application controller))
            (agent       (application-agent application))
            (notices     (remove-if-not
                          (lambda (notice)
-                           (application-job-completions--notice-admissible-p application notice))
+                            (or (application-job-completions--notice-admissible-p application notice)
+                                (application-job-completions--terminal-notice-p application notice :ready-p nil)))
                          (task-completion-pending agent :continuation-only-p t))))
       (when notices
         (reduce #'min notices :key (lambda (notice) (getf notice :ready-at)))))))
+
+(-> application-job-completions--terminal-notice-p (application list &key (:ready-p boolean)) boolean)
+(defun application-job-completions--terminal-notice-p (application notice &key (ready-p t))
+  "Select owned terminal outcomes that cannot authorize automatic inference."
+  (not
+   (null
+    (and (equal (getf notice :owner-conversation)
+                (conversation-identifier (application-conversation application)))
+         (eq (getf notice :completion-policy) ':continue)
+         (member (getf notice :state) '(:completed :failed :aborted))
+         (or (not ready-p) (<= (getf notice :ready-at) (get-universal-time)))
+         (not (task-completion--delivered-p (application-conversation application) (getf notice :id)))
+         (not (application-job-completions--notice-admissible-p application notice))))))
+
+(-> application-job-completions--no-resume-reason (application list) string)
+(defun application-job-completions--no-resume-reason (application notice)
+  "Explain the current inference restriction without offering an authority bypass."
+  (let* ((goal       (application-goal application))
+         (mission-id (getf notice :mission-id))
+         (reason
+           (cond
+             ((and mission-id
+                   (or (not (mission-goal-p goal))
+                       (not (equal mission-id (getf goal :completion-id)))))
+              "the result belongs to a previous mission")
+             ((and (mission-goal-p goal) (plusp (getf goal :unknown-usage 0)))
+              (format nil "the mission is ~A with unknown usage" (getf goal :status)))
+             ((and (mission-goal-p goal) (not (eq (getf goal :status) ':active)))
+              (format nil "the mission is ~A" (getf goal :status)))
+             ((and (mission-goal-p goal) (<= (getf goal :deadline) (get-universal-time)))
+              "the mission deadline has passed")
+             ((mission-goal-p goal)
+              "the mission turn or token budget is exhausted")
+             (t
+              "the goal continuation limit has been reached"))))
+    (format nil "No automatic continuation: ~A. Review the result and resolve the stated blocker, or explicitly decide appropriate separate work."
+            reason)))
+
+(-> application-job-completions--present-terminal (application list) null)
+(defun application-job-completions--present-terminal (application notices)
+  "Present only newly delivered records, using their existing replay identities."
+  (let* ((conversation (application-conversation application))
+         (records      (conversation-records-newest conversation *task-completion-batch-limit*)))
+    (dolist (notice notices)
+      (let* ((receipt (task-completion--receipt (getf notice :id)))
+             (record  (find receipt records :test #'equal
+                            :key                  (lambda (entry) (getf (rest entry) :pending-input-identifier))))
+             (reason  (application-job-completions--no-resume-reason application notice)))
+        (when record
+          (application-present
+           application
+           (append
+            (if (application-ui application)
+                (application--job-completion-entry application (rest record))
+                (list (terminal-span ':notice
+                                     (format nil "Job ~A: ~A.~%" (getf notice :job-id) (getf notice :outcome)))))
+            (list (terminal-span ':plain (string #\Newline))
+                  (terminal-span ':notice reason)))
+           :identifier (application--record-presentation-identifier application record))))))
+  nil)
+
+(-> application-job-completions--deliver-terminal (application-input-controller list) null)
+(defun application-job-completions--deliver-terminal (controller ticket)
+  "Recheck terminal consumption and presentation under controller/session authority."
+  (let* ((application (application-input-controller-application controller))
+         (agent       (application-agent application))
+         (session     (application-localgroup-session application)))
+    (flet ((guard (deliver)
+             (flet ((consume ()
+                      (when (and (application-job-completions--presentation-admissible-p
+                                  controller :session-locked-p t)
+                                 (null (application-input-controller-follow-up-edit-index controller))
+                                 (application-input-controller-pending-persistence-enabled-p controller)
+                                 (equal (getf ticket :conversation)
+                                        (conversation-identifier (application-conversation application)))
+                                 (getf ticket :events)
+                                 (every (lambda (identifier)
+                                          (let ((notice (find identifier (task-completion-pending agent)
+                                                              :key  (lambda (entry) (getf entry :id))
+                                                              :test #'equal)))
+                                            (and notice
+                                                 (application-job-completions--terminal-notice-p application notice))))
+                                        (getf ticket :events)))
+                        (application-job-completions--present-terminal application (funcall deliver)))))
+               (with-lock-held ((application-input-controller-lock controller))
+                 (if session
+                     (with-lock-held ((image-daemon:daemon-runtime-lock session))
+                       (consume))
+                     (consume))))))
+      (task-completion-deliver agent :identifiers (getf ticket :events) :call-with-delivery #'guard)))
+  nil)
 
 (-> application-job-completions--take-maintenance
     (application-input-controller) (option list))
@@ -152,6 +244,16 @@ snapshot cannot change the meaning of an already finalized transcript entry."
   (when (application-job-completions--controller-admissible-p controller)
     (let* ((application (application-input-controller-application controller))
            (agent       (application-agent application)))
+      (let ((notices (remove-if-not
+                      (lambda (notice) (application-job-completions--terminal-notice-p application notice))
+                      (task-completion-pending agent :continuation-only-p t))))
+        (when notices
+          (return-from application-job-completions--take-maintenance
+            (list ':job-completion-maintenance
+                  (list :conversation      (conversation-identifier (application-conversation application))
+                        :terminal-notice-p t
+                        :events            (mapcar (lambda (notice) (getf notice :id))
+                                                   (subseq notices 0 (min (length notices) *task-completion-batch-limit*))))))))
       (when (task-completion-maintenance-needed-p agent)
         (let ((notices (remove-if
                         (lambda (notice)
@@ -199,6 +301,9 @@ as ordinary controller admission, without recursively locking the session."
 (-> application-job-completions-maintain (application-input-controller list) null)
 (defun application-job-completions-maintain (controller ticket)
   "Recheck a bounded maintenance ticket and free receipt-backed capacity without a provider turn."
+  (when (getf ticket :terminal-notice-p)
+    (return-from application-job-completions-maintain
+      (application-job-completions--deliver-terminal controller ticket)))
   (let* ((application (application-input-controller-application controller))
          (agent       (application-agent application))
          (admitted-p
