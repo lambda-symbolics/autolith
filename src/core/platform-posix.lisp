@@ -151,13 +151,13 @@
 (-> posix--environment-directory (string pathname) pathname)
 (defun posix--environment-directory (variable fallback)
   "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
-  (let* ((value    (uiop:getenv variable))
-         (pathname (and (non-empty-string-p value)
-                        (pathname value))))
-    (uiop:ensure-directory-pathname
-     (if (and pathname (uiop:absolute-pathname-p pathname))
-         pathname
-         fallback))))
+  (let ((value (uiop:getenv variable)))
+    (if (and (non-empty-string-p value) (char= (char value 0) #\/))
+        (uiop:parse-native-namestring
+         (if (char= (char value (1- (length value))) #\/)
+             value
+             (concatenate 'string value "/")))
+        (uiop:ensure-directory-pathname fallback))))
 
 (defmethod platform-application-root ((platform posix-platform) kind)
   "Place each root under its XDG base directory or the XDG default below home."

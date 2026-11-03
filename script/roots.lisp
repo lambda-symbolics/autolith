@@ -88,11 +88,16 @@ next build performs."
   "Return the absolute directory VARIABLE names, or NIL when unset or relative."
   (let ((value (uiop:getenv variable)))
     (when (and value (plusp (length value)))
-      (let ((pathname (if (uiop:os-windows-p)
-                          (uiop:parse-native-namestring value)
-                          (pathname value))))
+      (let ((pathname
+              (if (uiop:os-windows-p)
+                  (uiop:ensure-directory-pathname
+                   (uiop:parse-native-namestring value))
+                  (uiop:parse-native-namestring
+                   (if (char= (char value (1- (length value))) #\/)
+                       value
+                       (concatenate 'string value "/"))))))
         (when (uiop:absolute-pathname-p pathname)
-          (uiop:ensure-directory-pathname pathname))))))
+          pathname)))))
 
 (defun autolith-script-known-folder (variable)
   "Return the Windows shell folder that environment VARIABLE names."
