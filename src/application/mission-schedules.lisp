@@ -174,13 +174,20 @@
         (mission--record context))
       (list :mission (getf goal :schedule-identity) :version (getf goal :schedule-version)))))
 
-(-> mission-schedule--current-p (mission-schedule-service list) boolean)
-(defun mission-schedule--current-p (service payload)
-  "Require exact mission identity/version and active state at admission and execution."
+(-> mission-schedule--disposition (mission-schedule-service list) keyword)
+(defun mission-schedule--disposition (service payload)
+  "Separate obsolete mission authority from temporarily unavailable mission work."
   (let ((goal (application-goal (mission-schedule-application service))))
-    (not (null (and (mission-goal-p goal) (eq (getf goal :status) ':active)
-                    (equal (getf goal :schedule-identity) (getf payload :mission))
-                    (equal (getf goal :schedule-version) (getf payload :version)))))))
+    (cond
+      ((or (not (mission-goal-p goal))
+           (not (equal (getf goal :schedule-identity) (getf payload :mission)))
+           (not (equal (getf goal :schedule-version) (getf payload :version)))
+           (member (getf goal :status) '(:verified :exhausted :cancelled :failed :complete)))
+       ':stale)
+      ((eq (getf goal :status) ':active)
+       ':runnable)
+      (t
+       ':suspended))))
 
 (-> application-mission-schedule-add
     (application &key (:id string) (:content string) (:at (option integer))
@@ -208,52 +215,87 @@
                            :id (getf wakeup :id) :token (getf wakeup :token)
                            :outcome outcome :result result))
 
+(-> mission-schedule--withhold (mission-schedule-service list keyword) list)
+(defun mission-schedule--withhold (service wakeup disposition)
+  "Settle unavailable work without withdrawing a suspended mission's schedule."
+  (when (eq disposition ':stale)
+    (cl-jobpond:scheduler-cancel (mission-schedule-scheduler service)
+                                :id (getf wakeup :schedule) :version (getf wakeup :version)))
+  ;; The scheduler's acknowledgement states do not include SKIPPED.
+  (mission-schedule--settle
+   service wakeup :outcome ':cancelled
+   :result                 (if (eq disposition ':stale) ':stale-mission
+                               (list :skipped (getf (application-goal (mission-schedule-application service)) :status)))))
+
+(-> mission-schedule--present-outcomes (application list) list)
+(defun mission-schedule--present-outcomes (application wakeups)
+  "Persist and display skipped or cancelled outcomes outside the schedule lock."
+  (dolist (wakeup wakeups)
+    (let ((result (getf wakeup :result)))
+      (when (or (eq result ':stale-mission)
+                (and (consp result) (eq (first result) ':skipped)))
+        (application-side-status-present
+         application "mission schedule"
+         (list (terminal-span ':notice
+                (format nil "Mission schedule ~A occurrence ~S: ~A (~A)."
+                        (getf wakeup :schedule) (getf wakeup :id)
+                        (if (eq result ':stale-mission) "cancelled" "skipped")
+                        (if (eq result ':stale-mission) "stale mission" (second result)))))))))
+  wakeups)
+
 (-> mission-schedule--admit (mission-schedule-service) list)
 (defun mission-schedule--admit (service)
   "Claim pending occurrences before admission; never repeat an uncertain admission."
   (mission-schedule--require-active service)
   (let ((scheduler (mission-schedule-scheduler service)) (results nil))
-    (dolist (pending (getf (cl-jobpond:scheduler-snapshot scheduler) :wakeups))
-      (when (eq (getf pending :state) ':pending)
-        (let ((wakeup (cl-jobpond:scheduler-claim scheduler :id (getf pending :id)
-                                                :version        (getf pending :version))))
-          (cond
-            ((not (mission-schedule--current-p service (getf wakeup :payload)))
-             (cl-jobpond:scheduler-cancel scheduler :id (getf wakeup :schedule) :version (getf wakeup :version))
-             (push (mission-schedule--settle service wakeup :outcome ':cancelled :result ':stale-mission) results))
-            (t
-             (handler-case
-                 (let ((accepted-p
-                         (funcall (mission-schedule-enqueue service)
-                                  (mission-schedule-application service)
-                                  (task--write-readable-sexp
-                                   (list 'mission-wakeup
-                                         (list 'quote
-                                               (list :id (getf wakeup :id) :token (getf wakeup :token))))))))
-                   (push (if accepted-p wakeup
-                             (mission-schedule--settle service wakeup :outcome ':failed :result ':admission-refused)) results))
-               (error ()
-                 (push (cl-jobpond:scheduler-resolve scheduler :id (getf wakeup :id)
-                                                    :token (getf wakeup :token) :action ':unknown) results))))))))
+    ;; Re-read pending work: cancellation can settle siblings from an earlier snapshot.
+    (loop for pending = (find ':pending (getf (cl-jobpond:scheduler-snapshot scheduler) :wakeups)
+                             :key (lambda (entry) (getf entry :state)))
+          while pending
+          do (let* ((wakeup      (cl-jobpond:scheduler-claim scheduler :id (getf pending :id)
+                                                          :version         (getf pending :version)))
+                    (disposition (mission-schedule--disposition service (getf wakeup :payload))))
+               (cond
+                 ((not (eq disposition ':runnable))
+                  (push (mission-schedule--withhold service wakeup disposition) results))
+                 (t
+                  (handler-case
+                      (let ((accepted-p
+                              (funcall (mission-schedule-enqueue service)
+                                       (mission-schedule-application service)
+                                       (task--write-readable-sexp
+                                        (list 'mission-wakeup
+                                              (list 'quote
+                                                    (list :id (getf wakeup :id) :token (getf wakeup :token))))))))
+                        (push (if accepted-p wakeup
+                                  (mission-schedule--settle service wakeup :outcome ':failed :result ':admission-refused)) results))
+                    (error ()
+                      (push (cl-jobpond:scheduler-resolve scheduler :id (getf wakeup :id)
+                                                         :token (getf wakeup :token) :action ':unknown) results)))))))
     (nreverse results)))
 
 (-> application-mission-schedules-wake (application &key (:now (option integer))) list)
 (defun application-mission-schedules-wake (application &key now)
   "Materialize due times and enqueue only proven current pending mission work."
   (let ((service (application-mission-schedules application)))
-    (with-recursive-lock-held ((mission-schedule-lock service))
-      (mission-schedule--require-active service)
-      (cl-jobpond:scheduler-wake (mission-schedule-scheduler service) :now now)
-      (mission-schedule--admit service))))
+    (mission-schedule--present-outcomes
+     application
+     (with-recursive-lock-held ((mission-schedule-lock service))
+       (mission-schedule--require-active service)
+       (cl-jobpond:scheduler-wake (mission-schedule-scheduler service) :now now)
+       (mission-schedule--admit service)))))
 
 (-> application-mission-schedule-event (application string string &key (:payload t)) list)
 (defun application-mission-schedule-event (application event id &key payload)
   "Deliver one stable external event and admit its current mission occurrences."
   (let ((service (application-mission-schedules application)))
-    (prog1 (with-recursive-lock-held ((mission-schedule-lock service))
-             (mission-schedule--require-active service)
-             (cl-jobpond:scheduler-event (mission-schedule-scheduler service) :event event :id id :payload payload)
-             (mission-schedule--admit service))
+    (prog1
+        (mission-schedule--present-outcomes
+         application
+         (with-recursive-lock-held ((mission-schedule-lock service))
+           (mission-schedule--require-active service)
+           (cl-jobpond:scheduler-event (mission-schedule-scheduler service) :event event :id id :payload payload)
+           (mission-schedule--admit service)))
       (mission-schedule--notify service))))
 
 (-> application-mission-schedule-cancel (application string) list)
@@ -276,10 +318,11 @@
 
 (-> application-mission-schedule-execute (application list) t)
 (defun application-mission-schedule-execute (application ticket)
-  "Execute an admitted ticket only once and recheck mission version at consumption."
+  "Execute an admitted ticket only once and recheck mission authority at consumption."
   (let* ((service   (application-mission-schedules application))
          (scheduler (mission-schedule-scheduler service))
-         (wakeup    nil))
+         (wakeup    nil)
+         (withheld  nil))
     (with-recursive-lock-held ((mission-schedule-lock service))
       (mission-schedule--require-active service)
       (setf wakeup (find (getf ticket :id) (getf (cl-jobpond:scheduler-snapshot scheduler) :wakeups)
@@ -287,14 +330,18 @@
       (unless (and wakeup (eq (getf wakeup :state) ':claimed)
                    (eql (getf ticket :token) (getf wakeup :token)))
         (mission--reject ':schedule-ticket "Wakeup ticket is stale or requires explicit recovery."))
-      (when (or (getf wakeup :cancelled)
-                (not (mission-schedule--current-p service (getf wakeup :payload))))
-        (return-from application-mission-schedule-execute
-          (mission-schedule--settle service wakeup :outcome ':cancelled :result ':stale-mission)))
-      ;; Durable UNKNOWN prevents implicit replay after a crash or a copied command.
-      (cl-jobpond:scheduler-resolve scheduler :id (getf wakeup :id)
-                                            :token (getf wakeup :token) :action ':unknown)
-      (setf (gethash (getf wakeup :id) (mission-schedule-executing service)) t))
+      (let ((disposition (if (getf wakeup :cancelled) ':stale
+                            (mission-schedule--disposition service (getf wakeup :payload)))))
+        (if (eq disposition ':runnable)
+            (progn
+              ;; Durable UNKNOWN prevents implicit replay after a crash or a copied command.
+              (cl-jobpond:scheduler-resolve scheduler :id (getf wakeup :id)
+                                                    :token (getf wakeup :token) :action ':unknown)
+              (setf (gethash (getf wakeup :id) (mission-schedule-executing service)) t))
+            (setf withheld (mission-schedule--withhold service wakeup disposition)))))
+    (when withheld
+      (mission-schedule--present-outcomes application (list withheld))
+      (return-from application-mission-schedule-execute withheld))
     (unwind-protect
          (progn
            (funcall (mission-schedule-run service) application (getf (getf wakeup :payload) :content))
