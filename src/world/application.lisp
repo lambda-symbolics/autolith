@@ -6,10 +6,19 @@
 ;;; The reconciliation hook is release machinery that leaves with
 ;;; src/world/sessions.lisp.
 
+(defvar *world-selection-p* t
+  "Whether reconciling an application's conversation also moves the person into its channel.
+
+True in a terminal running its own session, where the conversation on screen
+is the person's choice. The world server binds it to NIL: the hosts it
+builds and the conversations they install are not where the person is, and
+only a terminal's own attachment or switch moves the person.")
+
 (-> application-world-sync (application &key (:all-p boolean)) null)
 (defun application-world-sync (application &key all-p)
   "Reconcile the active conversation, or every conversation with ALL-P, and select its channel.
 
+The selection moves the person only while *WORLD-SELECTION-P* holds.
 Failures are reported as warnings: the world is a projection of the
 conversations and never blocks a session."
   (let* ((configuration (application-configuration application))
@@ -22,7 +31,7 @@ conversations and never blocks a session."
               (when (and conversation (conversation-persisted-p conversation))
                 (world-reconcile-sessions configuration
                                           :identities (list (conversation-pathname conversation)))))
-          (when conversation
+          (when (and conversation *world-selection-p*)
             (world-session-select configuration (conversation-identifier conversation))))
       (error (cause)
         (warn 'world-session-warning

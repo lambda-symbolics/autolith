@@ -314,7 +314,12 @@
                                    (application-configuration
                                     (world-host-application
                                      (world-server--find-host server other)))))
-                      "a workspace open with a conflicting option gets another channel that takes it")))))
+                      "a workspace open with a conflicting option gets another channel that takes it")
+         (let ((binding (assoc '*world-selection-p*
+                               (world-server--thread-bindings
+                                (world-host-application (world-server--find-host server other))))))
+           (test-assert (and binding (null (rest binding)))
+                        "a channel's threads run without world selection, so hosting moves nobody"))))))
   nil)
 
 (-> test-world-server-resume-order () null)
