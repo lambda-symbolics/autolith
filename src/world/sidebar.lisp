@@ -30,6 +30,11 @@
     :accessor      world-sidebar-current
     :type          (option string)
     :documentation "The channel this terminal is attached to, or NIL.")
+   (shown-p
+    :initform      t
+    :accessor      world-sidebar-shown-p
+    :type          boolean
+    :documentation "Whether the person wants the sidebar beside the session, kept across the terminal's attachments.")
    (entries
     :initform      nil
     :accessor      world-sidebar-entries
@@ -75,6 +80,14 @@
 
 
 ;;;; -- Panel Protocol --
+
+(defmethod screen-panel-shown-p ((panel world-sidebar))
+  "The sidebar remembers whether the person hid it, across screens."
+  (world-sidebar-shown-p panel))
+
+(defmethod (setf screen-panel-shown-p) (shown-p (panel world-sidebar))
+  "Record whether the person wants the sidebar, for every later screen of this terminal."
+  (setf (world-sidebar-shown-p panel) (and shown-p t)))
 
 (defmethod screen-panel-width ((panel world-sidebar))
   "The sidebar's fixed width."
