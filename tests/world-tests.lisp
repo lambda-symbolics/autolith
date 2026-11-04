@@ -814,6 +814,48 @@
                        "a known mention is styled and the unknown one stays in the plain text")))))
   nil)
 
+(-> test-world-mention-boundaries () null)
+(defun test-world-mention-boundaries ()
+  "Test an @ inside a word, an address or a path mentions nobody, in sends and in highlighting alike."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+      (declare (ignore human second-agent))
+      (let* ((world (world-load configuration))
+             (known (participant-name first-agent))
+             (id    (participant-identifier first-agent))
+             (cases (list (list (format nil "Internal account alice@~A.com" known) nil)
+                          (list (format nil "mail me at alice@~A" known) nil)
+                          (list (format nil "see src/@~A/notes" known) nil)
+                          (list (format nil "v1.2@~A" known) nil)
+                          (list (format nil "@~A" known) (list id))
+                          (list (format nil "ask @~A." known) (list id))
+                          (list (format nil "(@~A)" known) (list id))
+                          (list (format nil "hi, @~A, and @~A" known known) (list id))
+                          (list (format nil "quote \"@~A\"" known) (list id))
+                          (list (format nil "newline~%@~A" known) (list id)))))
+        (dolist (case cases)
+          (destructuring-bind (text expected) case
+            (test-assert (equal (world-message-mentions world text) expected)
+                         (format nil "~S mentions ~S" text expected))
+            (let* ((pieces (world-mention--split-span world (cons ':plain text)))
+                   (styled (remove ':plain pieces :key #'first)))
+              (test-assert (and (string= text (format nil "~{~A~}" (mapcar #'rest pieces)))
+                                (eq (not (null styled)) (not (null expected))))
+                           (format nil "highlighting of ~S agrees with the scanner" text)))))
+        (test-assert (equal (getf (world-message-send configuration
+                                                      :sender   (participant-identifier
+                                                                 (world-human-participant world))
+                                                      :channel  "bsecnd2"
+                                                      :text     (format nil "Internal account alice@~A.com"
+                                                                        known)
+                                                      :notify-p nil)
+                                  :channels)
+                            '("bsecnd2"))
+                     "an address in a sent message adds no recipient"))))
+  nil)
+
 (-> test-world-message-presentation () null)
 (defun test-world-message-presentation ()
   "Test delivered channel messages show their sender and channel, and delivery without a controller waits."

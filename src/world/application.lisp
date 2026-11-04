@@ -227,13 +227,10 @@ participant is left in place, only the scan moves past it."
       (let ((at (position #\@ text :start scan)))
         (unless at
           (return))
-        (let* ((end         (or (position-if-not (lambda (character)
-                                                   (or (alphanumericp character)
-                                                       (member character '(#\- #\_))))
-                                                 text :start (1+ at))
-                                (length text)))
+        (let* ((end         (world-mention-end text at))
                (designator  (subseq text (1+ at) end))
-               (participant (and (plusp (length designator))
+               (participant (and (world-mention-boundary-p text at)
+                                 (plusp (length designator))
                                  (world-message-participant world designator))))
           (if participant
               (progn

@@ -623,6 +623,7 @@
   test-world-handles
   test-world-composer-mentions
   test-world-mention-highlighting
+  test-world-mention-boundaries
   test-world-presentation-cache)
 
 (define-test-suite world-server
