@@ -931,12 +931,28 @@ participant owns and resides in, as a plist of :id, :workspace, :title and
 (defun world-participant-move (configuration identifier channel-identifier &key (now (get-universal-time)))
   "Move participant IDENTIFIER into channel CHANNEL-IDENTIFIER and return it.
 
-Other residents of either channel stay where they are."
+Other residents of either channel stay where they are. A channel has at most
+one resident agent, so an agent is refused a channel where another already
+resides; the person moves freely."
   (world--transact
    configuration
    (lambda (world)
      (let ((participant (world--require-participant world identifier ':move-participant)))
        (world--require-channel world channel-identifier ':move-participant)
+       (when (eq (participant-kind participant) ':agent)
+         (let ((resident (find-if (lambda (candidate)
+                                    (and (eq (participant-kind candidate) ':agent)
+                                         (not (string= (participant-identifier candidate)
+                                                       identifier))))
+                                  (world-channel-residents world channel-identifier))))
+           (when resident
+             (error 'world-error
+                    :message    (format nil "Channel ~A already has resident agent ~A; a channel has one agent. Move that one away first."
+                                        (conversation-identifier-display channel-identifier)
+                                        (participant-name resident))
+                    :pathname   nil
+                    :operation  ':move-participant
+                    :identifier identifier))))
        (if (string= (participant-residence participant) channel-identifier)
            (values nil participant)
            (let ((moved (world--copy-participant participant
