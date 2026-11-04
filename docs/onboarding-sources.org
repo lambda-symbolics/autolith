@@ -225,8 +225,6 @@ Autolith runs inside a *live Common Lisp image*. You and the agent can inspect, 
 
 Autolith records persistent self-modifications in a journal and replays them from private image commits.
 
-*Adapt the runtime to your needs.*
-
 Run =autolith --immutable= to prevent self-modification during a session.
 
 * Connect your first provider
@@ -237,9 +235,9 @@ Run =autolith --immutable= to prevent self-modification during a session.
 :END:
 Choose a provider and sign in before your first conversation.
 
-For *ChatGPT*, choose *browser* for direct browser OAuth or *device-code* to enter a code in your browser. For other providers, follow their login or API-key prompts.
+For a *ChatGPT subscription*, choose *chatgpt*. Use *browser* for OAuth with a local callback, or *device-code* to enter the displayed code in your browser.
 
-For an *OpenAI API key*, choose *openai-api*, then paste your key at the hidden prompt. Autolith saves it in its private credential store and discovers your available models. Choose *chatgpt* for a ChatGPT subscription instead.
+For an *OpenAI API key*, choose *openai-api* and paste your key at the hidden prompt. Autolith saves it in its private credential store and discovers your available models. Follow the login or API-key prompts for other providers.
 
 Don't want to sign in yet? Type =continue=.
 
@@ -304,7 +302,7 @@ Press Enter to run it. You can keep typing while it runs.
 :ID: prompt-function
 :VERSION: 4
 :END:
-Use =(prompt ...)= to send text you build in Lisp.
+Use =(prompt ...)= to send a request built in Lisp. Compute the text, read it from a file, or include images.
 
 =(prompt "Review this change")=
 
@@ -312,9 +310,7 @@ Use =:to= to send a request to a named child that is already running:
 =(prompt :to 'test-review
         "Run focused tests and report failures.")=
 
-Without =:to=, you send the request to the primary Autolith. *Use :to for an already-running child.*
-
-Compute text, read it from a file, or include images.
+Omit =:to= to address the primary Autolith.
 
 * Stay in control while work is active
 :PROPERTIES:
@@ -345,14 +341,14 @@ Use =(vault-contents)= to edit the stored Lisp data.
 
 @@brand:draft -> vault -> restore@@
 
-Put work aside without losing what you typed. The vault is for input, not secrets.
+Keep secrets out of the vault.
 
 * Find your way through a project
 :PROPERTIES:
 :ID: indexed-search
 :VERSION: 4
 :END:
-Use *fff indexed search* to find files and code quickly.
+Use indexed search to find files, identifiers, or path patterns:
 
 =(search.files :query "parser")=           fuzzy file paths
 =(search.content :query "parse-request")=  exact identifiers
@@ -374,7 +370,7 @@ To configure Autolith in Lisp, edit:
 
 Find saved preferences and completed lessons in the state directory.
 
-@@dim:Here are your Autolith config directories:@@
+@@dim:Your configuration and state directories:@@
 
 @@code:Config root: {{{:config-root}}}
 State root:  {{{:state-root}}}@@
@@ -490,7 +486,7 @@ Autolith keeps *prose memories* and *structured facts* with their sources. A fac
 =(memories "deploy")=  filter by topic
 =(why "ID")=           inspect sources and dependencies
 
-If a cited file changes, a premise stops holding, or evidence expires, you'll see a stale or invalid status. Ask Autolith to recheck the source before relying on it.
+Check stale or invalid entries before relying on them: a cited file may have changed, a premise may no longer hold, or the evidence may have expired.
 
 @@brand:read the evidence -> record it -> recheck when it changes@@
 
@@ -505,7 +501,7 @@ An admitted *rule* derives facts locally. Move a meeting and its calculated depa
 =(admit-rule "departure")=  approve a proposed rule
 =(what-changed)=            inspect changes and their causes
 
-Use =(why "ID")= to follow a conclusion back through its premises. Assumptions keep their status through derivation. Conflicting facts are shown together; missing evidence means unknown.
+Use =(why "ID")= to inspect a conclusion's premises. A conclusion based on an assumption is still an assumption. Conflicting facts are listed together; missing evidence means unknown.
 
 @@dim:The next-turn notice counts recalled facts and reports changes to facts used earlier.@@
 
@@ -518,7 +514,7 @@ Use =(why "ID")= to follow a conclusion back through its premises. Assumptions k
 
 *Mission fact gates* check accepted evidence. *Action contracts* check requirements before a tool call and describe its predicted effects and observed results.
 
-Approve each proposed contract's exact version, observation mappings, and acceptance policy. A changed definition needs fresh admission.
+Before admitting a contract, review its version, its tool-result-to-fact mappings, and its evidence policy. Admit each changed version separately.
 
 =(mission :status)=  inspect gates and evidence
 
@@ -527,7 +523,7 @@ Approve each proposed contract's exact version, observation mappings, and accept
 :ID: symbolic-procedures
 :VERSION: 1
 :END:
-After three successful turns repeat the same tool-call sequence, Autolith can learn a *parameterized procedure* locally.
+Autolith can learn a *parameterized procedure* locally after repeating the same tool-call sequence in three successful turns.
 
 =(procedures)=  inspect calls, admission, runs, and measured savings
 
@@ -542,11 +538,11 @@ Use =(retire-procedure "NAME")= to stop using and learning that procedure.
 :ID: symbolic-diagnosis
 :VERSION: 2
 :END:
-Autolith checks known facts and tests possible causes before choosing a repair.
+When several causes could explain a failure, Autolith can check known facts and run *diagnostic probes* before choosing a repair.
 Read the results and suggested repair in the diagnosis report.
 Cases without a known cause are marked open.
 
-*Diagnostic probes* are on by default. Turn them off in =(settings)=.
+Probes are on by default. Turn them off in =(settings)=.
 
 =(diagnoses)=  inspect saved diagnoses and recent cases
 
@@ -564,9 +560,7 @@ Autolith can use *recursive language models (RLM)* to read a large input in smal
       -> focused analyses
       -> combined result@@
 
-Autolith chooses recursive inference when it helps, such as reading a long document or comparing resources.
-
-*You do not need to manage the recursion yourself.*
+Ask for a summary, comparison, or extraction. Autolith selects the relevant passages and combines the analyses.
 
 * Delegate independent work
 :PROPERTIES:
@@ -578,8 +572,7 @@ Autolith can start *child agents* for implementation, research, design, or revie
 @@brand:you -> primary Autolith -> named children
                         <- results and evidence@@
 
-View roles with =(task.agents)=. Define a role in a .sexp file with =:name, :description, :instructions=.
-You can also set tools, models, effort, or spawn policy.
+Use =(task.agents)= to browse available roles.
 
 =.autolith/agents/=  project roles
 =<config-root>/agents/=  user roles
@@ -601,6 +594,8 @@ Save this as =.autolith/agents/code-reader.sexp=:
 Use =(task.agents)= to find your new role.
 Ask Autolith to start a child with that role.
 
+Customize the role's models, reasoning effort, or spawn policy in the same file.
+
 * Connect external tools and services
 :PROPERTIES:
 :ID: mcp
@@ -617,12 +612,12 @@ You can also register servers in =init.lisp=. Use =(mcp)= for configuration and 
 
 @@code:Config root: {{{:config-root}}}@@
 
-* Turn expertise into a reusable Skill
+* Save task instructions as a Skill
 :PROPERTIES:
 :ID: skills
 :VERSION: 4
 :END:
-Give Autolith task instructions in a reusable Skill. Use either format.
+Save a skill in either format:
 
 *SKILL.sexp*
 =(:autolith-skill :version 1
@@ -639,9 +634,9 @@ Read the diff. Cite files and line numbers.=
 
 =.autolith/skills/review/=  project skill
 =<config-root>/skills/review/=  user skill
-Use =(skills)= to browse the catalog and =skill.load= to load instructions.
+Use =(skills)= to browse the catalog. Ask Autolith to load a skill for the task at hand.
 
-For executable Skills, add EXECUTABLE.sexp with entrypoints, contracts, and capabilities.
+For executable Skills, add =EXECUTABLE.sexp= with entrypoints, contracts, and capabilities.
 
 * Choose your workspace view
 :PROPERTIES:
@@ -652,9 +647,9 @@ In *fullscreen mode*, scroll through the transcript while keeping the prompt in 
 
 =autolith --fullscreen=
 
-Save the preference through =(settings)=. Use inline mode with ordinary terminal scrollback.
+Choose the mode in =(settings)=. In inline mode, use your terminal's ordinary scrollback.
 
-@@brand:resize freely@@ Scroll long lessons with Page Up/Page Down. Use Up/Down on reading pages.
+Scroll long lessons with Page Up/Page Down. On reading pages, use Up/Down too.
 
 * Welcome to your LISP MACHINE.
 :PROPERTIES:
