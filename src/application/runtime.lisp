@@ -21,6 +21,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :reader        application-world-deliveries
     :type          hash-table
     :documentation "Channel delivery receipts this process has queued or taken as steering.")
+   (world-pending-share
+    :initform      nil
+    :accessor      application-world-pending-share
+    :type          (option string)
+    :documentation "A message the person submitted before this conversation persisted, shared once it does.")
    (world-human
     :initform      nil
     :accessor      application-world-human

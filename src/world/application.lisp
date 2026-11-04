@@ -317,6 +317,13 @@ stops the turn."
                  nil))))
     (when (and (non-empty-string-p text)
                (slot-boundp application 'configuration))
+      ;; A conversation with nothing durable yet has no channel to share
+      ;; from; the share waits for the message to persist.
+      (when (and (null (application-world--served-channel application))
+                 (slot-boundp application 'conversation)
+                 (application-conversation application))
+        (setf (application-world-pending-share application) text)
+        (return-from application-world-share nil))
       (handler-case
           (let* ((configuration (application-configuration application))
                  (channel       (application-world--served-channel application))
@@ -350,6 +357,18 @@ stops the turn."
                                (format nil "The message was not shared: ~A"
                                        (bounded-string (princ-to-string condition) :limit 300)))
           nil)))))
+
+(-> application-world-share-pending (application) list)
+(defun application-world-share-pending (application)
+  "Share the message the person submitted before the conversation persisted, now that it has.
+
+Returns the channels told, or NIL when nothing waited or the conversation
+is still not durable. The pending message is taken once, so a replay of the
+turn shares nothing again."
+  (let ((text (application-world-pending-share application)))
+    (when (and text (application-world--served-channel application))
+      (setf (application-world-pending-share application) nil)
+      (application-world-share application text))))
 
 (-> application-world-share-reply (application t) list)
 (defun application-world-share-reply (application text)

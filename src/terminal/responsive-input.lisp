@@ -3809,7 +3809,11 @@ again."
                       :user-message-persisted-function
                       (lambda (identifier)
                         (application-input-controller--acknowledge-active-work
-                         controller identifier))
+                         controller identifier)
+                        ;; The first durable message gives a fresh channel
+                        ;; its place in the world; a share that waited for
+                        ;; it goes out now.
+                        (application-world-share-pending application))
                       :pending-operations-function
                       (lambda (agent)
                         (application-input-controller--apply-pending-commands
