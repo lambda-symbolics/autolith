@@ -352,7 +352,8 @@ stops the turn."
       (when (and (null (application-world--served-channel application))
                  (slot-boundp application 'conversation)
                  (application-conversation application))
-        (setf (application-world-pending-share application) text)
+        (setf (application-world-pending-share application)
+              (append (application-world-pending-share application) (list text)))
         (return-from application-world-share nil))
       (handler-case
           (let* ((configuration (application-configuration application))
@@ -390,15 +391,17 @@ stops the turn."
 
 (-> application-world-share-pending (application) list)
 (defun application-world-share-pending (application)
-  "Share the message the person submitted before the conversation persisted, now that it has.
+  "Share the messages the person submitted before the conversation persisted, in order, now that it has.
 
 Returns the channels told, or NIL when nothing waited or the conversation
-is still not durable. The pending message is taken once, so a replay of the
+is still not durable. Each pending message is taken once, so a replay of a
 turn shares nothing again."
-  (let ((text (application-world-pending-share application)))
-    (when (and text (application-world--served-channel application))
+  (let ((texts (application-world-pending-share application)))
+    (when (and texts (application-world--served-channel application))
       (setf (application-world-pending-share application) nil)
-      (application-world-share application text))))
+      (remove-duplicates (loop for text in texts
+                               append (application-world-share application text))
+                         :test #'string= :from-end t))))
 
 (-> application-world-share-reply (application t) list)
 (defun application-world-share-reply (application text)
