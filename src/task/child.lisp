@@ -804,10 +804,12 @@ continuation, allowing callers to hold a source lock through actual removal."
          (conversation
           (conversation-create
            configuration
-           :identifier       (task-job-execution-identifier job)
-           :prompt-cache-key (task--child-prompt-cache-key
-                              (task-job-root-conversation-identifier job))
-           :storage-root     (task--artifact-root configuration job)))
+           :identifier        (task-job-execution-identifier job)
+           :prompt-cache-key  (task--child-prompt-cache-key
+                               (task-job-root-conversation-identifier job))
+           :storage-root      (task--artifact-root configuration job)
+           :parent-identifier (conversation-identifier (agent-conversation parent))
+           :agent-name        (job-name job)))
          (worker       (lisp-worker-pool-create configuration))
          (completion   (make-instance 'task-completion))
          (taken        (make-hash-table :test #'equal))

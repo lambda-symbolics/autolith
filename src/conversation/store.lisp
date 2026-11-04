@@ -156,6 +156,18 @@
     :accessor      conversation-prompt-cache-key
     :type          (option non-empty-string)
     :documentation "The root-lineage key shared by provider prompt caches.")
+   (parent-identifier
+    :initarg       :parent-identifier
+    :initform      nil
+    :reader        conversation-parent-identifier
+    :type          (option non-empty-string)
+    :documentation "The conversation of the agent that created this child agent's conversation, or NIL for a top-level one.")
+   (agent-name
+    :initarg       :agent-name
+    :initform      nil
+    :reader        conversation-agent-name
+    :type          (option non-empty-string)
+    :documentation "The readable name the parent gave this child agent, or NIL for a top-level one.")
    (pathname
     :initarg       :pathname
     :reader        conversation-pathname
@@ -1051,8 +1063,10 @@ mentions."
     list)
 (defun conversation--header-record
     (conversation &key (chunk-start-sequence 1))
-  "Return a self-contained portable chunk header for CONVERSATION."
-  (list :conversation
+  "Return a self-contained portable chunk header for CONVERSATION.
+
+Only a child agent's conversation names its parent and itself."
+  (list* :conversation
         :version 2
         :id                   (conversation-identifier conversation)
         :created-at           (conversation-created-at conversation)
@@ -1088,7 +1102,10 @@ mentions."
         (copy-tree (deque->list
                     (conversation-pending-async-lisp-events conversation)))
         :latest-goal-record
-        (copy-tree (conversation-latest-goal-record conversation))))
+        (copy-tree (conversation-latest-goal-record conversation))
+        (and (conversation-parent-identifier conversation)
+             (list :parent     (conversation-parent-identifier conversation)
+                   :agent-name (conversation-agent-name conversation)))))
 
 (-> conversation--initial-publication-lock-pathname (conversation) pathname)
 (defun conversation--initial-publication-lock-pathname (conversation)
@@ -1423,11 +1440,17 @@ The revision is durable source coordination, not a regenerable search payload."
     (configuration &key (:identifier (option string))
                         (:prompt-cache-key (option string))
                         (:storage-root (option pathname))
-                        (:created-at (option timestamp)))
+                        (:created-at (option timestamp))
+                        (:parent-identifier (option string))
+                        (:agent-name (option string)))
     conversation)
 (defun conversation-create
-    (configuration &key identifier prompt-cache-key storage-root created-at)
-  "Create an in-memory conversation that persists under optional STORAGE-ROOT."
+    (configuration &key identifier prompt-cache-key storage-root created-at
+                        parent-identifier agent-name)
+  "Create an in-memory conversation that persists under optional STORAGE-ROOT.
+
+A child agent's conversation records PARENT-IDENTIFIER, the conversation of
+the agent that created it, and AGENT-NAME, the name it was given."
   (let* ((created-at       (or created-at (get-universal-time)))
          (root             (conversation-cache-register-root
                             (uiop:ensure-directory-pathname
@@ -1452,6 +1475,8 @@ The revision is durable source coordination, not a regenerable search payload."
     (make-instance 'conversation
                    :identifier        conversation-id
                    :prompt-cache-key  prompt-cache-key
+                   :parent-identifier parent-identifier
+                   :agent-name        agent-name
                    :pathname          identity
                    :log-pathname      log-pathname
                    :persisted-p       nil
@@ -3367,6 +3392,10 @@ later picker searches read it without scanning the log."
               (make-instance 'conversation
                              :identifier        identifier
                              :prompt-cache-key  prompt-cache-key
+                             :parent-identifier (let ((parent (getf properties :parent)))
+                                                  (and (non-empty-string-p parent) parent))
+                             :agent-name        (let ((name (getf properties :agent-name)))
+                                                  (and (non-empty-string-p name) name))
                              :pathname          identity
                              :log-pathname      log-pathname
                              :persisted-p       t
