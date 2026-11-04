@@ -46,7 +46,8 @@ conversations and never blocks a session."
                        (values (world-reconcile-sessions (application-configuration application)))
                      (error ()
                        (world-load (application-configuration application)))))
-         (channels (world-channels world)))
+         (channels (world-channels world))
+         (parked   (world-parked-agents world)))
     (if channels
         (append (list (terminal-span ':brand (format nil "channels~%")))
                 (loop for channel in channels
@@ -59,7 +60,11 @@ conversations and never blocks a session."
                                                           (channel-resource--participants-text
                                                            (world-channel-residents world identifier))
                                                           (channel-resource--participants-text
-                                                           (world-channel-subscribers world identifier)))))))
+                                                           (world-channel-subscribers world identifier))))))
+                (and parked
+                     (list (terminal-span ':dim
+                                          (format nil "parked, in no channel: ~A~%"
+                                                  (channel-resource--participants-text parked))))))
         (list (terminal-span ':hint "No channels exist yet.")))))
 
 
@@ -159,13 +164,16 @@ well, since the steer persists first and the queued turn then skips."
         for name = (participant-name participant)
         when (and (world-handle-p name)
                   (uiop:string-prefix-p (string-downcase token) (string-downcase name)))
-          collect (let ((channel (world-channel-find world (participant-residence participant))))
+          collect (let* ((residence (participant-residence participant))
+                         (channel   (and residence (world-channel-find world residence))))
                     (list :name        (format nil "@~A" name)
-                          :description (format nil "~(~A~) in ~A~@[ ~A~]"
-                                               (participant-kind participant)
-                                               (conversation-identifier-display
-                                                (participant-residence participant))
-                                               (and channel (channel-title channel)))))))
+                          :description (if residence
+                                           (format nil "~(~A~) in ~A~@[ ~A~]"
+                                                   (participant-kind participant)
+                                                   (conversation-identifier-display residence)
+                                                   (and channel (channel-title channel)))
+                                           (format nil "~(~A~), parked"
+                                                   (participant-kind participant)))))))
 
 (-> application-world-mention-function (configuration) function)
 (defun application-world-mention-function (configuration)
@@ -336,13 +344,13 @@ stops the turn."
                                                   (let ((mentioned (world-participant-find
                                                                     world identifier)))
                                                     (or (null mentioned)
-                                                        (string= (participant-residence mentioned)
-                                                                 channel))))
+                                                        (equal (participant-residence mentioned)
+                                                               channel))))
                                                 (world-message-mentions world text))))
                  (subscribed    (and person
                                      (some (lambda (subscriber)
-                                             (not (string= (participant-residence subscriber)
-                                                           channel)))
+                                             (not (equal (participant-residence subscriber)
+                                                         channel)))
                                            (world-channel-subscribers world channel)))))
             (when (or elsewhere subscribed)
               (getf (world-message-send configuration
@@ -394,13 +402,13 @@ shares nothing. A delivery that fails is reported and never stops the turn."
                                                 (let ((mentioned (world-participant-find
                                                                   world identifier)))
                                                   (or (null mentioned)
-                                                      (string= (participant-residence mentioned)
-                                                               channel))))
+                                                      (equal (participant-residence mentioned)
+                                                             channel))))
                                               (world-message-mentions world text))))
                (subscribed    (and agent
                                    (some (lambda (subscriber)
-                                           (not (string= (participant-residence subscriber)
-                                                         channel)))
+                                           (not (equal (participant-residence subscriber)
+                                                       channel)))
                                          (world-channel-subscribers world channel)))))
           (when (or elsewhere subscribed)
             (getf (world-message-send configuration
@@ -445,7 +453,7 @@ session."
     (application participant &key (:destination (option string)))
     (integer 0))
 (defun application-world-release-agent (application participant &key destination)
-  "Stop APPLICATION's agent PARTICIPANT, which moves to channel DESTINATION or is dismissed, and return the queued messages dropped.
+  "Stop APPLICATION's agent PARTICIPANT, which moves to channel DESTINATION or is parked, and return the queued messages dropped.
 
 The active turn is cancelled at its next safe boundary, as steering is
 taken; the unstarted queue is dropped; running jobs stay with the channel.
@@ -473,7 +481,7 @@ message the conversation has not durably received. The channel is told."
       (application-input-controller--publish-counts controller))
     (application-present
      application
-     (format nil "Agent ~A ~:[was dismissed~;moved to channel ~:*~A~]; this channel has no agent now~@[, and ~D queued message~:P ~:*~[~;was~:;were~] dropped~]. (move \"WHO\") brings an agent here, (domestic) creates a new one."
+     (format nil "Agent ~A ~:[is parked~;moved to channel ~:*~A~]; this channel has no agent now~@[, and ~D queued message~:P ~:*~[~;was~:;were~] dropped~]. (move \"WHO\") brings an agent here, (domestic) creates a new one."
              (participant-name participant)
              (and destination (conversation-identifier-display destination))
              (and (plusp dropped) dropped)))
@@ -541,11 +549,13 @@ only when it is addressed."
   "Move agent PARTICIPANT into CHANNEL: the store first, then the applications serving the channels it leaves and joins.
 
 SOURCE-APPLICATION, when the channel it leaves is served, releases it;
-DESTINATION-APPLICATION, when CHANNEL is served, adopts it with PREFIX. The
-result is a plist of :source, :channel and :dropped."
+DESTINATION-APPLICATION, when CHANNEL is served, adopts it with PREFIX. A
+parked agent leaves no channel. The result is a plist of :source, NIL for a
+parked agent, :channel and :dropped."
   (let ((source (participant-residence participant)))
     (world-participant-move configuration (participant-identifier participant) channel)
-    (world-session-remap configuration source nil)
+    (when source
+      (world-session-remap configuration source nil))
     (world-session-remap configuration channel (participant-identifier participant))
     (let ((dropped (if source-application
                        (application-world-release-agent source-application participant
@@ -557,24 +567,26 @@ result is a plist of :source, :channel and :dropped."
                                        :source source))
       (list :source source :channel channel :dropped dropped))))
 
-(-> world-dismiss-agent (configuration participant &key (:application (option application))) list)
-(defun world-dismiss-agent (configuration participant &key application)
-  "Delete agent PARTICIPANT, leaving its channel without an agent, and return a plist of :channel and :dropped.
+(-> world-park-agent (configuration participant &key (:application (option application))) list)
+(defun world-park-agent (configuration participant &key application)
+  "Park agent PARTICIPANT, leaving its channel without an agent, and return a plist of :channel and :dropped.
 
 APPLICATION, when it serves the channel, stops the agent and drops its
-unstarted prompts. An agent with child participants is refused before
-anything changes: their tasks end first. The channel keeps its history, the
-person and its subscribers, and offers a move or a domestic agent."
+unstarted prompts. The agent keeps its identity, its children and the context
+it carries, and a move brings it into a channel again; its children carry on
+untouched. The channel keeps its history, the person and its subscribers, and
+offers a move or a domestic agent."
   (unless (eq (participant-kind participant) ':agent)
     (error 'world-error
-           :message    (format nil "~A is not an agent; only agents are dismissed."
+           :message    (format nil "~A is not an agent; only agents are parked."
                                (participant-name participant))
            :pathname   nil
-           :operation  ':dismiss
+           :operation  ':park
            :identifier (participant-identifier participant)))
   (let ((channel (participant-residence participant)))
-    (world-participant-delete configuration (participant-identifier participant))
-    (world-session-remap configuration channel nil)
+    (world-participant-park configuration (participant-identifier participant))
+    (when channel
+      (world-session-remap configuration channel nil))
     (list :channel channel
           :dropped (if application
                        (application-world-release-agent application participant)

@@ -207,7 +207,7 @@ session never gets a second agent."
     (mapping
      (let ((participant (world-participant-find world (world-session-mapping-participant mapping))))
        (and participant
-            (string= (participant-residence participant) channel-identifier)
+            (equal (participant-residence participant) channel-identifier)
             participant)))
     (t
      (find-if (lambda (participant)
@@ -503,7 +503,7 @@ retired on the pass that retires the child."
              (relocate-human (channel-id)
                "Move the human out of CHANNEL-ID into any other channel, when it lives there."
                (let ((person (human)))
-                 (when (and person (string= (participant-residence person) channel-id))
+                 (when (and person (equal (participant-residence person) channel-id))
                    (let ((elsewhere (find-if-not (lambda (candidate)
                                                    (string= (channel-identifier candidate)
                                                             channel-id))
@@ -573,15 +573,16 @@ its channel's workspace, so every participant can be mentioned by name."
         (if (or (member name seen :test #'string-equal)
                 (and (eq (participant-kind participant) ':agent)
                      (not (world-handle-p name))))
-            (let* ((channel (world-channel-find world (participant-residence participant)))
-                   (base    (if channel
-                                (world-session--handle-base (channel-workspace channel))
-                                *world-agent-name*))
-                   (handle  (loop for index from 1
-                                  for candidate = (world-handle-suffixed base index)
-                                  unless (or (member candidate seen :test #'string-equal)
-                                             (world-participant-named-p world candidate))
-                                    return candidate)))
+            (let* ((residence (participant-residence participant))
+                   (channel   (and residence (world-channel-find world residence)))
+                   (base      (if channel
+                                  (world-session--handle-base (channel-workspace channel))
+                                  *world-agent-name*))
+                   (handle    (loop for index from 1
+                                    for candidate = (world-handle-suffixed base index)
+                                    unless (or (member candidate seen :test #'string-equal)
+                                               (world-participant-named-p world candidate))
+                                      return candidate)))
               (push handle seen)
               (push (world--participant-record
                      (world--copy-participant participant

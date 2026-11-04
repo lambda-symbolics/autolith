@@ -506,7 +506,8 @@ An @ inside a word or an address, as in alice@bob.com, mentions nobody."
 
 The channel itself gets a post for its residents. Each subscriber and each
 mentioned participant residing elsewhere gets a copy in its residence channel,
-one per channel, subscriptions before mentions. Without POST-P the channel
+one per channel, subscriptions before mentions; a parked agent resides
+nowhere and gets none. Without POST-P the channel
 gets nothing: the message was said there already. SUBSCRIBERS-P, which
 follows POST-P unless given, says whether its subscribers still hear of it,
 as they do of every ordinary message said in the channel."
@@ -533,11 +534,13 @@ as they do of every ordinary message said in the channel."
         (deliver target ':post))
       (when subscribers-p
         (dolist (subscriber (world-channel-subscribers world target))
-          (unless (string= (participant-identifier subscriber) (participant-identifier sender))
+          (unless (or (string= (participant-identifier subscriber) (participant-identifier sender))
+                      (null (participant-residence subscriber)))
             (deliver (participant-residence subscriber) ':subscription))))
       (dolist (mention mentions)
         (let ((mentioned (world-participant-find world mention)))
           (when (and mentioned
+                     (participant-residence mentioned)
                      (not (string= mention (participant-identifier sender))))
             (deliver (participant-residence mentioned) ':mention)))))
     (nreverse pairs)))
@@ -586,8 +589,9 @@ TEXT. Without POST-P only the mentioned participants residing elsewhere are
 told. The send is recorded before any inbox is written, so a copy an inbox
 refuses, or one a crash skips, is delivered later under the same identifier.
 The result is a plist of :id, :channels (every inbox written), :pending (the
-channels whose inbox refused its copy for now) and :notified (the channels
-whose serving process was reached)."
+channels whose inbox refused its copy for now), :parked (the names of the
+mentioned agents that are parked and so got no copy) and :notified (the
+channels whose serving process was reached)."
   (world-message-resume configuration :notify-p notify-p)
   (let* ((world       (world-load configuration))
          (participant (or (world-participant-find world sender)
@@ -626,6 +630,10 @@ whose serving process was reached)."
         (list :id       identifier
               :channels delivered
               :pending  (mapcar #'first refused)
+              :parked   (loop for mention in mentioned
+                              for participant = (world-participant-find world mention)
+                              when (and participant (null (participant-residence participant)))
+                                collect (participant-name participant))
               :notified (and notify-p (world-message-notify configuration delivered)))))))
 
 

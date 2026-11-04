@@ -1322,7 +1322,7 @@
 
 (-> test-world-agent-move () null)
 (defun test-world-agent-move ()
-  "Test a dismissal leaves a channel without an agent, a move brings one and carries the mapping along, and neither invents an agent later."
+  "Test parking leaves a channel without an agent and the agent's children alone, a move brings an agent and carries the mapping along, and neither invents an agent later."
   (with-test-configuration (configuration root)
     (let ((first  (world-tests--persisted-conversation configuration "bfirst1" 1000))
           (second (world-tests--persisted-conversation configuration "bsecnd2" 2000)))
@@ -1344,25 +1344,53 @@
                                                  :name      "task"
                                                  :residence "btask11"
                                                  :parent    (participant-identifier first-agent))))
+            (let ((result (world-park-agent configuration first-agent)))
+              (let* ((world  (world-load configuration))
+                     (parked (world-participant-find world (participant-identifier first-agent)))
+                     (kept   (world-participant-find world (participant-identifier child))))
+                (test-assert (and (string= (getf result :channel) "bfirst1")
+                                  parked
+                                  (null (participant-residence parked))
+                                  (null (agent-of "bfirst1"))
+                                  (equal (world-parked-agents world) (list parked)))
+                             "a parked agent keeps its identity, resides in no channel, and leaves its channel without one")
+                (test-assert (and (string= (participant-residence kept) "btask11")
+                                  (equal (participant-parent kept) (participant-identifier first-agent)))
+                             "parking an agent with a child leaves the child where it was, still its child")))
             (test-assert (handler-case
-                             (progn (world-dismiss-agent configuration first-agent) nil)
+                             (progn (world-park-agent configuration human) nil)
                            (world-error (condition)
-                             (eq (world-error-operation condition) ':delete-participant)))
-                         "an agent with a child participant is not dismissed")
-            (test-assert (handler-case
-                             (progn (world-dismiss-agent configuration human) nil)
-                           (world-error (condition)
-                             (eq (world-error-operation condition) ':dismiss)))
-                         "the person is not dismissed")
+                             (eq (world-error-operation condition) ':park)))
+                         "the person is not parked")
+            (let ((result (world-move-agent configuration
+                                            (world-participant-find (world-load configuration)
+                                                                    (participant-identifier first-agent))
+                                            "bfirst1")))
+              (test-assert (and (null (getf result :source))
+                                (string= (participant-identifier (agent-of "bfirst1"))
+                                         (participant-identifier first-agent))
+                                (string= (participant-identifier
+                                          (world-session-participant configuration first))
+                                         (participant-identifier first-agent)))
+                           "a move brings a parked agent back into a channel"))
             (world-participant-delete configuration (participant-identifier child)))
-          (let ((result (world-dismiss-agent configuration second-agent)))
+          (let ((result (world-park-agent configuration second-agent)))
             (test-assert (and (string= (getf result :channel) "bsecnd2")
                               (zerop (getf result :dropped))
                               (null (agent-of "bsecnd2"))
-                              (null (world-participant-find (world-load configuration)
-                                                            (participant-identifier second-agent)))
+                              (world-participant-find (world-load configuration)
+                                                      (participant-identifier second-agent))
                               (null (world-session-participant configuration second)))
-                         "a dismissed agent is gone and its channel has none"))
+                         "a parked agent's channel has no agent")
+            (let ((sent (world-message-send configuration
+                                            :sender   (participant-identifier human)
+                                            :channel  "bfirst1"
+                                            :text     (format nil "@~A are you there?"
+                                                              (participant-name second-agent))
+                                            :notify-p nil)))
+              (test-assert (and (equal (getf sent :parked) (list (participant-name second-agent)))
+                                (equal (getf sent :channels) '("bfirst1")))
+                           "a mention of a parked agent reaches no channel and the send says it is parked")))
           (conversation-append-user-message second "still here")
           (world-reconcile-sessions configuration :now 3500)
           (test-assert (null (agent-of "bsecnd2"))
@@ -1400,13 +1428,14 @@
            :validate t)
           (let ((world (values (world-reconcile-sessions configuration :now 5000))))
             (test-assert (and (null (world-channel-find world "bsecnd2"))
-                              (world-participant-find world (participant-identifier first-agent)))
-                         "retiring a channel without an agent deletes the channel and nobody"))))))
+                              (world-participant-find world (participant-identifier first-agent))
+                              (world-participant-find world (participant-identifier second-agent)))
+                         "retiring a channel without an agent deletes the channel and nobody, the parked agent included"))))))
   nil)
 
 (-> test-world-agentless-channel () null)
 (defun test-world-agentless-channel ()
-  "Test a channel whose agent was dismissed refuses typed prompts and holds deliveries, and a domestic agent takes it back."
+  "Test a channel whose agent was parked refuses typed prompts and holds deliveries, and a domestic agent takes it back."
   (with-test-configuration (configuration)
     (let ((first (world-tests--persisted-conversation configuration "bfirst1" 1000)))
       (world-tests--persisted-conversation configuration "bsecnd2" 2000)
@@ -1438,13 +1467,13 @@
                    (test-assert (= (application-world-deliver application) 1)
                                 "a message to the channel is queued for its agent")
                    (setf (conversation-context-prefix first) (list (list :carried "private")))
-                   (let ((result (world-dismiss-agent configuration first-agent
-                                                      :application application)))
+                   (let ((result (world-park-agent configuration first-agent
+                                                   :application application)))
                      (test-assert (and (= (getf result :dropped) 2)
-                                       (search "was dismissed" (recording-terminal-output terminal)))
-                                  "dismissing the agent drops the prompt and the message it had not started, and says so")
+                                       (search "is parked" (recording-terminal-output terminal)))
+                                  "parking the agent drops the prompt and the message it had not started, and says so")
                      (test-assert (null (conversation-context-prefix first))
-                                  "the context the dismissed agent carried leaves with it"))
+                                  "the context the parked agent carried leaves with it"))
                    (test-assert (and (eq (submit "more words") ':rejected)
                                      (search "this channel has no agent"
                                              (recording-terminal-output terminal)))
