@@ -619,7 +619,34 @@
             (test-assert (and (null (world-inbox-deliveries configuration "bfirst1"))
                               (not (probe-file (world-outbox-pathname configuration id)))
                               (null (world-outbox-identifiers configuration)))
-                         "a recipient that read its copy gets no second one, and the record is gone")))
+                         "a recipient that read its copy gets no second one, and the record is gone"))
+          (world-inbox-settle configuration "bsecnd2"
+                              (mapcar #'world-delivery-identifier
+                                      (world-inbox-deliveries configuration "bsecnd2")))
+          (world-inbox-append configuration "bsecnd2" (list (delivery "filler2" "bsecnd2")))
+          (let* ((result (world-message-send configuration
+                                             :sender   (participant-identifier human)
+                                             :channel  "bfirst1"
+                                             :text     "again"
+                                             :notify-p nil))
+                 (id     (getf result :id))
+                 (taken  (make-hash-table :test #'equal)))
+            (test-assert (equal (getf result :pending) '("bsecnd2"))
+                         "a second send against the full inbox leaves its copy pending again")
+            (setf (gethash "channel:filler2" taken) ':taken)
+            (test-assert (world-inbox-steering-ack configuration
+                                                   :channel    "bsecnd2"
+                                                   :identifier "channel:filler2"
+                                                   :taken      taken)
+                         "a steering receipt settles the delivery it names")
+            (test-assert (and (= 1 (length (world-inbox-deliveries configuration "bsecnd2")))
+                              (string= (world-delivery-identifier
+                                        (first (world-inbox-deliveries configuration "bsecnd2")))
+                                       id)
+                              (null (world-outbox-identifiers configuration)))
+                         "settling by receipt frees the inbox and delivers the pending copy at once")
+            (world-inbox-settle configuration "bfirst1" (list id))
+            (world-inbox-settle configuration "bsecnd2" (list id))))
         (world-outbox-write configuration "crash11"
                             (list (cons "bfirst1" (delivery "crash11" "bfirst1"))
                                   (cons "bsecnd2" (delivery "crash11" "bsecnd2"))))
