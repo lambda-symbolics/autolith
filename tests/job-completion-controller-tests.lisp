@@ -1020,7 +1020,6 @@
                         "recording does not loosen conversation ownership"))))))
   nil)
 
-
 (-> test-job-completion-reservation-release () null)
 (defun test-job-completion-reservation-release ()
   "Keep a ready completion pending until unused inference reservations settle."
@@ -1028,15 +1027,15 @@
    (lambda (application controller parent job)
      (declare (ignore job))
      (application-mission-resume application)
-     (let* ((context     (mission-context-find (application-conversation application)))
+     (let* ((context                          (mission-context-find (application-conversation application)))
             (*provider-maximum-output-tokens* 1000)
-            (reservation (mission--reserve-inference context))
-            (notice      (first (task-completion-pending parent)))
-            (waiting     (bt:make-semaphore :count 0))
-            (completed   (bt:make-semaphore :count 0))
-            (wait        (symbol-function 'condition-wait))
-            (thread      nil)
-            (work        nil))
+            (reservation                      (mission--reserve-inference context))
+            (notice                           (first (task-completion-pending parent)))
+            (waiting                          (bt:make-semaphore :count 0))
+            (completed                        (bt:make-semaphore :count 0))
+            (wait                             (symbol-function 'condition-wait))
+            (thread                           nil)
+            (work                             nil))
        (test-assert (and notice
                          (not (application-job-completions--notice-admissible-p application notice)))
                     "the outstanding request temporarily holds every available token")
