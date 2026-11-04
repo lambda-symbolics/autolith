@@ -461,11 +461,29 @@ started must not end one another terminal attached to since."
                                  (conversation-identifier-display channel))
              :operation  ':close
              :identifier channel))
-    (if (and unattached-only-p (world-host-attached-p host))
-        (list :ok :operation ':close :session-id (world-host-channel host) :closed-p nil)
-        (progn
-          (world-server--close-host host)
-          (list :ok :operation ':close :session-id (world-host-channel host) :closed-p t)))))
+    (let ((session (application-localgroup-session (world-host-application host))))
+      (flet ((close-host ()
+               "Close HOST and answer that it was."
+               (world-server--close-host host)
+               (list :ok :operation ':close :session-id (world-host-channel host) :closed-p t)))
+        (cond
+          ((not unattached-only-p)
+           (close-host))
+          ((null session)
+           ;; No endpoint yet, so nothing can attach before the close.
+           (close-host))
+          (t
+           ;; The check and the commitment share the lock under which the
+           ;; endpoint admits terminals, so none slips in between them, and
+           ;; none is admitted after the close is committed.
+           (let ((committed-p
+                   (with-lock-held ((image-daemon:daemon-runtime-lock session))
+                     (unless (world-host-attached-p host)
+                       (setf (localgroup-session-closing-p session) t)))))
+             (if committed-p
+                 (close-host)
+                 (list :ok :operation ':close :session-id (world-host-channel host)
+                           :closed-p nil)))))))))
 
 
 ;;;; -- Hosting --

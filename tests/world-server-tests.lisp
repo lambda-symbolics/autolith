@@ -509,6 +509,8 @@
                               :session-id))
             (host-a     (world-server--find-host server id-a))
             (host-b     (world-server--find-host server id-b))
+            (session-a  (world-server-tests--session server id-a))
+            (session-b  (world-server-tests--session server id-b))
             (terminal-a (terminal-ui-terminal (application-ui (world-host-application host-a))))
             (attachment (make-instance 'image-daemon:attachment
                                        :socket nil
@@ -519,13 +521,16 @@
        (let ((answer (localgroup-query-record entry ':close
                                               (list :channel id-a :unattached-only-p t))))
          (test-assert (and (null (getf (rest answer) :closed-p))
-                           (world-host-live-p host-a))
+                           (world-host-live-p host-a)
+                           (localgroup-session-admits-attachment-p session-a))
                       "a channel another terminal controls survives a close meant for an idle one"))
        (let ((answer (localgroup-query-record entry ':close
                                               (list :channel id-b :unattached-only-p t))))
          (test-assert (and (getf (rest answer) :closed-p)
-                           (task-tests--wait-until (lambda () (not (world-host-live-p host-b))) 30))
-                      "a channel nobody controls is closed on request")))))
+                           (not (localgroup-session-admits-attachment-p session-b)))
+                      "a channel nobody controls is committed to close and admits no terminal from then on")
+         (test-assert (task-tests--wait-until (lambda () (not (world-host-live-p host-b))) 30)
+                      "the committed close ends the channel")))))
   nil)
 
 (-> test-world-server-open-before-checkpoint () null)
