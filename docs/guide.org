@@ -1709,7 +1709,9 @@ Messages travel between channels through the same path for people and agents.
 may be any part of the identifier that names one channel, as in
 =channel:id/ID= and =(switch "ID")=; the agent
 tools =channel.send=, =channel.subscribe= and =channel.unsubscribe= do the same
-for an agent. A message reaches the channel's residents, every subscriber of
+for an agent, a child task's agent included: it is the resident of its nested
+channel and messages as that participant under its role's ordinary tool
+policy. A message reaches the channel's residents, every subscriber of
 the channel and every participant it mentions as =@name= or =@id=, wherever
 they reside. An idle agent wakes with the message; a working one receives it
 as a steer labeled with the sender and the channel. The transcript shows the
