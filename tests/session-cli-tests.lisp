@@ -409,10 +409,17 @@
                 (when attach-error (error attach-error))
                 (when switch-to
                   (list :switch :session-id (shiftf switch-to nil)))))
+        (list 'world-client-entry
+              (lambda (candidate)
+                (declare (ignore candidate))
+                (cons "world" (list :session-id "world"))))
         (list 'localgroup-query-record
               (lambda (entry operation &optional arguments)
-                (declare (ignore entry arguments))
-                (push operation queried)
+                (declare (ignore entry))
+                (push (if (eq operation ':close)
+                          (list operation (getf arguments :unattached-only-p))
+                          operation)
+                      queried)
                 (list :ok)))
         (list 'localgroup-relay-exit
               (lambda (&rest arguments) (declare (ignore arguments))))
@@ -454,8 +461,8 @@
                             (progn (main-dispatch '()) nil)
                           (localgroup-error (condition)
                             (and (search "rejected" (autolith-error-message condition))
-                                 (equal queried '(:kill)))))
-                        "a failed attach kills the channel started for this terminal")
+                                 (equal queried '((:close t))))))
+                        "a failed attach asks the server to close the channel started for this terminal while nobody controls it")
            (setf started-p nil
                  queried   nil)
            (test-assert (handler-case
