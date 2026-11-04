@@ -115,14 +115,26 @@ original metadata as provenance and adapt visible section ranges to its prefix."
                    :error-code        (tool-result-error-code result)
                    :denied-p          (tool-result-denied-p result))))
 
+(-> tool-contracts-for-call (configuration tool json-object) list)
+(defun tool-contracts-for-call (configuration tool arguments)
+  "Return (CONTRACT ENVIRONMENT) for each contract describing this call of TOOL, by its display or canonical name."
+  (let ((display   (tool-display-name tool))
+        (canonical (tool-canonical-name tool)))
+    (append (knowledge-contracts-for-call configuration display arguments)
+            (and (string/= display canonical)
+                 (knowledge-contracts-for-call configuration canonical arguments)))))
+
 (-> tool-execute-with-contracts (tool tool-context json-object) tool-result)
 (defun tool-execute-with-contracts (tool context arguments)
-  "Execute TOOL with ARGUMENTS under CONTEXT, honoring the contracts describing the call."
+  "Execute TOOL with ARGUMENTS under CONTEXT, honoring the contracts describing the call.
+
+A contract names its tool as people see it, such as service.ping for an MCP
+server's tool, or by its canonical dispatch name; both find it."
   (let* ((configuration (tool-context-configuration context))
          (name          (tool-canonical-name tool))
          (matches       (and configuration
                              (knowledge-capture-p configuration)
-                             (handler-case (knowledge-contracts-for-call configuration name arguments)
+                             (handler-case (tool-contracts-for-call configuration tool arguments)
                                (knowledge-error (condition)
                                  (return-from tool-execute-with-contracts
                                    (tool-failure

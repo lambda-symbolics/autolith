@@ -29,14 +29,48 @@
     :documentation "The repairs tried, newest first."))
   (:documentation "A remote service with one fault and the tools that probe and repair it."))
 
-(-> diagnosis-tests--world-create (configuration (option string) &key (:config-p boolean))
+(defclass diagnosis-tests--wire-named-tool (learning-tests--scripted-tool)
+  ((display
+    :initarg       :display
+    :reader        diagnosis-tests--wire-named-tool-display
+    :type          string
+    :documentation "The name people see, as an MCP server's tool shows server.tool."))
+  (:documentation "A scripted tool whose canonical name differs from its display name, as an MCP tool's does."))
+
+(defmethod tool-display-name ((tool diagnosis-tests--wire-named-tool))
+  "Show the tool by its server and operation name."
+  (diagnosis-tests--wire-named-tool-display tool))
+
+(-> diagnosis-tests--wire-named-tool (tool-registry string function) tool)
+(defun diagnosis-tests--wire-named-tool (registry tool respond)
+  "Register scripted TOOL under a wire name, as MCP tools are, showing TOOL as its display name."
+  (let* ((dot      (position #\. tool))
+         (instance (make-instance 'diagnosis-tests--wire-named-tool
+                                  :namespace   (format nil "mcp__~A_0a1b2c" (subseq tool 0 dot))
+                                  :name        (format nil "~A_3d4e5f" (subseq tool (1+ dot)))
+                                  :display     tool
+                                  :description "A scripted tool with a wire name."
+                                  :parameters  (tool-object-schema (json-object) nil)
+                                  :respond     respond)))
+    (tool-registry-register registry instance)
+    instance))
+
+(-> diagnosis-tests--world-create
+    (configuration (option string) &key (:config-p boolean) (:wire-names-p boolean))
     diagnosis-tests--world)
-(defun diagnosis-tests--world-create (configuration fault &key (config-p t))
-  "Return a world under CONFIGURATION whose service has FAULT; without CONFIG-P its endpoint cannot be read."
+(defun diagnosis-tests--world-create (configuration fault &key (config-p t) wire-names-p)
+  "Return a world under CONFIGURATION whose service has FAULT; without CONFIG-P its endpoint cannot be read.
+
+With WIRE-NAMES-P its probe tools have wire names and show service.ping and
+the rest only as their display names, as an MCP server's tools do."
   (let* ((registry (make-default-tool-registry :configuration configuration))
          (world    (make-instance 'diagnosis-tests--world :fault fault :registry registry)))
     (flet ((fault-p (name)
-             (equal (diagnosis-tests--world-fault world) name)))
+             (equal (diagnosis-tests--world-fault world) name))
+           (learning-tests--tool (registry tool respond)
+             (if wire-names-p
+                 (diagnosis-tests--wire-named-tool registry tool respond)
+                 (learning-tests--tool registry tool respond))))
       (learning-tests--tool registry "service.ping"
                             (lambda (arguments)
                               (declare (ignore arguments))
@@ -163,6 +197,24 @@
        (lambda ()
          (funcall function configuration)))
       (test-assert (zerop requests) (format nil "~A makes no provider request" label))))
+  nil)
+
+(-> test-diagnosis-display-names () null)
+(defun test-diagnosis-display-names ()
+  "Test contracts and probes naming tools as people see them work for tools with wire names, as MCP tools have."
+  (diagnosis-tests--call-with
+   "stale-endpoint by display names"
+   (lambda (configuration)
+     (let* ((world  (diagnosis-tests--world-create configuration "stale-endpoint" :wire-names-p t))
+            (report (diagnosis-tests--diagnose configuration world (diagnosis-tests--definition)))
+            (case   (first (knowledge-base-diagnosis-cases
+                            (knowledge-base-read configuration)
+                            (knowledge--workspace configuration)))))
+       (test-assert (and (equal (getf case :remaining) '("stale-endpoint"))
+                         (equal (mapcar (lambda (probe) (getf probe :tool)) (getf case :probes))
+                                '("service.ping" "service.config"))
+                         (search "Diagnosis remote-service: stale-endpoint." report))
+                    "probes named service.ping and service.config run the wire-named tools and find the stale endpoint"))))
   nil)
 
 (-> test-diagnosis-predictions () null)
