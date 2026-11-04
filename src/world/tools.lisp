@@ -84,7 +84,7 @@
                            :description description
                            :parameters  (tool-object-schema properties required)))))
     (register "send"
-              "Send a message to a channel. It reaches the channel's residents, its subscribers and every participant mentioned as @name or @id. Read channel:list for channels and participants."
+              "Send a message to a channel. It reaches the channel's residents, its subscribers and every participant mentioned as @name or @id. @parent reaches your parent agent; when it is parked, the nearest ancestor that is not, or the person. Read channel:list for channels and participants."
               (json-object "channel" (tool-string-property "The channel identifier.")
                            "text" (tool-string-property
                                    (format nil "The message, 1 to ~:D characters."
