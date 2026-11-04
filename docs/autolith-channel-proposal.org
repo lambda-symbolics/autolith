@@ -101,10 +101,16 @@ Client
     idle until the person writes there (as the channel's only agent, a plain
     message is addressed to it) or someone mentions it from another channel.
     (Decided 2026-11-04.)
-  - A channel with no resident agent, because its agent left or it was opened
-    that way, keeps its history, the person and its subscribers. Opening it offers
-    two things: move an agent in, or create a new domestic agent for it.
+  - A channel with no resident agent, because its agent left or was dismissed,
+    keeps its history, the person and its subscribers. Opening it offers two
+    things: move an agent in, or create a new domestic agent for it.
     (Decided 2026-11-04.)
+  - Dismissing an agent deletes it and leaves its channel without one, after
+    stopping it the way a move does; an agent with child participants is
+    refused. Since every conversation starts with its agent and a move needs a
+    destination without one, a dismissal is what makes the first move possible.
+    (Chosen 2026-11-04 by the implementer to complete the move design; open to
+    revision.)
 - Participants can discover, inspect, read, subscribe to, and message other channels
   and participants across the world, including across projects.
 - Participant parent/child relationships are separate from channel nesting.

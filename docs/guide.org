@@ -1691,6 +1691,24 @@ letters, digits, hyphens and underscores, matched without regard to case.
 renames the participant =WHO= names by handle, identifier or a part of it,
 yourself included. A name another participant has is refused.
 
+A channel has one resident agent. =(move "WHO")= moves the agent =WHO=
+names, by handle, identifier or a part of it, into this channel, and
+=(move "WHO" "ID")= into channel =ID=. The move stops the agent where it is
+the way a steer does: the tool call in flight finishes, no new request
+starts, and the prompts it had not started are dropped with a notice in
+the channel it leaves. In its new channel the agent keeps the context it
+had, until the world server restarts, and waits: it works again when you
+write there or someone mentions it from another channel. A move into a
+channel that already has an agent is refused, and so is moving yourself;
+you move by attaching a terminal. =(dismiss "WHO")= deletes an agent
+instead, after it stops the same way; an agent with running tasks is
+refused. A channel without an agent, because its agent moved or was
+dismissed, keeps its history, you and its subscribers, and refuses typed
+prompts until =(move "WHO")= brings an agent or =(domestic)= creates a new
+one for it, named after the workspace and using this session's model.
+Messages sent to such a channel wait in its inbox until an agent is there
+to read them.
+
 Typing =@= in the composer completes participant handles the way it completes
 workspace paths; a token with a slash stays a path. A message you type that
 mentions a participant residing in another channel is delivered to that
