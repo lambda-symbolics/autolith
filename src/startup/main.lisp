@@ -1190,20 +1190,6 @@ request it conflicts with from one that says nothing."
           (when (getopt* command ':almighty)
             (list :theme ':almighty))))
 
-(-> main--select-world-channel (configuration string) null)
-(defun main--select-world-channel (configuration session-id)
-  "Move the person into channel SESSION-ID, the one this terminal attaches to.
-
-A world that cannot be read only warns: the attachment goes ahead either
-way."
-  (handler-case
-      (world-session-select configuration session-id)
-    (error (cause)
-      (warn 'world-session-warning
-            :pathname (configuration-world-sessions-path configuration)
-            :cause    cause)))
-  nil)
-
 (-> main--run-world-client
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:pristine-p boolean)
@@ -1239,9 +1225,8 @@ sidebar of the world follows the terminal from channel to channel."
                  (handler-case
                      (progn
                        (setf (world-sidebar-current panel) session-id)
-                       ;; Attaching is the person's choice of channel; the
-                       ;; server's own hosting never moves them.
-                       (main--select-world-channel configuration session-id)
+                       ;; The server moves the person into the channel once
+                       ;; this terminal's control attachment is admitted.
                        (localgroup-attach-record configuration record ':control :panel panel))
                    (serious-condition (condition)
                      ;; A channel started for this terminal would otherwise

@@ -270,6 +270,34 @@ participant is left in place, only the scan moves past it."
         (nreverse pieces)
         (list span))))
 
+(-> application-world-attached (application) null)
+(defun application-world-attached (application)
+  "Move the person into APPLICATION's channel: a terminal just took control of it.
+
+Only a channel the world server hosts moves anyone, and only once the
+attachment is admitted; a direct session selected its conversation when it
+opened, and a terminal whose attachment fails moves nobody. A world that
+cannot be read only warns."
+  (when (and (application-world-server application)
+             (slot-boundp application 'configuration))
+    (let ((channel       (application-world--served-channel application))
+          (configuration (application-configuration application)))
+      (when channel
+        (handler-case
+            (progn
+              ;; A conversation that persisted since the last reconciliation
+              ;; gets its channel first, so there is one to move into.
+              (world-reconcile-sessions configuration
+                                        :identities (list (conversation-pathname
+                                                           (application-conversation application))))
+              (world-session-select configuration channel))
+          (error (cause)
+            (warn 'world-session-warning
+                  :pathname (configuration-world-sessions-path
+                             (application-configuration application))
+                  :cause    cause))))))
+  nil)
+
 (-> application-world-share (application t) list)
 (defun application-world-share (application input)
   "Share INPUT, the person's message to this channel, with the participants elsewhere it reaches, and return the channels told.
