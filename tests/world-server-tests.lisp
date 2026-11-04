@@ -711,7 +711,7 @@
 
 (-> test-world-server-move () null)
 (defun test-world-server-move ()
-  "Test a dismissal and a move through the server stop the agent where it was, keep its context for a channel opened later, and adopt it where it goes."
+  "Test parking and a move through the server stop the agent where it was, keep its context for a channel opened later, and adopt it where it goes."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry (world-client-entry configuration))
@@ -747,9 +747,11 @@
                                (string= (getf answer :name) (participant-name agent-b))
                                (string= (getf answer :channel) id-b)
                                (not (application-world-agent-present-p app-b))
-                               (null (world-participant-find (world-load configuration)
-                                                             (participant-identifier agent-b))))
-                          "a dismissal through the server deletes the agent and leaves its hosted channel without one"))
+                               (null (participant-residence
+                                      (world-participant-find (world-load configuration)
+                                                              (participant-identifier agent-b))))
+                               (gethash (participant-identifier agent-b) *world-carried-contexts*))
+                          "a dismissal through the server parks the agent with its context and leaves its hosted channel without one"))
            (localgroup-query-record entry ':close (list :channel id-b))
            (test-assert (task-tests--wait-until
                          (lambda () (null (world-server--find-host server id-b)))

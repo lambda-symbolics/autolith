@@ -57,9 +57,10 @@
     :documentation "The participant that created this one, when any.")
    (residence
     :initarg       :residence
+    :initform      nil
     :reader        participant-residence
-    :type          non-empty-string
-    :documentation "The channel this participant resides in.")
+    :type          (option non-empty-string)
+    :documentation "The channel this participant resides in, or NIL for a parked agent, which resides nowhere.")
    (subscriptions
     :initarg       :subscriptions
     :initform      nil
@@ -252,7 +253,9 @@ becomes one hyphen, with no hyphen at either end."
                  (world--name-p (getf properties :name))
                  (or (null (getf properties :parent))
                      (non-empty-string-p (getf properties :parent)))
-                 (non-empty-string-p (getf properties :residence))
+                 (or (non-empty-string-p (getf properties :residence))
+                     (and (null (getf properties :residence))
+                          (eq (getf properties :kind) ':agent)))
                  (world--identifier-list-p (getf properties :subscriptions))
                  (typep (getf properties :presence) 'participant-presence)
                  (world-settings-p (getf properties :settings))
@@ -412,9 +415,10 @@ becomes one hyphen, with no hyphen at either end."
                   :operation  operation
                   :identifier identifier)))
     (maphash (lambda (identifier participant)
-               (unless (gethash (participant-residence participant)
-                                (world--channel-table world))
-                 (fail "A participant resides in a channel that does not exist." identifier))
+               (let ((residence (participant-residence participant)))
+                 (unless (or (and (null residence) (eq (participant-kind participant) ':agent))
+                             (and residence (gethash residence (world--channel-table world))))
+                   (fail "A participant resides in a channel that does not exist." identifier)))
                (let ((parent (participant-parent participant)))
                  (when (and parent (not (gethash parent (world--participant-table world))))
                    (fail "A participant's parent does not exist." identifier)))
@@ -630,7 +634,7 @@ fragment through WORLD-CHANNEL-RESOLVE."
 (defun world-channel-residents (world channel-identifier)
   "Return the participants residing in CHANNEL-IDENTIFIER, most recently changed first."
   (remove-if-not (lambda (participant)
-                   (string= (participant-residence participant) channel-identifier))
+                   (equal (participant-residence participant) channel-identifier))
                  (world-participants world)))
 
 (-> world-channel-subscribers (world string) list)
@@ -953,13 +957,48 @@ resides; the person moves freely."
                     :pathname   nil
                     :operation  ':move-participant
                     :identifier identifier))))
-       (if (string= (participant-residence participant) channel-identifier)
+       (if (equal (participant-residence participant) channel-identifier)
            (values nil participant)
            (let ((moved (world--copy-participant participant
                                                  :residence  channel-identifier
                                                  :updated-at (max now (participant-updated-at
                                                                        participant)))))
              (values (list (world--participant-record moved)) moved)))))))
+
+(-> world-participant-park (configuration string &key (:now timestamp)) participant)
+(defun world-participant-park (configuration identifier &key (now (get-universal-time)))
+  "Park agent IDENTIFIER, taking it out of every channel, and return it.
+
+A parked agent keeps its identity, its children and its subscriptions, and a
+move brings it into a channel again. Only agents park; the person always
+resides somewhere."
+  (world--transact
+   configuration
+   (lambda (world)
+     (let ((participant (world--require-participant world identifier ':park)))
+       (unless (eq (participant-kind participant) ':agent)
+         (error 'world-error
+                :message    (format nil "~A is not an agent; only agents are parked."
+                                    (participant-name participant))
+                :pathname   nil
+                :operation  ':park
+                :identifier identifier))
+       (if (null (participant-residence participant))
+           (values nil participant)
+           (let ((parked (world--copy-participant participant
+                                                  :residence  nil
+                                                  :updated-at (max now (participant-updated-at
+                                                                        participant)))))
+             (values (list (world--participant-record parked)) parked)))))))
+
+(-> world-parked-agents (world) list)
+(defun world-parked-agents (world)
+  "Return WORLD's parked agents, oldest first."
+  (sort (remove-if-not (lambda (participant)
+                         (and (eq (participant-kind participant) ':agent)
+                              (null (participant-residence participant))))
+                       (copy-list (world-participants world)))
+        #'< :key #'participant-created-at))
 
 (-> world-participant-subscribe (configuration string string &key (:now timestamp)) participant)
 (defun world-participant-subscribe (configuration identifier channel-identifier &key (now (get-universal-time)))
@@ -1118,7 +1157,7 @@ are the caller's check."
          (dolist (descendant (world-participant-descendants world (participant-identifier resident)))
            (unless (member (participant-identifier descendant) participants :test #'string=)
              (error 'world-error
-                    :message    (format nil "Deleting ~A would delete its descendant ~A in channel ~A; move it or include it in the deletion."
+                    :message    (format nil "Deleting ~A would delete its descendant ~A ~:[parked in no channel~;in channel ~:*~A~]; move it or include it in the deletion."
                                         (participant-identifier resident)
                                         (participant-identifier descendant)
                                         (participant-residence descendant))
