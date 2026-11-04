@@ -841,6 +841,21 @@
                          "the reply's copy comes from this channel's agent"))
           (test-assert (null (application-world-share-reply application nil))
                        "a reply without verbal text shares nothing")
+          (let ((before (length (world-inbox-deliveries configuration "bsecnd2"))))
+            (flet ((reply (observer text)
+                     "Report TEXT as a persisted reply to OBSERVER and return the copies bsecnd2 got."
+                     (agent-observer-status observer ':assistant-response-persisted (list :text text))
+                     (- (length (world-inbox-deliveries configuration "bsecnd2")) before)))
+              (test-assert (zerop (reply (application-agent-observer
+                                          application
+                                          :operation-request (list :operation "channel" :summary "hi"))
+                                         "an answer to a channel message"))
+                           "a reply to a channel message reaches no subscriber, so subscribed agents cannot answer each other forever")
+              (test-assert (zerop (reply (application-agent-observer application :continuation-p t)
+                                         "an answer to a job completion"))
+                           "a reply in an automatic continuation reaches no subscriber")
+              (test-assert (= (reply (application-agent-observer application) "an answer to the person") 1)
+                           "the reply to the person's typed message reaches the subscriber")))
           (let* ((fresh  (conversation-create configuration :identifier "bfresh4" :created-at 4000))
                  (new    (make-instance 'application
                                         :configuration configuration
