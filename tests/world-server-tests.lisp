@@ -290,6 +290,24 @@
                          (eq (application-permission-mode (world-host-application host))
                              ':full-access))
                     "a permission mode stated explicitly takes effect on a channel nobody controls")
+       (test-call-with-function-replacements
+        (list (list 'localgroup--task-counts
+                    (lambda (application)
+                      (declare (ignore application))
+                      (values 1 1))))
+        (lambda ()
+          (test-assert (and (handler-case
+                                (progn (localgroup-query-record
+                                        entry ':open
+                                        (list :channel id
+                                              :launch  '(:permission-mode :ask)
+                                              :rows 30 :columns 90 :styled-p nil))
+                                       nil)
+                              (autolith-error (condition)
+                                (search "while it is working" (autolith-error-message condition))))
+                            (eq (application-permission-mode (world-host-application host))
+                                ':full-access))
+                       "a channel running a job keeps its permission mode and refuses the open that would change it")))
        (test-assert (handler-case
                         (progn (localgroup-query-record
                                 entry ':open

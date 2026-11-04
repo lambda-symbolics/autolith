@@ -768,12 +768,20 @@ which only move the channel's own record."
   "Return the option of LAUNCH that channel HOST runs differently and cannot change, or NIL.
 
 The model, provider, immutable mode, fullscreen mode and theme are fixed when
-a channel's application is built; the permission mode is not."
-  (let* ((configuration (application-configuration (world-host-application host)))
+a channel's application is built. The permission mode changes only while the
+channel is not working: a turn or a job already running keeps the mode it
+started under."
+  (let* ((application   (world-host-application host))
+         (configuration (application-configuration application))
          (model         (getf launch :model))
          (provider      (getf launch :provider))
-         (theme         (getf launch :theme)))
+         (theme         (getf launch :theme))
+         (mode          (getf launch :permission-mode)))
     (cond
+      ((and mode
+            (not (eq mode (application-permission-mode application)))
+            (world-host-working-p host))
+       (format nil "--permissions ~(~A~) while it is working" mode))
       ((and model (not (equal model (config :model configuration))))
        (format nil "--model ~A; it runs ~A" model (config :model configuration)))
       ((and provider (not (equal provider (config :model-provider configuration))))
@@ -812,8 +820,19 @@ refused, so nothing a client asked for is dropped in silence."
                  :operation  ':open
                  :identifier (world-host-channel host)))
         (setf (application-permission-mode application)
-              (world-server--permission-mode server mode)))))
+              (world-server--permission-mode server mode))
+        (application-present application
+                             (format nil "· permission mode changed to ~(~A~) by a terminal opening this channel"
+                                     (application-permission-mode application))))))
   nil)
+
+(-> world-host-working-p (world-host) boolean)
+(defun world-host-working-p (host)
+  "Return true while HOST's channel runs a turn or a job."
+  (let* ((application (world-host-application host))
+         (controller  (application-input-controller application)))
+    (or (and controller (application-input-controller-turn-active-p controller))
+        (plusp (nth-value 0 (localgroup--task-counts application))))))
 
 (-> world-server--permission-mode (world-server t) keyword)
 (defun world-server--permission-mode (server value)
