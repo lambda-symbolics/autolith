@@ -809,10 +809,12 @@ continuation, allowing callers to hold a source lock through actual removal."
             (let ((conversation
                     (conversation-create
                      configuration
-                     :identifier       (task-job-execution-identifier job)
-                     :prompt-cache-key (task--child-prompt-cache-key
-                                        (task-job-root-conversation-identifier job))
-                     :storage-root     (task--artifact-root configuration job))))
+                     :identifier        (task-job-execution-identifier job)
+                     :prompt-cache-key  (task--child-prompt-cache-key
+                                         (task-job-root-conversation-identifier job))
+                     :storage-root      (task--artifact-root configuration job)
+                     :parent-identifier (conversation-identifier (agent-conversation parent))
+                     :agent-name        (job-name job))))
               (setf (getf (task-job-execution-metadata job) :conversation-file)
                     (namestring (conversation-pathname conversation)))
               conversation)))
