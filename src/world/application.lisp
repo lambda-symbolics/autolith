@@ -101,35 +101,56 @@ inbox made room."
 (defun application-world-deliver (application)
   "Queue every unread message of APPLICATION's channel as an automatic turn and return the count.
 
-A message queued while a turn runs is taken as steering first; the queued
-turn then finds its receipt and is skipped. Without an input controller, as
-in a headless job, or without a resident agent to read them, messages wait
-in the inbox. Settling received messages makes room in the inbox, so a send
-that found it full is resumed right after, rather than waiting for the next
-send to come by."
-  (let ((channel    (application-world--served-channel application))
-        (controller (application-input-controller application))
-        (queued     0))
-    (when (and channel controller (application-world-agent-present-p application))
-      (world-message-resume (application-configuration application))
-      (dolist (delivery (multiple-value-bind (pending settled)
-                            (application-world--unsettled application channel)
-                          (if settled
-                              (progn
-                                (world-message-resume (application-configuration application))
-                                (values (application-world--unsettled application channel)))
-                              pending)))
-        (let ((identifier (world-delivery-pending-identifier delivery))
-              (table      (application-world-deliveries application)))
-          (unless (gethash identifier table)
-            (when (application-input-controller-enqueue-operation-request
-                   controller
-                   (world-delivery-label delivery)
-                   (world-delivery-request delivery)
-                   :pending-input-identifier identifier)
-              (setf (gethash identifier table) ':queued)
-              (incf queued))))))
+A notice, a message for the person, is shown in the transcript and settled
+there: no agent takes it. A message queued while a turn runs is taken as
+steering first; the queued turn then finds its receipt and is skipped.
+Without an input controller, as in a headless job, or without a resident
+agent to read them, messages wait in the inbox. Settling received messages
+makes room in the inbox, so a send that found it full is resumed right
+after, rather than waiting for the next send to come by."
+  (let ((channel       (application-world--served-channel application))
+        (controller    (application-input-controller application))
+        (configuration (application-configuration application))
+        (queued        0))
+    (when channel
+      (world-message-resume configuration)
+      (let ((pending (multiple-value-bind (pending settled)
+                         (application-world--unsettled application channel)
+                       (if settled
+                           (progn
+                             (world-message-resume configuration)
+                             (values (application-world--unsettled application channel)))
+                           pending))))
+        (application-world--show-notices
+         application channel
+         (remove-if-not (lambda (delivery) (eq (world-delivery-kind delivery) ':notice)) pending))
+        (when (and controller (application-world-agent-present-p application))
+          (dolist (delivery (remove ':notice pending :key #'world-delivery-kind))
+            (let ((identifier (world-delivery-pending-identifier delivery))
+                  (table      (application-world-deliveries application)))
+              (unless (gethash identifier table)
+                (when (application-input-controller-enqueue-operation-request
+                       controller
+                       (world-delivery-label delivery)
+                       (world-delivery-request delivery)
+                       :pending-input-identifier identifier)
+                  (setf (gethash identifier table) ':queued)
+                  (incf queued))))))))
     queued))
+
+(-> application-world--show-notices (application string list) null)
+(defun application-world--show-notices (application channel notices)
+  "Show NOTICES, messages in CHANNEL's inbox for the person, in APPLICATION's transcript and settle them."
+  (when notices
+    (dolist (notice notices)
+      (application-present application
+                           (application--channel-message-entry
+                            application (world-delivery-request notice) (world-delivery-time notice))
+                           :identifier (world-delivery-pending-identifier notice)))
+    (world-inbox-settle (application-configuration application) channel
+                        (mapcar #'world-delivery-identifier notices))
+    (world-message-resume (application-configuration application)))
+  nil)
 
 (-> application-world-steering-take (application) list)
 (defun application-world-steering-take (application)
@@ -687,11 +708,11 @@ starting from this conversation alone."
 (defun application--channel-message-entry (application request timestamp)
   "Return the transcript entry showing a channel message with its sender and channel.
 
-A message said in this channel shows in full. A copy that arrived from
-another channel, because it mentioned a participant here or this channel
-subscribes to that one, shows as one line naming where it came from; its
-text went to the model and stays readable in the inbox and the channel
-resource."
+A message said in this channel, and a notice for the person, show in full.
+A copy that arrived from another channel, because it mentioned a participant
+here or this channel subscribes to that one, shows as one line naming where
+it came from; its text went to the model and stays readable in the inbox and
+the channel resource."
   (let* ((message        (getf request :message))
          (name           (sanitize-text (or (getf message :sender-name) "participant")
                                         :single-line-p t))
@@ -709,7 +730,12 @@ resource."
                                        channel name timestamp-text))))
         (append (list (terminal-span ':brand "● ")
                       (terminal-span ':agent-name name)
-                      (terminal-span ':dim (format nil " [channel ~A]~@[ ~A~]~%" channel timestamp-text)))
+                      (terminal-span ':dim (if (eq kind ':notice)
+                                               (format nil " to you, from #~A~@[ ~A~]~%"
+                                                       (conversation-identifier-display
+                                                        (or (getf message :source) (getf message :target) "?"))
+                                                       timestamp-text)
+                                               (format nil " [channel ~A]~@[ ~A~]~%" channel timestamp-text))))
                 (application-world-mention-spans
                  application
                  (application--markdown-body application (or (getf request :summary) "")))))))
