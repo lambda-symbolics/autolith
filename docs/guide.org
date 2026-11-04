@@ -31,30 +31,32 @@ Type =(=, =[=, or ={= in the composer to insert a matching pair with the cursor
 between the delimiters. Type the closing delimiter to move past it, or press
 Backspace between an empty pair to delete both.
 
-=Tab= completes operation names, finite options, and workspace
-paths, and =Shift-Tab= steps back through the suggestions. With nothing to
-complete, =Tab= sends the input like Enter, or queues it as a follow-up while a
-turn is running. Inside a form you are still typing, such as =(job.continuity :=,
-=Tab= does nothing rather than send half a form.
+Press =Tab= to complete operation names, finite options, and workspace paths.
+Use =Shift-Tab= to step back through the suggestions. With nothing to complete,
+press =Tab= to send the input like Enter, or queue it as a follow-up while a turn
+runs. If you press =Tab= while typing an unfinished form such as
+=(job.continuity :=, nothing happens. Finish the form before submitting it.
+
 The work indicator displays =REPL= with one letter highlighted in sequence.
-Use =(settings :transcript-style :repl)= to display messages as a Lisp REPL
+Use =(settings :transcript-style :repl)= to show messages as a Lisp REPL
 exchange, with =>= before yours and =<= before Autolith's. When turn timestamps
 are enabled, the time appears on the line above. Set the style to =:labels= to
 restore the =❯ you= and =● autolith= headers.
-Below the modeline, an activity line names what the turn is doing, such as
-=pondering=. Hide it with =(settings :activity-line-p nil)= to free that row;
-the modeline still shows elapsed time. The activity line is hidden while a
-response streams.
+
+Below the modeline, an activity line names the current work, such as
+=pondering=. Hide it with =(settings :activity-line-p nil)= to free that row. The
+modeline still shows elapsed time. The activity line is hidden while a response
+streams.
 
 * Terminal diagrams
 
-Ask for a fenced =mermaid= block to view a diagram directly in the terminal.
-Autolith uses [[https://github.com/lambda-symbolics/clermaid][Clermaid]] for flowcharts, sequence diagrams, flat state diagrams,
-class diagrams, and entity relationships. The library documents the supported
-syntax for each family.
-Boxes, connections, arrowheads and labels use separate theme colors. Graph
-layers are centered, with ordered ports and routes that favor fewer crossings.
-Unicode diagrams use rounded connection corners and directional end caps.
+Ask for a fenced =mermaid= block to view a diagram in the terminal. Autolith uses
+[[https://github.com/lambda-symbolics/clermaid][Clermaid]] for flowcharts, sequence diagrams, flat state diagrams,
+class diagrams, and entity relationships. The library documents the syntax for
+each family.
+Boxes, connections, arrowheads, and labels use separate theme colors. Graph
+layers are centered, with ordered ports and routes that limit crossings. Unicode
+diagrams use rounded connection corners and directional end caps.
 
 #+BEGIN_SRC markdown
 ```mermaid
@@ -64,9 +66,9 @@ flowchart LR
 ```
 #+END_SRC
 
-During streaming, view the source in the live tail until the closing fence.
-Use the diagram's copy action to copy its original Mermaid source. For syntax
-outside the supported subset or a diagram too wide for the terminal, read the
+During streaming, view the source in the live tail until the closing fence. Use
+the diagram's copy action to copy its original Mermaid source. For syntax outside
+the supported subset, or for a diagram too wide for the terminal, read the
 ordinary source block instead.
 
 * Command arguments
@@ -85,39 +87,39 @@ integers, pathnames, and quoted data directly:
 (tasks :send "ID" :message "Keep the original message intact.")
 #+END_SRC
 
-Omit a switch argument to inspect its value; pass =t= to enable it or =nil=
-to disable it. Strings represent text such as objectives, messages, names,
-and identifiers. Pass structured arguments as Lisp data rather than source
-text inside a string.
+Omit a switch argument to inspect its value. Pass =t= to enable it or =nil= to
+disable it. Strings represent text such as objectives, messages, names, and
+identifiers. Pass structured arguments as Lisp data, not as source text inside a
+string.
 
 * Onboarding
 
-At the opening boot screen, press Space or Enter to start the tour. Press Esc
-or begin typing to open the listener instead. Typed and pasted text is kept in
-the prompt; the lessons are available on the next launch or with =(onboard)=.
+At the opening boot screen, press Space or Enter to start the tour. Press Esc or
+begin typing to open the listener instead. Typed and pasted text stays in the
+prompt. The lessons are available on the next launch or with =(onboard)=.
 
-On your first interactive launch, try the prompt, =(help)=, background Lisp,
-and =(settings)= in the fullscreen tour. Edit the lesson input normally and
-press Enter to check it. Resize your terminal at any point. Use Page Up/Page Down
-to scroll long lessons and Shift-Tab to go back. Press Tab to skip one slide,
-including an exercise, without changing its settings.
+On your first interactive launch, try the prompt, =(help)=, background Lisp, and
+=(settings)= in the fullscreen tour. Edit the lesson input and press Enter to
+check it. Resize your terminal at any point. Use Page Up/Page Down to scroll long
+lessons and Shift-Tab to go back. Press Tab to skip one slide, including an
+exercise, without changing its settings.
 
 Press Esc to skip the tour. Completed and skipped lesson versions are recorded
-in your state directory. Ctrl-C interrupts the tour without acknowledging the
+in your state directory. Ctrl-C interrupts the tour without acknowledging
 unfinished lessons. Later launches show only new or revised lessons. Evaluate
 =(onboard)= to replay the whole tour.
 
-Disable automatic tours through =(settings :onboarding-p nil)= or set
+Disable automatic tours with =(settings :onboarding-p nil)= or set
 =AUTOLITH_ONBOARDING= to =off=. If you disable the boot screen, enter the tour
 directly without its opening animation.
 
 * Goals and verified missions
 
 Use =(goal "OBJECTIVE")= for lightweight autonomous work. Inspect it with
-=(goal)= or =(goal :status)=. Use =(goal :pause)=, =(goal :resume)= or
-=(goal :clear)= to control it, and =(goal :update "NEW-OBJECTIVE")= to edit
-it in place. String arguments are literal objectives, including ="pause"=.
-Unknown keyword actions signal =application-goal-error= without changing the goal.
+=(goal)= or =(goal :status)=. Control it with =(goal :pause)=, =(goal :resume)=,
+or =(goal :clear)=. Edit it in place with =(goal :update "NEW-OBJECTIVE")=.
+String arguments are literal objectives, including ="pause"=. Unknown keyword
+actions signal =application-goal-error= without changing the goal.
 
 For externally verifiable work, install explicit acceptance policy with
 =(mission :start specification)=:
@@ -133,12 +135,12 @@ For externally verifiable work, install explicit acceptance policy with
             :attempt-limit 3 :timeout-seconds 300))))
 #+END_SRC
 
-Use =(mission :run)= to begin, =(mission :status)= to inspect the complete
-durable state, and =(mission :verify)= to request harness verification. The model can
-also call =mission.status=, =mission.verify=, =mission.stop= and
-=mission.invalidate=. Only the primary agent may mutate mission policy through
-these model operations. Configure acceptance criteria yourself; the model
-cannot weaken them or supply user acceptance.
+Use =(mission :run)= to begin, =(mission :status)= to inspect the complete durable
+state, and =(mission :verify)= to request harness verification. The model can also
+call =mission.status=, =mission.verify=, =mission.stop=, and
+=mission.invalidate=. Only the primary agent may change mission policy through
+these model operations. Configure acceptance criteria yourself. The model cannot
+weaken them or supply user acceptance.
 
 Each criterion has a unique =:id=, a =:description= and optional ordered gate
 IDs in =:gates=. Criteria without gates require your explicit evidence:
@@ -149,25 +151,27 @@ IDs in =:gates=. Criteria without gates require your explicit evidence:
 (mission :verify)
 #+END_SRC
 
-The model's completion marker requests verification. Passing a gate proves
-only the criteria you explicitly associated with it. Verification requires all
-gates and all criteria. Inspect the acceptance mapping before beginning work.
+The model's completion marker requests verification. A passing gate proves only
+the criteria you linked to it. Verification requires every gate and criterion.
+Inspect the acceptance mapping before you begin work.
 
-The turn allowance counts provider inference calls across the primary agent,
-children, compaction and recursive inference, including mapped and nested frames.
-Reported billable tokens use the provider API's usage normalization and exclude
-known prompt-cache reads. Admissions and settlements are serialized within a
-mission; provider requests execute concurrently. Each admission reserves a turn
-and an output accounting allocation from the unspent, unreserved tokens. The
-allocation normally divides those tokens among the remaining turns; an explicit
-provider output cap replaces that division. Reviewer requests reserve from both
-allowances. Settlement releases the reservation and charges reported input and
-output usage, so measured usage can exhaust the token allowance.
+The turn allowance counts provider inference calls from the primary agent,
+children, compaction, and recursive inference. This includes mapped and nested
+frames. Reported billable tokens use the provider API's usage normalization and
+exclude known prompt-cache reads.
 
-When an admitted child's request has no reported usage, Autolith charges its
-full finite reservation once, provided it can identify the exact child and
-reservation. This includes length failures, HTTP 429, cancellation and interrupted
-dispatch. The child's failure and UNKNOWN audit are retained.
+Admissions and settlements are serialized within a mission, but provider requests
+run concurrently. Each admission reserves one turn and an output allocation from
+the unspent, unreserved tokens. The allocation normally divides those tokens
+among the remaining turns; an explicit provider output cap replaces that split.
+Reviewer requests reserve from both allowances. Settlement releases the
+reservation and charges reported input and output usage. Measured usage can
+therefore exhaust the token allowance.
+
+When an admitted child request reports no usage, Autolith charges its full finite
+reservation once, if it can identify the exact child and reservation. This covers
+length failures, HTTP 429, cancellation, and interrupted dispatch. The child's
+failure and UNKNOWN audit are retained.
 
 The =:reservation-charged-tokens= field is included in =:tokens-used=, not added
 as separate spend. The =:reservation-charges-by-child= field records request
@@ -178,10 +182,11 @@ unresolved UNKNOWN in the shared mission. Subsequent primary inference, new
 children and scheduled continuations use the same mission, with its remaining
 budget, deadline and identity checks.
 
-The reservation charge is accounting policy, not measured usage or a limit on
-provider billing. Input tokens and repeated generations can exceed it. Codex does
-not enforce a wire output ceiling at the current library pin. Retry success uses
-only final returned usage and does not reconcile earlier unreported attempts.
+The reservation charge is an accounting rule. It is not measured usage, a limit
+on provider billing, or a wire limit. Input tokens and repeated generations can
+exceed it. Codex does not enforce a wire output ceiling at the current library
+pin. A successful retry uses only its final reported usage and does not reconcile
+earlier unreported attempts.
 
 If Autolith cannot establish exact child ownership and a finite reservation,
 missing usage stays unresolved. Under the default policy, unresolved child usage
@@ -214,22 +219,24 @@ To opt in for existing work, start a new mission with its acceptance criteria an
 budgets and add the policy key. Large integer limits are finite, not an
 unlimited-mode switch.
 
-The wall-clock deadline includes gate execution, delegated tools, pauses and
-time away. Work runs under cl-jobpond supervision. Use =(goal :pause)= and
-=(mission :resume)= without resetting any mission budget; use
-=(mission :cancel "REASON")= to terminate it. Terminal states are =verified=,
-=exhausted=, =cancelled= and =failed=. A =blocked= mission retains the evidence
-needed to resolve its blocker and resume. With the default =:block= policy,
-interrupted inference restores as blocked when its usage cannot be recovered.
-Gate attempts, fingerprints and evidence restore with the conversation and
-survive compaction independently of model summaries.
+The wall-clock deadline includes gate execution, delegated tools, pauses, and time
+away. Work runs under cl-jobpond supervision. Use =(goal :pause)= and
+=(mission :resume)= without resetting the mission budget. Use
+=(mission :cancel "REASON")= to terminate it.
 
-Gates run in order, stopping at the first failure. Command gates use the ordinary
+Terminal states are =verified=, =exhausted=, =cancelled=, and =failed=. A =blocked=
+mission keeps the evidence needed to resolve its blocker and resume. With the
+default =:block= policy, interrupted inference becomes blocked when its usage
+cannot be recovered. Gate attempts, fingerprints, and evidence restore with the
+conversation and survive compaction independently of model summaries.
+
+Gates run in order and stop at the first failure. Command gates use the ordinary
 shell authorization and sandbox boundary. Artifact gates require =:path= and
-optionally an expected =:sha256=. Lisp gates require a =:predicate= string and
-run an assertion in the existing isolated Lisp worker. Every gate supports
-=:timeout-seconds= and a separate =:attempt-limit=, defaulting to 60 seconds and
-three executions. Each gate retains bounded evidence.
+optionally accept an expected =:sha256=. Lisp gates require a =:predicate=
+string and run an assertion in the existing isolated Lisp worker.
+
+Every gate supports =:timeout-seconds= and a separate =:attempt-limit=. The
+defaults are 60 seconds and three executions. Each gate keeps bounded evidence.
 
 For deterministic gates, declare all relevant file paths in =:inputs= and set
 =:deterministic-p t=. File contents and missing-file states form the fingerprint;
@@ -282,9 +289,9 @@ and user acceptance supply harness evidence.
 ** Scheduled mission continuations
 
 Attach explicit wakeups to the current mission with =mission-schedule.add=.
-Supply an immutable =id=, continuation =content=, and a time policy: =at= is an
-absolute Common Lisp universal time, =interval= is a positive number of seconds,
-and =event= names an external event instead of a time policy. For example:
+Supply an immutable =id=, continuation =content=, and one time policy. =at= is an
+absolute Common Lisp universal time. =interval= is a positive number of seconds.
+=event= names an external event instead. For example:
 
 #+BEGIN_SRC lisp
 (application-mission-schedule-add
@@ -293,23 +300,25 @@ and =event= names an external event instead of a time policy. For example:
  :at (+ (get-universal-time) 300) :missed-policy :latest)
 #+END_SRC
 
-For recurring wakeups, choose =missed-policy= =latest= (the default), =all= or
-=skip= to select the newest missed occurrence, every missed occurrence or only
-an occurrence due at exactly the current time. Use =mission-schedule.event= with
-an event name and stable external event =id=; repeated delivery of that ID is
-deduplicated. The local daemon listener hosts time wakeups. Due work enters the
-ordinary primary command queue as a persisted =(mission-wakeup ticket)= command
-with a structured ticket and executes as a mission continuation under the
-existing turn, token and wall-clock budgets.
+For recurring wakeups, choose =missed-policy= =latest= (the default), =all=, or
+=skip=. These select the newest missed occurrence, every missed occurrence, or
+only an occurrence due at exactly the current time. Use =mission-schedule.event=
+with an event name and stable external event =id=; repeated delivery of that ID
+is deduplicated. The local daemon listener hosts time wakeups. Due work enters
+the ordinary primary command queue as a persisted =(mission-wakeup ticket)=
+command, with a structured ticket, and runs as a mission continuation under the
+existing turn, token, and wall-clock budgets.
 
-Only the primary agent may use the =mission-schedule= tools. Each wakeup retains
-its exact mission identity and version, checked at admission and execution.
-While that mission is paused or blocked, due occurrences selected by the missed
-policy are skipped without running. The interval advances, and after resuming
-the mission you get the next due occurrence without recreating the schedule.
-Skipped occurrences are not replayed, including one-shot wakeups and deduplicated
-events. With the default =:block= policy, unknown usage prevents mission resume;
-=:record= does not prevent resuming an independent pause or blocker.
+Only the primary agent may use the =mission-schedule= tools. Each wakeup keeps
+its exact mission identity and version. Both are checked at admission and
+execution.
+
+While the mission is paused or blocked, the missed policy skips due occurrences
+without running them. The interval advances. After a resume, the next due
+occurrence arrives without recreating the schedule. Skipped occurrences are not
+replayed, including one-shot wakeups and deduplicated events. With the default
+=:block= policy, unknown usage prevents mission resume. =:record= does not prevent
+an independent pause or blocker from resuming.
 
 Replacement, a version change, or a terminal mission (verified, exhausted,
 cancelled, failed or legacy complete) cancels the schedule. Skips and automatic
@@ -332,12 +341,11 @@ Configure your ACP-compatible editor to launch:
 #+BEGIN_SRC sh
 autolith acp
 #+END_SRC
-
 Authenticate the selected provider with =autolith auth= before starting the
 editor session. ACP uses UTF-8 JSON-RPC on stdin/stdout; diagnostics go to stderr.
-The normal launch loads durable mutations and user initialization. For AUI, use
-=autolith --permissions auto acp=. Use =--pristine= when recovering from a damaged
-mutable image.
+A normal launch loads durable mutations and user initialization. For AUI, use
+=autolith --permissions auto acp=. Use =--pristine= when recovering from a
+damaged mutable image.
 
 New sessions use the editor's absolute working directory and a durable Autolith
 conversation ID. Load that ID to replay messages, visible reasoning, tool calls,
@@ -345,27 +353,28 @@ and results. Text prompts, resource links, and embedded text resources are
 supported. File and process operations use the native Autolith tools.
 
 The default =ask= mode requests command and external-tool approval in the editor.
-An approval for the session covers the exact command and working directory, or
-external tool identity and arguments. Select =auto=, =sandboxed=, or =full-access=
-through ACP session modes; use =--permissions auto|sandbox|full= on the command
-line. Changing modes clears session approvals.
+An approval covers the exact command and working directory, or the external tool
+identity and arguments. Select =auto=, =sandboxed=, or =full-access= through ACP
+session modes; use =--permissions auto|sandbox|full= on the command line. Changing
+modes clears session approvals.
 
 Client-supplied stdio and HTTP MCP servers are merged with native registrations
 for that session. Literal environment values and headers are ephemeral and
-redacted from server output. Cancel a prompt to stop its provider, tools, and
-owned jobs; close the session or disconnect to release its resources and lease.
-One primary prompt, setting mutation, tool invocation, or session setup runs at a
-time in each ACP process. Catalog reads and owned-job controls can run alongside it.
-Ctrl-C ends an ACP process with status 130 after it releases its sessions.
+redacted from server output.
 
+Cancel a prompt to stop its provider, tools, and owned jobs. Close the session or
+disconnect to release its resources and lease.
+
+Each ACP process runs one primary prompt, setting mutation, tool invocation, or
+session setup at a time. Catalog reads and owned-job controls can run alongside it.
+Ctrl-C ends an ACP process with status 130 after releasing its sessions.
 ** Remote clients
 
-=autolith acp --http= serves remote clients on one endpoint, =/acp=, over the
-transports of the ACP proposal "Streamable HTTP & WebSocket Transport":
-Streamable HTTP over HTTP/1.1 or cleartext HTTP/2, and WebSocket.
-=autolith acp --websocket= serves WebSocket alone. Both listen on
-=127.0.0.1:8737= by default. Name another port, or a host and a port, to change
-that:
+=autolith acp --http= serves remote clients at =/acp= over the transports in the
+ACP proposal "Streamable HTTP & WebSocket Transport": Streamable HTTP over
+HTTP/1.1 or cleartext HTTP/2, and WebSocket. =autolith acp --websocket= serves
+WebSocket alone. Both listen on =127.0.0.1:8737= by default. Give a port, or a host
+and port, to change that:
 
 #+BEGIN_SRC sh
 autolith acp --websocket 9000
@@ -374,17 +383,16 @@ autolith acp --http [::1]:8737
 #+END_SRC
 
 Autolith prints the endpoint URL on stderr and serves until Ctrl-C. Each client
-gets its own sessions. All clients share the process's one primary operation, so
-while one client's prompt runs, another client's prompt is refused as busy.
+gets its own sessions. All clients share one primary operation in the process, so
+one client's running prompt makes another client's prompt return busy.
 
 With =--token=, a client must send =Authorization: Bearer TOKEN= or add
-=?token=TOKEN= to the URL. Other users of the machine can read the command line,
-the token included. Requests from web pages, which carry an =Origin= header, are
-refused.
+=?token=TOKEN= to the URL. Other users of the machine can read a token on the
+command line. Requests from web pages, which carry an =Origin= header, are refused.
 
-Any host but loopback makes the agent reachable from other machines, and
-Autolith warns that the endpoint is not secure. The traffic, the token included,
-is unencrypted: put a reverse proxy with TLS in front of it, and use a token.
+Any host other than loopback makes the agent reachable from other machines.
+Autolith warns that the endpoint is not secure. Traffic, including the token, is
+unencrypted. Put a TLS reverse proxy in front of it and use a token.
 
 ** Typed client extensions
 
@@ -503,14 +511,14 @@ configured server socket exists:
 - =emacs.visit= shows a file position in a file window of the selected frame.
 - =emacs.eval= evaluates Emacs Lisp. It asks command authorization for
   =emacs.eval -- FORM= and runs only with full access.
+Slynk listens on =127.0.0.1= only. Like ordinary sly, it has no authentication
+beyond the optional =~/.sly-secret=. Anyone who can reach loopback on this machine
+can evaluate in the image. Your code shares the agent's heap: a fatal error or
+=(sb-ext:exit)= ends the session, which recovers like any crash.
 
-Slynk listens on =127.0.0.1= only. Like ordinary sly it has no authentication
-beyond the optional =~/.sly-secret=, so anyone who can reach loopback on this
-machine can evaluate in the image. Your code shares the agent's heap: a fatal
-error or =(sb-ext:exit)= ends the session, which recovers like any crash.
 Slynk's debugger and output hooks stay off for Autolith's own threads, so your
-REPL sees only your evaluations. A checkpoint stops Slynk, closing sly
-connections, and serves the same port again; reconnect with
+REPL sees only your evaluations. A checkpoint stops Slynk and closes sly
+connections, then serves the same port again. Reconnect with
 =M-x autolith-ide-reconnect=. A checkpoint waits for in-flight sly evaluations
 and fails if they exceed the shutdown timeout.
 
@@ -528,20 +536,19 @@ Save the preference for future launches at the Autolith prompt:
 #+BEGIN_SRC lisp
 (preferences-set-fullscreen (application-configuration *active-application*) t)
 #+END_SRC
-
 In fullscreen mode, scroll the transcript above the bottom-pinned composer,
 modeline, command, RLM, and task activity rows. Use =PageUp= and =PageDown= for
-page movement, =Ctrl-PageUp= and =Ctrl-PageDown= to jump between user and
-assistant messages while skipping reasoning and tool activity, =Ctrl-Home= and
+page movement. Use =Ctrl-PageUp= and =Ctrl-PageDown= to jump between user and
+assistant messages while skipping reasoning and tool activity. Use =Ctrl-Home= and
 =Ctrl-End= for the oldest and newest transcript positions, and the mouse wheel
 for incremental scrolling. A message jump places the end of the message on the
 row above the composer. If the message is taller than the window, its header
 appears at the top instead. The =--fullscreen= option enables fullscreen for one
 launch without changing the saved preference.
-Pass =nil= to =preferences-set-fullscreen= to return future launches to inline mode.
-Because the viewport owns the mouse, hold =Shift= while dragging to select text
-with the terminal emulator. Fullscreen history lives in the application rather
-than the terminal emulator's native scrollback. The viewport keeps about four
+Pass =nil= to =preferences-set-fullscreen= to return future launches to inline
+mode. Because the viewport owns the mouse, hold =Shift= while dragging to select
+text with the terminal emulator. Fullscreen history lives in the application,
+not the terminal emulator's native scrollback. The viewport keeps about four
 million characters of recent output in memory. At the oldest retained row, the
 legend shows =(history)=. Run =(history)= to load a page of older output.
 
@@ -1043,15 +1050,15 @@ where it came from:
 - a web page;
 - other memories it was derived from, its premises.
 
-When a cited file no longer contains its quoted passage, or a premise changes
-or is forgotten, the memory becomes /stale/, and so does every memory derived
-from it. Restoring the passage makes them current again. Quotes are compared
-ignoring whitespace, so reformatting a file leaves its memories alone. Your
-words and web pages are provenance: they are never refetched, and once a
-memory cites files, those files decide whether it is current. A memory whose
-only cited files cannot be read is /unverified/. Status is worked out when a
-memory is listed or recalled, from the files as they are then; checking makes
-no model requests.
+If a cited file no longer contains its quoted passage, or a premise changes or is
+forgotten, the memory becomes /stale/. Every memory derived from it becomes stale
+too. Restoring the passage makes them current again. Quotes are compared while
+ignoring whitespace, so reformatting a file does not stale its memories.
+
+Your words and web pages are provenance: they are never refetched. Once a memory
+cites files, those files decide whether it is current. A memory whose only cited
+files cannot be read is /unverified/. Status is worked out from the current files
+when the memory is listed or recalled. Checking makes no model requests.
 
 #+BEGIN_SRC lisp
 (memories)            ; relevant memories, stale ones first
@@ -1059,21 +1066,20 @@ no model requests.
 (memory "3afbfa1a")   ; one memory, its evidence, and what relies on it
 (forget "3afbfa1a")   ; stop recalling it
 #+END_SRC
-
-In fullscreen, open the memory manager with =(memories)=.
-Browse notes and facts side by side with their evidence; on a narrow terminal,
-press Enter to read the selected item. Use =/= to search titles, bodies, tags,
-IDs, and evidence, Tab to choose All/Notes/Facts, and Shift-Tab to choose a scope.
-Scroll an open explanation with the arrow keys or Page Up/Down. Press Esc to
-return to the list, then Esc again to close.
+In fullscreen, open the memory manager with =(memories)=. Browse notes and facts
+beside their evidence. On a narrow terminal, press Enter to read the selected
+item. Use =/= to search titles, bodies, tags, IDs, and evidence. Use Tab to choose
+All/Notes/Facts, and Shift-Tab to choose a scope. Scroll an open explanation with
+the arrow keys or Page Up/Down. Press Esc to return to the list, then Esc again
+to close.
 
 Press =n= to create a note, =e= to edit one, =d= to forget a note or retract an
-asserted fact, and =r= to reload. Confirm deletion with =y=. In the note form,
-use Tab to move between title, tags, scope, and content; Space to choose a scope;
-Shift-Enter for a content newline; and Enter to save. A changed or deleted note
-must be reloaded before editing. Editing prose preserves its recorded evidence
-and premise versions. Inspect derived facts to find their supporting premises
-and rules. =(memory "ID")= opens the corresponding explanation directly.
+asserted fact, and =r= to reload. Confirm deletion with =y=. In the note form, use
+Tab to move between title, tags, scope, and content. Use Space to choose a scope,
+Shift-Enter for a content newline, and Enter to save. A changed or deleted note
+must be reloaded before editing. Editing prose preserves its evidence and premise
+versions. Inspect derived facts to find their premises and rules.
+=(memory "ID")= opens the corresponding explanation directly.
 
 In inline or noninteractive sessions, these commands print textual listings and
 explanations.
@@ -1096,21 +1102,21 @@ its memories rely on.
 
 *** Facts and rules
 
-Besides prose memories, Autolith keeps structured facts: a predicate applied to
-typed values, such as =event.start review 2026-10-22T13:00:00Z=. Each fact
-cites its evidence, like a memory, and says why it is believed: an
-/observation/ of a file, page, tool, or mission, a /user assertion/, an
-/assumption/, or the model's own /proposal/. Where a fact came from decides
-its basis, not what the model calls it: a file Autolith read is an
-observation, your own words a user assertion, and a web page an observation
-once =web_extra.gist= retrieves it with the quoted text. The retrieval receipt
-identifies the retrieved content, the bounded tool preview, and the original
-observation time. Quotations can cite the complete retained overflow object;
-if overflow storage is unavailable, only text in the retrieved prefix counts.
-The omission notice is presentation, not source evidence. A fact stated by
-two sources has two supports and holds while either does. Web pages expire a
-week after retrieval and tool output after a day; fetch the source again to
-renew its evidence. Your statements and recorded runs do not expire.
+Besides prose memories, Autolith keeps structured facts: predicates applied to
+typed values, such as =event.start review 2026-10-22T13:00:00Z=. Each fact cites
+its evidence and says why it is believed: an /observation/ of a file, page, tool,
+or mission; a /user assertion/; an /assumption/; or the model's own /proposal/.
+The source decides the basis, not the model's label. A file Autolith read is an
+observation. Your words are a user assertion. A web page becomes an observation
+when =web_extra.gist= retrieves it with the quoted text.
+
+The retrieval receipt identifies the retrieved content, bounded tool preview, and
+observation time. Quotations can cite the complete retained overflow object. If
+that storage is unavailable, only text in the retrieved prefix counts. The
+omission notice is presentation, not source evidence. A fact stated by two
+sources has two supports and holds while either does. Web pages expire after a
+week and tool output after a day. Fetch the source again to renew its evidence.
+Your statements and recorded runs do not expire.
 
 A structured fact's file evidence applies only to the exact observed content,
 even when its quotation survives an edit elsewhere in the file. Review the new
@@ -1128,16 +1134,16 @@ in units:
  :bindings (("?leave" ("-" "?start" ("+" "?travel" "?buffer"))))
  :conclusion ("event.departure" "?event" "?leave"))
 #+END_SRC
-
 When a premise changes, Autolith recomputes the conclusion locally, without a
-model request: move the meeting and the departure moves with it. A derived
-fact keeps the basis of its premises, so deriving from an assumption never
-yields an observation. A negated premise matches only a fact explicitly stated
-not to hold; a missing fact never satisfies it. Two facts that disagree about
-one keyed value, or a fact and its negation, are /conflicted/: both are kept
-and shown, and nothing picks a winner. Rules cannot depend on their own
-conclusions, and an evaluation that reaches its work limit reports the
-remaining conclusions as unknown rather than false.
+model request. Move the meeting and the departure moves with it. A derived fact
+keeps the basis of its premises, so a conclusion derived from an assumption is
+never an observation.
+
+A negated premise matches only a fact explicitly stated not to hold. A missing
+fact does not satisfy it. Two facts that disagree about one keyed value, or a fact
+and its negation, are /conflicted/. Both are kept and shown; nothing picks a
+winner. Rules cannot depend on their own conclusions. An evaluation that reaches
+its work limit reports the remaining conclusions as unknown, not false.
 
 A rule the model proposes derives nothing until it is admitted. Admission
 uses the ordinary command approval: with full access it is admitted at once,
@@ -1264,27 +1270,28 @@ original metadata as provenance.
 *** Learned procedures
 
 When three turns in a workspace make the same tool calls in the same order,
-Autolith learns a /procedure/ from them after the turn, locally and without a
-model request: arguments that never change stay as they were, a value taken
-from an earlier call's JSON result is taken from it again, and values that
-vary become parameters, matched with the words that varied in your requests.
-A procedure is kept only if each of those turns is reproduced by the
-procedure learned from the others. If another recent request worded the same
-way did something else, the wording does not show when the procedure applies,
-so it is never offered, though it can still be run. A new procedure shows
-=@ learned procedure make-sales-report from 3 turns · (procedures)=.
+Autolith learns a /procedure/ after the turn, locally and without a model request.
+Arguments that never change stay as they were. A value taken from an earlier
+call's JSON result is taken from it again. Values that vary become parameters,
+matched with the words that varied in your requests.
 
-When a later request fits, such as =Make the sales report for q5.=, the model
-is offered the one =procedure.run= call that makes the same calls with =q5=,
-and =@ learned procedure make-sales-report fits this request= appears. The
-first run asks to admit the procedure (=procedure.admit -- make-sales-report
-v1: sales.load, sales.report, notify.send=); full access admits it at once.
-Automatic execution requires completed, successful model turns running the exact
-admitted procedure version and content, with complete usage measurements showing
-both fewer model requests and fewer tokens than its learning baseline. A request
-matching its wording exactly, apart from its parameters, then runs it before the
-model's first request, shown as its =procedure.run= call, and the model answers
-from the results in one request.
+A procedure is kept only if each turn is reproduced by the procedure learned
+from the other two. If another recent request with the same wording did something
+else, the wording is not enough to show when the procedure applies. The procedure
+is not offered, though it can still be run. A new procedure shows
+=@ learned procedure make-sales-report from 3 turns · (procedures)=.
+When a later request fits, such as =Make the sales report for q5.=, the model is
+offered one =procedure.run= call. It makes the same calls with =q5=, and
+=@ learned procedure make-sales-report fits this request= appears. The first run
+asks to admit the procedure (=procedure.admit -- make-sales-report v1:
+sales.load, sales.report, notify.send=). Full access admits it at once.
+
+Automatic execution requires completed, successful model turns that ran the exact
+admitted procedure version and content. Complete usage measurements must show
+fewer model requests and fewer tokens than the learning baseline. A request that
+matches the wording exactly, apart from its parameters, then runs the procedure
+before the model's first request. The =procedure.run= call is shown, and the
+model answers from its results in one request.
 
 If a learned wording pattern has a variable word such as =Please= or =Kindly=,
 any word matches in that position. Such a match is only offered to the model,
@@ -1318,15 +1325,17 @@ and are learned and offered only while =knowledge-mode= is =active=.
 
 *** Diagnosis
 
-Diagnostic probes are enabled by default. Turn them off in =(settings)= or
-with =AUTOLITH_DIAGNOSIS=0=. With probes enabled and structured knowledge active,
-the model can use =diagnosis.run= to distinguish possible causes before trying
-a repair.
+Diagnostic probes are enabled by default. Turn them off in =(settings)= or with
+=AUTOLITH_DIAGNOSIS=0=. With probes enabled and structured knowledge active, the
+model can use =diagnosis.run= to distinguish possible causes before trying a
+repair.
 
-Supply up to four hypotheses, each predicting facts, and probes: tool calls whose
-contracts observe facts from their results. Autolith checks known facts first,
-then selects the probe expected to distinguish the most remaining hypotheses
-per cost. It runs at most three probes, without a model request between them.
+Supply up to four hypotheses, each with predicted facts, and probes: tool calls
+whose contracts observe facts from their results. Autolith checks known facts
+first. It then selects the probe expected to distinguish the most remaining
+hypotheses for its cost. It runs at most three probes without a model request
+between them.
+
 A hypothesis is ruled out only by an undisputed observation or statement that
 contradicts one of its predictions. Cases the probes cannot settle are reported
 as open. Save a diagnosis by name to run it again with new values.
@@ -1357,44 +1366,40 @@ autolith data import project.sexp --workspace /home/al/src/project
 (data.export "project.sexp" :workspace "/home/al/code/project")
 (data.import "project.sexp" :workspace "/home/al/src/project")
 #+END_SRC
-
 Export defaults to all workspaces and global data. A workspace export contains
-its conversations, memories, agendas, plans, papercuts, and associated session
-assets. The archive contains Autolith data rather than the repository files;
-clone or copy the repository separately. Credentials, configuration, executable
-image state, and caches are excluded.
+its conversations, memories, agendas, plans, papercuts, and related session
+assets. The archive contains Autolith data, not repository files. Clone or copy
+the repository separately. Credentials, configuration, executable image state,
+and caches are excluded.
 
-Import preserves stable identifiers and merges into local data. Identical data
-is skipped; a conflicting identity aborts the import before publication. For a
+Import preserves stable identifiers and merges into local data. Identical data is
+skipped. A conflicting identity aborts the import before publication. For a
 single-workspace archive, =--workspace DIRECTORY= or =:workspace "DIRECTORY"=
 sets its new home directory. Without that option, workspace locations are
 preserved. Relative paths are resolved against the current working directory.
 
 Export creates a new private archive and refuses to overwrite an existing file.
-The CLI exits without starting a session: success is 0, invalid arguments are
-64, and transfer failures are 1. Both command groups provide =--help=.
+The CLI exits without starting a session: success is 0, invalid arguments are 64,
+and transfer failures are 1. Both command groups provide =--help=.
 
 ** Session titles and resume
 
 A session gets an immediate local title from its first prompt or image. After the
 third actual user turn, Autolith may ask the active model for one concise
-replacement and persist it with the conversation. The local title does not depend
-on provider generation.
+replacement and save it with the conversation. The local title does not depend on
+provider generation.
 
-Provider-generated refreshes are enabled by default. Use =(titles)=,
-=(titles t)= or =(titles nil)= to inspect or change the durable global
-preference.
+Provider-generated refreshes are enabled by default. Use =(titles)=, =(titles t)=,
+or =(titles nil)= to inspect or change the durable global preference.
 
-=(resume)= displays titles in its picker while an explicit =(resume "ID")=
-continues to address the stable conversation identifier. The
-terminal status bar and local session status display the title when one is
-available and otherwise show the conversation ID.
+=(resume)= displays titles in its picker. An explicit =(resume "ID")= still uses the
+stable conversation identifier. The terminal status bar and local session status
+show the title when one is available; otherwise they show the conversation ID.
 
-A resumed conversation runs in a fresh process, so background jobs,
-asynchronous shell runs, and Lisp worker state from before the restart no
-longer exist. The first user turn after a resume carries a request-local notice
-telling the model so, which keeps it from polling or waiting on dead jobs. Only
-durable child task results stay readable through =job.get=.
+A resumed conversation runs in a fresh process. Background jobs, asynchronous
+shell runs, and Lisp worker state from before the restart no longer exist. The
+first user turn after a resume carries a request-local notice that tells the model
+so. Only durable child task results stay readable through =job.get=.
 
 Inspect a saved conversation without resuming or locking it with:
 
@@ -1500,15 +1505,20 @@ caches below =${XDG_CONFIG_HOME:-~/.config}/autolith/=,
 nonempty absolute paths; invalid values use these defaults. Newly created
 Autolith roots have mode =0700=.
 
-POSIX XDG directory values are native filesystem names, including literal brackets,
-asterisks, and backslashes. Before 0.68.0, a populated root written under a path
-whose backslashes an older release stripped moves to the native path once. Runtime
-and launcher migration use the same lock. An absent native root or one containing
-only directories can be replaced; precreated directory trees are preserved in a
-hidden sibling backup. If both roots contain files, choose one explicitly rather
-than merging installations. A failed move warns and uses the legacy root; a fresh
-configuration retries it. Warnings and conflicts name both paths. Explicit root
-settings bypass this compatibility lookup.
+POSIX XDG directory values are native filesystem names, including literal
+brackets, asterisks, and backslashes.
+
+Until 0.68.0, Autolith moves a populated root to the native path once if an
+older release stripped backslashes from the path it used to write the root.
+Runtime and launcher migration use the same lock.
+
+The move can replace an absent native root or one containing only directories.
+Precreated directory trees are preserved in a hidden sibling backup. If both
+roots contain files, choose one explicitly rather than merging installations.
+
+If the move fails, Autolith warns and uses the legacy root. Autolith retries
+the move with a fresh configuration. Warnings and conflicts name both paths.
+Autolith skips this compatibility lookup for explicitly set roots.
 
 Provider discovery metadata uses =CACHE/provider-models.sexp=. On upgrade, the old
 state-directory cache moves there once. Publication is atomic; the old file is
@@ -1590,16 +1600,23 @@ or pathnames for paths. Omit the value to inspect a setting; an explicit =nil=
 sets its value. A change to a durable setting is saved at once for future
 sessions. In a script, =(settings)= prints every setting grouped by area.
 
-Settings live in one of four scopes. Durable settings, such as the model,
-reasoning effort, Fast mode, reasoning traces, compact view, timestamps, the
-transcript style, the activity line, cache miss notices, Simple Technical
-English, generated titles, fullscreen, and the saved permission mode, persist in
-=preferences.sexp= under the config directory. Session settings, such as hurry-up
-mode, last until exit. Process settings, such as the immutable flag, the management
-endpoint, and the roots, come from the command line, the environment, or startup
-defaults and are fixed for the process. Derived settings, such as the context window
-and provider endpoint, follow the model. The window uses a declared model value,
-else the catalog value, else the default.
+Settings have four scopes.
+
+Durable settings persist in =preferences.sexp= under the config directory.
+These include the model, reasoning effort, Fast mode, reasoning traces, compact
+view, timestamps, transcript style, activity line, cache miss notices, Simple
+Technical English, generated titles, fullscreen, and saved permission mode.
+
+Session settings, such as hurry-up mode, last until exit.
+
+Process settings, such as the immutable flag, management endpoint, and roots,
+come from the command line, environment, or startup defaults and are fixed for
+the process.
+
+Derived settings, such as the context window and provider endpoint, follow the
+model. For the context window, Autolith first uses a declared model value. If
+none is available, it uses the catalog value, or the default if neither value
+is available.
 
 On upgrade, Autolith moves the state-directory =preferences.sexp= into the config
 directory once, preserving unknown keys. Existing config preferences take
@@ -1698,16 +1715,21 @@ Use =lsp.semantic= for revisioned transformations:
   Confirm each synthetic =lsp.semantic-confirmation= request through the ordinary
   command-permission prompt. Without a permission callback, confirmation is denied.
 
-Proposals preserve ordered text, create, move and delete effects. Every affected
-file passes the ordinary resource authority checks before observation and again
-before application. Resource revisions cover file kind and content; synchronized
-document versions must also match. Request a fresh proposal after a conflicting
-edit or server restart. Moves preserve the source permissions captured during
-staging, including edited multi-hop moves. Publication is atomic per file with
-change-set rollback on failure. Proposals and action choices own their exact
-snapshots and are conversation-local. Retain up to 32 choices, 240,000 encoded
-characters per choice, 128 resources per choice, and 512 resources or 16 MiB of
-UTF-8 snapshots per conversation. Older choices expire when those budgets fill.
+Proposals preserve the order of text, create, move and delete effects. Every
+affected file passes the ordinary resource authority checks before observation
+and again before application. Resource revisions cover file kind and content;
+synchronized document versions must also match. Request a fresh proposal after
+a conflicting edit or server restart.
+
+Moves preserve the source permissions captured during staging, including
+edited multi-hop moves. Publication is atomic per file, with rollback of the
+change set on failure.
+
+Proposals and action choices are conversation-local and retain their exact
+snapshots. The limits are 32 choices, 240,000 encoded characters per choice,
+128 resources per choice, and 512 resources or 16 MiB of UTF-8 snapshots per
+conversation. Older choices expire when those budgets fill.
+
 Server commands are presented as data for separate explicit execution.
 Use local =file:///= URIs; directories, service resources and URI authorities
 are unsupported.
@@ -1724,15 +1746,19 @@ Diagnostic state =received= identifies versioned reports, =unversioned= means a
 report's snapshot cannot be confirmed, and =pending= means no report arrived.
 The =sources= field gives push and pull freshness separately.
 
-Explicit diagnostics allow two seconds for push reports and use the configured
-request timeout for pull requests. Edit follow-ups have one shared one-second
-blocking deadline across lock acquisition, startup, synchronization, and all
-matching servers, with at most half a second for push settling. Failed startup
-also reaps its process. If automatic diagnostics time out, use =lsp.diagnostics=
-for the full server timeout. Reports retain at most 200 diagnostics per file and
-mark truncation. Files are limited to 2 MiB, with 64 open documents per server
-and 16 live project/server pairs per registry. Use =lsp.restart= to release them.
-Server shutdown occurs when the tool runtime is retired.
+For explicit diagnostics, Autolith allows two seconds for push reports and
+uses the configured request timeout for pull requests.
+
+Edit follow-ups share a single one-second blocking deadline across lock
+acquisition, startup, synchronization, and all matching servers. This includes
+at most half a second for push settling. If startup fails, Autolith reaps the
+server process. If automatic diagnostics time out, use =lsp.diagnostics= for
+the full server timeout.
+
+Reports retain at most 200 diagnostics per file and mark truncation. Files are
+limited to 2 MiB, with 64 open documents per server and 16 live project/server
+pairs per registry. Use =lsp.restart= to release them. Server shutdown occurs
+when the tool runtime is retired.
 
 ** Active-image management endpoint
 
@@ -1770,11 +1796,15 @@ TCP accepts IPv4 loopback addresses only. This endpoint does not provide server
 TLS, and arbitrary Lisp results may contain secrets. Challenge-response prevents
 bearer-token replay, but an unauthenticated local process can relay a challenge
 and proof between trusted local clients. Treat loopback TCP clients as locally
-trusted. Unix transport creates a
-mode-0700 private directory and a mode-0600 socket. Startup refuses an active
-socket and any alien or non-socket path; it removes a socket only after proving
-that it is a stale current-user endpoint. Windows has no filesystem sockets, so
-=unix= is refused there with a message and =tcp= is the default.
+trusted.
+
+With Unix transport, Autolith creates a mode-0700 private directory and a
+mode-0600 socket. At startup, Autolith refuses an active socket and any alien or
+non-socket path. It removes a socket only after proving that it is a stale
+current-user endpoint.
+
+Windows has no filesystem sockets. Autolith refuses =unix= there with a message
+and uses =tcp= by default.
 
 *** Wire protocol
 
@@ -1830,14 +1860,16 @@ Conditions return =:status :condition=, a bounded =:condition-type= and
 connection.
 
 Evaluation deadlines use in-process interrupts and are best effort for trusted
-forms; a form that suppresses interrupts may outlive its deadline. Checkpointing
-stops the listener, clients, evaluator, and queue before saving the image and
-restarts the endpoint afterward. If an evaluator cannot quiesce within the
-documented two-second shutdown bound, checkpointing aborts with a
-=management-repl-error= whose operation is =:quiesce= rather than saving live
-management threads.
-Normal shutdown is idempotent and
-removes only the exact Unix socket created by that runtime.
+forms. A form that suppresses interrupts may outlive its deadline.
+
+Before saving the image during checkpointing, Autolith stops the listener,
+clients, evaluator, and queue. It restarts the endpoint after saving. If an
+evaluator cannot quiesce within the documented two-second shutdown bound,
+checkpointing aborts with a =management-repl-error= whose operation is
+=:quiesce= rather than saving live management threads.
+
+Normal shutdown is idempotent and removes only the exact Unix socket created by
+that runtime.
 
 ** Context
 
@@ -1927,18 +1959,24 @@ separately as work spent on the checkpoint and summary.
 At narrow widths, the meter keeps the used and window counts and drops the bar.
 
 Use =(compact)= to compact the current conversation immediately,
-regardless of the meter. It uses the same provider-native checkpoint and portable
-summary path as automatic compaction. During an active turn, the command waits
-in the idle queue. An empty conversation needs no provider request. Compaction
-adds a durable checkpoint without adding a user message or starting a model turn.
+regardless of the meter. Immediate and automatic compaction use the same
+provider-native checkpoint and portable summary path. During an active turn,
+compaction waits in the idle queue. An empty conversation needs no provider
+request. Compaction adds a durable checkpoint without adding a user message
+or starting a model turn.
+
 The native checkpoint and its portable handoff normally require two provider
-requests. Completed requests are recorded with their usage before output validation,
-including rejected summaries and native responses that require portable fallback.
-A native checkpoint includes the full returned item window, in provider order.
-A summary must complete normally and contain bounded, nonempty progress, decisions,
-context, constraints, next-steps and reference sections before checkpoint publication.
-Markdown heading marks may decorate the labels. When a finished summary misses this
-shape, Autolith asks again and names the problem, up to four summary requests in all.
+requests. Completed requests are recorded with their usage before output
+validation, including rejected summaries and native responses that require
+portable fallback. A native checkpoint includes the full returned item window,
+in provider order.
+
+A summary must complete normally and contain bounded, nonempty progress,
+decisions, context, constraints, next-steps and reference sections before
+checkpoint publication. Markdown heading marks may decorate the labels. If a
+finished summary lacks this structure, Autolith names the problem and asks
+again, up to four summary requests in all.
+
 The last request publishes any finished text answer, so a loosely shaped handoff
 never stops the agent. An empty or refused summary fails at once.
 
@@ -1974,15 +2012,19 @@ Unknown token counts are omitted. Export is disabled without a destination.
 Appends are synchronous and serialized across processes; export errors do not
 abort a completed provider call.
 
-Mechanical precompaction bounds oversized old tool output before a request after
-an explicitly declared cache lifetime expires or the provider/model changes.
-A retention estimate alone never permits rewriting served history. Excerpts
-include the head and tail, failure status, uncertainty about external effects,
-and a retrievable conversation/call reference. Calls, reasoning, and failed
-attempts are retained. Full outputs are available in the durable transcript;
-the latest user turn is untouched. Each precompaction is recorded and replayed
-on resume. A same-provider/model resume preserves its prefix unless a known
-lifetime elapsed. Conversations without a recorded response identity prepare
+Mechanical precompaction bounds oversized old tool output before a request,
+but only after an explicitly declared cache lifetime expires or the
+provider/model changes. A retention estimate alone never permits rewriting
+served history.
+
+Excerpts include the head and tail, failure status, uncertainty about external
+effects, and a retrievable conversation/call reference. Calls, reasoning, and
+failed attempts are retained. Full outputs are available in the durable
+transcript; the latest user turn is untouched. Each precompaction is recorded
+and replayed on resume.
+
+A same-provider/model resume preserves its prefix unless a known lifetime has
+elapsed. If a conversation has no recorded response identity, it is prepared
 once on resume. Manual, context-threshold, and scheduled idle compaction can
 still replace history with a summary, including when its cache lifetime is unknown.
 
@@ -2033,22 +2075,28 @@ subscription route. Idle compaction uses the ordinary paid checkpoint and
 summary path. It can reduce the context sent after a long pause, but neither a
 cache hit nor a net saving is guaranteed.
 
-=(cache-misses t)= enables notices when cached reads fall by at least 128 tokens,
-including accumulated smaller losses, or remain flat while shared request history
-grows by at least 16,384 characters and one sixteenth of its reference size.
-Temporary context and newly offered history are excluded from shared growth.
-A cache miss reports measured lost reads; a stall reports shared-history growth
+Use =(cache-misses t)= to enable notices when cached reads fall by at least
+128 tokens, including accumulated smaller losses. Notices also appear when
+cached reads remain flat while shared request history grows by at least
+16,384 characters and at least one sixteenth of its reference size. Temporary
+context and newly offered history are excluded from shared growth.
+
+A cache miss reports measured lost reads. A stall reports shared-history growth
 in characters because its token count is unknown. Both show cached and total
-input tokens. Notices start with a red =!=. Model changes, idle intervals and
+input tokens and start with a red =!=. Model changes, idle intervals and
 smaller prompts are local observations, not proof of eviction or routing failure.
-A notice also names what changed in the request as sent, compared with the
-previous one: top-level fields such as =tools= or =system=, the first item of
-the previous request's reusable prefix that the new request changes or lacks,
-and moved cache markers. The reusable prefix stops before the temporary
-context and one-response exchanges, so appended history is not a change, and
-a request that repeats the whole prefix reads =prefix intact=: the provider
-did not extend its cache. These come from digests of the final request, not
-from provider counters, and keep no prompt text.
+
+Each notice also identifies changes in the request as sent, compared with the
+previous request: top-level fields such as =tools= or =system=, the first item
+in the previous request's reusable prefix that the new request changes or
+omits, and moved cache markers.
+
+The reusable prefix stops before temporary context and one-response exchanges,
+so appended history does not count as a change. If a request repeats the whole
+prefix, the notice reads =prefix intact=: the provider did not extend its
+cache. These comparisons use digests of the final request, not provider
+counters, and retain no prompt text.
+
 The first request after resuming or compacting establishes a fresh baseline.
 Without comparable read counters or prefix measurements, no loss is inferred
 from total input. The setting is off by default and persists across restarts.
@@ -2127,17 +2175,20 @@ use =autolith models= to list locally known IDs and =(models)= to refresh them.
 
 The built-in model picker uses =https://models.dev/api.json= for ChatGPT,
 Gemini, Grok, Anthropic, Fireworks, OpenCode, OpenRouter, and Mistral metadata.
-An explicit =(models)= refresh downloads the public catalog once without
-provider credentials, selects tool-capable text models, and updates descriptions,
-context windows, and reasoning efforts. Startup reads the last-good local cache
-without a network request. Failed refreshes retain cached models; built-in seed
-metadata supports a first offline start. Custom provider registrations and
-overridden discovery endpoints retain their own discovery. Copilot retains its
-account-specific catalog because it also supplies authorized protocol routes;
-Nous retains its account catalog because models.dev has no corresponding source.
-ChatGPT, Gemini, and Grok subscription adapters update metadata only for the
-model IDs their transports support; public API availability alone does not
-establish subscription access.
+When you explicitly refresh with =(models)=, Autolith downloads the public
+catalog once without provider credentials, selects tool-capable text models,
+and updates descriptions, context windows, and reasoning efforts.
+
+Startup reads the last-good local cache without a network request. Failed
+refreshes retain cached models, and built-in seed metadata supports a first
+offline start. Custom provider registrations and overridden discovery endpoints
+retain their own discovery.
+
+Copilot retains its account-specific catalog because that catalog also supplies
+authorized protocol routes. Nous retains its account catalog because models.dev
+has no corresponding source. ChatGPT, Gemini, and Grok subscription adapters
+update metadata only for the model IDs their transports support. Public API
+availability alone does not establish subscription access.
 Catalog refresh for the picker works independently of telemetry being enabled.
 
 Built-in ChatGPT subscriptions use browser OAuth with PKCE and a local callback
@@ -2206,15 +2257,19 @@ models keep the preference but use the standard path. Set
 =AUTOLITH_CODEX_FAST_MODE=on= or =off= to override the saved choice for one
 process; while it is set, =(fast t)= and =(fast nil)= are unavailable.
 
-A request that fails before model generation begins is retried up to six times
-with jittered delays. Once reasoning or output has streamed, or the provider
-reports token exhaustion (=length=, =max_output_tokens=, or =max_tokens=), at most
-two retries are made: three generation attempts including the original. Token
-exhaustion before visible text uses the same limit. Set
-=autolith::*provider-maximum-streaming-retries*= in =init.lisp= to change this
-retry count; zero disables these retries. Every failed attempt is recorded next
-to its request number with the attempt count, elapsed seconds, whether output
-was received, and provider identifiers.
+If a request fails before model generation begins, Autolith retries it up to
+six times with jittered delays.
+
+Once reasoning or output has streamed, or the provider reports token exhaustion
+(=length=, =max_output_tokens=, or =max_tokens=), Autolith makes at most two
+retries: three generation attempts including the original. Token exhaustion
+before visible text uses the same limit.
+
+Set =autolith::*provider-maximum-streaming-retries*= in =init.lisp= to change
+this retry count; zero disables these retries.
+
+Every failed attempt is recorded next to its request number with the attempt
+count, elapsed seconds, whether output was received, and provider identifiers.
 
 ChatGPT Codex uses standard Responses requests and native Responses compaction.
 Normal requests enable provider parallel tool calls. Autolith executes independent
@@ -2224,13 +2279,17 @@ runtime execute in separate ordered waves.
 
 GPT-5.4 and later Codex models use native Responses tool search. Autolith sends
 stable namespace names and descriptions up front, marks each function
-=defer_loading=true=, and declares a client-executed =tool_search=. When the
-model searches, Autolith answers from its own registry over the namespaces
-that request advertised, scoring namespace names, tool names, and description
-words, and appends the =tool_search_output= as a durable provider item. The
-expansion replays intact in every later request, which keeps those tools
-loaded and the prompt prefix cacheable; only native compaction requests replay
-it empty. Other models and providers receive the complete eager tool array.
+=defer_loading=true=, and declares a client-executed =tool_search=.
+
+When the model searches, Autolith searches its own registry within the
+namespaces advertised in that request. It scores namespace names, tool names,
+and description words, then appends the =tool_search_output= as a durable
+provider item.
+
+The expansion replays intact in every later request. This keeps those tools
+loaded and the prompt prefix cacheable. The expansion is replayed empty only
+in native compaction requests. Other models and providers receive the complete
+eager tool array.
 
 Authenticate Gemini with =autolith auth gemini= or
 =(auth "gemini")=. Autolith stores its Google OAuth credentials separately at
@@ -2404,17 +2463,20 @@ owning package separately from the reader package. Replay skips stale definition
 whose ownership moved to another library. Reapply an old skipped definition to
 record an intentional replacement under its current owner.
 
-Tracked source stays authoritative over private replay. Each published
-definition records the tracked source it shadowed, or that it introduced a new
-name. Startup replay skips a definition whose tracked definition changed, was
-removed, or appeared since publication, lists every skip in one startup notice
-grouped by reason, and leaves it out of the next =self.commit=. Commits published before
-this record replay their tracked overrides only while the image runs the source
-revision the lineage was published against. Reapply a skipped definition
-against the current source to restore it, or use =(fix-skipped-definitions)=
-to hand every skipped definition to the model with its persisted source, the
-tracked source it was written against, and the current tracked source. Supply
-an optional comment to direct which overrides to retain or drop:
+Tracked source takes precedence over private replay. Each published definition
+records the tracked source it shadowed, or records that it introduced a new name.
+Startup replay skips a definition if its tracked definition changed, was removed,
+or appeared since publication. One startup notice lists every skip, grouped by
+reason. Skipped definitions are left out of the next =self.commit=.
+
+For commits published before this record was introduced, tracked overrides replay
+only while the image runs the source revision the lineage was published against.
+
+To restore a skipped definition, reapply it against the current source. Or use
+=(fix-skipped-definitions)= to give the model every skipped definition, along
+with its persisted source, the tracked source it was written against, and the
+current tracked source. Supply an optional comment to say which overrides to
+retain or drop:
 
 #+BEGIN_SRC lisp
 (fix-skipped-definitions "Drop all of these. They were temporary development experiments.")
@@ -2645,28 +2707,34 @@ tools and =task.run=. A batch inherits its outer policy unless an item overrides
 it. The policy also applies after the synchronous grace period hands work off.
 
 In a primary terminal session, continue independent work while jobs run. When
-only job results are pending, yield the current turn. Receive a bounded result
-summary, truthful outcome and artifact reference in the exact owning conversation.
-Idle completions within a one-second window share one automatic turn through the
-ordinary controller. Busy turns receive results at their next safe request
-boundary. With =notify=, receive results on the next ordinary turn instead.
+only job results are pending, yield the current turn.
+
+Results arrive in the exact conversation that owns the work, with a bounded
+summary, the actual outcome and an artifact reference. When the session is idle,
+completions within a one-second window share one automatic turn through the
+ordinary controller. During a busy turn, results arrive at the next safe request
+boundary. With =notify=, they arrive on the next ordinary turn instead.
 
 An empty final reply while eligible jobs run appears as an Autolith yield notice
 with the number of unfinished jobs that can wake this conversation. Replayed
 notices retain the count at the time of yielding; completed jobs and notify-only
 work do not contribute to a new notice.
 
-An active goal or mission does not urge the model on while a job that will wake
-it is queued, running or undelivered. Its automatic continuations wait, the
-goal stays active, and the transcript shows =∙ continuing with job results=
-when the wakeup arrives. The goal's continuations resume after that turn.
+Automatic continuations for an active goal or mission wait while a job that
+will wake the conversation is queued, running or awaiting result delivery.
+The goal stays active. When the wakeup arrives, the transcript shows
+=∙ continuing with job results=. The goal's continuations resume after that
+turn.
 
-Delivery receipts survive restart and conversation compaction. Notification
-reconstruction reads terminal artifacts without repeating job effects. Cancellation,
+Delivery receipts survive restart and conversation compaction. Notifications are
+reconstructed from terminal artifacts without repeating job effects. Cancellation,
 paused or terminal missions, spent budgets, and conversation ownership constrain
 automatic turns. Inspect retained results with =job.get=, =job.continuity= or =(tasks)=.
-Child-owned outcomes are inspection-only outside their exact conversation; completing
-a child does not reopen it or redirect descendant results into the primary context.
+
+Outside a child's exact conversation, its outcomes are available only for
+inspection. Completing a child does not reopen it or redirect descendant results
+into the primary context.
+
 ACP sessions also own a completion controller and stream automatic turns to the
 connected client. Interfaces without an input controller deliver results on
 subsequent ordinary turns. Use =job.wait= when deliberate waiting is appropriate.
@@ -2709,11 +2777,13 @@ retained shared-workspace task specification:
 (tasks :abandon "EXECUTION-ID" :authorize t)
 #+END_SRC
 
-Equivalent =job.continuity= actions are =revive= and =abandon= with =id= and
-=authorize: true=. The durable recovery decision precedes dispatch and links the
-old execution to the new execution. Failed or interrupted revival consumes its
-claim and records an uncertain outcome for explicit inspection. Resuming a
-conversation presents this inventory for a decision rather than replaying work.
+For equivalent =job.continuity= calls, use =revive= or =abandon= with =id= and
+=authorize: true=. The recovery decision is durably recorded before dispatch
+and links the old execution to the new execution.
+
+A failed or interrupted revival consumes its claim and records an uncertain
+outcome for explicit inspection. When you resume a conversation, you see this
+inventory for a decision. Resuming does not replay the work.
 
 ** Granted peer messages
 
@@ -2758,12 +2828,14 @@ state.
 ** Engineering task artifacts
 
 Select the bundled =engineering= role or give a native role =:output :engineering=.
-Its version-1 contract requires =schemaVersion=, =baseline= (=kind=, =workspace=,
+The version-1 contract requires =schemaVersion=, =baseline= (=kind=, =workspace=,
 =revision=), =change= (=kind=, =reference=), =paths=, =checks=, =evidence=, =issues=
-and =integrationNotes=. =symbols= is optional. Each check names the command,
-status (=passed=, =failed=, =skipped= or =not-run=) and summary, with optional
-evidence references. Use baseline kind =unknown= when no revision is available
-and change kind =none= when no change was produced.
+and =integrationNotes=. =symbols= is optional.
+
+For each check, include the command, status (=passed=, =failed=, =skipped= or
+=not-run=) and summary. Evidence references are optional. Use baseline kind
+=unknown= when no revision is available and change kind =none= when no change
+was produced.
 
 Extend the common contract in a native role:
 
@@ -2793,11 +2865,15 @@ Git directory. Integration requires authorization for the target workspace.
 
 The child edits and tests in its detached checkout. Before it starts, persist the
 source repository, exact resolved baseline, isolated path and conversation-qualified
-owner. Stage new files before yielding. A patch includes committed and uncommitted
-tracked changes; a commit range requires a clean checkout and ancestor baseline.
-Terminal results, including aborted tasks, identify the secured engineering artifact.
-Extraction failures retain the checkout and report =:worktree-error=; a successful
-child without a complete artifact is reported as failed.
+owner. Stage new files before yielding.
+
+A patch includes committed and uncommitted tracked changes. A commit range
+requires a clean checkout and an ancestor baseline.
+
+Terminal results identify the secured engineering artifact, including when a
+task is aborted. If extraction fails, the checkout is retained and the result
+reports =:worktree-error=. A successful child without a complete artifact is
+reported as failed.
 
 Use =task.worktree= with an explicit =action=:
 
@@ -2823,17 +2899,23 @@ chooses integration order and resolves conflicts deliberately.
 
 Primary shell and Lisp executions and child agents appear as live rows with
 spinners and elapsed time. The command and agent strips share a viewport bound,
-and provider activity remains visible below them. =shell.run= accepts an optional
-short =:description= for its row label; otherwise it derives one from the command.
+and provider activity remains visible below them. You can supply a short
+=:description= in a =shell.run= call to set its row label. Otherwise, the label
+is derived from the command.
+
 Use POSIX shell syntax for commands on POSIX hosts and PowerShell syntax on
-Windows. Both Windows authorization modes use native PowerShell; MSYS/Git Bash
+Windows. Both Windows authorization modes use native PowerShell. MSYS/Git Bash
 requires a shared object namespace that AppContainer does not permit.
-Windows sandboxed commands execute serially while temporary filesystem ACLs
-are installed. Their writable temporary directory is removed after completion
-or cancellation. Add existing read-only tool directories through
-=*win32-sandbox-read-roots*= for tools installed outside system application directories.
-Windows scopes must be local directories without reparse points or hard-linked files. Unsupported
-scopes or an unavailable helper fail instead of running without isolation.
+
+On Windows, sandboxed commands execute serially while temporary filesystem
+ACLs are installed. Their writable temporary directory is removed after
+completion or cancellation. For tools installed outside system application
+directories, add existing read-only tool directories through
+=*win32-sandbox-read-roots*=.
+
+Windows scopes must be local directories with no reparse points or hard-linked
+files. If a scope is unsupported or the helper is unavailable, execution fails
+rather than proceeding without isolation.
 
 The default pool admits eight concurrent children.
 =AUTOLITH_TASK_MAX_CONCURRENCY= raises that up to 32. Child jobs have no
@@ -2861,15 +2943,19 @@ References are included in job inspection, durable tool-result metadata and
 completion notices. Reopen them after restart or compaction without executing
 the command again. Missing, interrupted and pruned captures return diagnostics.
 
-Defaults are 64 MiB per stream, 1 GiB of reserved capture capacity and 256
-retained artifacts. Eligible completed captures can be pruned after seven days
-or under capacity pressure, on the next allocation. Active captures and
-undelivered completion evidence are protected. If delivery is observed before
-child artifact retention, that observation is recorded on each capture, so it
-can be pruned normally after the owner's conversation storage is removed.
+The defaults are 64 MiB per stream, 1 GiB of reserved capture capacity and 256
+retained artifacts. Eligible completed captures can be pruned at the next
+allocation, either after seven days or under capacity pressure. Active captures
+and undelivered completion evidence are protected.
+
+If delivery is observed before child artifact retention, the observation is
+recorded on each capture. This allows normal pruning after the owner's
+conversation storage is removed.
+
 Adjust =*shell-log-capture-byte-limit*=, =*shell-log-retention-byte-limit*=,
 =*shell-log-retention-count-limit*= and =*shell-log-retention-age*= in trusted
-configuration. Captures exceeding their limit are explicitly incomplete.
+configuration. Captures that exceed their limit are explicitly marked incomplete.
+
 Session export collects task metadata independently of local log storage.
 
 * Non-interactive jobs
@@ -2902,9 +2988,12 @@ The input is exactly one bounded data-only S-expression:
 #+END_SRC
 
 The supplied output contract applies only to that run and does not alter the
-role definition. The terminal artifact is atomically installed at =--output=
-as =(:autolith-job-result :version 1 ...)=. Structured objects and arrays use
+role definition.
+
+The terminal artifact is atomically installed at =--output= as
+=(:autolith-job-result :version 1 ...)=. Structured objects and arrays use
 =:OBJECT= and =:ARRAY= tags, so false, null, and empty arrays remain distinct.
+
 Failures use stable categories and statuses =:failed=, =:cancelled=, or
 =:timed-out=. Successful jobs use =:succeeded= and include the contracted
 result. Trace and usage fields are included when available.
@@ -2937,13 +3026,16 @@ Strings may contain newlines. Each version-one record has this shape:
 
 The event kinds are =:run-started=, =:job-started=, =:tool-started=, =:progress=,
 =:tool-finished=, =:job-finished=, =:usage=, =:warning=, =:progress-omitted=, and
-=:run-finished=. Ignore unknown versioned kinds. Sequence numbers increase
-strictly within one run. Job and execution identifiers are opaque execution
-UUIDs; provider call identifiers are pseudonymous within that run. Tool names
-come from the registered tool catalog. Observe only the requested root and its
-owned descendants, excluding other roots in the same conversation. Event data
-contains allowlisted statuses and numeric counters, not prompts, tool arguments,
-tool output, or provider payloads.
+=:run-finished=. Ignore unknown versioned kinds.
+
+Sequence numbers increase strictly within one run. Job and execution
+identifiers are opaque execution UUIDs; provider call identifiers are
+pseudonymous within that run. Tool names come from the registered tool catalog.
+
+Observe only the requested root and its owned descendants, excluding other
+roots in the same conversation. Event data contains allowlisted statuses and
+numeric counters, not prompts, tool arguments, tool output, or provider
+payloads.
 Interactive input is EOF, and diagnostic/query streams go to stderr in the
 initiating thread and its workers.
 
@@ -3005,11 +3097,13 @@ To start a rescue session directly, use:
 autolith resume --pristine --permissions full
 #+END_SRC
 
-=--pristine= forces tracked source instead of a saved active core and skips the
-selected private image commit, mutation journal reconstruction, and executable
-user initialization for this process. It implies =--immutable= so ordinary
-self-mutation tools cannot replace the selected private commit. It does not
-erase mutation or conversation data.
+With =--pristine=, the process uses tracked source instead of a saved active
+core. It skips the selected private image commit, mutation journal
+reconstruction, and executable user initialization.
+
+The process also runs with =--immutable=, so ordinary self-mutation tools
+cannot replace the selected private commit. Mutation and conversation data
+are not erased.
 
 A fatal active failure publishes a private crash capsule and restores the
 terminal. Recovery restores the conversation without duplicating scrollback.
