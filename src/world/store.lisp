@@ -550,13 +550,24 @@ nothing; so does no match."
                              (string-equal (participant-name participant) name)))
                       (world-participants world)))))
 
+(-> world-handle-suffixed (string (integer 1)) string)
+(defun world-handle-suffixed (base index)
+  "Return BASE for INDEX 1, else BASE numbered with INDEX, cut so the whole stays a handle.
+
+A base already at the handle length limit loses its tail to make room for
+the suffix, so a numbered handle is valid and the search for a free one
+ends."
+  (if (= index 1)
+      base
+      (let* ((suffix (format nil "-~D" index))
+             (room   (max 1 (- *world-handle-limit* (length suffix)))))
+        (concatenate 'string (subseq base 0 (min (length base) room)) suffix))))
+
 (-> world-unique-handle (world string) string)
 (defun world-unique-handle (world base)
   "Return BASE, or BASE with the lowest numbered suffix, that names no participant of WORLD."
   (loop for index from 1
-        for candidate = (if (= index 1)
-                            base
-                            (format nil "~A-~D" base index))
+        for candidate = (world-handle-suffixed base index)
         unless (world-participant-named-p world candidate)
           return candidate))
 
