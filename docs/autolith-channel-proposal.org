@@ -101,19 +101,23 @@ Client
     idle until the person writes there (as the channel's only agent, a plain
     message is addressed to it) or someone mentions it from another channel.
     (Decided 2026-11-04.)
-  - A channel with no resident agent, because its agent left or was dismissed,
+  - A channel with no resident agent, because its agent left or was parked,
     keeps its history, the person and its subscribers. Opening it offers two
     things: move an agent in, or create a new domestic agent for it.
     (Decided 2026-11-04.)
-  - Dismissing an agent deletes it and leaves its channel without one, after
-    stopping it the way a move does; an agent with child participants is
-    refused. Since every conversation starts with its agent and a move needs a
-    destination without one, a dismissal is what makes the first move possible.
-    (Chosen 2026-11-04 by the implementer to complete the move design; open to
-    revision.)
+  - Dismissing an agent parks it: it is stopped the way a move stops it and
+    then resides in no channel. A parked, homeless agent keeps its identity,
+    its children and the context it carries, and a move brings it into a
+    channel again. An agent with children may be parked; parking never
+    affects its children. (Decided 2026-11-04.)
 - Participants can discover, inspect, read, subscribe to, and message other channels
   and participants across the world, including across projects.
 - Participant parent/child relationships are separate from channel nesting.
+- Agents are one kind of participant. There are no sub-agents: an agent has a
+  parent and may have children, and "parent agent" and "child agent" describe
+  only that relationship. Any agent may create child agents, a child as well
+  as a top-level agent; how deep the tree grows and how many agents run at once
+  are both capped. (Decided 2026-11-04.)
 - Ownership, residence, and subscription are distinct relationships.
 - Preserve human control over the participant tree; detaching/reparenting must not
   leave participants outside that control. Exact descendant controls need specification.
@@ -156,6 +160,9 @@ Client
   second copy.
 - Mentions deliver across channels without creating a subscription. A mention
   starts a word: an =@= inside an address or a path mentions nobody.
+- =@parent= names the sender's parent. When that parent is parked, the
+  message goes to the nearest ancestor agent that is not, and to the person
+  when no such agent is left. (Decided 2026-11-04.)
 - A copy that arrives from another channel shows in the transcript as one compact
   line, "@name mentioned from #channel" (the same for a subscription copy); its
   text goes only to the model's request and stays readable in the inbox and the
@@ -236,3 +243,9 @@ Client
 - Channel URI addressing, bounded-history schema, and supported resource edits.
 - Exact migration fields, freshness comparison, reconciliation triggers, and removal
   of existing 1:1 session assumptions.
+- The starts that still run one channel without the world server (the pristine
+  recovery image, authentication, startup images, simulated crashes,
+  non-interactive input, =AUTOLITH_SESSION_STYLE=direct= and handoff
+  replacements): there a moved or parked agent's context survives only into
+  that process's own channel, because no world server holds it for the
+  channels the process does not serve.
