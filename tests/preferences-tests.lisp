@@ -366,3 +366,112 @@ Source precedence, source recording, and value rejection belong to setinka."
   (test-assert (version< *autolith-version* "0.68.0")
                "At 0.68.0 remove legacy XDG root selection and choice caches, preferences/model-cache migration and conversation-cache legacy sidecars, then remove this test.")
   nil)
+
+(-> test-preferences-unavailable-provider-selection () null)
+(defun test-preferences-unavailable-provider-selection ()
+  "Drop durable unavailable model/provider pairs during deferred startup validation."
+  (preferences-tests--without-model-environment
+   (lambda ()
+     (with-test-environment (("AUTOLITH_MODEL_PROVIDER" nil))
+       (provider-selection-tests--with-providers
+        (lambda ()
+          (dolist (provider '("occ-dead" "selection-a"))
+            (with-test-configuration (configuration)
+              (snapshot-write (configuration-preferences-path configuration)
+                              (list :preferences :version 8
+                                    :model "dead-model" :model-provider provider))
+              (let ((created (preferences-tests--create
+                              configuration :defer-provider-validation-p t)))
+                (test-assert
+                 (handler-case
+                     (progn (provider-bootstrap-configuration created) t)
+                   (model-selection-error () nil))
+                 "unavailable durable selections do not abort startup")
+                (test-assert (string= (config :model created) *default-model*)
+                             "the default model replaces an unavailable saved model")
+                (test-assert (configuration-model-registration created)
+                             "the fallback pair resolves to a registered provider")
+                (test-assert (non-empty-string-p (config :saved-model-selection-notice created))
+                             "bootstrap records a visible dropped-selection notice")
+                (test-assert (string= (config :model-provider created) "")
+                             "the stale provider is dropped with its saved model")))))))))
+  nil)
+
+(-> test-preferences-provider-selection-controls () null)
+(defun test-preferences-provider-selection-controls ()
+  "Preserve valid saved pairs and reject explicit invalid selections."
+  (preferences-tests--without-model-environment
+   (lambda ()
+     (with-test-environment (("AUTOLITH_MODEL_PROVIDER" nil))
+       (provider-selection-tests--with-providers
+        (lambda ()
+          (with-test-configuration (configuration)
+            (snapshot-write (configuration-preferences-path configuration)
+                            '(:preferences :version 8 :model "shared"
+                              :model-provider "selection-a"))
+            (let ((created (provider-bootstrap-configuration
+                            (preferences-tests--create
+                             configuration :defer-provider-validation-p t))))
+              (test-assert (and (string= (config :model created) "shared")
+                                (string= (config :model-provider created) "selection-a")
+                                (configuration-model-registration created))
+                           "a valid saved provider retains its exact model")
+              (test-assert (not (non-empty-string-p
+                                 (config :saved-model-selection-notice created)))
+                           "valid saved selections need no recovery notice"))
+            (dolist (overrides '((:model "dead-model" :model-provider "occ-dead")
+                                 (:model "dead-model" :model-provider "selection-a")))
+              (test-assert
+               (handler-case
+                   (progn (provider-bootstrap-configuration
+                           (apply #'preferences-tests--create configuration
+                                  :defer-provider-validation-p t overrides))
+                          nil)
+                 (setting-invalid () t)
+                 (configuration-error () t))
+               "invalid explicit launch choices fail instead of falling back"))
+            (with-test-environment (("AUTOLITH_MODEL" "dead-model")
+                                    ("AUTOLITH_MODEL_PROVIDER" "occ-dead"))
+              (test-assert
+               (handler-case
+                   (progn (provider-bootstrap-configuration
+                           (preferences-tests--create
+                            configuration :defer-provider-validation-p t))
+                          nil)
+                 (setting-invalid () t))
+               "invalid environment choices fail instead of falling back")
+              (let ((created (provider-bootstrap-configuration
+                              (preferences-tests--create
+                               configuration :model "shared" :model-provider "selection-a"
+                               :defer-provider-validation-p t))))
+                (test-assert (and (string= (config :model created) "shared")
+                                  (string= (config :model-provider created) "selection-a"))
+                             "explicit launch choices take precedence over environment")))))))))
+  nil)
+
+(-> test-preferences-provider-aliases () null)
+(defun test-preferences-provider-aliases ()
+  "Accept legacy provider aliases from both durable and environment selections."
+  (preferences-tests--without-model-environment
+   (lambda ()
+     (dolist (alias '("codex" "openai"))
+       (dolist (source '(:durable :environment))
+         (with-test-configuration (configuration)
+           (snapshot-write (configuration-preferences-path configuration)
+                           (list :preferences :version 8 :model *default-model*
+                                 :model-provider alias))
+           (with-test-environment (("AUTOLITH_MODEL_PROVIDER"
+                                    (and (eq source ':environment) alias)))
+             (let ((created (preferences-tests--create
+                             configuration :defer-provider-validation-p t)))
+               (test-assert
+                (handler-case (progn (provider-bootstrap-configuration created) t)
+                  (setting-invalid () nil))
+                "valid legacy aliases do not fail deferred validation")
+               (test-assert
+                (and (string= (config :model-provider created) alias)
+                     (configuration-model-registration created)
+                     (not (non-empty-string-p
+                           (config :saved-model-selection-notice created))))
+                "valid aliases retain their selection without a recovery notice"))))))))
+  nil)

@@ -1585,7 +1585,10 @@ outside conversation turns. The setting lasts until exit and defaults to =nil=.
 A durable value is chosen at startup from the first source that supplies it:
 an explicit command-line choice, the setting's environment variable, then the
 saved file. A saved model or effort that no registered provider serves is
-dropped rather than applied.
+dropped rather than applied. An unavailable saved provider or incompatible saved
+model/provider pair falls back to a registered selection after user initialization.
+Startup displays a notice when it drops a saved model selection. Invalid explicit
+command-line and environment choices report an error.
 
 From Lisp, user initialization and replay scripts read a setting with
 =(config :model)=, which uses the current configuration, or

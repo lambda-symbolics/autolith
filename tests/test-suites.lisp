@@ -375,6 +375,7 @@
   test-onboarding-source-text
   test-onboarding-operation
   test-onboarding-first-startup
+  test-startup-saved-model-selection-notice
   test-onboarding-startup-input
   test-onboarding-startup-exclusions
   test-onboarding-version-selection
@@ -574,6 +575,9 @@
 
 (define-test-suite preferences
   test-preferences
+  test-preferences-unavailable-provider-selection
+  test-preferences-provider-selection-controls
+  test-preferences-provider-aliases
   test-preferences-xdg-migration
   test-preferences-xdg-migration-failure
   test-preferences-xdg-migration-cleanup

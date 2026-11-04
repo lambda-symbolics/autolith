@@ -330,6 +330,26 @@
        (test-assert (not (terminal-ui-live-output-suspended-p ui)) "live output is available after the tour"))))
   nil)
 
+(-> test-startup-saved-model-selection-notice () null)
+(defun test-startup-saved-model-selection-notice ()
+  "Present a recovered saved selection once through the startup UI."
+  (onboarding-tests--call
+   (lambda (application controller configuration terminal)
+     (setf (config :saved-model-selection-notice configuration) "Recovered saved selection.")
+     (test-call-with-function-replacements
+      (list (list 'terminal-ui-boot-sequence
+                  (lambda (&rest arguments)
+                    (declare (ignore arguments))
+                    ':completed)))
+      (lambda ()
+        (application-startup-presentation application controller :onboarding-p nil)
+        (test-assert (search "Recovered saved selection." (recording-terminal-output terminal))
+                     "the notice reaches the terminal presentation path")
+        (test-assert (not (non-empty-string-p
+                           (config :saved-model-selection-notice configuration)))
+                     "the pending notice is consumed after presentation")))))
+  nil)
+
 (-> test-onboarding-choice-exercise () null)
 (defun test-onboarding-choice-exercise ()
   "Pick a lesson's setting value by typing its form, persisting it for later launches."

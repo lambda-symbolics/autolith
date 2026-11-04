@@ -337,15 +337,26 @@ gpt-6.1-terra is assumed to, like gpt-5.6-terra, until upstream lists it.")
       (not (null (provider-registration-for-model model)))
       (not (null (member model *supported-models* :test #'string=)))))
 
+(-> configuration--model-provider-problem (string t) (option string))
+(defun configuration--model-provider-problem (provider configuration)
+  "Return why PROVIDER is unavailable after executable initialization."
+  (declare (ignore configuration))
+  (when (and (non-empty-string-p provider) (fboundp 'provider-registration-find)
+             (not (provider-registration-find (provider--canonical-name provider))))
+    (format nil "Unknown provider ~S." provider)))
+
 (-> configuration--model-problem (string t) (option string))
 (defun configuration--model-problem (model configuration)
   "Return why MODEL is unavailable in CONFIGURATION's selected provider."
-  (let ((provider (config :model-provider configuration)))
-    (unless (if (and (non-empty-string-p provider) (fboundp 'provider-resolve-model))
-                (nth-value 1 (provider-resolve-model model :provider provider))
-                (configuration--model-supported-p model))
-      (format nil "Unsupported model ~S. The choices are ~{~A~^, ~}."
-              model *supported-models*))))
+  (handler-case
+      (let ((provider (config :model-provider configuration)))
+        (unless (if (and (non-empty-string-p provider) (fboundp 'provider-resolve-model))
+                    (nth-value 1 (provider-resolve-model model :provider provider))
+                    (configuration--model-supported-p model))
+          (format nil "Unsupported model ~S. The choices are ~{~A~^, ~}."
+                  model *supported-models*)))
+    (model-selection-error (condition)
+      (autolith-error-message condition))))
 
 (-> configuration--reasoning-effort-problem (string t) (option string))
 (defun configuration--reasoning-effort-problem (effort configuration)
