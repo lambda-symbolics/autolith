@@ -496,17 +496,20 @@ An @ inside a word or an address, as in alice@bob.com, mentions nobody."
 
 (-> world-message-plan
     (world &key (:sender participant) (:channel channel) (:text string) (:mentions list)
-                (:identifier string) (:now timestamp) (:post-p boolean))
+                (:identifier string) (:now timestamp) (:post-p boolean)
+                (:subscribers-p boolean))
     list)
 (defun world-message-plan (world &key sender channel text mentions identifier
-                                      (now (get-universal-time)) (post-p t))
+                                      (now (get-universal-time)) (post-p t)
+                                      (subscribers-p post-p))
   "Return the deliveries one message from SENDER to CHANNEL produces, as (CHANNEL-ID . DELIVERY) pairs.
 
 The channel itself gets a post for its residents. Each subscriber and each
 mentioned participant residing elsewhere gets a copy in its residence channel,
 one per channel, subscriptions before mentions. Without POST-P the channel
-and its subscribers get nothing: the message was said there already, and
-only the participants it mentions elsewhere hear of it."
+gets nothing: the message was said there already. SUBSCRIBERS-P, which
+follows POST-P unless given, says whether its subscribers still hear of it,
+as they do of every ordinary message said in the channel."
   (let ((target  (channel-identifier channel))
         (pairs   nil)
         (covered (if post-p nil (list (channel-identifier channel)))))
@@ -527,7 +530,8 @@ only the participants it mentions elsewhere hear of it."
                                           :kind        kind))
                      pairs))))
       (when post-p
-        (deliver target ':post)
+        (deliver target ':post))
+      (when subscribers-p
         (dolist (subscriber (world-channel-subscribers world target))
           (unless (string= (participant-identifier subscriber) (participant-identifier sender))
             (deliver (participant-residence subscriber) ':subscription))))
@@ -569,10 +573,12 @@ inbox until a process installs its conversation."
 
 (-> world-message-send
     (configuration &key (:sender string) (:channel string) (:text string) (:mentions list)
-                        (:notify-p boolean) (:now timestamp) (:post-p boolean))
+                        (:notify-p boolean) (:now timestamp) (:post-p boolean)
+                        (:subscribers-p boolean))
     list)
 (defun world-message-send (configuration &key sender channel text mentions (notify-p t)
-                                              (now (get-universal-time)) (post-p t))
+                                              (now (get-universal-time)) (post-p t)
+                                              (subscribers-p post-p))
   "Send TEXT from participant SENDER to channel CHANNEL and return what happened.
 
 MENTIONS are explicit participant designators added to the @mentions found in
@@ -604,14 +610,15 @@ whose serving process was reached)."
                                                 :identifier designator))
                                     collect (participant-identifier found))))
            (pairs     (world-message-plan world
-                                          :sender     participant
-                                          :channel    target
-                                          :text       text
-                                          :mentions   (remove-duplicates mentioned :test     #'string=
-                                                                                   :from-end t)
-                                          :identifier identifier
-                                          :now        now
-                                          :post-p     post-p)))
+                                          :sender        participant
+                                          :channel       target
+                                          :text          text
+                                          :mentions      (remove-duplicates mentioned :test     #'string=
+                                                                                      :from-end t)
+                                          :identifier    identifier
+                                          :now           now
+                                          :post-p        post-p
+                                          :subscribers-p subscribers-p)))
       (when pairs
         (world-outbox-write configuration identifier pairs))
       (multiple-value-bind (delivered refused)

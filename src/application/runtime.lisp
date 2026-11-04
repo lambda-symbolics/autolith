@@ -4156,7 +4156,8 @@ checked."
                              (getf details :attempt)
                              (getf details :maximum-attempts)))))))
            (:assistant-response-persisted
-            (setf request-empty-p nil))
+            (setf request-empty-p nil)
+            (application-world-share-reply application (getf details :text)))
            (:provider-request-completed
             (when (plusp (getf details :tool-call-count 0))
               (setf request-empty-p nil))
