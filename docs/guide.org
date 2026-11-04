@@ -869,8 +869,8 @@ Omit =:to= to address the primary agent:
 (prompt :to 'test-review "Run focused tests and report failures.")
 #+END_SRC
 
-If you message a sub-agent, it can respond to you in the main conversation thread
-if it wants to.
+If you message a child agent, it can respond to you in the main conversation
+thread if it wants to.
 
 Start a message with =(= to evaluate it as Common Lisp in the active image:
 
@@ -1678,18 +1678,26 @@ process hosts the open channels, each with its own endpoint for terminals;
 see Local sessions.
 
 =(channels)= lists every channel with its residents and subscribers, newest
-change first. A child task is a channel nested under its root channel, with
-a participant named =task= under the root's agent, so =channel:id/<execution id>=
-reads a child's transcript and a message to that channel steers the child.
+change first, and then the parked agents. Agents are all one kind of
+participant: an agent has a parent and may have children, and any agent,
+a child too, may create child agents. A child agent resides in a channel
+nested under its parent's channel and belongs to its parent agent, so
+=channel:id/<execution id>= reads a child's transcript and a message to that
+channel steers it. How deep the tree grows is capped:
+=AUTOLITH_TASK_MAX_DEPTH=, default 2, counts the levels of child agents below
+a top-level agent, and the limits on running and queued jobs cap how many
+run at once.
 
 Every participant has a unique name, its handle, so =@name= reaches exactly
 one of them. A session's agent is named after its workspace directory, =frob=
 for an agent working in =~/work/frob=, and a second agent there is =frob-2=;
-a child task's agent is =task=, =task-2= and so on; you are =user=. Names are
-letters, digits, hyphens and underscores, matched without regard to case.
-=(rename "NAME")= renames this channel's agent and =(rename "WHO" "NAME")=
-renames the participant =WHO= names by handle, identifier or a part of it,
-yourself included. A name another participant has is refused.
+a child agent takes the name its parent gave it, as in
+=(prompt :to 'test-review ...)=, or =agent= when it has none; you are =user=.
+Names are letters, digits, hyphens and underscores, matched without regard to
+case. =(rename "NAME")= renames this channel's agent and
+=(rename "WHO" "NAME")= renames the participant =WHO= names by handle,
+identifier or a part of it, yourself included. A name another participant
+has is refused, and so is =parent=, which always means the sender's parent.
 
 A channel has one resident agent. =(move "WHO")= moves the agent =WHO=
 names, by handle, identifier or a part of it, into this channel, and
@@ -1700,14 +1708,16 @@ the channel it leaves. In its new channel the agent keeps the context it
 had, until the world server restarts, and waits: it works again when you
 write there or someone mentions it from another channel. A move into a
 channel that already has an agent is refused, and so is moving yourself;
-you move by attaching a terminal. =(dismiss "WHO")= deletes an agent
-instead, after it stops the same way; an agent with running tasks is
-refused. A channel without an agent, because its agent moved or was
-dismissed, keeps its history, you and its subscribers, and refuses typed
-prompts until =(move "WHO")= brings an agent or =(domestic)= creates a new
-one for it, named after the workspace and using this session's model.
-Messages sent to such a channel wait in its inbox until an agent is there
-to read them.
+you move by attaching a terminal. =(dismiss "WHO")= parks an agent instead,
+after it stops the same way: a parked agent resides in no channel and keeps
+its identity, its children and its context, and =(move "WHO")= brings it into
+a channel again. Parking never affects its children. A mention of a parked
+agent reaches nobody, and the send says the agent is parked. A channel
+without an agent, because its agent moved or was parked, keeps its history,
+you and its subscribers, and refuses typed prompts until =(move "WHO")=
+brings an agent or =(domestic)= creates a new one for it, named after the
+workspace and using this session's model. Messages sent to such a channel
+wait in its inbox until an agent is there to read them.
 
 Typing =@= in the composer completes participant handles the way it completes
 workspace paths; a token with a slash stays a path. A message you type that
@@ -1727,13 +1737,17 @@ Messages travel between channels through the same path for people and agents.
 may be any part of the identifier that names one channel, as in
 =channel:id/ID= and =(switch "ID")=; the agent
 tools =channel.send=, =channel.subscribe= and =channel.unsubscribe= do the same
-for an agent, a child task's agent included: it is the resident of its nested
+for an agent, a child agent included: it is the resident of its nested
 channel and messages as that participant under its role's ordinary tool
 policy. A message reaches the channel's residents, every subscriber of
 the channel and every participant it mentions as =@name= or =@id=, wherever
-they reside. An idle agent wakes with the message; a working one receives it
+they reside. =@parent= names the sender's parent; when that parent is parked,
+the message goes to the nearest ancestor agent that is not, and to you when
+none is left. An idle agent wakes with the message; a working one receives it
 as a steer labeled with the sender and the channel. The transcript shows the
-sender's name and the channel. Messages wait in the channel's inbox under
+sender's name and the channel. A message for you, one that mentions you or
+reaches you through =@parent=, is a notice: it shows in full in the
+transcript of the channel you are in, and no agent there takes it as a turn. Messages wait in the channel's inbox under
 =world/inbox/= until a process serves the channel, and a crash between
 delivery and the durable record repeats nothing. A send is recorded under
 =world/outbox/= before its copies go out, so a copy an inbox refuses because
@@ -3137,7 +3151,9 @@ files. If a scope is unsupported or the helper is unavailable, execution fails
 rather than proceeding without isolation.
 
 The default pool admits eight concurrent children.
-=AUTOLITH_TASK_MAX_CONCURRENCY= raises that up to 32. Child jobs have no
+=AUTOLITH_TASK_MAX_CONCURRENCY= raises that up to 32. =AUTOLITH_TASK_MAX_DEPTH=,
+default 2, is how many levels of child agents may sit below a top-level
+agent; a child at the last level cannot create children. Child jobs have no
 deadline unless =AUTOLITH_TASK_MAX_RUNTIME_MS= is set positive.
 
 ** Retained command output
