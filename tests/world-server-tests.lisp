@@ -764,6 +764,16 @@
            (test-assert (and (not (application-world-agent-present-p app-a))
                              (gethash (participant-identifier agent-a) *world-carried-contexts*))
                         "the channel left has no agent, and the context waits for the unhosted destination")
+           (let ((waiting (gethash (participant-identifier agent-a) *world-carried-contexts*)))
+             (world-channel-create configuration
+                                   :id        "bthird3"
+                                   :owner     (participant-identifier human)
+                                   :workspace (world-tests--workspace root "c"))
+             (move (participant-identifier agent-a) "bthird3")
+             (move (participant-identifier agent-a) id-b)
+             (test-assert (eq (gethash (participant-identifier agent-a) *world-carried-contexts*)
+                              waiting)
+                          "moves between channels nobody serves keep the waiting context with the agent"))
            (let* ((opened (localgroup-query-record entry ':open (list :channel  id-b
                                                                       :rows     30
                                                                       :columns  90
