@@ -3118,6 +3118,114 @@ the world knows no such channel."
                        (application-channels-entry application))
   ':continue)
 
+(define-application-command application--builtin-move-command
+    (:name              "/move"
+     :argument          "AGENT [CHANNEL]"
+     :description       "move an agent into a channel, this one by default"
+     :tip               "stops the agent where it is; in its new channel it waits until someone writes there or mentions it."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application agent &optional channel)
+  (let* ((configuration (application-configuration application))
+         (here          (application-world--served-channel application))
+         (target        (if channel
+                            (princ-to-string channel)
+                            (or here
+                                (error 'world-error
+                                       :message   "This conversation is not a channel yet; name the channel to move the agent into."
+                                       :pathname  nil
+                                       :operation ':move))))
+         (server        (application-world-server application)))
+    (if server
+        (let ((answer (rest (world-server-move server (princ-to-string agent) target))))
+          (application-present
+           application
+           (format nil "Agent ~A moved from channel ~A to ~A~@[; ~D queued message~:P dropped~]."
+                   (participant-name (world-participant-find (world-load configuration)
+                                                             (getf answer :participant)))
+                   (conversation-identifier-display (getf answer :source))
+                   (conversation-identifier-display (getf answer :channel))
+                   (let ((dropped (getf answer :dropped)))
+                     (and (plusp dropped) dropped)))))
+        (let* ((world       (values (world-reconcile-sessions configuration)))
+               (participant (or (world-participant-designated world (princ-to-string agent))
+                                (error 'world-error
+                                       :message    (format nil "No participant is named ~A." agent)
+                                       :pathname   nil
+                                       :operation  ':move
+                                       :identifier (princ-to-string agent))))
+               (destination (channel-identifier (world-channel-designated world configuration target)))
+               (source-p    (and here (string= here (participant-residence participant))))
+               (result      (world-move-agent
+                             configuration participant destination
+                             :source-application      (and source-p application)
+                             :destination-application (and here (string= here destination) application)
+                             :prefix                  (and source-p
+                                                           (conversation-input-items-for-family
+                                                            (application-conversation application)
+                                                            (provider-family (application-provider application))
+                                                            :include-ephemeral-p nil)))))
+          (application-present
+           application
+           (format nil "Agent ~A moved from channel ~A to ~A~@[; ~D queued message~:P dropped~]."
+                   (participant-name participant)
+                   (conversation-identifier-display (getf result :source))
+                   (conversation-identifier-display destination)
+                   (let ((dropped (getf result :dropped)))
+                     (and (plusp dropped) dropped)))))))
+  ':continue)
+
+(define-application-command application--builtin-domestic-command
+    (:name              "/domestic"
+     :argument          nil
+     :description       "create a new agent for this channel"
+     :tip               "for a channel without an agent: a fresh agent with this session's model, named after the workspace."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application)
+  (application-world-domestic-agent application)
+  ':continue)
+
+(define-application-command application--builtin-dismiss-command
+    (:name              "/dismiss"
+     :argument          "AGENT"
+     :description       "delete an agent, leaving its channel without one"
+     :tip               "stops the agent; its channel then takes a moved agent or a domestic one. An agent with running tasks is refused."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application agent)
+  (let* ((configuration (application-configuration application))
+         (server        (application-world-server application))
+         (answer        (if server
+                            (rest (world-server-dismiss server (princ-to-string agent)))
+                            (let* ((world       (values (world-reconcile-sessions configuration)))
+                                   (participant (or (world-participant-designated
+                                                     world (princ-to-string agent))
+                                                    (error 'world-error
+                                                           :message    (format nil "No participant is named ~A."
+                                                                               agent)
+                                                           :pathname   nil
+                                                           :operation  ':dismiss
+                                                           :identifier (princ-to-string agent))))
+                                   (here        (application-world--served-channel application)))
+                              (list* :name (participant-name participant)
+                                     (world-dismiss-agent
+                                      configuration participant
+                                      :application (and here
+                                                        (string= here (participant-residence participant))
+                                                        application)))))))
+    (application-present
+     application
+     (format nil "Agent ~A dismissed from channel ~A~@[; ~D queued message~:P dropped~]."
+             (getf answer :name)
+             (conversation-identifier-display (getf answer :channel))
+             (let ((dropped (getf answer :dropped)))
+               (and (plusp dropped) dropped)))))
+  ':continue)
+
 (define-application-command application--builtin-tell-command
     (:name              "/tell"
      :argument          "CHANNEL MESSAGE"
