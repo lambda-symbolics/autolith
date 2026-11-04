@@ -270,13 +270,16 @@ participant is left in place, only the scan moves past it."
         (nreverse pieces)
         (list span))))
 
-(-> application-world-mention (application t) list)
-(defun application-world-mention (application input)
-  "Tell the participants INPUT, the person's message to this channel, mentions elsewhere, and return the channels told.
+(-> application-world-share (application t) list)
+(defun application-world-share (application input)
+  "Share INPUT, the person's message to this channel, with the participants elsewhere it reaches, and return the channels told.
 
-The message itself goes to this channel's agent as the person's turn; a
-participant residing elsewhere that it names as @name or @id gets a copy in
-its own channel. A delivery that fails is reported and never stops the turn."
+The message itself goes to this channel's agent as the person's turn. A
+copy goes to every subscriber of this channel residing elsewhere, and to a
+participant residing elsewhere that it names as @name or @id. The share runs
+once, when the person submits, so a replay of the turn after a restart
+never sends a second copy. A delivery that fails is reported and never
+stops the turn."
   (let ((text (cond
                 ((stringp input)
                  input)
@@ -284,33 +287,85 @@ its own channel. A delivery that fails is reported and never stops the turn."
                  (user-message-input-text input))
                 (t
                  nil))))
-    (when (and (stringp text) (find #\@ text))
+    (when (non-empty-string-p text)
       (handler-case
           (let* ((configuration (application-configuration application))
                  (channel       (application-world--served-channel application))
                  (world         (and channel (values (world-reconcile-sessions configuration))))
                  (person        (and world (world-human-participant world)))
                  (elsewhere     (and person
+                                     (find #\@ text)
                                      (remove-if (lambda (identifier)
                                                   (let ((mentioned (world-participant-find
                                                                     world identifier)))
                                                     (or (null mentioned)
                                                         (string= (participant-residence mentioned)
                                                                  channel))))
-                                                (world-message-mentions world text)))))
-            (when elsewhere
+                                                (world-message-mentions world text))))
+                 (subscribed    (and person
+                                     (some (lambda (subscriber)
+                                             (not (string= (participant-residence subscriber)
+                                                           channel)))
+                                           (world-channel-subscribers world channel)))))
+            (when (or elsewhere subscribed)
               (getf (world-message-send configuration
-                                        :sender   (participant-identifier person)
-                                        :channel  channel
-                                        :text     text
-                                        :mentions elsewhere
-                                        :post-p   nil)
+                                        :sender        (participant-identifier person)
+                                        :channel       channel
+                                        :text          text
+                                        :mentions      elsewhere
+                                        :post-p        nil
+                                        :subscribers-p t)
                     :channels)))
         (autolith-error (condition)
           (application-present application
-                               (format nil "Mentions were not delivered: ~A"
+                               (format nil "The message was not shared: ~A"
                                        (bounded-string (princ-to-string condition) :limit 300)))
           nil)))))
+
+(-> application-world-share-reply (application t) list)
+(defun application-world-share-reply (application text)
+  "Share TEXT, this channel's agent's reply, with the channel's subscribers elsewhere, and return the channels told.
+
+The reply was said in this channel already; a subscriber residing elsewhere
+gets a copy, and so does a participant elsewhere the reply mentions. A
+reply that is not verbal text, or a channel without an agent of its own,
+shares nothing. A delivery that fails is reported and never stops the turn."
+  (when (non-empty-string-p text)
+    (handler-case
+        (let* ((configuration (application-configuration application))
+               (channel       (application-world--served-channel application))
+               (world         (and channel (values (world-reconcile-sessions configuration))))
+               (agent         (and world
+                                   (find ':agent (world-channel-residents world channel)
+                                         :key #'participant-kind)))
+               (elsewhere     (and agent
+                                   (find #\@ text)
+                                   (remove-if (lambda (identifier)
+                                                (let ((mentioned (world-participant-find
+                                                                  world identifier)))
+                                                  (or (null mentioned)
+                                                      (string= (participant-residence mentioned)
+                                                               channel))))
+                                              (world-message-mentions world text))))
+               (subscribed    (and agent
+                                   (some (lambda (subscriber)
+                                           (not (string= (participant-residence subscriber)
+                                                         channel)))
+                                         (world-channel-subscribers world channel)))))
+          (when (or elsewhere subscribed)
+            (getf (world-message-send configuration
+                                      :sender        (participant-identifier agent)
+                                      :channel       channel
+                                      :text          text
+                                      :mentions      elsewhere
+                                      :post-p        nil
+                                      :subscribers-p t)
+                  :channels)))
+      (autolith-error (condition)
+        (application-present application
+                             (format nil "The reply was not shared: ~A"
+                                     (bounded-string (princ-to-string condition) :limit 300)))
+        nil))))
 
 (-> application-world-human-identifier (application) (option string))
 (defun application-world-human-identifier (application)
