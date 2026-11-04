@@ -88,11 +88,23 @@ Client
 
 * Channels and participants
 
-- Each participant resides in exactly one channel. A channel may have zero or more
-  residents, human or agent. Subscription is independent of residence.
+- Each participant resides in exactly one channel. A channel has at most one
+  resident agent, the person when they are there, and any number of
+  subscribers. Subscription is independent of residence. (Decided 2026-11-04.)
 - Only the user can move existing participants in the MVP.
   - Move the selected participant into the destination's resident set and remove
     it from the source's. Other residents do not move; there is no automatic swap.
+  - Moving an agent into a channel that already has a resident agent is refused.
+  - A move stops the agent at the next safe boundary, the one steering uses: the
+    tool call in flight finishes, no new request starts, and its unstarted queue
+    is dropped with a notice in the channel it leaves. In the destination it stays
+    idle until the person writes there (as the channel's only agent, a plain
+    message is addressed to it) or someone mentions it from another channel.
+    (Decided 2026-11-04.)
+  - A channel with no resident agent, because its agent left or it was opened
+    that way, keeps its history, the person and its subscribers. Opening it offers
+    two things: move an agent in, or create a new domestic agent for it.
+    (Decided 2026-11-04.)
 - Participants can discover, inspect, read, subscribe to, and message other channels
   and participants across the world, including across projects.
 - Participant parent/child relationships are separate from channel nesting.
@@ -106,6 +118,13 @@ Client
   - These belong to humans and agents alike and follow the participant when moved.
   - Context is private working material, subject to compaction, rather than simply
     the history of the currently displayed channel.
+  - A moved agent keeps its context window until the world server restarts: its
+    requests in the destination continue from its previous channel's history up
+    to the move, then the destination's records from the move on, with a
+    request-local notice of the move. The destination's earlier history is not
+    pushed into its context; it reads it through the channel resource. After a
+    restart the agent starts from the destination's own history. (Decided
+    2026-11-04.)
   - Plans and goals stay separate.
   - A new participant inherits no private state from previous channel residents.
 - Channel: CWD, history, jobs started there.
@@ -125,7 +144,16 @@ Client
   - Inspect a child's channel through the same interface as any other channel.
 - Messages sent to a channel reach its residents and subscribers through the same delivery path.
 - Reading history does not subscribe the reader; subscriptions deliver future messages.
-- Mentions deliver across channels without creating a subscription.
+  Every ordinary message said in a channel, the person's and the agent's reply,
+  reaches its subscribers elsewhere as a copy labeled by the subscription; a
+  message is shared when the person submits it, so a replayed turn sends no
+  second copy.
+- Mentions deliver across channels without creating a subscription. A mention
+  starts a word: an =@= inside an address or a path mentions nobody.
+- A copy that arrives from another channel shows in the transcript as one compact
+  line, "@name mentioned from #channel" (the same for a subscription copy); its
+  text goes only to the model's request and stays readable in the inbox and the
+  channel resource. (Decided 2026-11-04.)
 - Deliver human and agent messages through the same participant interface.
   - Agent clients trigger inference; human clients present the messages to the user.
   - Working agent recipient: deliver as a clearly labeled steer with sender and source channel.
@@ -144,6 +172,9 @@ Client
   another helper agent or a separate child communication model.
 - Creating a child with its initial residence is distinct from moving an existing participant.
 - The parent can read or steer the child without subscribing to all its activity.
+- A child's agent is the resident of its nested channel and uses the channel
+  tools like any participant, under its role's ordinary tool policy: it sends,
+  subscribes and unsubscribes as itself. (Decided 2026-11-04.)
 - Notify the parent of completion using the same channel-bound job routing.
 - Jobs stay in their starting channel when participants move. Jobs cannot be detached
   from that channel.
@@ -160,6 +191,9 @@ Client
   memories, subject to the memory-transfer choice below.
 - Residence is not ownership. Before deleting a channel, move its residents or
   explicitly include them in deletion; do not implicitly delete other participants.
+  Deleting a participant takes its descendants with it, so every descendant of a
+  listed resident, wherever it lives, must be listed too or moved first; the
+  deletion is refused before anything is written otherwise.
 - Delete only unreferenced history. Retain referenced history and keep existing
   references resolvable after channel deletion.
 - Working choice: move a deleted participant's memories into the global store,
@@ -180,10 +214,16 @@ Client
 
 * Implementation details left
 
-- Message ordering, batching, deduplication, and self-message handling.
-- Atomic residence moves and their boundaries during inference, tool calls,
-  and job completion; delivery ordering for multiple residents.
-- Ownership, descendant controls, and reference cleanup on deletion.
+- Message ordering, batching, deduplication, and self-message handling beyond
+  the sharing and receipt rules above.
+- The exact mention syntax beyond the word boundary rule: escaping, quoted text
+  and code blocks.
+- Ownership, descendant controls, and reference cleanup on deletion; whether the
+  working memory-transfer choice above stands.
+- Whether startup offers to create a channel when no channel matches the launch
+  directory, or creates one; and what "latest touched" means exactly.
+- Independent terminal views: how a smaller observer sees a shared frame, and
+  whether unread and mention counts are per terminal only, as today, or kept.
 - Memory transfer, history-reference tracking, and retention of referenced history.
 - N:1 startup, reconnection, persistence, concurrent updates, and shared-image mutation.
 - CWD matching and the meaning of "latest touched".
