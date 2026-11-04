@@ -473,7 +473,7 @@
                         "a failed attach leaves a channel the server already served")
            (setf attach-error nil
                  open-error   (make-condition 'localgroup-error
-                                              :operation ':open
+                                              :operation ':spawn
                                               :message   "No world server could start."))
            (test-assert (handler-case
                             (progn (main-dispatch '()) nil)

@@ -1151,7 +1151,10 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
 
 CONVERSATION-ID opens that channel; otherwise the launch directory selects
 or creates one. The second value says whether the server started the channel
-for this terminal."
+for this terminal. Only a world server that cannot be started or reached
+sends the start direct; one that answers and refuses, as a channel refusing
+a launch option it cannot change, ends the start with its reason, so a
+refused request never runs somewhere else in silence."
   (handler-case
       (world-client-open configuration
                          :directory          (config :working-directory configuration)
@@ -1163,10 +1166,20 @@ for this terminal."
                          :recovery-diagnosis recovery-diagnosis
                          :launch             launch)
     (error (condition)
+      (when (main--world-refusal-p condition)
+        (error condition))
       (format *error-output*
               "Autolith is starting directly in this terminal: ~A~%"
               (bounded-string (princ-to-string condition) :limit 400))
       (values nil nil))))
+
+(-> main--world-refusal-p (condition) boolean)
+(defun main--world-refusal-p (condition)
+  "Return true when CONDITION is the world server's answer refusing an open, not a failure to reach it."
+  (and (typep condition 'localgroup-error)
+       (eq (image-daemon:daemon-error-operation condition) ':open)
+       (null (image-daemon:daemon-error-cause condition))
+       (not (localgroup-error-retry-p condition))))
 
 (-> main--launch-options (clingon:command &key (:permission-mode (option keyword))) list)
 (defun main--launch-options (command &key permission-mode)
