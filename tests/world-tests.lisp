@@ -1349,3 +1349,68 @@
                          "retiring a channel without an agent deletes the channel and nobody"))))))
   nil)
 
+(-> test-world-agentless-channel () null)
+(defun test-world-agentless-channel ()
+  "Test a channel whose agent was dismissed refuses typed prompts and holds deliveries, and a domestic agent takes it back."
+  (with-test-configuration (configuration)
+    (let ((first (world-tests--persisted-conversation configuration "bfirst1" 1000)))
+      (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+      (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+        (declare (ignore second-agent))
+        (let* ((terminal    (make-instance 'waiting-recording-terminal :columns 80))
+               (ui          (terminal-ui-create :terminal terminal))
+               (application (make-instance 'application
+                                           :configuration configuration
+                                           :conversation  first
+                                           :ui            ui))
+               (controller  nil))
+          (with-terminal-ui (active-ui ui)
+            (setf controller (application-input-controller-create application
+                                                                  :load-pending-p nil
+                                                                  :start-reader-p nil))
+            (unwind-protect
+                 (flet ((submit (text)
+                          "Submit TEXT as a primary prompt and return its delivery mode."
+                          (nth-value 1 (application-input-controller-submit-primary-prompt
+                                        controller text))))
+                   (test-assert (eq (submit "first words") ':queued)
+                                "a channel with its agent takes a typed prompt")
+                   (let ((result (world-dismiss-agent configuration first-agent
+                                                      :application application)))
+                     (test-assert (and (= (getf result :dropped) 1)
+                                       (search "was dismissed" (recording-terminal-output terminal)))
+                                  "dismissing the agent drops the prompt it had not started and says so"))
+                   (test-assert (and (eq (submit "more words") ':rejected)
+                                     (search "this channel has no agent"
+                                             (recording-terminal-output terminal)))
+                                "a channel without an agent refuses a typed prompt and offers a move or a domestic agent")
+                   (world-message-send configuration
+                                       :sender   (participant-identifier human)
+                                       :channel  "bfirst1"
+                                       :text     "anyone here?"
+                                       :notify-p nil)
+                   (test-assert (and (zerop (application-world-deliver application))
+                                     (= (length (world-inbox-deliveries configuration "bfirst1")) 1))
+                                "a message to a channel without an agent waits in the inbox")
+                   (let ((agent (application-world-domestic-agent application)))
+                     (test-assert (and (eq (participant-kind agent) ':agent)
+                                       (string= (participant-residence agent) "bfirst1")
+                                       (equal (participant-parent agent)
+                                              (participant-identifier human))
+                                       (equal (getf (participant-settings agent) :model)
+                                              (config :model configuration))
+                                       (string= (participant-identifier
+                                                 (world-session-participant configuration first))
+                                                (participant-identifier agent)))
+                                  "a domestic agent lives in the channel under the person with the session's model, and the session names it")
+                     (test-assert (handler-case
+                                      (progn (application-world-domestic-agent application) nil)
+                                    (world-error (condition)
+                                      (eq (world-error-operation condition) ':domestic)))
+                                  "a second domestic agent is refused")
+                     (test-assert (eq (submit "again") ':queued)
+                                  "the channel takes typed prompts again")
+                     (test-assert (= (application-world-deliver application) 1)
+                                  "the waiting message reaches the new agent")))
+              (application-input-controller-stop controller)))))))
+  nil)
