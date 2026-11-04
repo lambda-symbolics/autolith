@@ -449,7 +449,9 @@ session."
 
 The active turn is cancelled at its next safe boundary, as steering is
 taken; the unstarted queue is dropped; running jobs stay with the channel.
-The channel is told."
+The channel's record of messages queued for the agent is forgotten, so the
+next resident receives every message the conversation has not durably
+received. The channel is told."
   (let ((controller (application-input-controller application))
         (dropped    0))
     (when controller
@@ -463,6 +465,9 @@ The channel is told."
           (loop until (deque-empty-p items)
                 do (deque-pop-front items)
                    (incf dropped))))
+      ;; Receipts in the conversation say what was received; the queue's
+      ;; bookkeeping only kept a message from being queued twice.
+      (clrhash (application-world-deliveries application))
       (application-localgroup-resume application)
       (application-input-controller--publish-counts controller))
     (application-present
