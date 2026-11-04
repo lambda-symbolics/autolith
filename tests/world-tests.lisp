@@ -841,6 +841,25 @@
                          "the reply's copy comes from this channel's agent"))
           (test-assert (null (application-world-share-reply application nil))
                        "a reply without verbal text shares nothing")
+          (let* ((fresh  (conversation-create configuration :identifier "bfresh4" :created-at 4000))
+                 (new    (make-instance 'application
+                                        :configuration configuration
+                                        :conversation  fresh
+                                        :ui            (terminal-ui-create
+                                                        :terminal (make-instance 'recording-terminal
+                                                                                 :columns 80))))
+                 (text   (format nil "ask @~A now" other))
+                 (before (length (world-inbox-deliveries configuration "bsecnd2"))))
+            (test-assert (and (null (application-world-share new text))
+                              (string= (application-world-pending-share new) text)
+                              (null (application-world-share-pending new))
+                              (= before (length (world-inbox-deliveries configuration "bsecnd2"))))
+                         "a message typed before the conversation persists waits, and sharing it early sends nothing")
+            (conversation-append-user-message fresh text)
+            (test-assert (and (equal (application-world-share-pending new) '("bsecnd2"))
+                              (= (1+ before) (length (world-inbox-deliveries configuration "bsecnd2")))
+                              (null (application-world-share-pending new)))
+                         "once the first message persists the waiting share goes out exactly once"))
           (let* ((entry  (application--user-message-entry
                           application (format nil "ping @~A, @user and @nobody" other) 1000))
                  (styled (loop for span in entry
