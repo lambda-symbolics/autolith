@@ -24,8 +24,8 @@ Clicking the rendered call's header inserts it into the composer.")
    (world-pending-share
     :initform      nil
     :accessor      application-world-pending-share
-    :type          (option string)
-    :documentation "A message the person submitted before this conversation persisted, shared once it does.")
+    :type          list
+    :documentation "The messages the person submitted before this conversation persisted, oldest first, shared in that order once it does.")
    (world-human
     :initform      nil
     :accessor      application-world-human
