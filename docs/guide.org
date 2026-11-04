@@ -1658,8 +1658,13 @@ yourself included. A name another participant has is refused.
 Typing =@= in the composer completes participant handles the way it completes
 workspace paths; a token with a slash stays a path. A message you type that
 mentions a participant residing in another channel is delivered to that
-channel as a mention from you before your own agent takes the message, so
-=@frob have a look= reaches frob wherever you are. The transcript highlights
+channel as a mention from you when you submit it, before your own agent
+takes the message, so =@frob have a look= reaches frob wherever you are. A
+mention starts a word: an =@= inside an address or a path, as in
+=alice@frob.example=, mentions nobody. A plain message you type, and your
+agent's reply to it, reach every subscriber of your channel residing
+elsewhere the same way, as copies labeled by the subscription; a replayed
+turn after a restart sends no second copy. The transcript highlights
 mentions: your own name in the user color, other participants' names in the
 accent color.
 

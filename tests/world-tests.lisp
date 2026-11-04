@@ -803,10 +803,10 @@
                               (every (lambda (entry) (search " in b-" (getf entry :description)))
                                      entries))
                          "mention completion offers the handles starting with the typed text"))
-          (test-assert (null (application-world-mention
+          (test-assert (null (application-world-share
                               application (format nil "hi @~A" (participant-name first-agent))))
                        "mentioning this channel's own agent tells nobody else")
-          (test-assert (equal (application-world-mention
+          (test-assert (equal (application-world-share
                                application (format nil "ask @~A about it" other))
                               '("bsecnd2"))
                        "mentioning an agent elsewhere tells its channel")
@@ -819,6 +819,28 @@
                          "the copy arrives as a mention from the person in their channel"))
           (test-assert (null (world-inbox-deliveries configuration "bfirst1"))
                        "nothing is posted back to the person's own channel")
+          (test-assert (null (application-world-share application "a plain remark"))
+                       "a plain message with no subscriber elsewhere tells nobody")
+          (world-participant-subscribe configuration (participant-identifier second-agent) "bfirst1")
+          (test-assert (equal (application-world-share application "a plain remark") '("bsecnd2"))
+                       "a plain message reaches a subscriber residing elsewhere")
+          (let ((copy (first (last (world-inbox-deliveries configuration "bsecnd2")))))
+            (test-assert (and copy
+                              (eq (world-delivery-kind copy) ':subscription)
+                              (string= (world-delivery-text copy) "a plain remark")
+                              (null (world-inbox-deliveries configuration "bfirst1")))
+                         "the subscriber's copy is labeled a subscription and nothing is posted back"))
+          (test-assert (equal (application-world-share-reply application "the agent answers") '("bsecnd2"))
+                       "the agent's reply reaches the subscriber elsewhere too")
+          (let ((copy (first (last (world-inbox-deliveries configuration "bsecnd2")))))
+            (test-assert (and copy
+                              (eq (world-delivery-kind copy) ':subscription)
+                              (string= (world-delivery-sender copy)
+                                       (participant-identifier first-agent))
+                              (string= (world-delivery-text copy) "the agent answers"))
+                         "the reply's copy comes from this channel's agent"))
+          (test-assert (null (application-world-share-reply application nil))
+                       "a reply without verbal text shares nothing")
           (let* ((entry  (application--user-message-entry
                           application (format nil "ping @~A, @user and @nobody" other) 1000))
                  (styled (loop for span in entry

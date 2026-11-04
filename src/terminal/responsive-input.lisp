@@ -1723,6 +1723,11 @@ the ordinary FIFO queue."
         (when ui
           (terminal-ui-set-notice ui nil))))
     (application-input-controller--publish-counts controller)
+    ;; The person's own submission, and only that, is shared with the
+    ;; participants elsewhere it reaches: a replayed or relayed message
+    ;; never enters here.
+    (when delivery
+      (application-world-share (application-input-controller-application controller) input))
     (values (not (null delivery)) (or delivery ':rejected))))
 
 (-> application-prompt--primary-target-p (string) boolean)
@@ -4091,8 +4096,7 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           (:tool-allowlist (option list))
           (:tool-restriction-p boolean)
           (:goal-continuations-p boolean)
-          (:fatal-agent-loop-errors-p boolean)
-          (:mentions-p boolean))
+          (:fatal-agent-loop-errors-p boolean))
     keyword)
 (defun application--run-message-input
     (application input
@@ -4100,13 +4104,12 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           user-message-persisted-function pending-operations-function
           pending-input-identifier (tools-p t)
           tool-allowlist (tool-restriction-p nil) (goal-continuations-p t)
-          (fatal-agent-loop-errors-p t) (mentions-p t))
+          (fatal-agent-loop-errors-p t))
   "Run model INPUT with established expected, cancellation, and fatal handling.
 
-With MENTIONS-P, a message the person typed is told to the participants it
-mentions in other channels before this channel's agent takes it."
-  (when (and mentions-p (null pending-input-identifier))
-    (application-world-mention application input))
+A message the person typed was shared with the participants elsewhere it
+reaches when they submitted it, so a replay of the turn shares nothing
+again."
   (application--call-with-model-error-handling
    application
    (lambda ()
@@ -4268,8 +4271,7 @@ mentions in other channels before this channel's agent takes it."
                :tool-allowlist            *application-recovery-diagnostic-tool-names*
                :tool-restriction-p        t
                :goal-continuations-p      nil
-               :fatal-agent-loop-errors-p nil
-               :mentions-p                nil)))
+               :fatal-agent-loop-errors-p nil)))
             (:native-lisp
              (application-input-controller--record-prompt-result
               controller
