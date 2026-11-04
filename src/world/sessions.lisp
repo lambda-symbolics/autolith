@@ -25,8 +25,8 @@
 An agent is named after its workspace's directory, so @frob reaches the
 agent working in frob; a second agent there is frob-2.")
 
-(defparameter *world-task-name* "task"
-  "The handle base of the agent participant a migrated child task gets.")
+(defparameter *world-task-name* "agent"
+  "The handle base of a child agent whose conversation records no name of its own.")
 
 (defvar *world-sessions-lock* (make-recursive-lock "Autolith world sessions")
   "Serializes in-process reconciliation.")
@@ -258,15 +258,19 @@ rewrite and nothing to reconcile, so the move leaves it to the world store."
 
 ;;;; -- Reconciliation --
 
-(-> world-session--changes (list list &key (:all-p boolean)) (values list list))
-(defun world-session--changes (identities mappings &key all-p)
+(-> world-session--changes (list list &key (:all-p boolean) (:orphan-p function)) (values list list))
+(defun world-session--changes (identities mappings &key all-p (orphan-p (constantly nil)))
   "Return the conversations to migrate and the mappings whose conversation vanished.
 
 IDENTITIES holds identity pathnames, or (IDENTITY ROOT-IDENTIFIER) pairs for
-child task conversations. Each change is a plist of :id, :identity, :root,
-:token, :header and :mapping. A mapping has vanished when its conversation is
-among IDENTITIES without durable storage, or, with ALL-P, when IDENTITIES is
-every conversation and does not name it."
+child agent conversations. Each change is a plist of :id, :identity, :root,
+:token, :header and :mapping. An unchanged child is migrated again when
+ORPHAN-P, given its identifier, its root and whether the root migrates in
+this pass, says its channel still lacks the ancestry it was migrated without
+and its root is known by now. A
+mapping has vanished when its conversation is among IDENTITIES without durable
+storage, or, with ALL-P, when IDENTITIES is every conversation and does not
+name it."
   (let ((changes   nil)
         (vanished  nil)
         (requested (make-hash-table :test #'equal)))
@@ -281,7 +285,8 @@ every conversation and does not name it."
                                 (error () nil)))))
         (setf (gethash identifier requested) (or token ':absent))
         (when (and token
-                   (not (and mapping (equal token (world-session-mapping-token mapping)))))
+                   (or (not (and mapping (equal token (world-session-mapping-token mapping))))
+                       (and root (funcall orphan-p identifier root (gethash root requested)))))
           (let ((header (conversation-peek-header identity)))
             (when header
               (push (list :id       identifier
@@ -326,16 +331,26 @@ value lists the conversation identifiers whose mappings end."
                "Return the creation time CHANGE's conversation header records."
                (getf (rest (getf change :header)) :created-at))
 
-             (root-agent (change)
-               "Return the agent of CHANGE's root conversation, or NIL for a primary or an unknown root."
-               (let ((root (getf change :root)))
-                 (and root
-                      (world-channel-find preview root)
+             (parent-of (change)
+               "Return the conversation of the agent that created CHANGE's, or NIL for a top-level one.
+
+A child agent's conversation names its parent; one written before it did,
+or whose parent is gone, falls back to its root."
+               (let ((parent (getf (rest (getf change :header)) :parent)))
+                 (if (and (non-empty-string-p parent) (world-channel-find preview parent))
+                     parent
+                     (getf change :root))))
+
+             (parent-agent (change)
+               "Return the agent of CHANGE's parent conversation, or NIL for a top-level one or an unknown parent."
+               (let ((parent (parent-of change)))
+                 (and parent
+                      (world-channel-find preview parent)
                       (world-session--mapped-participant
                        preview
-                       (find root mappings
+                       (find parent (append planned mappings)
                              :key #'world-session-mapping-conversation :test #'string=)
-                       root))))
+                       parent))))
 
              (ensure-human (change)
                "Create the human participant at home in CHANGE's channel when none exists."
@@ -366,42 +381,54 @@ value lists the conversation identifiers whose mappings end."
              (ensure-channel (change owner)
                "Create or refresh CHANGE's channel, owned by OWNER when created.
 
-A child task's channel nests under its root channel and belongs to the
-root's agent while that root exists."
+A child agent's channel nests under its parent's channel and belongs to the
+parent agent while that agent exists. A channel planned before its parent's
+was known gets that ancestry once the parent appears."
                (let* ((header    (getf change :header))
                       (existing  (world-channel-find preview (getf change :id)))
                       (workspace (world-session--workspace configuration header))
                       (title     (world-session--title (getf change :identity) header))
-                      (root      (let ((root (getf change :root)))
-                                   (and root (world-channel-find preview root) root))))
+                      (parent    (let ((parent (parent-of change)))
+                                   (and parent (world-channel-find preview parent) parent)))
+                      (keeper    (participant-identifier (or (parent-agent change) owner))))
                  (cond
                    ((null existing)
                     (emit (world--channel-record
                            (make-instance 'channel
                                           :identifier (getf change :id)
-                                          :parent     root
-                                          :owner      (participant-identifier
-                                                       (or (root-agent change) owner))
+                                          :parent     parent
+                                          :owner      keeper
                                           :workspace  workspace
                                           :title      title
                                           :created-at (created-at change)
                                           :updated-at (max now (created-at change))))))
                    ((or (not (string= (channel-workspace existing) workspace))
-                        (not (equal (channel-title existing) title)))
-                    (emit (world--channel-record
-                           (world--copy-channel existing
-                                                :workspace  workspace
-                                                :title      title
-                                                :updated-at (max now (channel-updated-at
-                                                                      existing)))))))))
+                        (not (equal (channel-title existing) title))
+                        (and parent (null (channel-parent existing))))
+                    (let ((adopted-p (and parent (null (channel-parent existing)))))
+                      (emit (world--channel-record
+                             (world--copy-channel existing
+                                                  :workspace  workspace
+                                                  :title      title
+                                                  :parent     (if adopted-p parent (channel-parent existing))
+                                                  :owner      (if adopted-p keeper (channel-owner existing))
+                                                  :updated-at (max now (channel-updated-at
+                                                                        existing))))))))))
 
              (ensure-agent (change owner)
-               "Create or refresh CHANGE's agent participant under OWNER and return its identifier."
+               "Create or refresh CHANGE's agent participant under OWNER and return its identifier.
+
+A child agent is named as its parent named it and belongs to its parent
+agent. One migrated before its parent was known gets that parent when its
+channel gets its ancestry."
                (let* ((header      (getf change :header))
                       (settings    (world-session--settings header))
                       (mapping     (getf change :mapping))
                       (existing    (world-session--mapped-participant
                                     preview mapping (getf change :id)))
+                      (parent      (parent-agent change))
+                      (adopted-p   (let ((before (world-channel-find world (getf change :id))))
+                                     (and before parent (null (channel-parent before)))))
                       ;; A channel whose agent moved away, or that was left
                       ;; without one on purpose, gets no invented agent; only
                       ;; a mapping whose agent is gone from the world is
@@ -420,23 +447,31 @@ root's agent while that root exists."
                                                 :kind       ':agent
                                                 :name       (world-unique-handle
                                                              preview
-                                                             (if (getf change :root)
-                                                                 *world-task-name*
+                                                             (if (parent-of change)
+                                                                 (world-handle-base
+                                                                  (or (getf (rest header) :agent-name) "")
+                                                                  :fallback *world-task-name*)
                                                                  (world-session--handle-base
                                                                   (world-session--workspace
                                                                    configuration header))))
                                                 :parent     (participant-identifier
-                                                             (or (root-agent change) owner))
+                                                             (or parent owner))
                                                 :residence  (getf change :id)
                                                 :settings   settings
                                                 :created-at (created-at change)
                                                 :updated-at (max now (created-at change)))))
                       (emit (world--participant-record agent))
                       (participant-identifier agent)))
-                   ((not (equal (participant-settings existing) settings))
+                   ((or (not (equal (participant-settings existing) settings))
+                        (and adopted-p
+                             (not (equal (participant-parent existing)
+                                         (participant-identifier parent)))))
                     (emit (world--participant-record
                            (world--copy-participant existing
                                                     :settings   settings
+                                                    :parent     (if adopted-p
+                                                                    (participant-identifier parent)
+                                                                    (participant-parent existing))
                                                     :updated-at (max now (participant-updated-at
                                                                           existing)))))
                     (participant-identifier existing))
@@ -500,7 +535,11 @@ parent is never left behind its retired children."
                          (setf gone-p t))))
                    (unless gone-p
                      (return))))))
-      (dolist (change changes)
+      ;; Top-level conversations first, then child agents in the order they
+      ;; were created, so a parent is always planned before its children.
+      (dolist (change (stable-sort (copy-list changes) #'<
+                                   :key (lambda (change)
+                                          (if (parent-of change) (created-at change) -1))))
         (let ((owner (ensure-human change)))
           (ensure-channel change owner)
           (push (make-instance 'world-session-mapping
@@ -584,7 +623,16 @@ participant and, once empty, their channel."
                           (append (conversation-list configuration)
                                   (conversation-task-identities configuration)))))
       (multiple-value-bind (changes vanished)
-          (world-session--changes identities mappings :all-p (not identities-p))
+          (let ((world (world-load configuration)))
+            (world-session--changes identities mappings
+                                    :all-p    (not identities-p)
+                                    :orphan-p (lambda (identifier root root-requested-p)
+                                                (let ((channel (world-channel-find world identifier)))
+                                                  (and channel
+                                                       (null (channel-parent channel))
+                                                       (or root-requested-p
+                                                           (world-channel-find world root))
+                                                       t)))))
         (unless prune-p
           (setf vanished nil))
         (if (and (null changes)

@@ -1096,6 +1096,61 @@
                    "moving an agent where it already is changes nothing")))
   nil)
 
+(-> world-tests--child-conversation
+    (configuration string &key (:root string) (:parent string) (:name string) (:created-at timestamp))
+    conversation)
+(defun world-tests--child-conversation (configuration identifier &key root parent name created-at)
+  "Create child agent conversation IDENTIFIER named NAME under PARENT, stored below ROOT, with one durable message."
+  (let ((conversation (conversation-create configuration
+                                           :identifier        identifier
+                                           :storage-root      (merge-pathnames
+                                                               (format nil "tasks/~A/~A/" root identifier)
+                                                               (config :data-root configuration))
+                                           :created-at        created-at
+                                           :parent-identifier parent
+                                           :agent-name        name)))
+    (conversation-append-user-message conversation (format nil "work for ~A" parent))
+    conversation))
+
+(-> test-world-agent-hierarchy () null)
+(defun test-world-agent-hierarchy ()
+  "Test child agents of child agents nest under their own parents and keep that ancestry when migrated first."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "broot11" 1000)
+    (world-tests--child-conversation configuration "exec-one"
+                                     :root "broot11" :parent "broot11" :name "planner" :created-at 1500)
+    (let ((grandchild (world-tests--child-conversation configuration "exec-two"
+                                                       :root       "broot11"
+                                                       :parent     "exec-one"
+                                                       :name       "checker"
+                                                       :created-at 1600)))
+      ;; The grandchild is reconciled alone first, before anything it descends from.
+      (world-reconcile-sessions configuration
+                                :identities (list (list (conversation-pathname grandchild) "broot11"))
+                                :now        2000)
+      (let* ((world   (values (world-reconcile-sessions configuration :now 3000)))
+             (root    (find ':agent (world-channel-residents world "broot11") :key #'participant-kind))
+             (planner (find ':agent (world-channel-residents world "exec-one") :key #'participant-kind))
+             (checker (find ':agent (world-channel-residents world "exec-two") :key #'participant-kind)))
+        (test-assert (and planner checker
+                          (string= (participant-name planner) "planner")
+                          (string= (participant-name checker) "checker"))
+                     "child agents are named as their parents named them")
+        (test-assert (and (equal (participant-parent planner) (participant-identifier root))
+                          (equal (participant-parent checker) (participant-identifier planner)))
+                     "a child agent of a child agent belongs to that child agent, not to the root")
+        (test-assert (and (equal (channel-parent (world-channel-find world "exec-one")) "broot11")
+                          (equal (channel-parent (world-channel-find world "exec-two")) "exec-one")
+                          (equal (channel-owner (world-channel-find world "exec-two"))
+                                 (participant-identifier planner)))
+                     "each child channel nests under its parent's channel and belongs to its parent agent")
+        (test-assert (equal (world-participant-descendants world (participant-identifier root))
+                            (list planner checker))
+                     "the root agent's descendants are its child and its grandchild")
+        (test-assert (zerop (nth-value 1 (world-reconcile-sessions configuration :now 4000)))
+                     "the repaired ancestry is stable"))))
+  nil)
+
 (-> test-world-staggered-retirement () null)
 (defun test-world-staggered-retirement ()
   "Test a root whose storage vanishes before its child's keeps its mapping and retires with the child."
@@ -1164,10 +1219,10 @@
                                      (participant-identifier root-agent)))
                        "a child channel nests under its root and belongs to the root's agent")
           (test-assert (and task-agent
-                            (string= (participant-name task-agent) "task")
+                            (string= (participant-name task-agent) "agent")
                             (equal (participant-parent task-agent)
                                    (participant-identifier root-agent)))
-                       "a child's participant is named task under the root's agent")
+                       "a child agent whose conversation records no name is named agent, under the root's agent")
           (test-assert (string= (participant-residence (world-human-participant world)) "broot11")
                        "the human stays in the root channel")
           (let ((text (world-tests--read configuration root "id/exec-one")))
