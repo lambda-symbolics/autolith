@@ -121,6 +121,12 @@ or =(goal :clear)=. Edit it in place with =(goal :update "NEW-OBJECTIVE")=.
 String arguments are literal objectives, including ="pause"=. Unknown keyword
 actions signal =application-goal-error= without changing the goal.
 
+Lightweight goals pause after eight automatic continuation turns between user
+messages by default. Set =(settings :goal-continuation-limit 16)= to change the
+limit, or =(settings :goal-continuation-limit :unlimited)= to remove it. The
+setting is durable. A completed lightweight goal permits ordinary session-owned
+job-completion wakeups without restarting that goal.
+
 For externally verifiable work, install explicit acceptance policy with
 =(mission :start specification)=:
 

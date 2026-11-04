@@ -1081,3 +1081,132 @@
             (when thread (sb-thread:join-thread thread :timeout 5 :default nil)))))))
    :unknown-usage 0 :response "[GOAL-COMPLETE]")
   nil)
+
+(-> test-job-completion-lightweight-goal-authority () null)
+(defun test-job-completion-lightweight-goal-authority ()
+  "Admit completed lightweight goals as ordinary session-owned wakeups."
+  (job-completion-controller-tests--fixture
+   (lambda (application controller notices)
+     (declare (ignore controller notices))
+     (dolist (row '((:active 0 8 :continue nil nil t)
+                    (:active 8 8 :continue nil nil nil)
+                    (:active 8 :unlimited :continue nil nil t)
+                    (:active 500 :unlimited :continue nil nil t)
+                    (:complete 0 8 :continue nil nil t)
+                    (:complete 8 8 :continue nil nil t)
+                    (:paused 0 :unlimited :continue nil nil nil)
+                    (:complete 0 8 :notify nil nil nil)
+                    (:complete 0 8 :continue t nil nil)
+                    (:complete 0 8 :continue nil "foreign-mission" nil)))
+       (destructuring-bind (status count limit policy foreign-p mission-id expected) row
+         (setf (config :goal-continuation-limit (application-configuration application)) limit)
+         (setf (application-goal application)
+               (list :objective "integrate results" :status status :continuations count))
+         (let ((notice (job-completion-controller-tests--notice
+                        application "lightweight-authority" :policy policy :mission-id mission-id)))
+           (when foreign-p
+             (setf (getf notice :owner-conversation) "foreign-conversation"))
+           (test-assert
+            (eq expected (application-job-completions--notice-admissible-p application notice))
+            (format nil "lightweight wake authority for ~S" row)))))))
+  nil)
+
+(-> test-job-completion-completed-lightweight-wake () null)
+(defun test-job-completion-completed-lightweight-wake ()
+  "Wake once for a held owned job without reviving or charging its completed goal."
+  (with-test-configuration (configuration root)
+    (setf configuration (configuration-copy configuration :working-directory root))
+    (let* ((*task-completion-coalescing-seconds* 0)
+           (application                          (mission-test--application
+                                                  configuration :results (list (mission-test--result "integrated"))))
+           (provider                             (application-provider application))
+           (parent                               (application-agent application))
+           (registry                             (task-augment-tool-registry (application-tool-registry application)))
+           (runtime                              (task-completion--runtime parent))
+           (release                              (sb-thread:make-semaphore))
+           (controller                           (application-input-controller-create
+                                                  application :start-reader-p nil :load-pending-p nil)))
+      (declare (ignore registry))
+      (unwind-protect
+           (let ((job (task-orchestrator-start-execution-job
+                       runtime parent :tool-name "completion.fixture" :summary "held job"
+                       :operation-function (lambda ()
+                                             (sb-thread:wait-on-semaphore release)
+                                             (tool-success "completed"))
+                       :detached-p t :completion-policy ':continue)))
+             (task-completion-watch job parent)
+             (setf (application-goal application)
+                   (list :objective "old objective" :status ':complete
+                         :continuations 8 :created-at (get-universal-time)))
+             (application--record-goal application)
+             (test-assert (application-job-completions-awaited-p application)
+                          "an unfinished owned job can wake after a lightweight goal completes")
+             (test-assert (= 1 (application-job-completions-awaited-count application))
+                          "the completed goal permits the owned yield snapshot")
+             (sb-thread:signal-semaphore release)
+             (session-job-await job 5)
+             (cl-jobpond:completion-subscription-refresh
+              (task-completion-service-subscription (task-completion--service parent)))
+             (let* ((conversation (application-conversation application))
+                    (before       (count :goal (conversation-records-newest conversation 100) :key #'first))
+                    (work         nil))
+               (task-tests--wait-until
+                (lambda () (setf work (application-job-completions--take-work controller))) 5)
+               (test-assert (eq (first work) ':job-completion)
+                            "completed lightweight goals do not withhold controller work")
+               (when work
+                 (application-input-controller--run-work controller work))
+               (test-assert (= 1 (length (scripted-provider-input-snapshots provider)))
+                            "one completion causes exactly one ordinary provider request")
+               (test-assert (eq (getf (application-goal application) :status) ':complete)
+                            "the old goal is not reactivated")
+               (test-assert (= 8 (getf (application-goal application) :continuations))
+                            "the ordinary wake spends no completed-goal continuation")
+               (test-assert (= before (count :goal (conversation-records-newest conversation 100) :key #'first))
+                            "the ordinary wake appends no goal record")
+               (test-assert
+                (not (search "<goal_context>"
+                             (json-encode (scripted-provider-input-snapshots provider))))
+                "the provider receives no completed lightweight goal context")))
+        (sb-thread:signal-semaphore release)
+        (application-input-controller-stop controller)
+        (setf (application-input-controller application) nil)
+        (task-orchestrator-close runtime)
+        (terminal-ui-stop (application-ui application)))))
+  nil)
+
+(-> test-job-completion-lightweight-limit-accounting () null)
+(defun test-job-completion-lightweight-limit-accounting ()
+  "Use the same configured cap for admission and keep unlimited wake accounting."
+  (job-completion-controller-tests--fixture
+   (lambda (application controller notices)
+     (setf (config :goal-continuation-limit (application-configuration application)) 1)
+     (setf (application-goal application)
+           (list :objective "integrate" :status ':active :continuations 1))
+     (funcall notices (list (job-completion-controller-tests--notice application "bounded")))
+     (test-assert (null (application-job-completions--take-work controller))
+                  "a nondefault cap withholds an active goal's next wake")
+     (setf (getf (application-goal application) :continuations) 0)
+     (let ((work (application-job-completions--take-work controller)))
+       (test-assert work "a bounded goal below its cap admits its owned wake")
+       (when work
+         (application-input-controller--run-work controller work))
+       (test-assert (= 1 (getf (application-goal application) :continuations))
+                    "one bounded wake increments its active goal once")
+       (test-assert (eq (getf (application-goal application) :status) ':complete)
+                    "the bounded wake can complete its active goal"))
+     (setf (config :goal-continuation-limit (application-configuration application)) ':unlimited)
+     (setf (getf (application-goal application) :status) ':active)
+     (funcall notices (list (job-completion-controller-tests--notice application "unlimited")))
+     (setf (getf (application-goal application) :continuations) 8)
+     (let ((work (application-job-completions--take-work controller)))
+       (test-assert work "unlimited admits a wake at the old cap")
+       (when work
+         (application-input-controller--run-work controller work))
+       (test-assert (= 9 (getf (application-goal application) :continuations))
+                    "one unlimited wake increments its active goal once")
+       (test-assert (eq (getf (application-goal application) :status) ':complete)
+                    "the admitted wake can complete its active goal")))
+   :results (list (mission-test--result "[GOAL-COMPLETE]")
+                  (mission-test--result "[GOAL-COMPLETE]")))
+  nil)

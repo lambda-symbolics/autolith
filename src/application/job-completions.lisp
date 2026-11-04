@@ -29,8 +29,13 @@
              ((mission-goal-p goal)
               (not (eq (getf goal :status) ':active)))
              (goal
-              (and (eq (getf goal :status) ':active)
-                   (< (getf goal :continuations 0) *application-goal-continuation-limit*)))
+              (case (getf goal :status)
+                (:active
+                 (not (application--goal-continuations-exhausted-p application goal)))
+                (:complete
+                 t)
+                (t
+                 nil)))
              (t
               t)))))))
 
@@ -416,7 +421,9 @@ as ordinary controller admission, without recursively locking the session."
                       (task-completion-deliver
                        agent :identifiers (mapcar (lambda (notice) (getf notice :id)) notices))))
         (let ((goal (application-goal application)))
-          (when (and goal (or (not (mission-goal-p goal)) mission-authorized-p))
+          (when (and goal (if (mission-goal-p goal)
+                             mission-authorized-p
+                             (eq (getf goal :status) ':active)))
             (incf (getf goal :continuations 0))
             (application--record-goal application)))
         (application-input-controller-call-with-primary-steering
