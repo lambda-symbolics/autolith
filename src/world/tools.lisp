@@ -11,9 +11,9 @@
   (:documentation "A channel operation performed as the requesting conversation's participant."))
 
 (defmethod tool-child-safe-p ((tool channel-tool))
-  "Keep channel messaging with primary participants until children become participants."
+  "Children are participants too: a task's conversation is a nested channel with its own resident, so it messages, subscribes and unsubscribes like any participant."
   (declare (ignore tool))
-  nil)
+  t)
 
 (defmethod tool-execution-policy ((tool channel-tool))
   "Channel operations touch only the world stores, so they run in parallel."
