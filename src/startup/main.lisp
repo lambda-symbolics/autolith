@@ -1245,11 +1245,17 @@ sidebar of the world follows the terminal from channel to channel."
                        (localgroup-attach-record configuration record ':control :panel panel))
                    (serious-condition (condition)
                      ;; A channel started for this terminal would otherwise
-                     ;; idle in the server; one that already served others
-                     ;; is left to them.
+                     ;; idle in the server. The server closes it only while
+                     ;; no terminal controls it: another one may have
+                     ;; attached since this one started it.
                      (when started-p
-                       ; mallet:suppress no-ignore-errors -- best-effort kill while the attach failure propagates
-                       (ignore-errors (localgroup-query-record record ':kill)))
+                       ; mallet:suppress no-ignore-errors -- best-effort close while the attach failure propagates
+                       (ignore-errors
+                         (let ((world (world-client-entry configuration)))
+                           (when world
+                             (localgroup-query-record world ':close
+                                                     (list :channel           session-id
+                                                           :unattached-only-p t))))))
                      (error condition)))))
           (if (and (consp exit) (eq (first exit) ':switch))
               (multiple-value-setq (session-id started-p)
