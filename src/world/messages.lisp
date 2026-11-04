@@ -47,6 +47,12 @@
     :reader        world-delivery-sender-name
     :type          non-empty-string
     :documentation "The sending participant's name when the message was sent.")
+   (sender-kind
+    :initarg       :sender-kind
+    :initform      nil
+    :reader        world-delivery-sender-kind
+    :type          (option participant-kind)
+    :documentation "Whether the sender is the person or an agent, or NIL in a copy written before deliveries recorded it.")
    (source
     :initarg       :source
     :reader        world-delivery-source
@@ -92,6 +98,7 @@
         :time        (world-delivery-time delivery)
         :sender      (world-delivery-sender delivery)
         :sender-name (world-delivery-sender-name delivery)
+        :sender-kind (world-delivery-sender-kind delivery)
         :source      (world-delivery-source delivery)
         :target      (world-delivery-target delivery)
         :text        (world-delivery-text delivery)
@@ -106,7 +113,7 @@
        (sexp-store:plist-schema-p (rest form)
                                  :required-keys  '(:id :time :sender :sender-name :source
                                                    :target :text :mentions :kind)
-                                 :allowed-keys   '(:id :time :sender :sender-name :source
+                                 :allowed-keys   '(:id :time :sender :sender-name :sender-kind :source
                                                    :target :text :mentions :kind)
                                  :keyword-keys-p t)
        (let ((properties (rest form)))
@@ -114,6 +121,7 @@
               (typep (getf properties :time) 'timestamp)
               (non-empty-string-p (getf properties :sender))
               (world--name-p (getf properties :sender-name))
+              (typep (getf properties :sender-kind) '(option participant-kind))
               (non-empty-string-p (getf properties :source))
               (non-empty-string-p (getf properties :target))
               (non-empty-string-p (getf properties :text))
@@ -131,6 +139,7 @@
                    :time        (getf properties :time)
                    :sender      (getf properties :sender)
                    :sender-name (getf properties :sender-name)
+                   :sender-kind (getf properties :sender-kind)
                    :source      (getf properties :source)
                    :target      (getf properties :target)
                    :text        (getf properties :text)
@@ -395,8 +404,19 @@ With NOTIFY-P, the process serving each of those channels is told to read."
 
 (-> world-delivery-label (world-delivery) string)
 (defun world-delivery-label (delivery)
-  "Return DELIVERY as the labeled message its recipients read."
-  (format nil "[Message from ~A (~A) ~A]~%~A"
+  "Return DELIVERY as the labeled message its recipients read.
+
+The first line says who sent it, the person or an agent, and why it arrived;
+every line of the message itself is quoted under it, so no text a sender
+writes can pass for that header."
+  (format nil "[Message from ~@[~A ~]~A (~A) ~A]~%~{> ~A~^~%~}"
+          (case (world-delivery-sender-kind delivery)
+            (:human
+             "the person")
+            (:agent
+             "agent")
+            (otherwise
+             nil))
           (world-delivery-sender-name delivery)
           (conversation-identifier-display (world-delivery-sender delivery))
           (let ((target (conversation-identifier-display (world-delivery-target delivery))))
@@ -409,7 +429,7 @@ With NOTIFY-P, the process serving each of those channels is told to read."
                (format nil "to channel ~A, mentioning you" target))
               (:notice
                (format nil "to channel ~A, for the person" target))))
-          (world-delivery-text delivery)))
+          (uiop:split-string (world-delivery-text delivery) :separator '(#\Newline))))
 
 (-> world-delivery-request (world-delivery) list)
 (defun world-delivery-request (delivery)
@@ -549,6 +569,7 @@ as they do of every ordinary message said in the channel."
                                           :time        now
                                           :sender      (participant-identifier sender)
                                           :sender-name (participant-name sender)
+                                          :sender-kind (participant-kind sender)
                                           :source      (participant-residence sender)
                                           :target      target
                                           :text        text
