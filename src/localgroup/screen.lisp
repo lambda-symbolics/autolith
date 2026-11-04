@@ -39,11 +39,11 @@ successive attachments, so hiding it holds across a reconnect or a switch."))
   (:documentation "Record whether the person wants PANEL beside the session."))
 
 (defmethod screen-panel-shown-p ((panel t))
-  "A panel without a choice of its own is wanted."
-  t)
+  "A panel without a memory of its own leaves the choice to the screen."
+  ':screen)
 
 (defmethod (setf screen-panel-shown-p) (shown-p (panel t))
-  "A panel without a choice of its own forgets the request."
+  "A panel without a memory of its own leaves the choice to the screen."
   shown-p)
 
 
@@ -87,6 +87,11 @@ successive attachments, so hiding it holds across a reconnect or a switch."))
     :initform      nil
     :reader        localgroup-screen-panel
     :documentation "The side panel composed left of the session's rows, or NIL.")
+   (own-panel-shown-p
+    :initform      t
+    :accessor      localgroup-screen-own-panel-shown-p
+    :type          boolean
+    :documentation "Whether the person wants the side panel, for a panel that keeps no choice of its own.")
    (resize-pending-p
     :initform      nil
     :accessor      localgroup-screen-resize-pending-p
@@ -99,12 +104,21 @@ successive attachments, so hiding it holds across a reconnect or a switch."))
   "Return a screen painting a session's frames on the client's TERMINAL beside PANEL."
   (make-instance 'localgroup-screen :terminal terminal :panel panel))
 
+(-> localgroup-screen-panel-shown-p (localgroup-screen) boolean)
+(defun localgroup-screen-panel-shown-p (screen)
+  "Return whether the person wants SCREEN's side panel: the panel's own memory, else the screen's."
+  (let* ((panel (localgroup-screen-panel screen))
+         (kept  (and panel (screen-panel-shown-p panel))))
+    (if (eq kept ':screen)
+        (localgroup-screen-own-panel-shown-p screen)
+        (and kept t))))
+
 (-> localgroup-screen-panel-visible-p (localgroup-screen) boolean)
 (defun localgroup-screen-panel-visible-p (screen)
   "Return true when SCREEN's side panel takes part of the terminal."
   (let ((panel (localgroup-screen-panel screen)))
     (and panel
-         (screen-panel-shown-p panel)
+         (localgroup-screen-panel-shown-p screen)
          (>= (terminal-columns (localgroup-screen-terminal screen))
              (screen-panel-minimum-columns panel))
          t)))
@@ -155,8 +169,10 @@ starts the way the person left it."
   (let ((panel (localgroup-screen-panel screen)))
     (when panel
       (with-lock-held ((localgroup-screen-lock screen))
-        (let ((visible-p (localgroup-screen-panel-visible-p screen)))
-          (setf (screen-panel-shown-p panel) (not (screen-panel-shown-p panel)))
+        (let ((visible-p (localgroup-screen-panel-visible-p screen))
+              (wanted-p  (not (localgroup-screen-panel-shown-p screen))))
+          (setf (screen-panel-shown-p panel) wanted-p
+                (localgroup-screen-own-panel-shown-p screen) wanted-p)
           (unless (eq visible-p (localgroup-screen-panel-visible-p screen))
             (setf (localgroup-screen-resize-pending-p screen) t)
             (terminal-screen-invalidate (localgroup-screen-terminal screen)
