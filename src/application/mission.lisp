@@ -38,7 +38,9 @@
 
 (define-condition mission-error (autolith-error)
   ((reason :initarg :reason :reader mission-error-reason
-           :documentation "Machine-readable reason for a rejected mission operation."))
+           :documentation "Machine-readable reason for a rejected mission operation.")
+   (cause :initarg :cause :initform nil :reader mission-error-cause
+          :documentation "Ephemeral terminal condition from supervised execution, never reconstructed from text."))
   (:documentation "A mission cannot admit work or validate its acceptance policy."))
 
 (defmethod tool-failure-code ((condition mission-error))
@@ -268,17 +270,21 @@ NEW-WORK-P always requires an active mission. Hard budgets apply to both paths."
 (defun mission--supervise (context name function &key timeout)
   "Run FUNCTION inline through cl-jobpond under the mission's remaining deadline.
 The calling thread preserves provider bindings and authorization callbacks."
-  (let* ((milliseconds (mission--remaining-milliseconds context))
-         (pool         (make-job-pool :name name :maximum-concurrency 1
-                                      :maximum-batch-size 1 :maximum-live-jobs 1
-                                      :maximum-runtime-milliseconds
-                                      (max 1 (if timeout (min milliseconds timeout) milliseconds))
-                                      :terminal-retention-limit 1 :start-threads-p nil))
-         (job          (first (job-pool-submit-batch
-                               pool (list (list :name name :inline-only-p t
-                                                :function (lambda (job)
-                                                            (job-check-cancellation job)
-                                                            (funcall function))))))))
+  (let* ((terminal-condition nil)
+         (milliseconds       (mission--remaining-milliseconds context))
+         (pool               (make-job-pool :name name :maximum-concurrency 1
+                                            :maximum-batch-size 1 :maximum-live-jobs 1
+                                            :maximum-runtime-milliseconds
+                                            (max 1 (if timeout (min milliseconds timeout) milliseconds))
+                                            :terminal-retention-limit 1 :start-threads-p nil))
+         (job                (first (job-pool-submit-batch
+                                     pool (list (list :name name :inline-only-p t
+                                                      :function (lambda (job)
+                                                                  (job-check-cancellation job)
+                                                                  (handler-case (funcall function)
+                                                                    (serious-condition (condition)
+                                                                      (setf terminal-condition condition)
+                                                                      (error condition))))))))))
     (unwind-protect
          (progn
            (with-recursive-lock-held ((mission-context-lock context))
@@ -301,9 +307,10 @@ The calling thread preserves provider bindings and authorization callbacks."
                      (mission--transition context ':exhausted "Mission operation reached its wall-clock deadline.")
                      (mission--reject ':exhausted "Mission operation reached its deadline."))))
               (t
-               (mission--reject (getf snapshot :state)
-                                (or (getf snapshot :condition-report)
-                                    "Mission operation did not complete."))))))
+               (error 'mission-error :reason  (getf snapshot :state)
+                                     :cause   terminal-condition
+                                     :message (or (getf snapshot :condition-report)
+                                                  "Mission operation did not complete."))))))
       (with-recursive-lock-held ((mission-context-lock context))
         (setf (mission-context-jobs context)
               (remove job (mission-context-jobs context)))

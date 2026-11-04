@@ -248,6 +248,13 @@
   test-mission-schedule-events-and-authority
   test-mission-schedule-live-retry-exclusion
   test-mission-schedule-hosted-admission
+  test-mission-schedule-provider-failure-notice
+  test-mission-schedule-typed-outcomes
+  test-mission-schedule-terminal-classification
+  test-mission-schedule-notice-recovery-windows
+  test-mission-schedule-restored-failure-notices
+  test-mission-schedule-notice-conversation-switch
+  test-mission-schedule-non-error-controls
   test-mission-schedule-native-wakeup-stale-claim-process
   test-mission-schedule-lisp-restart-policy
   test-vault-edit-accepts-native-lisp)
