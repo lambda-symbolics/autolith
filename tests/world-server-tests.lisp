@@ -708,3 +708,89 @@
            (test-assert (null (world-client-entry configuration))
                         "shutdown unpublishes the world endpoint"))))))
   nil)
+
+(-> test-world-server-move () null)
+(defun test-world-server-move ()
+  "Test a dismissal and a move through the server stop the agent where it was, keep its context for a channel opened later, and adopt it where it goes."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry (world-client-entry configuration))
+            (id-a  (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
+                         :session-id))
+            (id-b  (getf (rest (world-server-tests--open entry (world-tests--workspace root "b")))
+                         :session-id))
+            (app-a (world-host-application (world-server--find-host server id-a)))
+            (app-b (world-host-application (world-server--find-host server id-b))))
+       (conversation-append-user-message (application-conversation app-a) "first words in a")
+       (conversation-append-user-message (application-conversation app-b) "first words in b")
+       (let* ((world   (values (world-reconcile-sessions configuration)))
+              (human   (world-human-participant world))
+              (agent-a (find ':agent (world-channel-residents world id-a) :key #'participant-kind))
+              (agent-b (find ':agent (world-channel-residents world id-b) :key #'participant-kind)))
+         (labels ((move (participant channel)
+                    "Move PARTICIPANT into CHANNEL through the server and return the answer's plist."
+                    (rest (localgroup-query-record entry ':move
+                                                   (list :participant participant :channel channel))))
+
+                  (refused-p (participant channel)
+                    "Return whether moving PARTICIPANT into CHANNEL is refused."
+                    (handler-case (progn (move participant channel) nil)
+                      (localgroup-error () t))))
+           (test-assert (and agent-a agent-b)
+                        "both hosted channels have agents once their conversations persist")
+           (test-assert (and (refused-p (participant-name agent-a) id-b)
+                             (refused-p (participant-identifier human) id-a))
+                        "a move into a channel with an agent is refused, and so is moving the person")
+           (let ((answer (rest (localgroup-query-record
+                                entry ':dismiss (list :participant (participant-name agent-b))))))
+             (test-assert (and (string= (getf answer :participant) (participant-identifier agent-b))
+                               (string= (getf answer :name) (participant-name agent-b))
+                               (string= (getf answer :channel) id-b)
+                               (not (application-world-agent-present-p app-b))
+                               (null (world-participant-find (world-load configuration)
+                                                             (participant-identifier agent-b))))
+                          "a dismissal through the server deletes the agent and leaves its hosted channel without one"))
+           (localgroup-query-record entry ':close (list :channel id-b))
+           (test-assert (task-tests--wait-until
+                         (lambda () (null (world-server--find-host server id-b)))
+                         20)
+                        "the channel without an agent closes like any other")
+           (let ((answer (move (participant-name agent-a) id-b)))
+             (test-assert (and (string= (getf answer :participant) (participant-identifier agent-a))
+                               (string= (getf answer :source) id-a)
+                               (string= (getf answer :channel) id-b)
+                               (zerop (getf answer :dropped)))
+                          "a move answers with the agent, the channel left and the destination"))
+           (test-assert (and (not (application-world-agent-present-p app-a))
+                             (gethash (participant-identifier agent-a) *world-carried-contexts*))
+                        "the channel left has no agent, and the context waits for the unhosted destination")
+           (let* ((opened (localgroup-query-record entry ':open (list :channel  id-b
+                                                                      :rows     30
+                                                                      :columns  90
+                                                                      :styled-p nil)))
+                  (app-b  (world-host-application
+                           (world-server--find-host server (getf (rest opened) :session-id)))))
+             (test-assert (and (string= (getf (rest opened) :session-id) id-b)
+                               (conversation-context-prefix (application-conversation app-b))
+                               (null (gethash (participant-identifier agent-a)
+                                              *world-carried-contexts*)))
+                          "a channel opened later receives the context its agent carried")
+             (let ((answer (move (participant-identifier agent-a) id-a)))
+               (test-assert (string= (getf answer :source) id-b)
+                            "the agent moves on from the channel opened for it"))
+             (let ((record (first (last (application-tests--conversation-records
+                                         (application-conversation app-a))))))
+               (test-assert (and (application-world-agent-present-p app-a)
+                                 (not (application-world-agent-present-p app-b))
+                                 (string= (participant-identifier
+                                           (world-session-participant
+                                            configuration (application-conversation app-a)))
+                                          (participant-identifier agent-a))
+                                 (conversation-context-prefix (application-conversation app-a))
+                                 (eq (first record) ':message)
+                                 (getf (rest record) :automatic-p)
+                                 (search "were moved into channel" (getf (rest record) :content))
+                                 (zerop (deque-count (application-input-controller-work-items
+                                                      (application-input-controller app-a)))))
+                            "the destination adopts the agent with its context, tells it so durably, and starts no turn"))))))))
+  nil)
