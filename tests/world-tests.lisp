@@ -1134,6 +1134,39 @@
                          "the steer's receipt settles the delivery")
             (test-assert (null (world-inbox-deliveries configuration "exec-one"))
                          "the settled delivery leaves the inbox"))
+          (let* ((registry   (channel-register-tools (make-instance 'tool-registry)))
+                 (definition (make-instance 'task-agent-definition
+                                            :name "worker" :description "worker"
+                                            :instructions "work" :source ':test :tools ':all))
+                 (agent      (agent-create :configuration configuration
+                                           :conversation  child
+                                           :provider      (make-instance 'model-provider)
+                                           :tool-registry registry
+                                           :worker        nil))
+                 (context    (make-instance 'tool-context
+                                            :configuration configuration
+                                            :conversation  child
+                                            :agent         agent
+                                            :registry      registry
+                                            :worker        nil)))
+            (test-assert (every (lambda (tool) (task--definition-allows-tool-p definition tool))
+                                (tool-registry-tools registry))
+                         "a child definition with every tool admits the channel tools")
+            (test-assert (tool-result-success-p
+                          (tool-registry-execute-call
+                           registry
+                           (agent-test-call :namespace "channel"
+                                            :name      "send"
+                                            :arguments (json-encode (json-object "channel" "b-root11"
+                                                                                 "text"    "done here")))
+                           context))
+                         "a child sends to its parent's channel through the channel tool")
+            (let ((delivery (first (last (world-inbox-deliveries configuration "broot11")))))
+              (test-assert (and delivery
+                                (string= (world-delivery-sender delivery)
+                                         (participant-identifier task-agent))
+                                (string= (world-delivery-text delivery) "done here"))
+                           "the message arrives as the child's own participant")))
           (world-tests--persisted-conversation configuration "bthird3" 2500)
           (platform-delete-directory-tree *platform*
                                           (merge-pathnames "tasks/broot11/"
