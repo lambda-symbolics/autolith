@@ -677,6 +677,7 @@
   test-world-server-close-unattached
   test-world-server-attachment-selects
   test-world-server-open-before-checkpoint
+  test-world-server-move
   test-world-client-joins-winner)
 
 (define-test-suite world-sidebar

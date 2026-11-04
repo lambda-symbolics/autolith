@@ -389,6 +389,10 @@ Return the launcher status a hosted session asked for, or NIL."
     (:close
      (world-server-close server (getf arguments :channel)
                          :unattached-only-p (not (null (getf arguments :unattached-only-p)))))
+    (:move
+     (world-server-move server (getf arguments :participant) (getf arguments :channel)))
+    (:dismiss
+     (world-server-dismiss server (getf arguments :participant)))
     (:stop
      (world-server-stop server)
      (list :ok :operation ':stop :session-id *world-server-identifier*))
@@ -484,6 +488,112 @@ started must not end one another terminal attached to since."
                  (close-host)
                  (list :ok :operation ':close :session-id (world-host-channel host)
                            :closed-p nil)))))))))
+
+
+;;;; -- Moves --
+
+(defvar *world-carried-contexts* (make-hash-table :test #'equal :synchronized t)
+  "The context each moved agent carries, by participant identifier, until its destination channel is served.
+
+A world server keeps it for the agents it moved into channels it does not
+serve yet; it is never persisted, so a restart starts those agents from their
+destination's own history.")
+
+(-> world-server-move (world-server t t) list)
+(defun world-server-move (server participant channel)
+  "Move agent PARTICIPANT into CHANNEL, both designators, and answer with what happened.
+
+The channel it leaves, when served, stops it; the destination, when served,
+adopts it with the context it carries, else that context waits here for the
+channel's next open. The world store refuses a destination that has an
+agent."
+  (unless (and (stringp participant) (stringp channel))
+    (error 'world-error
+           :message   "A move names the participant to move and the channel to move it into."
+           :operation ':move))
+  (let* ((configuration (world-server-configuration server))
+         (world         (values (world-reconcile-sessions configuration)))
+         (agent         (or (world-participant-designated world participant)
+                            (error 'world-error
+                                   :message    (format nil "No participant is named ~A." participant)
+                                   :pathname   nil
+                                   :operation  ':move
+                                   :identifier participant)))
+         (target        (channel-identifier (world-channel-designated world configuration channel)))
+         (source-host   (world-server--find-host server (participant-residence agent)))
+         (target-host   (world-server--find-host server target))
+         (prefix        (and source-host
+                             (let ((application (world-host-application source-host)))
+                               (conversation-input-items-for-family
+                                (application-conversation application)
+                                (provider-family (application-provider application))
+                                :include-ephemeral-p nil)))))
+    (unless (eq (participant-kind agent) ':agent)
+      (error 'world-error
+             :message    (format nil "~A is not an agent; the person moves by attaching a terminal."
+                                 (participant-name agent))
+             :pathname   nil
+             :operation  ':move
+             :identifier (participant-identifier agent)))
+    (let ((result (world-move-agent configuration agent target
+                                    :source-application      (and source-host
+                                                                  (world-host-application source-host))
+                                    :destination-application (and target-host
+                                                                  (world-host-application target-host))
+                                    :prefix                  prefix)))
+      (if target-host
+          (remhash (participant-identifier agent) *world-carried-contexts*)
+          (setf (gethash (participant-identifier agent) *world-carried-contexts*) prefix))
+      (list :ok :operation ':move :participant (participant-identifier agent)
+                :source (getf result :source) :channel target :dropped (getf result :dropped)))))
+
+(-> world-server-dismiss (world-server t) list)
+(defun world-server-dismiss (server participant)
+  "Delete agent PARTICIPANT, a designator, leaving its channel without an agent, and answer with what happened.
+
+The channel, when served, stops the agent; the context it carried, when any
+waited here, is forgotten with it."
+  (unless (stringp participant)
+    (error 'world-error
+           :message   "A dismissal names the agent to dismiss."
+           :operation ':dismiss))
+  (let* ((configuration (world-server-configuration server))
+         (world         (values (world-reconcile-sessions configuration)))
+         (agent         (or (world-participant-designated world participant)
+                            (error 'world-error
+                                   :message    (format nil "No participant is named ~A." participant)
+                                   :pathname   nil
+                                   :operation  ':dismiss
+                                   :identifier participant)))
+         (host          (world-server--find-host server (participant-residence agent)))
+         (result        (world-dismiss-agent configuration agent
+                                             :application (and host (world-host-application host)))))
+    (remhash (participant-identifier agent) *world-carried-contexts*)
+    (list :ok :operation ':dismiss :participant (participant-identifier agent)
+              :name (participant-name agent)
+              :channel (getf result :channel) :dropped (getf result :dropped))))
+
+(-> world-server--carry-context (application) null)
+(defun world-server--carry-context (application)
+  "Give APPLICATION's conversation the context its agent carried here, when one waits.
+
+The agent is the channel's resident, found in the world store: the channel
+may have been opened before it ever had a durable message, so its session
+mapping cannot be relied on."
+  (let* ((conversation (application-conversation application))
+         (world        (handler-case (world-load (application-configuration application))
+                         (autolith-error ()
+                           nil)))
+         (agent        (and world
+                            (find ':agent (world-channel-residents
+                                           world (conversation-identifier conversation))
+                                  :key #'participant-kind))))
+    (when agent
+      (let ((prefix (gethash (participant-identifier agent) *world-carried-contexts*)))
+        (when prefix
+          (setf (conversation-context-prefix conversation) (copy-list prefix))
+          (remhash (participant-identifier agent) *world-carried-contexts*)))))
+  nil)
 
 
 ;;;; -- Hosting --
@@ -754,6 +864,7 @@ forgotten again when no thread could start."
                                                            :styled-p (getf arguments :styled-p)))))
          (host          (make-instance 'world-host :application application)))
     (setf (application-world-server application) server)
+    (world-server--carry-context application)
     (with-lock-held ((world-server-lock server))
       (push host (world-server-hosts server)))
     (handler-case
