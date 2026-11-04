@@ -1264,3 +1264,88 @@
                                      '("bthird3")))
                          "a second reconciliation finds nothing left to retire"))))))
   nil)
+
+(-> test-world-agent-move () null)
+(defun test-world-agent-move ()
+  "Test a dismissal leaves a channel without an agent, a move brings one and carries the mapping along, and neither invents an agent later."
+  (with-test-configuration (configuration root)
+    (let ((first  (world-tests--persisted-conversation configuration "bfirst1" 1000))
+          (second (world-tests--persisted-conversation configuration "bsecnd2" 2000)))
+      (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+        (flet ((agent-of (channel)
+                 "Return CHANNEL's resident agent."
+                 (find ':agent (world-channel-residents (world-load configuration) channel)
+                       :key #'participant-kind)))
+          (test-assert (null (world-session-remap configuration "bnone99" nil))
+                       "a channel without a session mapping has nothing to rewrite")
+          (world-channel-create configuration
+                                :id        "btask11"
+                                :owner     (participant-identifier human)
+                                :workspace (world-tests--workspace root "task")
+                                :parent    "bfirst1"
+                                :now       2500)
+          (let ((child (world-participant-create configuration
+                                                 :kind      ':agent
+                                                 :name      "task"
+                                                 :residence "btask11"
+                                                 :parent    (participant-identifier first-agent))))
+            (test-assert (handler-case
+                             (progn (world-dismiss-agent configuration first-agent) nil)
+                           (world-error (condition)
+                             (eq (world-error-operation condition) ':delete-participant)))
+                         "an agent with a child participant is not dismissed")
+            (test-assert (handler-case
+                             (progn (world-dismiss-agent configuration human) nil)
+                           (world-error (condition)
+                             (eq (world-error-operation condition) ':dismiss)))
+                         "the person is not dismissed")
+            (world-participant-delete configuration (participant-identifier child)))
+          (let ((result (world-dismiss-agent configuration second-agent)))
+            (test-assert (and (string= (getf result :channel) "bsecnd2")
+                              (zerop (getf result :dropped))
+                              (null (agent-of "bsecnd2"))
+                              (null (world-participant-find (world-load configuration)
+                                                            (participant-identifier second-agent)))
+                              (null (world-session-participant configuration second)))
+                         "a dismissed agent is gone and its channel has none"))
+          (conversation-append-user-message second "still here")
+          (world-reconcile-sessions configuration :now 3500)
+          (test-assert (null (agent-of "bsecnd2"))
+                       "a newer conversation in a channel without an agent invents none")
+          (let ((result (world-move-agent configuration first-agent "bsecnd2")))
+            (test-assert (and (string= (getf result :source) "bfirst1")
+                              (string= (getf result :channel) "bsecnd2")
+                              (zerop (getf result :dropped)))
+                         "a move reports the channel left and the destination, dropping nothing without an application"))
+          (test-assert (and (null (agent-of "bfirst1"))
+                            (string= (participant-identifier (agent-of "bsecnd2"))
+                                     (participant-identifier first-agent))
+                            (null (world-session-participant configuration first))
+                            (string= (participant-identifier
+                                      (world-session-participant configuration second))
+                                     (participant-identifier first-agent)))
+                       "the agent lives in the destination, whose session names it, and the channel it left has none")
+          (conversation-append-user-message first "still here too")
+          (world-reconcile-sessions configuration :now 4000)
+          (test-assert (and (null (agent-of "bfirst1"))
+                            (= (count ':agent (world-channel-residents (world-load configuration)
+                                                                       "bsecnd2")
+                                      :key #'participant-kind)
+                               1))
+                       "reconciliation invents no agent for either channel after the move")
+          (world-move-agent configuration (agent-of "bsecnd2") "bfirst1")
+          (test-assert (and (null (agent-of "bsecnd2"))
+                            (string= (participant-identifier
+                                      (world-session-participant configuration first))
+                                     (participant-identifier first-agent)))
+                       "moving back restores the first channel's agent and leaves the other without one")
+          (platform-delete-directory-tree
+           *platform*
+           (conversation-storage-directory-pathname (conversation-pathname second))
+           :validate t)
+          (let ((world (values (world-reconcile-sessions configuration :now 5000))))
+            (test-assert (and (null (world-channel-find world "bsecnd2"))
+                              (world-participant-find world (participant-identifier first-agent)))
+                         "retiring a channel without an agent deletes the channel and nobody"))))))
+  nil)
+

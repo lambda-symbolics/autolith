@@ -621,6 +621,7 @@
   test-world-message-presentation
   test-world-child-participants
   test-world-one-resident-agent
+  test-world-agent-move
   test-world-staggered-retirement
   test-world-handles
   test-world-composer-mentions

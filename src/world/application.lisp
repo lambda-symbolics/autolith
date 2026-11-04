@@ -98,13 +98,14 @@ inbox made room."
 
 A message queued while a turn runs is taken as steering first; the queued
 turn then finds its receipt and is skipped. Without an input controller, as
-in a headless job, messages wait in the inbox. Settling received messages
-makes room in the inbox, so a send that found it full is resumed right
-after, rather than waiting for the next send to come by."
+in a headless job, or without a resident agent to read them, messages wait
+in the inbox. Settling received messages makes room in the inbox, so a send
+that found it full is resumed right after, rather than waiting for the next
+send to come by."
   (let ((channel    (application-world--served-channel application))
         (controller (application-input-controller application))
         (queued     0))
-    (when (and channel controller)
+    (when (and channel controller (application-world-agent-present-p application))
       (world-message-resume (application-configuration application))
       (dolist (delivery (multiple-value-bind (pending settled)
                             (application-world--unsettled application channel)
@@ -415,6 +416,163 @@ shares nothing. A delivery that fails is reported and never stops the turn."
                              (format nil "The reply was not shared: ~A"
                                      (bounded-string (princ-to-string condition) :limit 300)))
         nil))))
+
+
+;;;; -- Residents --
+
+;;; A channel has one resident agent. Moving it elsewhere stops it, leaves
+;;; the channel without an agent, and makes it the destination's agent, idle
+;;; there until addressed. The world store moves the identity; the running
+;;; applications release and adopt it.
+
+(-> application-world-agent-present-p (application) boolean)
+(defun application-world-agent-present-p (application)
+  "Return true while APPLICATION's channel has a resident agent, or before it is a channel at all.
+
+A world that cannot be read counts as present: the world never blocks a
+session."
+  (let ((channel (application-world--served-channel application)))
+    (or (null channel)
+        (handler-case
+            (let ((world (application-world application)))
+              (or (null (world-channel-find world channel))
+                  (not (null (find ':agent (world-channel-residents world channel)
+                                   :key #'participant-kind)))))
+          (error ()
+            t)))))
+
+(-> application-world-release-agent
+    (application participant &key (:destination (option string)))
+    (integer 0))
+(defun application-world-release-agent (application participant &key destination)
+  "Stop APPLICATION's agent PARTICIPANT, which moves to channel DESTINATION or is dismissed, and return the queued messages dropped.
+
+The active turn is cancelled at its next safe boundary, as steering is
+taken; the unstarted queue is dropped; running jobs stay with the channel.
+The channel is told."
+  (let ((controller (application-input-controller application))
+        (dropped    0))
+    (when controller
+      ;; A session's pause asks for the cancellation itself; without one, as
+      ;; outside a world server, the turn is asked to stop directly.
+      (unless (application-localgroup-pause application)
+        (application-input-controller--request-active-turn-cancellation controller))
+      (with-lock-held ((application-input-controller-lock controller))
+        (dolist (items (list (application-input-controller-work-items controller)
+                             (application-input-controller-steering-items controller)))
+          (loop until (deque-empty-p items)
+                do (deque-pop-front items)
+                   (incf dropped))))
+      (application-localgroup-resume application)
+      (application-input-controller--publish-counts controller))
+    (application-present
+     application
+     (format nil "Agent ~A ~:[was dismissed~;moved to channel ~:*~A~]; this channel has no agent now~@[, and ~D queued message~:P ~:*~[~;was~:;were~] dropped~]. (move \"WHO\") brings an agent here, (domestic) creates a new one."
+             (participant-name participant)
+             (and destination (conversation-identifier-display destination))
+             (and (plusp dropped) dropped)))
+    dropped))
+
+(-> application-world-adopt-agent
+    (application participant &key (:prefix list) (:source (option string)))
+    null)
+(defun application-world-adopt-agent (application participant &key prefix source)
+  "Make PARTICIPANT APPLICATION's agent, carrying PREFIX, the context it brings from channel SOURCE.
+
+The participant's settings choose the model; the tool registry and the
+conversation stay. The agent is told where it came from through a durable
+automatic message, which it reads on its next turn, and that turn comes
+only when it is addressed."
+  (let* ((settings      (participant-settings participant))
+         (base          (application-configuration application))
+         (configuration (if (getf settings :model)
+                            (configuration-copy base
+                                                :model                      (getf settings :model)
+                                                :model-provider             (or (getf settings :model-provider) "")
+                                                :model-selection-override-p t
+                                                :reasoning-effort           (or (getf settings :reasoning-effort)
+                                                                                (config :reasoning-effort base)))
+                            base))
+         (conversation  (application-conversation application))
+         (provider      (provider-create configuration
+                                         :reasoning-summaries-p (application-reasoning-traces-p application)))
+         (agent         (agent-create :configuration configuration
+                                      :provider      provider
+                                      :conversation  conversation
+                                      :tool-registry (application-tool-registry application)
+                                      :hurry-up-p    (application-hurry-up-p application)
+                                      :worker        (application-worker application))))
+    (setf (application-configuration application) configuration
+          (application-provider application)      provider
+          (application-agent application)         agent
+          (conversation-context-prefix conversation) (copy-list prefix))
+    (application-refresh-context-meter application)
+    (world-session-remap configuration (conversation-identifier conversation)
+                         (participant-identifier participant))
+    (conversation-append-user-message
+     conversation
+     (format nil "[You, ~A, were moved into channel ~A~@[ from channel ~A~]. ~:[~;Your context continues from where you were. ~]This channel's earlier history is at channel:id/~A. Nothing is expected of you until someone writes here or mentions you.]"
+             (participant-name participant)
+             (conversation-identifier-display (conversation-identifier conversation))
+             (and source (conversation-identifier-display source))
+             prefix
+             (conversation-identifier-display (conversation-identifier conversation)))
+     :automatic-p t)
+    (application-present
+     application
+     (format nil "Agent ~A now resides here~@[, moved from channel ~A~]; it waits for your message."
+             (participant-name participant)
+             (and source (conversation-identifier-display source))))
+    nil))
+
+(-> world-move-agent
+    (configuration participant string &key (:source-application (option application))
+                                           (:destination-application (option application))
+                                           (:prefix list))
+    list)
+(defun world-move-agent (configuration participant channel &key source-application
+                                                                 destination-application prefix)
+  "Move agent PARTICIPANT into CHANNEL: the store first, then the applications serving the channels it leaves and joins.
+
+SOURCE-APPLICATION, when the channel it leaves is served, releases it;
+DESTINATION-APPLICATION, when CHANNEL is served, adopts it with PREFIX. The
+result is a plist of :source, :channel and :dropped."
+  (let ((source (participant-residence participant)))
+    (world-participant-move configuration (participant-identifier participant) channel)
+    (world-session-remap configuration source nil)
+    (world-session-remap configuration channel (participant-identifier participant))
+    (let ((dropped (if source-application
+                       (application-world-release-agent source-application participant
+                                                        :destination channel)
+                       0)))
+      (when destination-application
+        (application-world-adopt-agent destination-application participant
+                                       :prefix prefix
+                                       :source source))
+      (list :source source :channel channel :dropped dropped))))
+
+(-> world-dismiss-agent (configuration participant &key (:application (option application))) list)
+(defun world-dismiss-agent (configuration participant &key application)
+  "Delete agent PARTICIPANT, leaving its channel without an agent, and return a plist of :channel and :dropped.
+
+APPLICATION, when it serves the channel, stops the agent and drops its
+unstarted prompts. An agent with child participants is refused before
+anything changes: their tasks end first. The channel keeps its history, the
+person and its subscribers, and offers a move or a domestic agent."
+  (unless (eq (participant-kind participant) ':agent)
+    (error 'world-error
+           :message    (format nil "~A is not an agent; only agents are dismissed."
+                               (participant-name participant))
+           :pathname   nil
+           :operation  ':dismiss
+           :identifier (participant-identifier participant)))
+  (let ((channel (participant-residence participant)))
+    (world-participant-delete configuration (participant-identifier participant))
+    (world-session-remap configuration channel nil)
+    (list :channel channel
+          :dropped (if application
+                       (application-world-release-agent application participant)
+                       0))))
 
 (-> application-world-human-identifier (application) (option string))
 (defun application-world-human-identifier (application)
