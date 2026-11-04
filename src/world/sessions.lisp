@@ -40,8 +40,8 @@ agent working in frob; a second agent there is frob-2.")
    (participant
     :initarg       :participant
     :reader        world-session-mapping-participant
-    :type          non-empty-string
-    :documentation "The agent participant the conversation was migrated onto.")
+    :type          (option non-empty-string)
+    :documentation "The agent participant resident in the conversation's channel, or NIL for a channel deliberately without one: its agent moved away, and none is invented in its place.")
    (token
     :initarg       :token
     :reader        world-session-mapping-token
@@ -78,7 +78,8 @@ agent working in frob; a second agent there is frob-2.")
                                  :allowed-keys   '(:conversation :participant :token)
                                  :keyword-keys-p t)
        (non-empty-string-p (getf (rest form) :conversation))
-       (non-empty-string-p (getf (rest form) :participant))
+       (let ((participant (getf (rest form) :participant)))
+         (or (null participant) (non-empty-string-p participant)))
        (world-session--token-p (getf (rest form) :token))))
 
 (-> world-session--form-p (t) boolean)
@@ -193,16 +194,27 @@ costs nothing here; the header's title is older but always available."
 
 (-> world-session--mapped-participant (world (option world-session-mapping) string) (option participant))
 (defun world-session--mapped-participant (world mapping channel-identifier)
-  "Return the agent participant MAPPING names, or the migrated resident of CHANNEL-IDENTIFIER.
+  "Return the agent participant MAPPING names while it resides in CHANNEL-IDENTIFIER, or the migrated resident.
 
-A mapping lost after its world records were published still finds the agent
-resident the migration created, so a session never gets a second agent."
-  (or (and mapping (world-participant-find world (world-session-mapping-participant mapping)))
-      (find-if (lambda (participant)
-                 (and (eq (participant-kind participant) ':agent)
-                      (participant-parent participant)))
-               (sort (world-channel-residents world channel-identifier) #'<
-                     :key #'participant-created-at))))
+A mapping names no participant for a channel deliberately left without an
+agent; it stays without one. A mapping whose agent moved elsewhere leaves
+the channel without one too. A mapping lost after its world records were
+published still finds the agent resident the migration created, so a
+session never gets a second agent."
+  (cond
+    ((and mapping (null (world-session-mapping-participant mapping)))
+     nil)
+    (mapping
+     (let ((participant (world-participant-find world (world-session-mapping-participant mapping))))
+       (and participant
+            (string= (participant-residence participant) channel-identifier)
+            participant)))
+    (t
+     (find-if (lambda (participant)
+                (and (eq (participant-kind participant) ':agent)
+                     (participant-parent participant)))
+              (sort (world-channel-residents world channel-identifier) #'<
+                    :key #'participant-created-at)))))
 
 (-> world-session-participant (configuration conversation) (option participant))
 (defun world-session-participant (configuration conversation)
@@ -217,8 +229,31 @@ its first message finds its participant on the first call."
                        (world-session-mappings configuration)
                        :key #'world-session-mapping-conversation :test #'string=)))
     (and mapping
+         (world-session-mapping-participant mapping)
          (world-participant-find (world-load configuration)
                                  (world-session-mapping-participant mapping)))))
+
+(-> world-session-remap (configuration string (option string)) boolean)
+(defun world-session-remap (configuration conversation-identifier participant-identifier)
+  "Record PARTICIPANT-IDENTIFIER as the agent of CONVERSATION-IDENTIFIER's channel, or NIL for none, and return whether a mapping was rewritten.
+
+A move writes the destination's mapping with the moved agent and the
+source's with NIL, so neither channel gets a second agent invented at its
+next reconciliation. A channel without a conversation has no mapping to
+rewrite and nothing to reconcile, so the move leaves it to the world store."
+  (with-recursive-lock-held (*world-sessions-lock*)
+    (let* ((mappings (world-session-mappings configuration))
+           (mapping  (find conversation-identifier mappings
+                           :key #'world-session-mapping-conversation :test #'string=)))
+      (when mapping
+        (world-session--write-mappings
+         configuration
+         (cons (make-instance 'world-session-mapping
+                              :conversation conversation-identifier
+                              :participant  participant-identifier
+                              :token        (world-session-mapping-token mapping))
+               (remove mapping mappings))))
+      (not (null mapping)))))
 
 
 ;;;; -- Reconciliation --
@@ -362,11 +397,23 @@ root's agent while that root exists."
 
              (ensure-agent (change owner)
                "Create or refresh CHANGE's agent participant under OWNER and return its identifier."
-               (let* ((header   (getf change :header))
-                      (settings (world-session--settings header))
-                      (existing (world-session--mapped-participant
-                                 preview (getf change :mapping) (getf change :id))))
+               (let* ((header      (getf change :header))
+                      (settings    (world-session--settings header))
+                      (mapping     (getf change :mapping))
+                      (existing    (world-session--mapped-participant
+                                    preview mapping (getf change :id)))
+                      ;; A channel whose agent moved away, or that was left
+                      ;; without one on purpose, gets no invented agent; only
+                      ;; a mapping whose agent is gone from the world is
+                      ;; repaired with a new one.
+                      (agentless-p (and mapping
+                                        (null existing)
+                                        (or (null (world-session-mapping-participant mapping))
+                                            (world-participant-find
+                                             preview (world-session-mapping-participant mapping))))))
                  (cond
+                   (agentless-p
+                    nil)
                    ((null existing)
                     (let ((agent (make-instance 'participant
                                                 :identifier (world--generate-identifier preview now)
@@ -403,8 +450,10 @@ A parent whose child channel still has a live conversation keeps its
 mapping and its participant: the child belongs to it, and the parent is
 retired on the pass that retires the child."
                (let* ((channel-id  (world-session-mapping-conversation mapping))
-                      (participant (world-participant-find
-                                    preview (world-session-mapping-participant mapping)))
+                      ;; A channel without an agent, or whose agent lives
+                      ;; elsewhere now, retires nobody.
+                      (participant (world-session--mapped-participant
+                                    preview mapping channel-id))
                       (blocked-p   (some (lambda (child)
                                            (not (member (channel-identifier child) ending
                                                         :test #'string=)))
