@@ -463,9 +463,7 @@ its channel's workspace, so every participant can be mentioned by name."
                                 (world-session--handle-base (channel-workspace channel))
                                 *world-agent-name*))
                    (handle  (loop for index from 1
-                                  for candidate = (if (= index 1)
-                                                      base
-                                                      (format nil "~A-~D" base index))
+                                  for candidate = (world-handle-suffixed base index)
                                   unless (or (member candidate seen :test #'string-equal)
                                              (world-participant-named-p world candidate))
                                     return candidate)))
