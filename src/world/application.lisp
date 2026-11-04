@@ -287,7 +287,8 @@ stops the turn."
                  (user-message-input-text input))
                 (t
                  nil))))
-    (when (non-empty-string-p text)
+    (when (and (non-empty-string-p text)
+               (slot-boundp application 'configuration))
       (handler-case
           (let* ((configuration (application-configuration application))
                  (channel       (application-world--served-channel application))
@@ -330,7 +331,8 @@ The reply was said in this channel already; a subscriber residing elsewhere
 gets a copy, and so does a participant elsewhere the reply mentions. A
 reply that is not verbal text, or a channel without an agent of its own,
 shares nothing. A delivery that fails is reported and never stops the turn."
-  (when (non-empty-string-p text)
+  (when (and (non-empty-string-p text)
+             (slot-boundp application 'configuration))
     (handler-case
         (let* ((configuration (application-configuration application))
                (channel       (application-world--served-channel application))
