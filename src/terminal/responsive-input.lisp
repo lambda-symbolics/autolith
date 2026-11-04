@@ -1258,6 +1258,12 @@ the ordinary FIFO queue."
   (unless (application-input-controller--prompt-storage-ready-p controller)
     (return-from application-input-controller-submit-primary-prompt
       (values nil ':rejected)))
+  (unless (application-world-agent-present-p (application-input-controller-application controller))
+    (application-present
+     (application-input-controller-application controller)
+     "· this channel has no agent. (move \"ID\") brings one here; (domestic) creates a new one")
+    (return-from application-input-controller-submit-primary-prompt
+      (values nil ':rejected)))
   (let ((delivery  nil)
         (resumed-p nil))
     (with-lock-held ((application-input-controller-lock controller))
