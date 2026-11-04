@@ -1205,8 +1205,10 @@ request it conflicts with from one that says nothing."
 
 Return NIL when no server could serve it, so the session runs directly. A
 channel that asks the terminal to switch is left running, and the terminal
-attaches to the channel it named, opening it in the server first. One
-sidebar of the world follows the terminal from channel to channel."
+attaches to the channel it named, opening it in the server first without
+this start's launch options; when that channel refuses, the terminal
+attaches to the one it left. One sidebar of the world follows the terminal
+from channel to channel."
   (multiple-value-bind (session-id started-p)
       (main--open-world-channel configuration
                                 :permission-mode    permission-mode
@@ -1243,13 +1245,22 @@ sidebar of the world follows the terminal from channel to channel."
                                                            :unattached-only-p t))))))
                      (error condition)))))
           (if (and (consp exit) (eq (first exit) ':switch))
-              (multiple-value-setq (session-id started-p)
-                (world-client-open configuration
-                                   :channel         (getf (rest exit) :session-id)
-                                   :permission-mode permission-mode
-                                   :immutable-p     immutable-p
-                                   :pristine-p      pristine-p
-                                   :launch          launch))
+              ;; A switch navigates: it states none of this start's launch
+              ;; options, and a channel that refuses it leaves the terminal
+              ;; where it was.
+              (handler-case
+                  (multiple-value-setq (session-id started-p)
+                    (world-client-open configuration
+                                       :channel         (getf (rest exit) :session-id)
+                                       :permission-mode permission-mode
+                                       :immutable-p     immutable-p
+                                       :pristine-p      pristine-p))
+                (localgroup-error (condition)
+                  (format *error-output* "~&Autolith: could not switch to ~A: ~A~%"
+                          (conversation-identifier-display (getf (rest exit) :session-id))
+                          (autolith-error-message condition))
+                  (force-output *error-output*)
+                  (setf started-p nil)))
               (progn
                 (localgroup-relay-exit configuration exit ':control)
                 (return t))))))))
