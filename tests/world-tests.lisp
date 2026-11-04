@@ -1028,6 +1028,45 @@
                      "the inbox keeps the undelivered message"))))
   nil)
 
+(-> test-world-one-resident-agent () null)
+(defun test-world-one-resident-agent ()
+  "Test a channel holds one resident agent: an agent is refused a channel another agent lives in, the person is not."
+  (with-test-configuration (configuration root)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+      (test-assert (handler-case
+                       (progn (world-participant-move configuration
+                                                      (participant-identifier first-agent)
+                                                      "bsecnd2")
+                              nil)
+                     (world-error (condition)
+                       (and (eq (world-error-operation condition) ':move-participant)
+                            (search (participant-name second-agent)
+                                    (autolith-error-message condition)))))
+                   "an agent is refused a channel whose resident agent is named in the refusal")
+      (test-assert (string= (participant-residence
+                             (world-participant-move configuration
+                                                     (participant-identifier human) "bsecnd2"))
+                            "bsecnd2")
+                   "the person moves into a channel with an agent")
+      (world-channel-create configuration
+                            :id        "bempty3"
+                            :owner     (participant-identifier human)
+                            :workspace (world-tests--workspace root "empty")
+                            :now       3000)
+      (test-assert (string= (participant-residence
+                             (world-participant-move configuration
+                                                     (participant-identifier first-agent) "bempty3"))
+                            "bempty3")
+                   "an agent moves into a channel without one")
+      (test-assert (string= (participant-residence
+                             (world-participant-move configuration
+                                                     (participant-identifier first-agent) "bempty3"))
+                            "bempty3")
+                   "moving an agent where it already is changes nothing")))
+  nil)
+
 (-> test-world-staggered-retirement () null)
 (defun test-world-staggered-retirement ()
   "Test a root whose storage vanishes before its child's keeps its mapping and retires with the child."
