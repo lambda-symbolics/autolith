@@ -1581,11 +1581,10 @@ every matching ID with its available title, workspace, time, and preview
 instead of selecting one. Running conversations,
 including empty new sessions, are selectable. Resuming a running conversation
 attaches to it; detached resume prints its existing PID without disturbing its
-clients. Launch-only overrides such as =--model= are rejected when reusing a
-running conversation; an explicit =--permissions= takes effect on a running
-channel no terminal controls, as the world server section says, and is
-refused while another terminal controls it. =--image= and =--simulate-crash=
-cannot be combined with =--detached=.
+clients. Launch-only overrides such as =--model= and =--permissions= are
+rejected when resuming a running conversation; change its mode inside it with
+=(permissions ...)=. =--image= and =--simulate-crash= cannot be combined with
+=--detached=.
 
 Control a session with the following commands:
 
