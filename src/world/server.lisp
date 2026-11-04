@@ -424,25 +424,32 @@ ARGUMENTS name a :CHANNEL or a :DIRECTORY, and carry the client's
 :PERMISSION-MODE, :FULLSCREEN-P, :RESUME-COMMAND-P, :RECOVERY-DIAGNOSIS,
 :ROWS, :COLUMNS and :STYLED-P. The answer arrives once the channel's
 endpoint is published, so the client can attach at once."
-  (when (world-server-stopping-p server)
-    (error 'world-error
-           :message   "The world server is stopping."
-           :operation ':open))
-  (when (world-server-checkpointing-p server)
-    (error 'world-error
-           :message   "The world server is checkpointing; the channel opens once it resumes."
-           :operation ':checkpointing))
   (multiple-value-bind (host started-p)
       (with-lock-held ((world-server-open-lock server))
+        ;; Admission and host registration happen under one lock, the one a
+        ;; checkpoint takes before it declares itself, so no host can start
+        ;; between the checkpoint's snapshot of the hosts and its pause.
+        (when (world-server-stopping-p server)
+          (error 'world-error
+                 :message   "The world server is stopping."
+                 :operation ':open))
+        (when (world-server-checkpointing-p server)
+          (error 'world-error
+                 :message   "The world server is checkpointing; the channel opens once it resumes."
+                 :operation ':checkpointing))
         (world-server--host-for server arguments))
     (world-server--wait-ready server host)
     (list :ok
           :session-id (world-host-channel host)
           :started-p  (not (null started-p)))))
 
-(-> world-server-close (world-server t) list)
-(defun world-server-close (server channel)
-  "End the session of CHANNEL and answer once its end is requested."
+(-> world-server-close (world-server t &key (:unattached-only-p boolean)) list)
+(defun world-server-close (server channel &key unattached-only-p)
+  "End the session of CHANNEL and answer once its end is requested.
+
+With UNATTACHED-ONLY-P the channel is closed only while no terminal controls
+it, and the answer says whether it was: a client cleaning up a channel it
+started must not end one another terminal attached to since."
   (unless (stringp channel)
     (error 'world-error
            :message   "A close names the channel to close."
@@ -1065,8 +1072,12 @@ RECONNECT-ID, and stops the process services around its thunk. The process
 saves its heap with APPLICATION as the active application, so a rollback
 into the checkpoint resumes that channel. NOTICE-FUNCTION, given an
 application, returns what its channel is told once served again."
-  (with-lock-held ((world-server-lock server))
-    (setf (world-server-checkpointing-p server) t))
+  ;; An open admitted before this point holds the open lock until its host is
+  ;; registered and served, so the checkpoint declares itself only once every
+  ;; host it will pause is listed, and later opens are refused.
+  (with-lock-held ((world-server-open-lock server))
+    (with-lock-held ((world-server-lock server))
+      (setf (world-server-checkpointing-p server) t)))
   (setf *active-application* application)
   (unwind-protect
        (let ((*checkpoint-thread-quiescer*
