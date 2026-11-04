@@ -438,20 +438,40 @@ With NOTIFY-P, the process serving each of those channels is told to read."
                                     (world-participants world))))
           (and (= (length named) 1) (first named))))))
 
+(-> world-mention-boundary-p (string (integer 0)) boolean)
+(defun world-mention-boundary-p (text at)
+  "Return true when the @ at index AT of TEXT begins a mention rather than continuing a word.
+
+A mention starts the text or follows a character that no word, address or
+path continues into. Letters, digits and the characters of an email address
+or a path before the @ make it part of that token, as in alice@bob.com."
+  (or (zerop at)
+      (let ((before (char text (1- at))))
+        (not (or (alphanumericp before)
+                 (member before '(#\. #\- #\_ #\+ #\/ #\\)))))))
+
+(-> world-mention-end (string (integer 0)) (integer 0))
+(defun world-mention-end (text at)
+  "Return the index after the designator of the mention beginning with the @ at AT in TEXT."
+  (or (position-if-not (lambda (character)
+                         (or (alphanumericp character)
+                             (member character '(#\- #\_))))
+                       text :start (1+ at))
+      (length text)))
+
 (-> world-message-mentions (world string) list)
 (defun world-message-mentions (world text)
-  "Return the identifiers of the participants TEXT mentions as @name or @identifier."
+  "Return the identifiers of the participants TEXT mentions as @name or @identifier.
+
+An @ inside a word or an address, as in alice@bob.com, mentions nobody."
   (let ((mentions nil) (start 0))
     (loop
       (let ((at (position #\@ text :start start)))
         (unless at (return))
-        (let* ((end         (or (position-if-not (lambda (character)
-                                                   (or (alphanumericp character)
-                                                       (member character '(#\- #\_))))
-                                                 text :start (1+ at))
-                                (length text)))
+        (let* ((end         (world-mention-end text at))
                (designator  (subseq text (1+ at) end))
-               (participant (and (plusp (length designator))
+               (participant (and (world-mention-boundary-p text at)
+                                 (plusp (length designator))
                                  (world-message-participant world designator))))
           (when (and participant
                      (not (member (participant-identifier participant) mentions
