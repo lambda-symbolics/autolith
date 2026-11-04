@@ -747,6 +747,42 @@
                      "a channel that refuses the switch leaves the terminal in the channel it came from"))))
   nil)
 
+(-> test-world-client-refusal-ends-start () null)
+(defun test-world-client-refusal-ends-start ()
+  "Test a world server's refusal ends a start with its reason, while an unreachable server sends it direct."
+  (with-test-configuration (configuration)
+    (flet ((open-with (condition)
+             "Open this terminal's channel while the client open signals CONDITION; return :direct or :refused."
+             (test-call-with-function-replacements
+              (list (list 'world-client-open
+                          (lambda (&rest arguments)
+                            (declare (ignore arguments))
+                            (error condition))))
+              (lambda ()
+                (handler-case
+                    (let ((*error-output* (make-broadcast-stream)))
+                      (if (main--open-world-channel configuration) :opened :direct))
+                  (localgroup-error ()
+                    :refused))))))
+      (test-assert (eq (open-with (make-condition 'localgroup-error
+                                                  :message   "Channel b-first1 is already running and cannot take --fullscreen."
+                                                  :operation ':open))
+                       :refused)
+                   "a refusal the server answered ends the start instead of running direct")
+      (test-assert (eq (open-with (make-condition 'localgroup-error
+                                                  :message   "Localgroup session world is unavailable."
+                                                  :operation ':open
+                                                  :cause     (make-condition 'simple-error
+                                                                             :format-control "refused")))
+                       :direct)
+                   "a server that cannot be reached sends the start direct")
+      (test-assert (eq (open-with (make-condition 'localgroup-error
+                                                  :message   "The detached world server did not start within 1 seconds."
+                                                  :operation ':spawn))
+                       :direct)
+                   "a server that cannot be started sends the start direct")))
+  nil)
+
 (-> test-world-server-stop () null)
 (defun test-world-server-stop ()
   "Test stopping the server ending every channel and the main thread."
