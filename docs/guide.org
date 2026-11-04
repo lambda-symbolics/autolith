@@ -1418,19 +1418,20 @@ provider generation.
 Provider-generated refreshes are enabled by default. Use =(titles)=, =(titles t)=,
 or =(titles nil)= to inspect or change the durable global preference.
 
-=(resume)= displays titles in its picker. An explicit =(resume "ID")= still uses the
-stable conversation identifier, or any part of it that names one conversation;
-several matches are listed instead. The terminal status bar and local session
-status show the title when one is available; otherwise they show the
-conversation ID.
+=(resume)= displays titles in its picker. An explicit =(resume "ID")= accepts the
+stable conversation identifier or a part that identifies one conversation.
+Several matches are listed instead. The terminal status bar and local session
+status show the title when one is available; otherwise they show the conversation
+ID.
 
-A resumed conversation that no process serves runs in a fresh one. Background
+If no process serves the conversation, it resumes in a fresh one. Background
 jobs, asynchronous shell runs, and Lisp worker state from before the restart no
 longer exist. The first user turn after such a resume carries a request-local
-notice that tells the model so. Only durable child task results stay readable
-through =job.get=. Resuming a conversation a world server still serves as a
-channel attaches to that live channel instead, with its jobs intact; see Local
-sessions.
+notice telling the model about the restart. Only durable child task results stay
+readable through =job.get=.
+
+If a world server still serves the conversation as a channel, resume attaches to
+that live channel with its jobs intact. See Local sessions.
 
 Inspect a saved conversation without resuming or locking it with:
 
