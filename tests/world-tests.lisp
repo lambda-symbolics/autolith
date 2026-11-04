@@ -718,7 +718,24 @@
                                         (participant-identifier second-agent)))
                                 (world-participant-find world (participant-identifier second-agent)))
                             (null (world-participant-designated world "nobody")))
-                       "participants are designated by name, display identifier or unique fragment")))))
+                       "participants are designated by name, display identifier or unique fragment"))
+        (let* ((leaf (make-string *world-handle-limit* :initial-element #\a))
+               (long (configuration-copy configuration
+                                         :working-directory
+                                         (merge-pathnames (concatenate 'string leaf "/")
+                                                          (config :working-directory configuration)))))
+          (world-tests--persisted-conversation long "bthird3" 4000)
+          (world-tests--persisted-conversation long "bfourt4" 5000)
+          (flet ((names ()
+                   "Return every participant name after a reconciliation, sorted."
+                   (sort (mapcar #'participant-name
+                                 (world-participants (values (world-reconcile-sessions long :now 6000))))
+                         #'string<)))
+            (let ((first-pass (names)))
+              (test-assert (every #'world-handle-p first-pass)
+                           "agents in a workspace at the handle length limit get valid numbered handles")
+              (test-assert (equal first-pass (names))
+                           "a second reconciliation of colliding maximum-length handles changes nothing")))))))
   nil)
 
 (-> test-world-composer-mentions () null)
