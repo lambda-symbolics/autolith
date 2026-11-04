@@ -659,7 +659,8 @@
   test-world-server-starting-host
   test-world-server-launch-options
   test-world-server-close-unattached
-  test-world-server-open-before-checkpoint)
+  test-world-server-open-before-checkpoint
+  test-world-client-joins-winner)
 
 (define-test-suite world-sidebar
   test-world-sidebar-rows
