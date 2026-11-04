@@ -2,9 +2,11 @@
 
 ;;;; -- Completion-Driven Primary Turns --
 
-(-> application-job-completions--notice-admissible-p (application list) boolean)
-(defun application-job-completions--notice-admissible-p (application notice)
-  "Require the notice's exact conversation and current, unspent goal authority."
+(-> application-job-completions--notice-admissible-p
+    (application list &key (:ignore-reservations-p boolean)) boolean)
+(defun application-job-completions--notice-admissible-p
+    (application notice &key ignore-reservations-p)
+  "Require exact ownership and unspent authority, optionally ignoring temporary reservations."
   (let* ((goal       (application-goal application))
          (mission-id (getf notice :mission-id)))
     (not
@@ -19,8 +21,10 @@
                    (eq (getf goal :status) ':active)
                    (not (mission--unknown-usage-blocks-p goal))
                    (< (getf goal :turns-used) (getf goal :turn-limit))
-                   (< (+ (getf goal :tokens-used) (getf goal :tokens-reserved 0))
-                      (getf goal :token-limit))
+                   (< (getf goal :tokens-used) (getf goal :token-limit))
+                   (or ignore-reservations-p
+                       (< (+ (getf goal :tokens-used) (getf goal :tokens-reserved 0))
+                          (getf goal :token-limit)))
                    (> (getf goal :deadline) (get-universal-time))))
              ((mission-goal-p goal)
               (not (eq (getf goal :status) ':active)))
@@ -148,7 +152,8 @@ snapshot cannot change the meaning of an already finalized transcript entry."
          (member (getf notice :state) '(:completed :failed :aborted))
          (or (not ready-p) (<= (getf notice :ready-at) (get-universal-time)))
          (not (task-completion--delivered-p (application-conversation application) (getf notice :id)))
-         (not (application-job-completions--notice-admissible-p application notice))))))
+         (not (application-job-completions--notice-admissible-p
+               application notice :ignore-reservations-p t))))))
 
 (-> application-job-completions--no-resume-reason (application list) string)
 (defun application-job-completions--no-resume-reason (application notice)
@@ -290,7 +295,8 @@ snapshot cannot change the meaning of an already finalized transcript entry."
       (when (task-completion-maintenance-needed-p agent)
         (let ((notices (remove-if
                         (lambda (notice)
-                          (application-job-completions--notice-admissible-p application notice))
+                          (application-job-completions--notice-admissible-p
+                           application notice :ignore-reservations-p t))
                         (task-completion-pending agent))))
           (when notices
             (list ':job-completion-maintenance
@@ -353,7 +359,8 @@ as ordinary controller admission, without recursively locking the session."
               (loop for notice in (task-completion-pending agent)
                     when (and (not (eq (getf notice :kind) ':cancellation-warning))
                               (member (getf notice :id) (getf ticket :events) :test #'equal)
-                              (not (application-job-completions--notice-admissible-p application notice)))
+                              (not (application-job-completions--notice-admissible-p
+                                    application notice :ignore-reservations-p t)))
                       collect (getf notice :id))))
         (when identifiers
           (task-completion-deliver agent :identifiers identifiers)))

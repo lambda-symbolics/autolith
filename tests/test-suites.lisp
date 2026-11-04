@@ -417,6 +417,7 @@
 
 (define-test-suite job-completion-controller
   test-job-completion-no-resume-reasons
+  test-job-completion-reservation-release
   test-job-completion-terminal-visibility
   test-job-completion-terminal-boundaries
   test-job-completion-terminal-admission-control

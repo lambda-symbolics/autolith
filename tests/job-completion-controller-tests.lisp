@@ -1013,3 +1013,66 @@
            (test-assert (not (application-job-completions--notice-admissible-p application notice))
                         "recording does not loosen conversation ownership"))))))
   nil)
+
+
+(-> test-job-completion-reservation-release () null)
+(defun test-job-completion-reservation-release ()
+  "Keep a ready completion pending until unused inference reservations settle."
+  (job-completion-controller-tests--terminal-fixture
+   (lambda (application controller parent job)
+     (declare (ignore job))
+     (application-mission-resume application)
+     (let* ((context     (mission-context-find (application-conversation application)))
+            (*provider-maximum-output-tokens* 1000)
+            (reservation (mission--reserve-inference context))
+            (notice      (first (task-completion-pending parent)))
+            (waiting     (bt:make-semaphore :count 0))
+            (completed   (bt:make-semaphore :count 0))
+            (wait        (symbol-function 'condition-wait))
+            (thread      nil)
+            (work        nil))
+       (test-assert (and notice
+                         (not (application-job-completions--notice-admissible-p application notice)))
+                    "the outstanding request temporarily holds every available token")
+       (test-assert (not (application-job-completions--terminal-notice-p application notice))
+                    "a reservation alone cannot turn a completion into a terminal refusal")
+       (test-call-with-function-replacements
+        (list (list 'task-completion-maintenance-needed-p
+                    (lambda (agent) (declare (ignore agent)) t))
+              (list 'condition-wait
+                    (lambda (condition lock &key timeout)
+                      (when (eq condition (application-input-controller-condition-variable controller))
+                        (bt:signal-semaphore waiting))
+                      (funcall wait condition lock :timeout timeout))))
+        (lambda ()
+          (test-assert (null (application-job-completions--take-maintenance controller))
+                       "even overflow maintenance leaves reservation-deferred notices pending")
+          (unwind-protect
+               (progn
+                 (setf thread
+                       (make-thread
+                        (lambda ()
+                          (setf work (application-input-controller--next-work controller))
+                          (bt:signal-semaphore completed))
+                        :name "Reservation-deferred completion"))
+                 (test-assert (bt:wait-on-semaphore waiting :timeout 3)
+                              "the controller waits rather than acknowledging the completion")
+                 (test-assert (and (= 1 (length (task-completion-pending parent)))
+                                   (null (scripted-provider-input-snapshots (application-provider application))))
+                              "deferral records no receipt and spends no inference")
+                 (mission--settle-inference context reservation 1)
+                 (test-assert (bt:wait-on-semaphore completed :timeout 3)
+                              "settlement wakes the waiting controller without another job event")
+                 (test-assert (eq (first work) ':job-completion)
+                              "released tokens admit the original automatic completion")
+                 (when (eq (first work) ':job-completion)
+                   (application-input-controller--run-work controller work)
+                   (test-assert (and (null (task-completion-pending parent))
+                                     (= 1 (length (scripted-provider-input-snapshots (application-provider application)))))
+                                "the retained notice is delivered and continued exactly once")))
+            (with-lock-held ((application-input-controller-lock controller))
+              (setf (application-input-controller-stopping-p controller) t)
+              (sb-thread:condition-broadcast (application-input-controller-condition-variable controller)))
+            (when thread (sb-thread:join-thread thread :timeout 5 :default nil)))))))
+   :unknown-usage 0 :response "[GOAL-COMPLETE]")
+  nil)
