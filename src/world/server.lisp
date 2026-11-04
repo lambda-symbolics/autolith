@@ -710,17 +710,19 @@ forgotten again when no thread could start."
                                   (list :immutable-p t))
                                 (when (getf launch :theme)
                                   (list :terminal-theme (getf launch :theme))))))
-         (application   (application--build
-                         configuration
-                         :conversation-id          conversation-id
-                         :permission-mode          (world-server--permission-mode
-                                                    server (or (getf launch :permission-mode)
-                                                               (getf arguments :permission-mode)))
-                         :pristine-p               (world-server-pristine-p server)
-                         :mutation-replay-failures (world-server-mutation-replay-failures server)
-                         :relay-presentation       (list :rows     (getf arguments :rows)
-                                                         :columns  (getf arguments :columns)
-                                                         :styled-p (getf arguments :styled-p))))
+         (application   (let ((*world-selection-p* nil))
+                          ;; Hosting a channel is not the person's choice of one.
+                          (application--build
+                           configuration
+                           :conversation-id          conversation-id
+                           :permission-mode          (world-server--permission-mode
+                                                      server (or (getf launch :permission-mode)
+                                                                 (getf arguments :permission-mode)))
+                           :pristine-p               (world-server-pristine-p server)
+                           :mutation-replay-failures (world-server-mutation-replay-failures server)
+                           :relay-presentation       (list :rows     (getf arguments :rows)
+                                                           :columns  (getf arguments :columns)
+                                                           :styled-p (getf arguments :styled-p)))))
          (host          (make-instance 'world-host :application application)))
     (setf (application-world-server application) server)
     (with-lock-held ((world-server-lock server))
@@ -775,6 +777,7 @@ itself so that threads those threads start inherit it too."
   (let* ((inherited (cons 'bordeaux-threads:*default-special-bindings* nil))
          (bindings  (list (cons '*active-application* (list 'quote application))
                           (cons '*localgroup-startup-record* nil)
+                          (cons '*world-selection-p* nil)
                           inherited)))
     (setf (rest inherited) (list 'quote bindings))
     bindings))
