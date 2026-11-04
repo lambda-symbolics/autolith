@@ -620,6 +620,7 @@
   test-world-channel-tools
   test-world-message-presentation
   test-world-child-participants
+  test-world-one-resident-agent
   test-world-staggered-retirement
   test-world-handles
   test-world-composer-mentions
