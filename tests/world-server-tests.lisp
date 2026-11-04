@@ -533,6 +533,40 @@
                       "the committed close ends the channel")))))
   nil)
 
+(-> test-world-server-attachment-selects () null)
+(defun test-world-server-attachment-selects ()
+  "Test the person moves into a hosted channel when a terminal's control attachment is admitted, not before."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (world-tests--persisted-conversation configuration "bhome11" 1000)
+     (world-reconcile-sessions configuration :now 2000)
+     (let* ((entry  (world-client-entry configuration))
+            (id     (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
+                          :session-id))
+            (host   (world-server--find-host server id))
+            (hosted (world-host-application host))
+            (direct (make-instance 'application
+                                   :configuration configuration
+                                   :ui            (terminal-ui-create
+                                                   :terminal (make-instance 'recording-terminal
+                                                                            :columns 80)))))
+       (flet ((residence ()
+                "Return the channel the person lives in."
+                (participant-residence (world-human-participant (world-load configuration)))))
+         (test-assert (string= (residence) "bhome11")
+                      "opening a channel in the server moves nobody")
+         (application-world-attached direct)
+         (test-assert (string= (residence) "bhome11")
+                      "an application outside the server moves nobody either")
+         (application-world-attached hosted)
+         (test-assert (string= (residence) "bhome11")
+                      "a channel whose conversation holds nothing durable yet has no place to move into")
+         (conversation-append-user-message (application-conversation hosted) "first words")
+         (application-world-attached hosted)
+         (test-assert (string= (residence) id)
+                      "an admitted control attachment moves the person into the channel")))))
+  nil)
+
 (-> test-world-server-open-before-checkpoint () null)
 (defun test-world-server-open-before-checkpoint ()
   "Test an open admitted before a checkpoint finishes starting its host before the checkpoint pauses the channels."
