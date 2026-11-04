@@ -276,7 +276,8 @@ value lists the conversation identifiers whose mappings end."
   (let ((preview (world--copy world))
         (records nil)
         (planned nil)
-        (ended   nil))
+        (ended   nil)
+        (ending  (mapcar #'world-session-mapping-conversation vanished)))
     (labels ((emit (record)
                "Append RECORD and fold it into the preview."
                (push record records)
@@ -396,15 +397,24 @@ root's agent while that root exists."
                     (participant-identifier existing)))))
 
              (retire (mapping)
-               "Delete MAPPING's participant with its descendants; its channel ends in the sweep."
+               "Delete MAPPING's participant with its descendants; its channel ends in the sweep.
+
+A parent whose child channel still has a live conversation keeps its
+mapping and its participant: the child belongs to it, and the parent is
+retired on the pass that retires the child."
                (let* ((channel-id  (world-session-mapping-conversation mapping))
                       (participant (world-participant-find
-                                    preview (world-session-mapping-participant mapping))))
-                 (when participant
-                   (dolist (record (world--participant-deletion-records
-                                    preview participant now :except channel-id))
-                     (emit record)))
-                 (push channel-id ended)))
+                                    preview (world-session-mapping-participant mapping)))
+                      (blocked-p   (some (lambda (child)
+                                           (not (member (channel-identifier child) ending
+                                                        :test #'string=)))
+                                         (world-channel-children preview channel-id))))
+                 (unless blocked-p
+                   (when participant
+                     (dolist (record (world--participant-deletion-records
+                                      preview participant now :except channel-id))
+                       (emit record)))
+                   (push channel-id ended))))
 
              (relocate-human (channel-id)
                "Move the human out of CHANNEL-ID into any other channel, when it lives there."

@@ -1009,6 +1009,50 @@
                      "the inbox keeps the undelivered message"))))
   nil)
 
+(-> test-world-staggered-retirement () null)
+(defun test-world-staggered-retirement ()
+  "Test a root whose storage vanishes before its child's keeps its mapping and retires with the child."
+  (with-test-configuration (configuration)
+    (let ((root  (world-tests--persisted-conversation configuration "broot11" 1000))
+          (child (conversation-create configuration
+                                      :identifier   "exec-one"
+                                      :storage-root (merge-pathnames
+                                                     "tasks/broot11/exec-one/"
+                                                     (config :data-root configuration))
+                                      :created-at   1500)))
+      (conversation-append-user-message child "do the task")
+      (world-tests--persisted-conversation configuration "bthird3" 2500)
+      (world-reconcile-sessions configuration :now 3000)
+      (platform-delete-directory-tree *platform*
+                                      (conversation-storage-directory-pathname
+                                       (conversation-pathname root))
+                                      :validate t)
+      (let ((world (values (world-reconcile-sessions configuration :now 3001))))
+        (test-assert (and (world-channel-find world "broot11")
+                          (world-channel-find world "exec-one")
+                          (find ':agent (world-channel-residents world "broot11") :key #'participant-kind)
+                          (member "broot11" (mapcar #'world-session-mapping-conversation
+                                                    (world-session-mappings configuration))
+                                  :test #'string=))
+                     "a root whose child still lives keeps its channel, its agent and its mapping"))
+      (platform-delete-directory-tree *platform*
+                                      (merge-pathnames "tasks/broot11/"
+                                                       (config :data-root configuration))
+                                      :validate t)
+      (let ((world (values (world-reconcile-sessions configuration :now 3002))))
+        (test-assert (and (null (world-channel-find world "exec-one"))
+                          (null (world-channel-find world "broot11"))
+                          (equal (mapcar #'channel-identifier (world-channels world)) '("bthird3"))
+                          (equal (mapcar #'world-session-mapping-conversation
+                                         (world-session-mappings configuration))
+                                 '("bthird3")))
+                     "once the child goes, the root retires with it and no mapping lingers"))
+      (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3003)
+        (test-assert (and (zerop count)
+                          (equal (mapcar #'channel-identifier (world-channels world)) '("bthird3")))
+                     "a later reconciliation has nothing left to retire"))))
+  nil)
+
 (-> test-world-child-participants () null)
 (defun test-world-child-participants ()
   "Test child task conversations become nested channels with steerable participants."
