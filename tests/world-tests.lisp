@@ -346,7 +346,25 @@
                    "startup sync migrates persisted conversations")
       (test-assert (handler-case (progn (application-world-sync application) t)
                      (warning () nil))
-                   "sync without a conversation warns about nothing")))
+                   "sync without a conversation warns about nothing")
+      (world-tests--persisted-conversation configuration "b-other" 2000)
+      (let ((hosted (make-instance 'application
+                                   :configuration configuration
+                                   :ui            (terminal-ui-create
+                                                   :terminal (make-instance 'recording-terminal
+                                                                            :columns 80)))))
+        (flet ((residence ()
+                 "Return the channel the person lives in."
+                 (participant-residence (world-human-participant (world-load configuration)))))
+          (let ((before (residence)))
+            (let ((*world-selection-p* nil))
+              (application-world-sync hosted :all-p t))
+            (test-assert (and (world-channel-find (world-load configuration) "b-other")
+                              (string= (residence) before))
+                         "a sync without selection, as a world server's, migrates but moves nobody")
+            (world-session-select configuration "b-other")
+            (test-assert (string= (residence) "b-other")
+                         "an explicit selection is what moves the person"))))))
   nil)
 
 (-> world-tests--read (configuration conversation string &rest t) string)
