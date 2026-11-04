@@ -1506,58 +1506,80 @@ Use a terminal for colored output; redirected output is plain text. Set
 
 ** Local sessions
 
-One server process serves every channel of your world, and =autolith= in a
-directory is a client of it. The first client starts the server detached;
-later clients find it running. The client asks the server to open a channel
-for its directory, which is the most recently changed channel of that
-workspace that no other terminal controls, or a new channel there, and
-attaches to it. =autolith resume ID= opens that channel in the server
-instead. Closing the terminal, detaching or a dropped connection leaves the
-channel running in the server; =(quit)= ends the channel. =(switch "ID")=
-moves the terminal to another channel, opening it in the server when nothing
-serves it yet, and leaves the channel it came from running; in a session
-running directly it resumes that conversation in place. The server keeps
-running with no channel and no client until you stop it:
+*** Starting and switching channels
+
+One background server hosts your channels. Run =autolith= in a directory to
+connect to it, starting the server if needed. The client opens the most
+recently changed channel in that workspace that no other terminal controls,
+or creates a channel if none qualifies. Use =autolith resume ID= to open a
+specific channel.
+
+Closing the terminal, detaching, or losing the connection leaves the channel
+running. Use =(quit)= to end it. Use =(switch "ID")= to attach to another
+channel; the server opens it if needed and leaves the previous one running.
+In a directly run session, use the same command to resume that conversation
+in place.
+
+The server runs until you stop it, even with no open channel or attached
+terminal:
 
 #+BEGIN_SRC sh
 autolith lg server
 autolith lg stop
 #+END_SRC
 
-=server= shows the server's process and the channels it hosts; =stop= ends
-every channel and then the server. An update or a rollback chosen in any
-channel stops the server as well, since every channel shares its image. A
-checkpoint from one channel saves the whole process, with that channel as
-the one a rollback resumes: once every channel is idle the server pauses
-them all, each terminal reconnects by itself, and each channel resumes with
-the outcome, the one that asked with the generation's identifier. A channel
-still working refuses the checkpoint. A terminal starting during the pause
-waits for the server rather than starting a second one. On Windows the
-exact-heap checkpoint restarts the process, so the server refuses it; run
-the channel directly to checkpoint it. =--detached= starts a
-standalone session process outside the server, and
-=AUTOLITH_SESSION_STYLE=direct= runs one session in the terminal's own
-process. The launch options a start states, =--model=, =--provider= (only
-together with =--model=, as on a direct start), =--permissions=,
-=--immutable=, =--fullscreen= and =--almighty=, apply to the channel the
-server starts for it. A channel already running takes an
-explicit permission mode when no terminal controls it and refuses the other
-options, naming the one it cannot change; a workspace open with such an
-option gets another channel instead of the running one.
+Use =server= to inspect the server process and its hosted channels, and
+=stop= to end all channels and the server. Updating or rolling back from any
+channel also stops the server because the image is shared.
 
-A terminal attached to a hosted channel receives the channel's screen as
-frames and paints them itself, so in fullscreen mode it can show the world's
-channels in a sidebar on the left. The sidebar groups channels by workspace,
-your channel's workspace first, nests child channels under their parents and
-marks each channel: =▸= the channel this terminal is in, a cyan =●= where a
-terminal is attached, a green =●= where the agent works, =○= where it waits,
-and =·= where nothing runs. A yellow count is the messages a channel received
-since this terminal last looked at it, an =@= count the ones that mentioned
-you, and =✉= the deliveries waiting for a channel nobody serves. The counts
-are this terminal's own and start caught up. =Ctrl-T= hides and shows the
-sidebar, and a hidden sidebar stays hidden across a switch or a reconnect of
-the same terminal. A terminal narrower than one hundred columns hides it on
-its own.
+*** Checkpoints and launch options
+
+Wait until every channel is idle before requesting a checkpoint. It saves
+the whole process and records the requesting channel as the rollback target.
+The server pauses all channels, and each terminal reconnects automatically.
+Every channel receives the outcome; the requesting channel also receives the
+generation ID. A busy channel prevents the checkpoint. A terminal started
+during the pause waits for the server instead of starting another one.
+
+On Windows, run a channel directly to checkpoint it. The world server
+refuses exact-heap checkpoints because they require a process restart.
+
+Use =--detached= for a standalone session outside the server. Set
+=AUTOLITH_SESSION_STYLE=direct= to run a single session in the terminal's
+own process.
+
+For a new channel, specify =--model=, =--permissions=, =--immutable=,
+=--fullscreen=, or =--almighty= at startup. Supply =--provider= only together
+with =--model=, as on a direct start. An existing channel accepts an explicit
+=--permissions= override only when no terminal controls it. Other launch
+options are rejected, with the option named in the error. When opening a
+workspace, those other options create a new channel instead of reusing a
+running one.
+
+*** Channel sidebar
+
+In fullscreen mode, an attached terminal can show the world's channels in a
+sidebar on the left. Channels are grouped by workspace, with the current
+workspace first and child channels nested under their parents.
+
+| Marker | Meaning |
+|--------+---------|
+| =▸= | This terminal's current channel |
+| Cyan =●= | A terminal is attached |
+| Green =●= | The agent is working |
+| =○= | Hosted but not working |
+| =·= | No running session |
+
+A yellow number counts messages received since this terminal last viewed
+the channel; =@= counts mentions of you. Each terminal tracks its own unread
+counts. A channel first seen by that terminal starts at zero. The =✉= count
+shows deliveries waiting for a channel that no process serves.
+
+Press =Ctrl-T= to hide or show the sidebar. That preference is kept when the
+same terminal switches channels or reconnects. Below 100 columns, the
+sidebar is hidden automatically.
+
+*** Session endpoints
 
 Every channel the server hosts, like every directly running session,
 publishes a private authenticated local endpoint. Its session ID is the
@@ -1765,6 +1787,14 @@ delivery and the durable record repeats nothing. A send is recorded under
 it is full, or one a crash skipped, is delivered later under the same
 identifier, once, and the sender hears which channels still wait.
 
+Conversation leases, Localgroup endpoint records, and recovery state live under
+=${XDG_STATE_HOME:-~/.local/state}/autolith/= rather than =XDG_RUNTIME_DIR=.
+They must survive logout so detached sessions, handoffs, and crash recovery can
+continue across login sessions. Autolith uses authenticated loopback TCP rather
+than filesystem sockets for its inference and Localgroup protocols, and cleans
+stale Localgroup records itself.
+The management REPL socket also defaults to the state directory, at
+=management/repl.sock=.
 Conversation leases, Localgroup endpoint records, and recovery state live under
 =${XDG_STATE_HOME:-~/.local/state}/autolith/= rather than =XDG_RUNTIME_DIR=.
 They must survive logout so detached sessions, handoffs, and crash recovery can
