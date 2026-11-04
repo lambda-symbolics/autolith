@@ -974,8 +974,9 @@
            (progn
              (test-assert (string= (localgroup-world--wait-for-fresh configuration token 0) "world")
                           "the world wait resolves a published endpoint carrying the launch token")
-             (test-assert (null (let ((*localgroup-handoff-start-timeout-seconds* 0))
-                                  (localgroup-world--wait-for-fresh configuration "other-token" 0)))
-                          "the world wait ignores an endpoint published under another token"))
+             (test-assert (string= (let ((*localgroup-handoff-start-timeout-seconds* 0))
+                                     (localgroup-world--wait-for-fresh configuration "other-token" 0))
+                                   "world")
+                          "the world wait takes an answering endpoint under another token: that launch lost the race to it"))
         (image-daemon:daemon-runtime-stop runtime))))
   nil)
