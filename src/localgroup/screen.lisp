@@ -29,6 +29,23 @@
 (defgeneric screen-panel-rows (panel terminal height)
   (:documentation "Return HEIGHT display rows of PANEL rendered for TERMINAL, each exactly its width."))
 
+(defgeneric screen-panel-shown-p (panel)
+  (:documentation "Return whether the person wants PANEL beside the session.
+
+The choice belongs to the panel, which outlives the screens of a terminal's
+successive attachments, so hiding it holds across a reconnect or a switch."))
+
+(defgeneric (setf screen-panel-shown-p) (shown-p panel)
+  (:documentation "Record whether the person wants PANEL beside the session."))
+
+(defmethod screen-panel-shown-p ((panel t))
+  "A panel without a choice of its own is wanted."
+  t)
+
+(defmethod (setf screen-panel-shown-p) (shown-p (panel t))
+  "A panel without a choice of its own forgets the request."
+  shown-p)
+
 
 ;;;; -- Screens --
 
@@ -70,11 +87,6 @@
     :initform      nil
     :reader        localgroup-screen-panel
     :documentation "The side panel composed left of the session's rows, or NIL.")
-   (panel-shown-p
-    :initform      t
-    :accessor      localgroup-screen-panel-shown-p
-    :type          boolean
-    :documentation "Whether the person wants the side panel, which shows when the terminal is wide enough.")
    (resize-pending-p
     :initform      nil
     :accessor      localgroup-screen-resize-pending-p
@@ -92,7 +104,7 @@
   "Return true when SCREEN's side panel takes part of the terminal."
   (let ((panel (localgroup-screen-panel screen)))
     (and panel
-         (localgroup-screen-panel-shown-p screen)
+         (screen-panel-shown-p panel)
          (>= (terminal-columns (localgroup-screen-terminal screen))
              (screen-panel-minimum-columns panel))
          t)))
@@ -136,17 +148,20 @@ the panel."
 
 (-> localgroup-screen-toggle-panel (localgroup-screen) null)
 (defun localgroup-screen-toggle-panel (screen)
-  "Show or hide SCREEN's side panel, noting the pane's new size for the session."
-  (when (localgroup-screen-panel screen)
-    (with-lock-held ((localgroup-screen-lock screen))
-      (let ((visible-p (localgroup-screen-panel-visible-p screen)))
-        (setf (localgroup-screen-panel-shown-p screen)
-              (not (localgroup-screen-panel-shown-p screen)))
-        (unless (eq visible-p (localgroup-screen-panel-visible-p screen))
-          (setf (localgroup-screen-resize-pending-p screen) t)
-          (terminal-screen-invalidate (localgroup-screen-terminal screen)
-                                      (localgroup-screen-painter screen))
-          (localgroup-screen--paint screen)))))
+  "Show or hide SCREEN's side panel, noting the pane's new size for the session.
+
+The choice is recorded on the panel, so the next screen of this terminal
+starts the way the person left it."
+  (let ((panel (localgroup-screen-panel screen)))
+    (when panel
+      (with-lock-held ((localgroup-screen-lock screen))
+        (let ((visible-p (localgroup-screen-panel-visible-p screen)))
+          (setf (screen-panel-shown-p panel) (not (screen-panel-shown-p panel)))
+          (unless (eq visible-p (localgroup-screen-panel-visible-p screen))
+            (setf (localgroup-screen-resize-pending-p screen) t)
+            (terminal-screen-invalidate (localgroup-screen-terminal screen)
+                                        (localgroup-screen-painter screen))
+            (localgroup-screen--paint screen))))))
   nil)
 
 (-> localgroup-screen-tick (localgroup-screen) null)

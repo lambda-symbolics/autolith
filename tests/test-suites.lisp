@@ -673,6 +673,7 @@
 
 (define-test-suite world-sidebar
   test-world-sidebar-rows
+  test-world-sidebar-visibility
   test-world-sidebar-unread)
 
 (define-test-suite preferences
