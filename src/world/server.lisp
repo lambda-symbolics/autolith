@@ -689,6 +689,11 @@ ARGUMENTS carry the opening client's choices, among them the :LAUNCH options
 it stated explicitly, which the new channel takes. The host is listed before
 its thread starts, so a second open of the same channel waits for it, and is
 forgotten again when no thread could start."
+  (let ((launch (getf arguments :launch)))
+    (when (and (getf launch :provider) (null (getf launch :model)))
+      (error 'world-error
+             :message   "--provider requires --model MODEL; a channel cannot take a provider alone."
+             :operation ':open)))
   (let* ((base          (world-server-configuration server))
          (launch        (getf arguments :launch))
          (configuration (apply #'configuration-copy base

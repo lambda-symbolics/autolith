@@ -299,6 +299,13 @@
                       (autolith-error (condition)
                         (search "--fullscreen" (autolith-error-message condition))))
                     "a running channel refuses an option it cannot change, naming it")
+       (test-assert (handler-case
+                        (progn (world-server-tests--open entry (world-tests--workspace root "b")
+                                                         :launch '(:provider "other"))
+                               nil)
+                      (autolith-error (condition)
+                        (search "--provider" (autolith-error-message condition))))
+                    "a provider without a model is refused for a new channel, as on the command line")
        (let ((other (getf (rest (world-server-tests--open entry workspace
                                                           :launch '(:fullscreen-p t)))
                           :session-id)))
