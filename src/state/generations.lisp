@@ -223,6 +223,49 @@ structured type and message survive the round trip."
   "Return valid retained generations newest first."
   (sbcl-generations:generation-list (generation-store-for configuration)))
 
+(-> generation-health (generation) list)
+(defun generation-health (generation)
+  "Return GENERATION's compatibility and an actionable diagnostic reason."
+  (let ((metadata (generation-metadata generation)))
+    (cond
+      ((not (probe-file (generation-manifest-pathname generation)))
+       (list :compatible nil :reason "manifest is missing or unreadable"))
+      ((not (probe-file (generation-core-pathname generation)))
+       (list :compatible nil :reason "core is missing or unreadable"))
+      ((handler-case
+           (<= (with-open-file (stream (generation-core-pathname generation)
+                                   :element-type '(unsigned-byte 8))
+                 (file-length stream))
+               1048576)
+         (error () t))
+       (list :compatible nil :reason "core is unreadable or too small"))
+      ((generation-compatible-p generation)
+       (list :compatible t :reason nil))
+      (t
+       (let ((recorded (getf metadata :sbcl-version))
+             (current  (lisp-implementation-version)))
+         (list :compatible nil
+               :reason
+               (if (and recorded (not (equal recorded current)))
+                   (format nil "runtime mismatch: SBCL recorded ~A, current ~A"
+                           recorded current)
+                   "runtime is incompatible with this core")))))))
+
+(-> generation-health-summary (configuration) list)
+(defun generation-health-summary (configuration)
+  "Return retained-generation counts and selected/fallback health."
+  (let* ((generations (generation-list configuration))
+         (compatible (remove-if-not
+                      (lambda (generation)
+                        (getf (generation-health generation) :compatible))
+                      generations))
+         (selected (generation-selected configuration)))
+    (list :retained (length generations)
+          :compatible (length compatible)
+          :selected selected
+          :selected-health (and selected (generation-health selected))
+          :fallback (first compatible))))
+
 (-> generation-find (configuration string) (option generation))
 (defun generation-find (configuration identifier)
   "Return retained generation IDENTIFIER, or NIL when it is unknown."
@@ -280,21 +323,23 @@ structured type and message survive the round trip."
     (if generations
         (with-output-to-string (stream)
           (dolist (generation generations)
-            (format stream
-                    "~A  ~A  source ~A~%  image ~A~%  history ~A~%  replay ~A~%"
-                    (generation-identifier generation)
-                    (if (generation-compatible-p generation)
-                        "compatible"
-                        "incompatible")
-                    (generation-git-commit generation)
-                    (or (generation-image-commit-identifier generation)
-                        "base")
-                    (or (generation-mutation-history-commit generation)
-                        "unavailable")
-                    (if (generation-reconstruction-pathname generation)
-                        (namestring
-                         (generation-reconstruction-pathname generation))
-                        "unavailable for legacy generation"))))
+            (let ((health (generation-health generation)))
+              (format stream
+                      "~A  ~A  source ~A~%  image ~A~%  history ~A~%  replay ~A~%"
+                      (generation-identifier generation)
+                      (if (getf health :compatible)
+                          "compatible"
+                          (format nil "incompatible (~A)"
+                                  (getf health :reason)))
+                      (generation-git-commit generation)
+                      (or (generation-image-commit-identifier generation)
+                          "base")
+                      (or (generation-mutation-history-commit generation)
+                          "unavailable")
+                      (if (generation-reconstruction-pathname generation)
+                          (namestring
+                           (generation-reconstruction-pathname generation))
+                          "unavailable for legacy generation")))))
         "No retained generations exist.")))
 
 

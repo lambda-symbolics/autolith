@@ -9,13 +9,14 @@
 
 (-> self-status--generation ((option generation)) string)
 (defun self-status--generation (generation)
-  "Render GENERATION's identity and compatibility, or NONE."
+  "Render optional GENERATION's identity and checkpoint health, or NONE."
   (if generation
-      (format nil "~A (~A)"
-              (generation-identifier generation)
-              (if (generation-compatible-p generation)
-                  "compatible"
-                  "incompatible"))
+      (let* ((health (generation-health generation))
+             (state  (if (getf health :compatible)
+                         "compatible"
+                         (format nil "incompatible: ~A"
+                                 (getf health :reason)))))
+        (format nil "~A (~A)" (generation-identifier generation) state))
       "none"))
 
 (-> self-status-render (configuration) string)
@@ -26,8 +27,11 @@
     (let* ((pending             (image-commit-pending-records configuration))
            (effective           (image-commit-effective-diff-records configuration))
            (generations         (generation-list configuration))
+           (health              (generation-health-summary configuration))
            (newest-generation   (first generations))
-           (selected-generation (generation-selected configuration))
+           (selected-generation (getf health :selected))
+           (selected-health     (getf health :selected-health))
+           (fallback-generation  (getf health :fallback))
            (selection-current-p
              (and (equal *active-image-commit-identifier* selected-identifier)
                   (equal *active-image-history-commit*
@@ -51,10 +55,22 @@
             (format stream "~A~%" experiment)))
         (format stream "checkpoint~%  publishing  ~:[no~;yes~]~%"
                 *checkpoint-in-progress-p*)
-        (format stream "generations~%  retained  ~D~%  newest    ~A~%  selected  ~A"
-                (length generations)
+        (format stream "generations~%  retained   ~D~%  compatible ~D~%  newest     ~A~%  selected    ~A"
+                (getf health :retained)
+                (getf health :compatible)
                 (self-status--generation newest-generation)
-                (self-status--generation selected-generation))))))
+                (self-status--generation selected-generation))
+        (when (and selected-health
+                   (not (getf selected-health :compatible)))
+          (format stream "~%  warning     selected generation is unavailable"))
+        (when (and (getf health :retained)
+                   (zerop (getf health :compatible)))
+          (format stream "~%  warning     rollback unavailable: no compatible retained generation"))
+        (when (and fallback-generation
+                   selected-health
+                   (not (getf selected-health :compatible)))
+          (format stream "~%  fallback    ~A"
+                  (self-status--generation fallback-generation)))))))
 
 (defmethod tool-execute ((tool self-status-tool)
                          (context tool-context)

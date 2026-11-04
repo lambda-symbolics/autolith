@@ -852,6 +852,18 @@
                           "a published generation appears in retained listings")
              (test-assert (not (generation-compatible-p loaded))
                           "a fake one-byte core is never reported as bootable")
+               (test-assert
+                (let ((health (generation-health loaded)))
+                 (and (not (getf health :compatible))
+                      (search "core is unreadable or too small"
+                              (getf health :reason))))
+               "generation health reports why a retained core is unavailable")
+               (test-assert
+                (let ((summary (generation-health-summary configuration)))
+                  (and (= (getf summary :retained) 1)
+                       (zerop (getf summary :compatible))
+                       (null (getf summary :fallback))))
+                "generation health counts compatible rollback targets")
              (test-assert
               (let ((*checkpoint-in-progress-p* t))
                 (handler-case
