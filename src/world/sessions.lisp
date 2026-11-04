@@ -572,7 +572,8 @@ its channel's workspace, so every participant can be mentioned by name."
       (let ((name (participant-name participant)))
         (if (or (member name seen :test #'string-equal)
                 (and (eq (participant-kind participant) ':agent)
-                     (not (world-handle-p name))))
+                     (or (not (world-handle-p name))
+                         (world-handle-reserved-p name))))
             (let* ((residence (participant-residence participant))
                    (channel   (and residence (world-channel-find world residence)))
                    (base      (if channel
@@ -595,13 +596,14 @@ its channel's workspace, so every participant can be mentioned by name."
 
 (-> world-session--duplicate-names-p (world) boolean)
 (defun world-session--duplicate-names-p (world)
-  "Return true when two participants of WORLD share a name, or an agent's name is no handle."
+  "Return true when two participants of WORLD share a name, or an agent's name is no handle or a reserved one."
   (let ((names nil))
     (dolist (participant (world-participants world) nil)
       (let ((name (participant-name participant)))
         (when (or (member name names :test #'string-equal)
                   (and (eq (participant-kind participant) ':agent)
-                       (not (world-handle-p name))))
+                       (or (not (world-handle-p name))
+                           (world-handle-reserved-p name))))
           (return t))
         (push name names)))))
 
