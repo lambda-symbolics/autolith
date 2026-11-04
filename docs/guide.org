@@ -1424,10 +1424,13 @@ several matches are listed instead. The terminal status bar and local session
 status show the title when one is available; otherwise they show the
 conversation ID.
 
-A resumed conversation runs in a fresh process. Background jobs, asynchronous
-shell runs, and Lisp worker state from before the restart no longer exist. The
-first user turn after a resume carries a request-local notice that tells the model
-so. Only durable child task results stay readable through =job.get=.
+A resumed conversation that no process serves runs in a fresh one. Background
+jobs, asynchronous shell runs, and Lisp worker state from before the restart no
+longer exist. The first user turn after such a resume carries a request-local
+notice that tells the model so. Only durable child task results stay readable
+through =job.get=. Resuming a conversation a world server still serves as a
+channel attaches to that live channel instead, with its jobs intact; see Local
+sessions.
 
 Inspect a saved conversation without resuming or locking it with:
 
@@ -1493,9 +1496,10 @@ exact-heap checkpoint restarts the process, so the server refuses it; run
 the channel directly to checkpoint it. =--detached= starts a
 standalone session process outside the server, and
 =AUTOLITH_SESSION_STYLE=direct= runs one session in the terminal's own
-process. The launch options a start states, =--model=, =--provider=,
-=--permissions=, =--immutable=, =--fullscreen= and =--almighty=, apply to
-the channel the server starts for it. A channel already running takes an
+process. The launch options a start states, =--model=, =--provider= (only
+together with =--model=, as on a direct start), =--permissions=,
+=--immutable=, =--fullscreen= and =--almighty=, apply to the channel the
+server starts for it. A channel already running takes an
 explicit permission mode when no terminal controls it and refuses the other
 options, naming the one it cannot change; a workspace open with such an
 option gets another channel instead of the running one.
@@ -1510,8 +1514,9 @@ and =·= where nothing runs. A yellow count is the messages a channel received
 since this terminal last looked at it, an =@= count the ones that mentioned
 you, and =✉= the deliveries waiting for a channel nobody serves. The counts
 are this terminal's own and start caught up. =Ctrl-T= hides and shows the
-sidebar, and a terminal narrower than one hundred columns hides it on its
-own.
+sidebar, and a hidden sidebar stays hidden across a switch or a reconnect of
+the same terminal. A terminal narrower than one hundred columns hides it on
+its own.
 
 Every channel the server hosts, like every directly running session,
 publishes a private authenticated local endpoint. Its session ID is the
@@ -1547,9 +1552,11 @@ every matching ID with its available title, workspace, time, and preview
 instead of selecting one. Running conversations,
 including empty new sessions, are selectable. Resuming a running conversation
 attaches to it; detached resume prints its existing PID without disturbing its
-clients. Launch-only overrides such as =--model= and =--permissions= are rejected
-when reusing a running conversation. =--image= and =--simulate-crash= cannot be
-combined with =--detached=.
+clients. Launch-only overrides such as =--model= are rejected when reusing a
+running conversation; an explicit =--permissions= takes effect on a running
+channel no terminal controls, as the world server section says, and is
+refused while another terminal controls it. =--image= and =--simulate-crash=
+cannot be combined with =--detached=.
 
 Control a session with the following commands:
 
