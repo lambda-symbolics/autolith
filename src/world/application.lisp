@@ -449,11 +449,12 @@ session."
 
 The active turn is cancelled at its next safe boundary, as steering is
 taken; the unstarted queue is dropped; running jobs stay with the channel.
-The channel's record of messages queued for the agent is forgotten, so the
-next resident receives every message the conversation has not durably
-received. The channel is told."
+The context the agent carries leaves with it, and the channel's record of
+messages queued for it is forgotten, so the next resident receives every
+message the conversation has not durably received. The channel is told."
   (let ((controller (application-input-controller application))
         (dropped    0))
+    (setf (conversation-context-prefix (application-conversation application)) nil)
     (when controller
       ;; A session's pause asks for the cancellation itself; without one, as
       ;; outside a world server, the turn is asked to stop directly.
@@ -585,7 +586,8 @@ person and its subscribers, and offers a move or a domestic agent."
 
 The channel must be served and without an agent. The new agent takes the
 application's current model and effort, a handle from the workspace, and
-the person as its parent; the application's own agent then speaks as it."
+the person as its parent; the application's own agent then speaks as it,
+starting from this conversation alone."
   (let* ((configuration (application-configuration application))
          (channel       (or (application-world--served-channel application)
                             (error 'world-error
@@ -618,6 +620,7 @@ the person as its parent; the application's own agent then speaks as it."
                                      (let ((effort (config :reasoning-effort configuration)))
                                        (and effort (list :reasoning-effort effort)))))))
       (world-session-remap configuration channel (participant-identifier agent))
+      (setf (conversation-context-prefix (application-conversation application)) nil)
       (application-present application
                            (format nil "Agent ~A now lives in this channel." (participant-name agent)))
       agent)))
