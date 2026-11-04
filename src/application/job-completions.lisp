@@ -152,27 +152,60 @@ snapshot cannot change the meaning of an already finalized transcript entry."
 
 (-> application-job-completions--no-resume-reason (application list) string)
 (defun application-job-completions--no-resume-reason (application notice)
-  "Explain the current inference restriction without offering an authority bypass."
+  "Explain the current restriction and a valid next action without changing authority."
   (let* ((goal       (application-goal application))
+         (status     (getf goal :status))
          (mission-id (getf notice :mission-id))
-         (reason
-           (cond
-             ((and mission-id
-                   (or (not (mission-goal-p goal))
-                       (not (equal mission-id (getf goal :completion-id)))))
-              "the result belongs to a previous mission")
-             ((and (mission-goal-p goal) (plusp (getf goal :unknown-usage 0)))
-              (format nil "the mission is ~A with unknown usage" (getf goal :status)))
-             ((and (mission-goal-p goal) (not (eq (getf goal :status) ':active)))
-              (format nil "the mission is ~A" (getf goal :status)))
-             ((and (mission-goal-p goal) (<= (getf goal :deadline) (get-universal-time)))
-              "the mission deadline has passed")
-             ((mission-goal-p goal)
-              "the mission turn or token budget is exhausted")
-             (t
-              "the goal continuation limit has been reached"))))
-    (format nil "No automatic continuation: ~A. Review the result and resolve the stated blocker, or explicitly decide appropriate separate work."
-            reason)))
+         (new-budget "Start a new mission with (mission :start SPECIFICATION).")
+         (review     "Review the result and decide separate work explicitly."))
+    (multiple-value-bind (reason action)
+        (cond
+          ((and mission-id
+                (or (not (mission-goal-p goal))
+                    (not (equal mission-id (getf goal :completion-id)))))
+           (values "the result belongs to a previous mission" review))
+          ((and (mission-goal-p goal) (not mission-id) (eq status ':active))
+           (values "the result is not part of the active mission" review))
+          ((and (mission-goal-p goal) (plusp (getf goal :unknown-usage 0)))
+           (values (format nil "the mission is ~A with unknown token usage" status) new-budget))
+          ((and (mission-goal-p goal) (<= (getf goal :deadline) (get-universal-time)))
+           (values (format nil "the mission is ~A and its deadline has passed" status) new-budget))
+          ((and (mission-goal-p goal) (>= (getf goal :turns-used) (getf goal :turn-limit)))
+           (values (format nil "the mission is ~A and used ~D of ~D turns"
+                           status (getf goal :turns-used) (getf goal :turn-limit))
+                   new-budget))
+          ((and (mission-goal-p goal)
+                (>= (+ (getf goal :tokens-used) (getf goal :tokens-reserved 0))
+                    (getf goal :token-limit)))
+           (values (format nil "the mission is ~A and used or reserved ~D of ~D tokens"
+                           status (+ (getf goal :tokens-used) (getf goal :tokens-reserved 0))
+                           (getf goal :token-limit))
+                   new-budget))
+          ((and (mission-goal-p goal) (eq status ':blocked))
+           (values "the mission is blocked"
+                   "Review the result and resolve the stated blocker, then use (mission :resume)."))
+          ((and (mission-goal-p goal) (eq status ':paused))
+           (values "the mission is paused" "Use (mission :resume) to continue it."))
+          ((and (mission-goal-p goal) (not (eq status ':active)))
+           (values (format nil "the mission is ~A" status) new-budget))
+          ((mission-goal-p goal)
+           (values (format nil "the mission is ~A" status) review))
+          ((eq status ':complete)
+           (values "the session goal is complete" "Set new work with (goal \"OBJECTIVE\")."))
+          ((eq status ':paused)
+           (values "the session goal is paused" "Use (goal :resume) to continue it."))
+          ((and goal (not (eq status ':active)))
+           (values (format nil "the session goal is ~A" status) review))
+          ((and goal (>= (getf goal :continuations 0) *application-goal-continuation-limit*))
+           (values (format nil "the session goal used ~D of ~D automatic continuations (effective limit ~D)"
+                           (getf goal :continuations 0) *application-goal-continuation-limit*
+                           *application-goal-continuation-limit*)
+                   (format nil "Send a message to reset the count, or raise the limit with ~
+                                (setf autolith::*application-goal-continuation-limit* ~D) for this process."
+                           (* 2 *application-goal-continuation-limit*))))
+          (t
+           (values "the result is not eligible for automatic continuation" review)))
+      (format nil "No automatic continuation: ~A. ~A" reason action))))
 
 (-> application-job-completions--present-terminal (application list) null)
 (defun application-job-completions--present-terminal (application notices)
