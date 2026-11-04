@@ -1004,13 +1004,32 @@
                          "the steer's receipt settles the delivery")
             (test-assert (null (world-inbox-deliveries configuration "exec-one"))
                          "the settled delivery leaves the inbox"))
+          (world-tests--persisted-conversation configuration "bthird3" 2500)
           (platform-delete-directory-tree *platform*
                                           (merge-pathnames "tasks/broot11/"
                                                            (config :data-root configuration))
                                           :validate t)
+          (platform-delete-directory-tree *platform*
+                                          (conversation-storage-directory-pathname
+                                           (conversation-pathname root))
+                                          :validate t)
           (let ((world (values (world-reconcile-sessions configuration :now 3001))))
             (test-assert (and (null (world-channel-find world "exec-one"))
+                              (null (world-channel-find world "broot11"))
                               (null (world-participant-find
-                                     world (participant-identifier task-agent))))
-                         "a pruned child retires its channel and participant"))))))
+                                     world (participant-identifier task-agent)))
+                              (null (world-participant-find
+                                     world (participant-identifier root-agent)))
+                              (string= (participant-residence (world-human-participant world))
+                                       "bthird3"))
+                         "pruning a root with its child retires both channels and participants, parent last")
+            (test-assert (equal (mapcar #'world-session-mapping-conversation
+                                        (world-session-mappings configuration))
+                                '("bthird3"))
+                         "only the surviving conversation keeps a mapping"))
+          (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3002)
+            (test-assert (and (zerop count)
+                              (equal (mapcar #'channel-identifier (world-channels world))
+                                     '("bthird3")))
+                         "a second reconciliation finds nothing left to retire"))))))
   nil)

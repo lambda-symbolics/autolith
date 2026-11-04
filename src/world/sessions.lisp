@@ -396,35 +396,51 @@ root's agent while that root exists."
                     (participant-identifier existing)))))
 
              (retire (mapping)
-               "Delete MAPPING's participant, and its channel once nobody else lives there."
+               "Delete MAPPING's participant with its descendants; its channel ends in the sweep."
                (let* ((channel-id  (world-session-mapping-conversation mapping))
                       (participant (world-participant-find
-                                    preview (world-session-mapping-participant mapping)))
-                      (channel     (world-channel-find preview channel-id)))
+                                    preview (world-session-mapping-participant mapping))))
                  (when participant
                    (dolist (record (world--participant-deletion-records
                                     preview participant now :except channel-id))
                      (emit record)))
-                 (when channel
-                   (let ((person (human)))
-                     (when (and person (string= (participant-residence person) channel-id))
-                       (let ((elsewhere (find-if-not (lambda (candidate)
-                                                       (string= (channel-identifier candidate)
-                                                                channel-id))
-                                                     (world-channels preview))))
-                         (when elsewhere
-                           (emit (world--participant-record
-                                  (world--copy-participant
-                                   person
-                                   :residence  (channel-identifier elsewhere)
-                                   :updated-at (max now (participant-updated-at person)))))))))
-                   (when (and (null (world-channel-residents preview channel-id))
-                              (null (world-channel-children preview channel-id)))
-                     (emit (list :channel-deleted
-                                 :version *world-format-version*
-                                 :id   channel-id
-                                 :time now))))
-                 (push channel-id ended))))
+                 (push channel-id ended)))
+
+             (relocate-human (channel-id)
+               "Move the human out of CHANNEL-ID into any other channel, when it lives there."
+               (let ((person (human)))
+                 (when (and person (string= (participant-residence person) channel-id))
+                   (let ((elsewhere (find-if-not (lambda (candidate)
+                                                   (string= (channel-identifier candidate)
+                                                            channel-id))
+                                                 (world-channels preview))))
+                     (when elsewhere
+                       (emit (world--participant-record
+                              (world--copy-participant
+                               person
+                               :residence  (channel-identifier elsewhere)
+                               :updated-at (max now (participant-updated-at person))))))))))
+
+             (sweep ()
+               "Delete every ended channel nobody lives in and nothing nests under.
+
+A root whose child channel ends in the same pass is empty only once the
+child is gone, so the sweep repeats until no further channel can go, and a
+parent is never left behind its retired children."
+               (loop
+                 (let ((gone-p nil))
+                   (dolist (channel-id ended)
+                     (when (and (world-channel-find preview channel-id)
+                                (null (world-channel-children preview channel-id)))
+                       (relocate-human channel-id)
+                       (when (null (world-channel-residents preview channel-id))
+                         (emit (list :channel-deleted
+                                     :version *world-format-version*
+                                     :id   channel-id
+                                     :time now))
+                         (setf gone-p t))))
+                   (unless gone-p
+                     (return))))))
       (dolist (change changes)
         (let ((owner (ensure-human change)))
           (ensure-channel change owner)
@@ -435,6 +451,7 @@ root's agent while that root exists."
                 planned)))
       (dolist (mapping vanished)
         (retire mapping))
+      (sweep)
       (dolist (record (world-session--handle-records preview now))
         (emit record)))
     (values (nreverse records) (nreverse planned) (nreverse ended))))
