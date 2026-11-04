@@ -4160,7 +4160,12 @@ checked."
                              (getf details :maximum-attempts)))))))
            (:assistant-response-persisted
             (setf request-empty-p nil)
-            (application-world-share-reply application (getf details :text)))
+            ;; Only the reply to the person's typed message reaches the
+            ;; channel's subscribers. A reply to a channel message, a job
+            ;; completion or any other automatic turn stays here, so two
+            ;; agents subscribed to each other never answer each other forever.
+            (when (and (null operation-request) (not continuation-p))
+              (application-world-share-reply application (getf details :text))))
            (:provider-request-completed
             (when (plusp (getf details :tool-call-count 0))
               (setf request-empty-p nil))
