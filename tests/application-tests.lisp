@@ -9871,3 +9871,178 @@
                            "the fake turn can complete an unlimited goal")))
         (terminal-ui-stop (application-ui application)))))
   nil)
+
+(-> test-goal-queued-input-boundary () null)
+(defun test-goal-queued-input-boundary ()
+  "Admit a queued goal clear before the next automatic continuation."
+  (with-test-configuration (configuration root)
+    (let* ((terminal   (make-instance 'recording-terminal :columns 60))
+           (application
+             (make-instance 'application :configuration configuration
+                            :conversation               (conversation-create configuration
+                                                                             :identifier "queued-goal")
+                            :tool-registry              (make-default-tool-registry)
+                            :worker                     nil
+                            :ui                         (terminal-ui-create :terminal terminal)))
+           (controller (application-input-controller-create
+                        application :load-pending-p nil
+                        :pending-persistence-enabled-p nil :start-reader-p nil))
+           (turns      0))
+      (unwind-protect
+           (progn
+             (setf (application-goal application)
+                   (list :objective "keep working" :status :active
+                         :continuations 0 :created-at (get-universal-time)))
+             (test-call-with-function-replacements
+              (list
+               (list 'application--run-turn
+                     (lambda (app content &rest arguments)
+                       (declare (ignore app content arguments))
+                       (incf turns)
+                       (when (= turns 3)
+                         (application-input-controller--enqueue
+                          controller :lisp "(goal :clear)"))
+                       (when (> turns 12)
+                         (error "Continuation test exceeded its fail-safe"))
+                       nil)))
+              (lambda ()
+                (application-input-controller--enqueue controller :message "start")
+                (application-input-controller--run-work
+                 controller (application-input-controller--next-work controller))
+                (test-assert (= turns 3)
+                             "queued clear yields at the next turn boundary")
+                (test-assert (eq (getf (application-goal application) :status) :active)
+                             "queued input precedes the numeric cap pause")
+                (application-input-controller--finish-work controller)
+                (let ((work (application-input-controller-take-queued-work controller)))
+                  (test-assert (equal work '(:lisp "(goal :clear)"))
+                               "the controller admits the queued Lisp form")
+                  (application-input-controller--run-work controller work))
+                (test-assert (null (application-goal application))
+                             "the queued form executes through the controller"))))
+        (terminal-ui-stop (application-ui application)))))
+  nil)
+
+(-> goal-input-test--call (function) null)
+(defun goal-input-test--call (function)
+  "Call FUNCTION with an isolated goal application and input controller."
+  (with-test-configuration (configuration)
+    (let* ((terminal   (make-instance 'recording-terminal :columns 60))
+           (application
+             (make-instance 'application :configuration configuration
+                            :conversation               (conversation-create configuration
+                                                                             :identifier "goal-input")
+                            :tool-registry              (make-default-tool-registry)
+                            :worker nil :ui (terminal-ui-create :terminal terminal)))
+           (controller (application-input-controller-create
+                        application :load-pending-p nil
+                        :pending-persistence-enabled-p nil :start-reader-p nil)))
+      (unwind-protect
+           (progn
+             (setf (application-goal application)
+                   (list :objective "keep working" :status :active
+                         :continuations 0 :created-at (get-universal-time)))
+             (funcall function application controller))
+        (terminal-ui-stop (application-ui application)))))
+  nil)
+
+(-> test-goal-queued-unlimited-clear () null)
+(defun test-goal-queued-unlimited-clear ()
+  "Bound an unlimited goal by admitting a queued Lisp clear."
+  (goal-input-test--call
+   (lambda (application controller)
+     (setf (config :goal-continuation-limit (application-configuration application))
+           :unlimited)
+     (let ((turns 0))
+       (test-call-with-function-replacements
+        (list (list 'application--run-turn
+                    (lambda (app &rest arguments)
+                      (declare (ignore app arguments))
+                      (incf turns)
+                      (when (= turns 3)
+                        (application-input-controller--enqueue
+                         controller :lisp "(goal :clear)"))
+                      (when (> turns 6) (error "Unlimited test exceeded fail-safe"))
+                      nil)))
+        (lambda ()
+          (application-input-controller--enqueue controller :message "start")
+          (application-input-controller--run-work
+           controller (application-input-controller--next-work controller))
+          (test-assert (= turns 3) "unlimited yields after the third turn")
+          (application-input-controller--finish-work controller)
+          (application-input-controller--run-work
+           controller (application-input-controller-take-queued-work controller))
+          (test-assert (null (application-goal application))
+                       "queued clear stops an unlimited goal"))))))
+  nil)
+
+(-> test-goal-queued-input-fifo-budget () null)
+(defun test-goal-queued-input-fifo-budget ()
+  "Admit mixed input in FIFO order and reset only when a message is admitted."
+  (goal-input-test--call
+   (lambda (application controller)
+     (setf (config :goal-continuation-limit (application-configuration application)) 2)
+     (let ((turns 0) (fresh-count nil))
+       (test-call-with-function-replacements
+        (list (list 'application--run-turn
+                    (lambda (app content &rest arguments)
+                      (declare (ignore arguments))
+                      (incf turns)
+                      (when (equal content "fresh")
+                        (setf fresh-count (getf (application-goal app) :continuations)))
+                      (when (= turns 3)
+                        (dolist (work '((:lisp "(+ 1 1)") (:message "fresh")
+                                        (:native-lisp "(+ 2 2)") (:command "/goal clear")))
+                          (application-input-controller--enqueue
+                           controller (first work) (second work))))
+                      (when (> turns 7) (error "FIFO test exceeded fail-safe"))
+                      nil)))
+        (lambda ()
+          (application-input-controller--enqueue controller :message "start")
+          (application-input-controller--run-work
+           controller (application-input-controller--next-work controller))
+          (test-assert (= 2 (getf (application-goal application) :continuations))
+                       "enqueuing a message does not reset the budget")
+          (dolist (kind '(:lisp :message :native-lisp :command))
+            (application-input-controller--finish-work controller)
+            (let ((work (application-input-controller-take-queued-work controller)))
+              (test-assert (eq (first work) kind) "mixed input keeps FIFO order")
+              (application-input-controller--run-work controller work)
+              (when (eq kind :lisp)
+                (test-assert (= 2 (getf (application-goal application) :continuations))
+                             "Lisp preserves the per-message count"))))
+          (test-assert (eql fresh-count 0) "admitting the message resets the count")
+          (test-assert (= turns 4) "no automatic turn overtakes queued input")
+          (test-assert (null (application-goal application)) "the final command clears the goal"))))))
+  nil)
+
+(-> test-goal-queued-form-resumes () null)
+(defun test-goal-queued-form-resumes ()
+  "Continue after a non-clearing form with the unused numeric budget."
+  (goal-input-test--call
+   (lambda (application controller)
+     (setf (config :goal-continuation-limit (application-configuration application)) 4)
+     (let ((turns 0))
+       (test-call-with-function-replacements
+        (list (list 'application--run-turn
+                    (lambda (app &rest arguments)
+                      (declare (ignore app arguments))
+                      (incf turns)
+                      (when (= turns 3)
+                        (application-input-controller--enqueue controller :lisp "(+ 1 1)"))
+                      (when (> turns 7) (error "Resume test exceeded fail-safe"))
+                      nil)))
+        (lambda ()
+          (application-input-controller--enqueue controller :message "start")
+          (application-input-controller--run-work
+           controller (application-input-controller--next-work controller))
+          (test-assert (= turns 3) "the non-clearing form is admitted at the boundary")
+          (application-input-controller--finish-work controller)
+          (application-input-controller--run-work
+           controller (application-input-controller-take-queued-work controller))
+          (test-assert (= turns 5) "the goal resumes using only the unused budget")
+          (test-assert (= 4 (getf (application-goal application) :continuations))
+                       "the form does not reset the numeric count")
+          (test-assert (eq :paused (getf (application-goal application) :status))
+                       "the empty queue reaches the existing numeric cap"))))))
+  nil)

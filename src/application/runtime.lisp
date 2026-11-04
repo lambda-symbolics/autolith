@@ -4345,6 +4345,12 @@ wake the model is still queued, running or undelivered."
     (let ((goal (application-goal application)))
       (unless (and goal (eq (getf goal :status) ':active))
         (return))
+
+      ;; Return to the controller before pausing or starting another turn.
+      (let ((controller (application-input-controller application)))
+        (when (and controller
+                   (application-input-controller-goal-input-pending-p controller))
+          (return)))
       (when (and (not (mission-goal-p goal))
                  (application--goal-continuations-exhausted-p application goal))
         (setf (getf (application-goal application) :status) ':paused)
