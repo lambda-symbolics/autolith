@@ -9875,7 +9875,7 @@
 (-> test-goal-queued-input-boundary () null)
 (defun test-goal-queued-input-boundary ()
   "Admit a queued goal clear before the next automatic continuation."
-  (with-test-configuration (configuration root)
+  (with-test-configuration (configuration)
     (let* ((terminal   (make-instance 'recording-terminal :columns 60))
            (application
              (make-instance 'application :configuration configuration
