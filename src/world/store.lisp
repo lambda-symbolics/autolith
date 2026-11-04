@@ -19,6 +19,9 @@
 (defparameter *world-handle-limit* 32
   "The most characters in a participant handle, the name an @mention uses.")
 
+(defparameter *world-parent-handle* "parent"
+  "The mention that names the sender's parent; no participant may take it as a name.")
+
 (defparameter *world-settings-limit* 32
   "The maximum plist elements in one participant settings plist.")
 
@@ -569,11 +572,17 @@ ends."
 
 (-> world-unique-handle (world string) string)
 (defun world-unique-handle (world base)
-  "Return BASE, or BASE with the lowest numbered suffix, that names no participant of WORLD."
+  "Return BASE, or BASE with the lowest numbered suffix, that names no participant of WORLD and is not reserved."
   (loop for index from 1
         for candidate = (world-handle-suffixed base index)
-        unless (world-participant-named-p world candidate)
+        unless (or (world-participant-named-p world candidate)
+                   (world-handle-reserved-p candidate))
           return candidate))
+
+(-> world-handle-reserved-p (string) boolean)
+(defun world-handle-reserved-p (name)
+  "Return true when NAME is a mention with a meaning of its own, which no participant may take."
+  (string-equal name *world-parent-handle*))
 
 (-> world-participant-designated (world string) (option participant))
 (defun world-participant-designated (world designator)
@@ -894,6 +903,12 @@ participant owns and resides in, as a plist of :id, :workspace, :title and
          (error 'world-error
                 :message    (format nil "A name is up to ~D letters, digits, hyphens and underscores, so @mentions can use it."
                                     *world-handle-limit*)
+                :pathname   nil
+                :operation  ':rename-participant
+                :identifier identifier))
+       (when (world-handle-reserved-p name)
+         (error 'world-error
+                :message    (format nil "@~A always names the sender's parent; choose another name." name)
                 :pathname   nil
                 :operation  ':rename-participant
                 :identifier identifier))

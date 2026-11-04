@@ -425,18 +425,40 @@ With NOTIFY-P, the process serving each of those channels is told to read."
 
 ;;;; -- Mentions --
 
-(-> world-message-participant (world string) (option participant))
-(defun world-message-participant (world designator)
-  "Return the participant DESIGNATOR names by identifier, display identifier or unique name."
+(-> world-message-participant (world string &key (:sender (option participant))) (option participant))
+(defun world-message-participant (world designator &key sender)
+  "Return the participant DESIGNATOR names by identifier, display identifier or unique name.
+
+With SENDER, @parent names the participant its message to its parent
+reaches; see `world-message-parent-recipient'."
   (let ((canonical (handler-case (identifier-normalize designator)
                      (identifier-error ()
                        nil))))
-    (or (world-participant-find world designator)
+    (or (and sender
+             (world-handle-reserved-p designator)
+             (world-message-parent-recipient world sender))
+        (world-participant-find world designator)
         (and canonical (world-participant-find world canonical))
         (let ((named (remove-if-not (lambda (participant)
                                       (string-equal (participant-name participant) designator))
                                     (world-participants world))))
           (and (= (length named) 1) (first named))))))
+
+(-> world-message-parent-recipient (world participant) (option participant))
+(defun world-message-parent-recipient (world sender)
+  "Return the participant a message from SENDER to @parent reaches.
+
+That is SENDER's parent. A parked parent resides nowhere, so the message
+goes on to the nearest ancestor that resides somewhere, and to the person
+when no such agent is left."
+  (let ((current (let ((parent (participant-parent sender)))
+                   (and parent (world-participant-find world parent)))))
+    (loop while current
+          do (if (participant-residence current)
+                 (return current)
+                 (setf current (let ((parent (participant-parent current)))
+                                 (and parent (world-participant-find world parent)))))
+          finally (return (world-human-participant world)))))
 
 (-> world-mention-boundary-p (string (integer 0)) boolean)
 (defun world-mention-boundary-p (text at)
@@ -459,11 +481,12 @@ or a path before the @ make it part of that token, as in alice@bob.com."
                        text :start (1+ at))
       (length text)))
 
-(-> world-message-mentions (world string) list)
-(defun world-message-mentions (world text)
+(-> world-message-mentions (world string &key (:sender (option participant))) list)
+(defun world-message-mentions (world text &key sender)
   "Return the identifiers of the participants TEXT mentions as @name or @identifier.
 
-An @ inside a word or an address, as in alice@bob.com, mentions nobody."
+An @ inside a word or an address, as in alice@bob.com, mentions nobody. With
+SENDER, @parent mentions the participant its message to its parent reaches."
   (let ((mentions nil) (start 0))
     (loop
       (let ((at (position #\@ text :start start)))
@@ -472,7 +495,7 @@ An @ inside a word or an address, as in alice@bob.com, mentions nobody."
                (designator  (subseq text (1+ at) end))
                (participant (and (world-mention-boundary-p text at)
                                  (plusp (length designator))
-                                 (world-message-participant world designator))))
+                                 (world-message-participant world designator :sender sender))))
           (when (and participant
                      (not (member (participant-identifier participant) mentions
                                   :test #'string=)))
@@ -603,9 +626,10 @@ channels whose serving process was reached)."
          (target      (world-channel-designated world configuration channel))
          (text        (world-message--text text))
          (identifier  (make-identifier)))
-    (let* ((mentioned (append (world-message-mentions world text)
+    (let* ((mentioned (append (world-message-mentions world text :sender participant)
                               (loop for designator in mentions
-                                    for found = (world-message-participant world designator)
+                                    for found = (world-message-participant world designator
+                                                                           :sender participant)
                                     do (unless found
                                          (error 'world-error
                                                 :message    (format nil "No participant is named ~A." designator)

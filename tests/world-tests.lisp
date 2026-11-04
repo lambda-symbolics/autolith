@@ -1151,6 +1151,49 @@
                      "the repaired ancestry is stable"))))
   nil)
 
+(-> test-world-parent-mention () null)
+(defun test-world-parent-mention ()
+  "Test @parent reaches the sender's parent, passes parked ancestors on to the next one, and ends with the person."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "broot11" 1000)
+    (world-tests--child-conversation configuration "exec-one"
+                                     :root "broot11" :parent "broot11" :name "planner" :created-at 1500)
+    (world-tests--child-conversation configuration "exec-two"
+                                     :root "broot11" :parent "exec-one" :name "checker" :created-at 1600)
+    (let* ((world   (values (world-reconcile-sessions configuration :now 3000)))
+           (human   (world-human-participant world))
+           (root    (find ':agent (world-channel-residents world "broot11") :key #'participant-kind))
+           (planner (find ':agent (world-channel-residents world "exec-one") :key #'participant-kind)))
+      (flet ((reached (text)
+               "Send TEXT from the checker and return the channels it reached."
+               (let ((checker (find ':agent (world-channel-residents (world-load configuration) "exec-two")
+                                    :key #'participant-kind)))
+                 (getf (world-message-send configuration
+                                           :sender   (participant-identifier checker)
+                                           :channel  "exec-two"
+                                           :text     text
+                                           :notify-p nil)
+                       :channels))))
+        (test-assert (equal (reached "@parent done") '("exec-two" "exec-one"))
+                     "@parent reaches the sender's parent agent")
+        (world-park-agent configuration planner)
+        (test-assert (equal (reached "@parent done again") '("exec-two" "broot11"))
+                     "with the parent parked, @parent reaches the grandparent")
+        (world-park-agent configuration root)
+        (test-assert (equal (reached "@Parent anyone?")
+                            (list "exec-two" (participant-residence (world-human-participant
+                                                                     (world-load configuration)))))
+                     "with every ancestor agent parked, @parent reaches the person")
+        (test-assert (handler-case
+                         (progn (world-participant-rename configuration (participant-identifier human) "parent")
+                                nil)
+                       (world-error (condition)
+                         (eq (world-error-operation condition) ':rename-participant)))
+                     "nobody may take parent as a name")
+        (test-assert (string= (world-unique-handle (world-load configuration) "parent") "parent-2")
+                     "a handle chosen from the base parent skips the reserved name"))))
+  nil)
+
 (-> test-world-staggered-retirement () null)
 (defun test-world-staggered-retirement ()
   "Test a root whose storage vanishes before its child's keeps its mapping and retires with the child."
