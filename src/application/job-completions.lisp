@@ -171,7 +171,7 @@ snapshot cannot change the meaning of an already finalized transcript entry."
            (values "the result belongs to a previous mission" review))
           ((and (mission-goal-p goal) (not mission-id) (eq status ':active))
            (values "the result is not part of the active mission" review))
-          ((and (mission-goal-p goal) (plusp (getf goal :unknown-usage 0)))
+          ((and (mission-goal-p goal) (mission--unknown-usage-blocks-p goal))
            (values (format nil "the mission is ~A with unknown token usage" status) new-budget))
           ((and (mission-goal-p goal) (<= (getf goal :deadline) (get-universal-time)))
            (values (format nil "the mission is ~A and its deadline has passed" status) new-budget))

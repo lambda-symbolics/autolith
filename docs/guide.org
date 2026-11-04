@@ -216,9 +216,10 @@ time away. Work runs under cl-jobpond supervision. Use =(goal :pause)= and
 =(mission :resume)= without resetting any mission budget; use
 =(mission :cancel "REASON")= to terminate it. Terminal states are =verified=, =exhausted=, =cancelled=
 and =failed=. A =blocked= mission retains the evidence needed to resolve its
-blocker and resume. Interrupted inference restores as blocked when its usage
-cannot be recovered. Gate attempts, fingerprints and evidence restore with the
-conversation and survive compaction independently of model summaries.
+blocker and resume. With the default =:block= policy, interrupted inference
+restores as blocked when its usage cannot be recovered. Gate attempts,
+fingerprints and evidence restore with the conversation and survive compaction
+independently of model summaries.
 
 Gates run in order, stopping at the first failure. Command gates use the ordinary
 shell authorization and sandbox boundary. Artifact gates require =:path= and
@@ -304,7 +305,8 @@ While that mission is paused or blocked, due occurrences selected by the missed
 policy are skipped without running. The interval advances, and after resuming
 the mission you get the next due occurrence without recreating the schedule.
 Skipped occurrences are not replayed, including one-shot wakeups and deduplicated
-events. Unknown usage still prevents mission resume until resolved.
+events. With the default =:block= policy, unknown usage prevents mission resume;
+=:record= does not prevent resuming an independent pause or blocker.
 
 Replacement, a version change, or a terminal mission (verified, exhausted,
 cancelled, failed or legacy complete) cancels the schedule. Skips and automatic

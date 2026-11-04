@@ -963,6 +963,12 @@
              (setf (getf goal :status) status (getf goal :unknown-usage) 1)
              (check (list (string-downcase (symbol-name status)) "unknown" "(mission :start")
                     '("blocker" "(mission :resume)")))
+           (setf (getf goal :unknown-usage-policy) ':record)
+           (dolist (status '(:paused :blocked))
+             (setf (getf goal :status) status)
+             (check (list (string-downcase (symbol-name status)) "(mission :resume)")
+                    '("unknown" "(mission :start")))
+           (setf (getf goal :unknown-usage-policy) ':block)
            (setf (getf goal :unknown-usage) 0 (getf goal :status) :active
                  (getf goal :deadline) (1- (get-universal-time)))
            (check '("deadline") '("blocker" "(mission :resume)"))
