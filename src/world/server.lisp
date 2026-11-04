@@ -505,8 +505,8 @@ destination's own history.")
 
 The channel it leaves, when served, stops it; the destination, when served,
 adopts it with the context it carries, else that context waits here for the
-channel's next open. The world store refuses a destination that has an
-agent."
+channel's next open. Context already waiting moves on with the agent, once.
+The world store refuses a destination that has an agent."
   (unless (and (stringp participant) (stringp channel))
     (error 'world-error
            :message   "A move names the participant to move and the channel to move it into."
@@ -522,12 +522,16 @@ agent."
          (target        (channel-identifier (world-channel-designated world configuration channel)))
          (source-host   (world-server--find-host server (participant-residence agent)))
          (target-host   (world-server--find-host server target))
-         (prefix        (and source-host
-                             (let ((application (world-host-application source-host)))
-                               (conversation-input-items-for-family
-                                (application-conversation application)
-                                (provider-family (application-provider application))
-                                :include-ephemeral-p nil)))))
+         ;; The context comes from the conversation it leaves, or, when that
+         ;; channel is not served, from what an earlier move left waiting.
+         (prefix        (if source-host
+                            (let ((application (world-host-application source-host)))
+                              (conversation-input-items-for-family
+                               (application-conversation application)
+                               (provider-family (application-provider application))
+                               :include-ephemeral-p nil))
+                            (values (gethash (participant-identifier agent)
+                                             *world-carried-contexts*)))))
     (unless (eq (participant-kind agent) ':agent)
       (error 'world-error
              :message    (format nil "~A is not an agent; the person moves by attaching a terminal."
