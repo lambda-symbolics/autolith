@@ -1497,6 +1497,10 @@
   test-effort-switch
   test-public-goal-actions
   test-session-goal
+  test-goal-queued-input-boundary
+  test-goal-queued-unlimited-clear
+  test-goal-queued-input-fifo-budget
+  test-goal-queued-form-resumes
   test-pending-publication-lock-boundaries
   test-pending-input-persistence)
 

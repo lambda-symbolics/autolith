@@ -3619,6 +3619,23 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
          (not (deque-empty-p
                (application-input-controller-work-items controller))))))
 
+(-> application-input-controller-goal-input-pending-p
+    (application-input-controller) boolean)
+(defun application-input-controller-goal-input-pending-p (controller)
+  "Return whether input can be admitted after the current goal turn finishes."
+  (with-lock-held ((application-input-controller-lock controller))
+    (and (not (application-input-controller-stopping-p controller))
+         (not (application-input-controller-queued-work-paused-p controller))
+         (not (application-localgroup-paused-p
+               (application-input-controller-application controller)))
+         (not (eql (application-input-controller-follow-up-edit-index controller) 0))
+         (or (not (deque-empty-p
+                   (application-input-controller-work-items controller)))
+             (not (deque-empty-p
+                   (application-input-controller-steering-items controller)))
+             (not (deque-empty-p
+                   (application-input-controller-steering-in-flight-items controller)))))))
+
 (-> application-input-controller-take-queued-work
     (application-input-controller)
     (option list))
@@ -4275,7 +4292,24 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
                  (application-localgroup-run-handoff
                   application (second work) controller)
                (localgroup-error (condition)
-                 (application-handle-expected-error application condition))))))
+                 (application-handle-expected-error application condition)))))
+          ;; Non-message input does not reset the per-message continuation budget.
+          (when (and (member (first work) '(:command :lisp :native-lisp))
+                     (not (application-input-controller-stopping-p controller)))
+            (application--call-with-model-error-handling
+             application
+             (lambda ()
+               (application-input-controller-call-with-primary-steering
+                controller
+                (lambda (take acknowledge)
+                  (application--run-goal-continuations
+                   application
+                   :steering-function           take
+                   :steering-persisted-function acknowledge
+                   :pending-operations-function
+                   (lambda (agent)
+                     (application-input-controller--apply-pending-commands
+                      controller :agent agent)))))))))
       (serious-condition (condition)
         (application-input-controller--record-prompt-condition
          controller condition)
