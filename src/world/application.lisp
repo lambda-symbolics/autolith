@@ -74,9 +74,12 @@ conversations and never blocks a session."
          (conversation-persisted-p conversation)
          (conversation-identifier conversation))))
 
-(-> application-world--unsettled (application string) list)
+(-> application-world--unsettled (application string) (values list list))
 (defun application-world--unsettled (application channel)
-  "Return CHANNEL's deliveries APPLICATION's conversation has not received, settling the rest."
+  "Return CHANNEL's deliveries APPLICATION's conversation has not received, settling the rest.
+
+The second value lists the identifiers settled, so the caller knows the
+inbox made room."
   (let ((configuration (application-configuration application))
         (conversation  (application-conversation application)))
     (multiple-value-bind (pending settled)
@@ -87,7 +90,7 @@ conversations and never blocks a session."
         (dolist (identifier settled)
           (remhash (format nil "channel:~A" identifier)
                    (application-world-deliveries application))))
-      pending)))
+      (values pending settled))))
 
 (-> application-world-deliver (application) (integer 0))
 (defun application-world-deliver (application)
@@ -95,13 +98,21 @@ conversations and never blocks a session."
 
 A message queued while a turn runs is taken as steering first; the queued
 turn then finds its receipt and is skipped. Without an input controller, as
-in a headless job, messages wait in the inbox."
+in a headless job, messages wait in the inbox. Settling received messages
+makes room in the inbox, so a send that found it full is resumed right
+after, rather than waiting for the next send to come by."
   (let ((channel    (application-world--served-channel application))
         (controller (application-input-controller application))
         (queued     0))
     (when (and channel controller)
       (world-message-resume (application-configuration application))
-      (dolist (delivery (application-world--unsettled application channel))
+      (dolist (delivery (multiple-value-bind (pending settled)
+                            (application-world--unsettled application channel)
+                          (if settled
+                              (progn
+                                (world-message-resume (application-configuration application))
+                                (values (application-world--unsettled application channel)))
+                              pending)))
         (let ((identifier (world-delivery-pending-identifier delivery))
               (table      (application-world-deliveries application)))
           (unless (gethash identifier table)

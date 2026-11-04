@@ -650,9 +650,13 @@ Deliveries CONVERSATION already recorded are settled on the way."
     (configuration &key (:channel string) (:identifier string) (:taken hash-table))
     boolean)
 (defun world-inbox-steering-ack (configuration &key channel identifier taken)
-  "Settle the delivery IDENTIFIER names in CHANNEL's inbox, or return NIL for other input."
+  "Settle the delivery IDENTIFIER names in CHANNEL's inbox, or return NIL for other input.
+
+Settling makes room in the inbox, so a send that found it full is resumed
+at once."
   (when (world-delivery-pending-identifier-p identifier)
     (world-inbox-settle configuration channel
                         (list (subseq identifier (length "channel:"))))
     (remhash identifier taken)
+    (world-message-resume configuration)
     t))
