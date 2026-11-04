@@ -2032,3 +2032,63 @@
                            (command-view-tests--role-p (first entries) ':code "ask"))
                       "ordinary permission changes distinguish mode and success severity")))))
   nil)
+
+(-> test-application-goal-continuation-setting () null)
+(defun test-application-goal-continuation-setting ()
+  "Persist and coerce bounded or unlimited lightweight goal continuation limits."
+  (test-call-with-typed-control-application
+   (lambda (application root observations)
+     (declare (ignore root observations))
+     (let ((configuration (application-configuration application)))
+       (test-assert (= 8 (config :goal-continuation-limit configuration))
+                    "the default permits eight automatic turns")
+       (dolist (value '(2 16 :unlimited))
+         (application-operation-call application 'settings ':goal-continuation-limit value)
+         (test-assert (eql value (config :goal-continuation-limit configuration))
+                      "native settings accepts a positive integer or unlimited")
+         (test-assert
+          (eql value (config :goal-continuation-limit
+                             (preferences-tests--create configuration)))
+          "a fresh configuration reads the saved continuation limit"))
+       (let ((evaluation (application-lisp-evaluate
+                          "(settings :goal-continuation-limit :unlimited)"
+                          :application application)))
+         (test-assert (eq (application-lisp-evaluation-status evaluation) ':ok)
+                      "the local Lisp command accepts unlimited"))
+       (test-assert
+        (string= "unlimited"
+                 (setting-render-value
+                  (configuration-setting configuration :goal-continuation-limit) ':unlimited))
+        "the keyword has a readable settings value")
+       (dolist (input '("unlimited" "UNLIMITED" "12"))
+         (application-command application (format nil "/settings goal-continuation-limit ~A" input))
+         (test-assert (eql (if (string-equal input "unlimited") ':unlimited 12)
+                           (config :goal-continuation-limit configuration))
+                      "slash input follows the continuation setting schema"))
+       (test-assert
+        (eq ':unlimited
+            (setting-parse (configuration-setting configuration :goal-continuation-limit)
+                           (format nil " ~CUnLiMiTeD~C " #\Tab #\Newline) configuration))
+        "text coercion ignores surrounding whitespace and keyword case")
+       (let ((saved (uiop:read-file-string (configuration-preferences-path configuration))))
+         (dolist (value '(0 -1 2.5 nil :forever "abc"))
+           (test-assert
+            (handler-case
+                (progn (application-operation-call application 'settings
+                                                   ':goal-continuation-limit value)
+                       nil)
+              (setting-invalid () t))
+            "invalid native values are rejected"))
+         (dolist (text '("abc" "0" "-2" "2.5"))
+           (test-assert
+            (handler-case
+                (progn (setting-parse
+                        (configuration-setting configuration :goal-continuation-limit)
+                        text configuration)
+                       nil)
+              (setting-invalid () t))
+            "invalid textual limits are rejected by the schema"))
+         (test-assert
+          (string= saved (uiop:read-file-string (configuration-preferences-path configuration)))
+          "rejection leaves the durable preferences untouched")))))
+  nil)

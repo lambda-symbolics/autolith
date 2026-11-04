@@ -3402,8 +3402,16 @@ A fullscreen transcript evicts its oldest output; those records page in again."
 
 ;;;; -- Session Goal --
 
-(defparameter *application-goal-continuation-limit* 8
-  "The automatic goal continuation turns allowed per user message.")
+(-> application-goal-continuation-limit (application) (or (integer 1) (eql :unlimited)))
+(defun application-goal-continuation-limit (application)
+  "Return APPLICATION's durable lightweight goal continuation limit."
+  (config :goal-continuation-limit (application-configuration application)))
+
+(-> application--goal-continuations-exhausted-p (application list) boolean)
+(defun application--goal-continuations-exhausted-p (application goal)
+  "Return true when GOAL has reached APPLICATION's numeric continuation cap."
+  (let ((limit (application-goal-continuation-limit application)))
+    (and (integerp limit) (>= (getf goal :continuations 0) limit))))
 
 (defparameter *application-goal-continuation-prompt*
   "Continue working toward the session goal."
@@ -4326,8 +4334,7 @@ wake the model is still queued, running or undelivered."
       (unless (and goal (eq (getf goal :status) ':active))
         (return))
       (when (and (not (mission-goal-p goal))
-                 (>= (getf goal :continuations)
-                     *application-goal-continuation-limit*))
+                 (application--goal-continuations-exhausted-p application goal))
         (setf (getf (application-goal application) :status) ':paused)
         (application--record-goal application)
         (application-present
@@ -4335,7 +4342,7 @@ wake the model is still queued, running or undelivered."
          (format nil
                  "The goal paused after ~D automatic continuations. ~
                   Use (goal :resume) or send a message to keep going."
-                 *application-goal-continuation-limit*))
+                 (application-goal-continuation-limit application)))
         (return))
       ;; A running job's completion wakes the model and resumes the goal.
       (when (application-job-completions-awaited-p application)

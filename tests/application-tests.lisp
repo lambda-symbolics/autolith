@@ -8881,7 +8881,7 @@
            (setf (application-goal application)
                  (list :objective     "endless"
                        :status        ':active
-                       :continuations *application-goal-continuation-limit*
+                       :continuations (application-goal-continuation-limit application)
                        :created-at    (get-universal-time)))
            (recording-terminal-reset terminal)
            (application--run-goal-continuations application)
@@ -9773,4 +9773,39 @@
       (application-disconnect-task-presentation application)
       (tool-registry-close-runtime-state registry)
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-application-goal-continuation-limits () null)
+(defun test-application-goal-continuation-limits ()
+  "Use a nondefault cap and keep unlimited counters observational."
+  (with-test-configuration (configuration)
+    (let* ((application (mission-test--application configuration))
+           (calls       0))
+      (unwind-protect
+           (test-call-with-function-replacements
+            (list (list 'application--run-turn
+                        (lambda (candidate &rest arguments)
+                          (declare (ignore arguments))
+                          (incf calls)
+                          (setf (getf (application-goal candidate) :status) ':complete)
+                          nil)))
+            (lambda ()
+              (setf (config :goal-continuation-limit configuration) 2)
+              (setf (application-goal application)
+                    (list :objective "bounded" :status ':active :continuations 2))
+              (application--run-goal-continuations application)
+              (test-assert (zerop calls) "a configured cap of two admits no third turn")
+              (test-assert (eq (getf (application-goal application) :status) ':paused)
+                           "the loop pauses at the configured cap")
+              (setf (config :goal-continuation-limit configuration) ':unlimited)
+              (setf calls 0
+                    (application-goal application)
+                    (list :objective "unlimited" :status ':active :continuations 50))
+              (application--run-goal-continuations application)
+              (test-assert (= calls 1) "unlimited permits one bounded fake turn past the old cap")
+              (test-assert (= 51 (getf (application-goal application) :continuations))
+                           "unlimited still records the continuation count")
+              (test-assert (eq (getf (application-goal application) :status) ':complete)
+                           "the fake turn can complete an unlimited goal")))
+        (terminal-ui-stop (application-ui application)))))
   nil)

@@ -46,6 +46,23 @@
   (:default-initargs :type '(option pathname))
   (:documentation "An optional absolute file pathname; empty text means none."))
 
+(defclass continuation-limit-setting (setting)
+  ()
+  (:default-initargs :type '(or (integer 1) (eql :unlimited)))
+  (:documentation "A positive automatic continuation count or the unlimited keyword."))
+
+(defmethod setting-coerce ((setting continuation-limit-setting) (value string) configuration)
+  "Read a positive count or the case-insensitive unlimited token."
+  (declare (ignore configuration))
+  (let ((text (string-trim '(#\Space #\Tab #\Newline #\Return) value)))
+    (if (string-equal text "unlimited")
+        ':unlimited
+        (handler-case (parse-integer text)
+          (parse-error ()
+            (setting-reject setting value
+                            "~A must be a positive integer or unlimited, not ~S."
+                            (setting-label setting) value))))))
+
 (defmethod setting-coerce ((setting web-search-mode-setting) (value string) configuration)
   "Read the mode name in lower case."
   (declare (ignore setting configuration))
@@ -472,6 +489,13 @@ Ordinary native defaults remain lazy and follow the current environment."
   :scope                    :durable
   :minimum                  0
   :default                  0)
+
+(define-setting :goal-continuation-limit (continuation-limit-setting)
+  :label                                 "Goal continuation limit"
+  :group                                 :behavior
+  :documentation                         "Automatic lightweight goal continuation turns allowed between user messages; unlimited removes the cap."
+  :scope                                 :durable
+  :default                               8)
 
 (define-setting :prompt-cache-ttl (choice-setting)
   :label                          "Cache lifetime"
