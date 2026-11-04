@@ -669,7 +669,8 @@
   test-world-server-attachment-selects
   test-world-server-open-before-checkpoint
   test-world-server-move
-  test-world-client-joins-winner)
+  test-world-client-joins-winner
+  test-world-client-switch-navigates)
 
 (define-test-suite world-sidebar
   test-world-sidebar-rows

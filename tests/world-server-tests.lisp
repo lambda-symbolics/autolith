@@ -688,6 +688,65 @@
                       "a launch that fails while nobody holds the world still fails")))))
   nil)
 
+(-> test-world-client-switch-navigates () null)
+(defun test-world-client-switch-navigates ()
+  "Test a terminal switching channels states no launch options, and stays in its channel when the other refuses."
+  (with-test-configuration (configuration)
+    (let ((opens    nil)
+          (attaches nil)
+          (refuse-p nil))
+      (flet ((run ()
+               "Run the client loop for a terminal started with launch options, switching once."
+               (setf opens nil attaches nil)
+               (let ((calls 0))
+                 (test-call-with-function-replacements
+                  (list (list 'main--open-world-channel
+                              (lambda (candidate &rest arguments)
+                                (declare (ignore candidate arguments))
+                                (values "bfirst1" nil)))
+                        (list 'localgroup--find-record
+                              (lambda (candidate session-id)
+                                (declare (ignore candidate))
+                                (list session-id)))
+                        (list 'localgroup-attach-record
+                              (lambda (candidate record mode &rest arguments)
+                                (declare (ignore candidate mode arguments))
+                                (push (first record) attaches)
+                                (if (= (incf calls) 1)
+                                    (list ':switch :session-id "bsecnd2")
+                                    ':detached)))
+                        (list 'localgroup-relay-exit
+                              (lambda (&rest arguments)
+                                (declare (ignore arguments))
+                                nil))
+                        (list 'world-client-open
+                              (lambda (candidate &rest arguments)
+                                (declare (ignore candidate))
+                                (push arguments opens)
+                                (if refuse-p
+                                    (error 'localgroup-error
+                                           :message   "Channel b-secnd2 cannot take that."
+                                           :operation ':open)
+                                    (values (getf arguments :channel) nil)))))
+                  (lambda ()
+                    (let ((*error-output* (make-broadcast-stream)))
+                      (main--run-world-client configuration
+                                              :permission-mode ':full-access
+                                              :launch          '(:model "other"
+                                                                 :permission-mode :full-access))))))))
+        (run)
+        (test-assert (and (= (length opens) 1)
+                          (null (getf (first opens) :launch))
+                          (equal (getf (first opens) :channel) "bsecnd2"))
+                     "a switch opens the other channel without this start's launch options")
+        (test-assert (equal (reverse attaches) '("bfirst1" "bsecnd2"))
+                     "the terminal attaches to the channel it switched to")
+        (setf refuse-p t)
+        (run)
+        (test-assert (equal (reverse attaches) '("bfirst1" "bfirst1"))
+                     "a channel that refuses the switch leaves the terminal in the channel it came from"))))
+  nil)
+
 (-> test-world-server-stop () null)
 (defun test-world-server-stop ()
   "Test stopping the server ending every channel and the main thread."
