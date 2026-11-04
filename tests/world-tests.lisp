@@ -1375,11 +1375,18 @@
                                         controller text))))
                    (test-assert (eq (submit "first words") ':queued)
                                 "a channel with its agent takes a typed prompt")
+                   (world-message-send configuration
+                                       :sender   (participant-identifier human)
+                                       :channel  "bfirst1"
+                                       :text     "before the dismissal"
+                                       :notify-p nil)
+                   (test-assert (= (application-world-deliver application) 1)
+                                "a message to the channel is queued for its agent")
                    (let ((result (world-dismiss-agent configuration first-agent
                                                       :application application)))
-                     (test-assert (and (= (getf result :dropped) 1)
+                     (test-assert (and (= (getf result :dropped) 2)
                                        (search "was dismissed" (recording-terminal-output terminal)))
-                                  "dismissing the agent drops the prompt it had not started and says so"))
+                                  "dismissing the agent drops the prompt and the message it had not started, and says so"))
                    (test-assert (and (eq (submit "more words") ':rejected)
                                      (search "this channel has no agent"
                                              (recording-terminal-output terminal)))
@@ -1390,8 +1397,8 @@
                                        :text     "anyone here?"
                                        :notify-p nil)
                    (test-assert (and (zerop (application-world-deliver application))
-                                     (= (length (world-inbox-deliveries configuration "bfirst1")) 1))
-                                "a message to a channel without an agent waits in the inbox")
+                                     (= (length (world-inbox-deliveries configuration "bfirst1")) 2))
+                                "messages to a channel without an agent wait in the inbox")
                    (let ((agent (application-world-domestic-agent application)))
                      (test-assert (and (eq (participant-kind agent) ':agent)
                                        (string= (participant-residence agent) "bfirst1")
@@ -1410,7 +1417,7 @@
                                   "a second domestic agent is refused")
                      (test-assert (eq (submit "again") ':queued)
                                   "the channel takes typed prompts again")
-                     (test-assert (= (application-world-deliver application) 1)
-                                  "the waiting message reaches the new agent")))
+                     (test-assert (= (application-world-deliver application) 2)
+                                  "both waiting messages reach the new agent, the one queued for the dismissed agent included")))
               (application-input-controller-stop controller)))))))
   nil)
