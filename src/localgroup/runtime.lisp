@@ -488,7 +488,10 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
                (application-sync-window-title application)
                (localgroup-terminal-replay-screen terminal attachment)
                (unless (eq mode ':read-only)
-                 (localgroup--note-controller-attached session))
+                 (localgroup--note-controller-attached session)
+                 ;; A terminal now controls this channel: that is the
+                 ;; person's choice of channel, committed only here.
+                 (application-world-attached application))
                (image-daemon:relay-read-attachment
                 terminal attachment :event-validator #'localgroup--terminal-event-p))
           (let ((controlled-p (image-daemon:relay-detach terminal attachment)))

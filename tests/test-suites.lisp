@@ -672,6 +672,7 @@
   test-world-server-starting-host
   test-world-server-launch-options
   test-world-server-close-unattached
+  test-world-server-attachment-selects
   test-world-server-open-before-checkpoint
   test-world-client-joins-winner)
 
