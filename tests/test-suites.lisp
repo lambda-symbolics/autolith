@@ -406,6 +406,7 @@
   test-job-cancellation-selected-delivery-presentation
   test-job-cancellation-terminal-replay
   test-job-cancellation-rejected-root-descendants
+  test-job-completion-checkpoint-resume
   test-job-completion-durable-delivery
   test-job-completion-delivery-crash-points
   test-job-completion-terminal-truth-and-reconstruction

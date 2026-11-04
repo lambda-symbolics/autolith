@@ -44,6 +44,31 @@
                    (make-default-tool-registry :configuration configuration))
    :worker        nil))
 
+(-> test-job-completion-checkpoint-resume () null)
+(defun test-job-completion-checkpoint-resume ()
+  "Restore durable delivery and admit new work after checkpoint quiescence."
+  (job-completion-tests--fixture
+   (lambda (parent runtime configuration)
+     (declare (ignore configuration))
+     (let* ((first-job (job-completion-tests--start parent runtime))
+            (first-id  (session-job-execution-identifier first-job)))
+       (test-assert (task-orchestrator-close runtime)
+                    "checkpoint quiescence closes the runtime")
+       (task-orchestrator-refresh runtime :reopen-p t)
+       (task-completion-restore parent)
+       (test-assert (= 1 (length (task-completion-deliver parent)))
+                    "resumption restores the undelivered durable outcome")
+       (test-assert (task-completion--delivered-p (agent-conversation parent) first-id)
+                    "the restored outcome has a durable delivery receipt")
+       (let* ((second-job (job-completion-tests--start parent runtime))
+              (second-id  (session-job-execution-identifier second-job)))
+         (test-assert (= 1 (length (task-completion-deliver parent)))
+                      "new work can register and deliver its completion after resumption")
+         (test-assert (task-completion--delivered-p (agent-conversation parent) second-id)
+                      "the new outcome has its own durable receipt")
+         (test-assert (null (task-completion-deliver parent))
+                      "resuming the runtime does not duplicate delivered outcomes"))))))
+
 (-> test-job-completion-durable-delivery () null)
 (defun test-job-completion-durable-delivery ()
   "Persist outcomes before delivery and retain exactly-once receipts through compaction."

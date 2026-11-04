@@ -624,7 +624,7 @@ conversation restores a fresh service from its durable snapshot."
 
 (-> task-completion-close (task-orchestrator) null)
 (defun task-completion-close (runtime)
-  "Close all completion subscriptions after the job pools finish publishing outcomes."
+  "Close subscriptions and discard their cache so resumed runtimes restore durable state."
   (with-lock-held ((task-orchestrator-completion-lock runtime))
     (maphash (lambda (owner service)
                (declare (ignore owner))
@@ -632,7 +632,8 @@ conversation restores a fresh service from its durable snapshot."
                  (setf (task-completion-service-wakeup service) nil))
                (cl-jobpond:completion-subscription-close
                 (task-completion-service-subscription service)))
-             (task-orchestrator-completion-services runtime)))
+             (task-orchestrator-completion-services runtime))
+    (clrhash (task-orchestrator-completion-services runtime)))
   nil)
 
 
