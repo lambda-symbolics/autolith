@@ -515,12 +515,21 @@ ownership. A nonlocal exit from it cancels the launch."
 
 (-> localgroup-world--wait-for-fresh (configuration string integer) (option string))
 (defun localgroup-world--wait-for-fresh (configuration token old-pid)
-  "Resolve a private launch TOKEN to the world endpoint a new process published."
+  "Resolve a private launch TOKEN to the world endpoint a new process published.
+
+Two terminals starting at once both spawn a server, and only one takes the
+world's lease; the other process ends without publishing. The world has one
+endpoint whichever process serves it, so a client whose own launch lost the
+race takes the endpoint that answers instead of waiting out its token."
   (image-daemon:daemon-wait-until
    (lambda ()
      (loop for entry in (image-daemon:daemon-registry-discover
                          (localgroup-world-directory configuration))
-           thereis (and (image-daemon:daemon-endpoint-status (rest entry) token old-pid)
+           thereis (and (or (image-daemon:daemon-endpoint-status (rest entry) token old-pid)
+                            (handler-case
+                                (localgroup-query-record entry ':status)
+                              (localgroup-error ()
+                                nil)))
                         (getf (rest (rest entry)) :session-id))))
    *localgroup-handoff-start-timeout-seconds*))
 

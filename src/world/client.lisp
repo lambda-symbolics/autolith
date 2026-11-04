@@ -53,17 +53,25 @@ opens once the checkpoint is over.")
   "Return the world server's endpoint entry: the one answering, or a new server's.
 
 A server that holds the world without answering, as during a checkpoint, is
-waited for until DEADLINE, an internal real time, rather than doubled."
+waited for until DEADLINE, an internal real time, rather than doubled. Two
+clients that find no server start one each; the launch that loses the
+world's lease fails, and its client then waits for the winner like any
+other."
   (loop
     (let ((entry (world-client-entry configuration)))
       (cond
         (entry
          (return entry))
         ((not (world-server-running-p configuration))
-         (return (world-client-start-server configuration
-                                            :permission-mode permission-mode
-                                            :immutable-p     immutable-p
-                                            :pristine-p      pristine-p)))
+         (handler-case
+             (return (world-client-start-server configuration
+                                                :permission-mode permission-mode
+                                                :immutable-p     immutable-p
+                                                :pristine-p      pristine-p))
+           (localgroup-error (condition)
+             ;; Another client's server took the lease meanwhile: join it.
+             (unless (world-server-running-p configuration)
+               (error condition)))))
         ((>= (get-internal-real-time) deadline)
          (error 'localgroup-error
                 :message   "The world server holds the world but did not answer in time."
