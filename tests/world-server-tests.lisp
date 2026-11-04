@@ -584,6 +584,53 @@
                     "both channels are served again after the checkpoint"))))
   nil)
 
+(-> test-world-client-joins-winner () null)
+(defun test-world-client-joins-winner ()
+  "Test a client whose own server launch lost the world's lease joins the server that won it."
+  (with-test-configuration (configuration)
+    (let ((polls   0)
+          (winner  (cons "world" (list :session-id "world")))
+          (running nil))
+      (test-call-with-function-replacements
+       (list (list 'world-client-entry
+                   (lambda (candidate)
+                     (declare (ignore candidate))
+                     (incf polls)
+                     (and (>= polls 3) winner)))
+             (list 'world-server-running-p
+                   (lambda (candidate)
+                     (declare (ignore candidate))
+                     running))
+             (list 'world-client-start-server
+                   (lambda (candidate &rest arguments)
+                     (declare (ignore candidate arguments))
+                     (setf running t)
+                     (error 'localgroup-error
+                            :message   "The detached world server did not start within 1 seconds."
+                            :operation ':spawn))))
+       (lambda ()
+         (test-assert (eq (world-client--entry configuration
+                                               :deadline (+ (get-internal-real-time)
+                                                            (* 10 internal-time-units-per-second)))
+                          winner)
+                      "a lost launch race ends at the winning server's endpoint, not in an error")
+         (setf polls 0 running nil)
+         (test-assert (handler-case
+                          (progn
+                            (test-call-with-function-replacements
+                             (list (list 'world-server-running-p
+                                         (lambda (candidate)
+                                           (declare (ignore candidate))
+                                           nil)))
+                             (lambda ()
+                               (world-client--entry configuration
+                                                    :deadline (+ (get-internal-real-time)
+                                                                 internal-time-units-per-second))))
+                            nil)
+                        (localgroup-error () t))
+                      "a launch that fails while nobody holds the world still fails")))))
+  nil)
+
 (-> test-world-server-stop () null)
 (defun test-world-server-stop ()
   "Test stopping the server ending every channel and the main thread."
