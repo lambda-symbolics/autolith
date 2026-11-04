@@ -231,7 +231,11 @@ exit 1
                     ;; The launcher leads its own process group, as a shell job does.
                     (uiop:run-program (list "kill" "-INT" "--"
                                             (format nil "-~D" (uiop:process-info-pid process))))
-                    (uiop:wait-process process))
+                    ;; Channel cleanup owns reaping, including on reader EOF.
+                    ;; A second blocking wait races SBCL's process event pipe.
+                    (test-assert
+                     (task-tests--wait-until (lambda () (not (uiop:process-alive-p process))) 10)
+                     "the interrupt ends the launcher before channel cleanup"))
                (agentcomms:channel-close channel))
              (let ((diagnostics (agentcomms:acp-process-channel-stderr-text channel)))
                (test-assert (eql 130 (agentcomms:acp-process-channel-exit-code channel))
