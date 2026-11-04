@@ -864,17 +864,21 @@
                                                         :terminal (make-instance 'recording-terminal
                                                                                  :columns 80))))
                  (text   (format nil "ask @~A now" other))
+                 (second (format nil "and tell @~A later" other))
                  (before (length (world-inbox-deliveries configuration "bsecnd2"))))
             (test-assert (and (null (application-world-share new text))
-                              (string= (application-world-pending-share new) text)
+                              (null (application-world-share new second))
+                              (equal (application-world-pending-share new) (list text second))
                               (null (application-world-share-pending new))
                               (= before (length (world-inbox-deliveries configuration "bsecnd2"))))
-                         "a message typed before the conversation persists waits, and sharing it early sends nothing")
+                         "messages typed before the conversation persists wait in order, and sharing them early sends nothing")
             (conversation-append-user-message fresh text)
             (test-assert (and (equal (application-world-share-pending new) '("bsecnd2"))
-                              (= (1+ before) (length (world-inbox-deliveries configuration "bsecnd2")))
+                              (equal (mapcar #'world-delivery-text
+                                             (nthcdr before (world-inbox-deliveries configuration "bsecnd2")))
+                                     (list text second))
                               (null (application-world-share-pending new)))
-                         "once the first message persists the waiting share goes out exactly once"))
+                         "once the first message persists every waiting share goes out exactly once, in order"))
           (let* ((entry  (application--user-message-entry
                           application (format nil "ping @~A, @user and @nobody" other) 1000))
                  (styled (loop for span in entry
