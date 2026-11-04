@@ -13,6 +13,11 @@
     :accessor      localgroup-session-paused-p
     :type          boolean
     :documentation "Whether queued primary work must wait for explicit input.")
+   (closing-p
+    :initform      nil
+    :accessor      localgroup-session-closing-p
+    :type          boolean
+    :documentation "Whether a close was committed while no terminal controlled the session, so no terminal may attach now.")
    (checkpoint-reconnect-id
     :initarg       :checkpoint-reconnect-id
     :initform      nil
@@ -358,6 +363,16 @@ without one."
           (localgroup-session-detached-explicitly-p session) nil))
   nil)
 
+(-> localgroup-session-admits-attachment-p (localgroup-session) boolean)
+(defun localgroup-session-admits-attachment-p (session)
+  "Return true while SESSION admits a new terminal: it is neither stopping nor committed to close.
+
+Call it with SESSION's runtime lock held, the lock a committed close takes
+before it checks for a controlling terminal, so no terminal is admitted
+between that check and the close."
+  (not (or (image-daemon:daemon-runtime-stopping-p session)
+           (localgroup-session-closing-p session))))
+
 (-> localgroup--exit-abandoned-session (localgroup-session) null)
 (defun localgroup--exit-abandoned-session (session)
   "Stop SESSION because the terminal it was serving is gone for good."
@@ -464,7 +479,7 @@ session, one a world server hosts, stays for its next client instead."
     (let ((attachment (image-daemon:attachment-create socket stream mode)))
       (labels ((attach ()
                  (with-lock-held ((image-daemon:daemon-runtime-lock session))
-                   (unless (image-daemon:daemon-runtime-stopping-p session)
+                   (when (localgroup-session-admits-attachment-p session)
                      (image-daemon:relay-attach
                       terminal attachment :rows rows :columns columns :styled-p styled-p
                       :session-id (image-daemon:daemon-runtime-identifier session))))))
