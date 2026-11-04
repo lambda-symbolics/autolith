@@ -158,20 +158,48 @@
                                     nil)
                            (world-error () t))
                          "deleting the only human would leave channels without a human owner")
-            (let ((deleted (world-channel-delete configuration "b-task"
-                                                 :participants (list (participant-identifier lead)
-                                                                     (participant-identifier helper))
-                                                 :now          2003)))
-              (test-assert (equal deleted (list (participant-identifier lead)
-                                                (participant-identifier helper)))
-                           "deleting a channel with its listed residents reports every deleted participant")
+            (world-channel-create configuration
+                                  :id        "b-other"
+                                  :owner     (participant-identifier human)
+                                  :workspace workspace
+                                  :now       2002)
+            (let ((remote (world-participant-create configuration
+                                                    :kind      ':agent
+                                                    :name      "remote"
+                                                    :parent    (participant-identifier lead)
+                                                    :residence "b-other"
+                                                    :now       2002)))
+              (test-assert (handler-case
+                               (progn (world-channel-delete configuration "b-task"
+                                                            :participants (list (participant-identifier lead)
+                                                                                (participant-identifier helper)))
+                                      nil)
+                             (world-error (condition)
+                               (and (eq (world-error-operation condition) ':delete-channel)
+                                    (world-channel-find (world-load configuration) "b-task")
+                                    (world-participant-find (world-load configuration)
+                                                            (participant-identifier remote)))))
+                           "a descendant living elsewhere is never deleted implicitly, and nothing is written")
+              (let ((deleted (world-channel-delete configuration "b-task"
+                                                   :participants (list (participant-identifier lead)
+                                                                       (participant-identifier helper)
+                                                                       (participant-identifier remote))
+                                                   :now          2003)))
+                (test-assert (null (set-exclusive-or deleted
+                                                     (list (participant-identifier lead)
+                                                           (participant-identifier helper)
+                                                           (participant-identifier remote))
+                                                     :test #'string=))
+                             "deleting a channel with its listed residents reports every deleted participant"))
               (let* ((world (world-load configuration))
                      (human (world-participant-find world (participant-identifier human))))
                 (test-assert (and (null (world-channel-find world "b-task"))
                                   (null (world-participant-find world (participant-identifier lead)))
                                   (null (world-participant-find world (participant-identifier helper)))
+                                  (null (world-participant-find world (participant-identifier remote)))
+                                  (world-channel-find world "b-other")
                                   (world-channel-find world "b-lobby"))
-                             "the channel and its residents are gone, the parent stays")
+                             "the channel and its residents are gone, the parent and the other channel stay")
                 (test-assert (null (participant-subscriptions human))
                              "subscriptions to a deleted channel are dropped")))
             (let ((agent (world-participant-create configuration
