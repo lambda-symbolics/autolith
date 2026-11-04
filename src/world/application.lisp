@@ -574,6 +574,49 @@ person and its subscribers, and offers a move or a domestic agent."
                        (application-world-release-agent application participant)
                        0))))
 
+(-> application-world-domestic-agent (application) participant)
+(defun application-world-domestic-agent (application)
+  "Create a new agent participant resident in APPLICATION's channel and return it.
+
+The channel must be served and without an agent. The new agent takes the
+application's current model and effort, a handle from the workspace, and
+the person as its parent; the application's own agent then speaks as it."
+  (let* ((configuration (application-configuration application))
+         (channel       (or (application-world--served-channel application)
+                            (error 'world-error
+                                   :message   "This conversation is not a channel yet; it becomes one with its first durable message."
+                                   :pathname  nil
+                                   :operation ':domestic)))
+         (world         (values (world-reconcile-sessions configuration)))
+         (person        (world-human-participant world)))
+    (when (find ':agent (world-channel-residents world channel) :key #'participant-kind)
+      (error 'world-error
+             :message    (format nil "Channel ~A already has an agent."
+                                 (conversation-identifier-display channel))
+             :pathname   nil
+             :operation  ':domestic
+             :identifier channel))
+    (let ((agent (world-participant-create
+                  configuration
+                  :kind      ':agent
+                  :name      (world-unique-handle world (world-handle-base
+                                                         (world-workspace-leaf
+                                                          (world-workspace-name
+                                                           (config :working-directory configuration)))
+                                                         :fallback *world-agent-name*))
+                  :residence channel
+                  :parent    (and person (participant-identifier person))
+                  :settings  (append (list :model (config :model configuration))
+                                     (let ((provider (config :model-provider configuration)))
+                                       (and (non-empty-string-p provider)
+                                            (list :model-provider provider)))
+                                     (let ((effort (config :reasoning-effort configuration)))
+                                       (and effort (list :reasoning-effort effort)))))))
+      (world-session-remap configuration channel (participant-identifier agent))
+      (application-present application
+                           (format nil "Agent ~A now lives in this channel." (participant-name agent)))
+      agent)))
+
 (-> application-world-human-identifier (application) (option string))
 (defun application-world-human-identifier (application)
   "Return the identifier of the world's human participant, or NIL before the world has one."
