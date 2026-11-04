@@ -644,6 +644,7 @@
   test-world-channel-tools
   test-world-message-presentation
   test-world-child-participants
+  test-world-agent-hierarchy
   test-world-one-resident-agent
   test-world-agent-move
   test-world-agentless-channel
