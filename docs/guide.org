@@ -4,19 +4,17 @@
 * Intro
 
 Autolith is a terminal agent running in a live Common Lisp image. It works on
-Linux x86-64 and macOS.
+Linux x86-64, macOS, and Windows x86-64.
 
-You can launch autolith by typing its name into your favorite terminal:
+Launch Autolith from your terminal:
 
 #+BEGIN_SRC sh
 autolith
 #+END_SRC
 
-If you haven't authenticated already, you can check out the [[file:../README.org][README]] for how
-to do that.
+If you haven't authenticated yet, follow the [[file:../README.org][README]] instructions.
 
-Autolith's prompt window can also evuluate lisp forms directly:
-
+Autolith's prompt window can also evaluate Lisp forms directly:
 
 #+BEGIN_SRC lisp
 (help)
@@ -24,15 +22,14 @@ Autolith's prompt window can also evuluate lisp forms directly:
 (prompt (read-file "review-notes.org"))
 #+END_SRC
 
-This can be frequently helpful since you can use the exact same tools
-the clanker can, and the same machinery is exposed to you.
+You can use the same tools and Lisp machinery as the clanker.
 
 Slash syntax is optional syntactic sugar for command forms, for example
 =/status= for =(status)=.
 
 Type =(=, =[=, or ={= in the composer to insert a matching pair with the cursor
-between the braces. Type the closing brace to move past it, or press Backspace
-between an empty pair to delete both braces.
+between the delimiters. Type the closing delimiter to move past it, or press
+Backspace between an empty pair to delete both.
 
 =Tab= completes operation names, finite options, and workspace
 paths, and =Shift-Tab= steps back through the suggestions. With nothing to
@@ -40,13 +37,14 @@ complete, =Tab= sends the input like Enter, or queues it as a follow-up while a
 turn is running. Inside a form you are still typing, such as =(job.continuity :=,
 =Tab= does nothing rather than send half a form.
 The work indicator displays =REPL= with one letter highlighted in sequence.
-=(settings :transcript-style :repl)= opens messages like a Lisp REPL exchange,
-with =>= before yours and =<= before Autolith's, and the time on the line above
-while turn timestamps are on; =:labels= restores the =❯ you= and =● autolith=
-headers.
-Below the modeline, a line names what the turn is doing, such as =pondering=;
-=(settings :activity-line-p nil)= hides it and spares the row, while the
-modeline keeps timing the turn. A streaming response needs no such line.
+Use =(settings :transcript-style :repl)= to display messages as a Lisp REPL
+exchange, with =>= before yours and =<= before Autolith's. When turn timestamps
+are enabled, the time appears on the line above. Set the style to =:labels= to
+restore the =❯ you= and =● autolith= headers.
+Below the modeline, an activity line names what the turn is doing, such as
+=pondering=. Hide it with =(settings :activity-line-p nil)= to free that row;
+the modeline still shows elapsed time. The activity line is hidden while a
+response streams.
 
 * Terminal diagrams
 
@@ -166,27 +164,32 @@ provider output cap replaces that division. Reviewer requests reserve from both
 allowances. Settlement releases the reservation and charges reported input and
 output usage, so measured usage can exhaust the token allowance.
 
-When an exactly identified admitted child settles without usage, charge its full
-finite reservation once, including for length failures, HTTP 429, cancellation or
-an interrupted dispatch. Retain the child's failure and UNKNOWN audit. Record
-=:reservation-charged-tokens= as part of =:tokens-used=, not additional spend, and
-=:reservation-charges-by-child= with request counts and token charges. Child
-terminal results retain =:unknown-usage=, =:reservation-charged-tokens= and
-=:reservation-charge-requests=; =:usage= contains only provider-reported usage.
-The shared mission gains no unresolved UNKNOWN from this bounded settlement.
-Subsequent primary inference, new children and native scheduled continuations
-use the same mission and ordinary remaining budget, deadline and identity checks.
+When an admitted child's request has no reported usage, Autolith charges its
+full finite reservation once, provided it can identify the exact child and
+reservation. This includes length failures, HTTP 429, cancellation and interrupted
+dispatch. The child's failure and UNKNOWN audit are retained.
 
-This allocation is an accounting policy charge, not measured usage or a bound on
-actual provider billing. Input and repeated generations can exceed it; Codex does
+The =:reservation-charged-tokens= field is included in =:tokens-used=, not added
+as separate spend. The =:reservation-charges-by-child= field records request
+counts and token charges. Child terminal results retain =:unknown-usage=,
+=:reservation-charged-tokens= and =:reservation-charge-requests=; =:usage=
+contains only provider-reported usage. This bounded settlement leaves no
+unresolved UNKNOWN in the shared mission. Subsequent primary inference, new
+children and scheduled continuations use the same mission, with its remaining
+budget, deadline and identity checks.
+
+The reservation charge is accounting policy, not measured usage or a limit on
+provider billing. Input tokens and repeated generations can exceed it. Codex does
 not enforce a wire output ceiling at the current library pin. Retry success uses
 only final returned usage and does not reconcile earlier unreported attempts.
-Without proven finite exact-child ownership, retain unresolved shared UNKNOWN.
-By default, exact-child unresolved usage quarantines further inference and new
-child work before dispatch; non-spending continuation and already-reserved
-requests may finish. Root or unproven ownership blocks new work. Recovery cannot
-infer per-request child bounds from aggregate outstanding reservations. Existing
-unresolved UNKNOWN is never reclassified by restore or continuation.
+
+If Autolith cannot establish exact child ownership and a finite reservation,
+missing usage stays unresolved. Under the default policy, unresolved child usage
+prevents further inference and new child work before dispatch; non-spending
+continuation and already-reserved requests may finish. Missing root usage or
+uncertain ownership blocks new work. Recovery cannot reconstruct per-request
+child bounds from aggregate reservations, and restore or continuation never
+reclassifies an existing unresolved UNKNOWN.
 
 To continue despite missing provider usage, explicitly select
 =:unknown-usage-policy :record= when starting a mission:
@@ -214,12 +217,12 @@ unlimited-mode switch.
 The wall-clock deadline includes gate execution, delegated tools, pauses and
 time away. Work runs under cl-jobpond supervision. Use =(goal :pause)= and
 =(mission :resume)= without resetting any mission budget; use
-=(mission :cancel "REASON")= to terminate it. Terminal states are =verified=, =exhausted=, =cancelled=
-and =failed=. A =blocked= mission retains the evidence needed to resolve its
-blocker and resume. With the default =:block= policy, interrupted inference
-restores as blocked when its usage cannot be recovered. Gate attempts,
-fingerprints and evidence restore with the conversation and survive compaction
-independently of model summaries.
+=(mission :cancel "REASON")= to terminate it. Terminal states are =verified=,
+=exhausted=, =cancelled= and =failed=. A =blocked= mission retains the evidence
+needed to resolve its blocker and resume. With the default =:block= policy,
+interrupted inference restores as blocked when its usage cannot be recovered.
+Gate attempts, fingerprints and evidence restore with the conversation and
+survive compaction independently of model summaries.
 
 Gates run in order, stopping at the first failure. Command gates use the ordinary
 shell authorization and sandbox boundary. Artifact gates require =:path= and
@@ -528,20 +531,19 @@ Save the preference for future launches at the Autolith prompt:
 
 In fullscreen mode, scroll the transcript above the bottom-pinned composer,
 modeline, command, RLM, and task activity rows. Use =PageUp= and =PageDown= for
-page movement, =Ctrl-PageUp= and =Ctrl-PageDown= to jump between the user and
+page movement, =Ctrl-PageUp= and =Ctrl-PageDown= to jump between user and
 assistant messages while skipping reasoning and tool activity, =Ctrl-Home= and
 =Ctrl-End= for the oldest and newest transcript positions, and the mouse wheel
-for incremental scrolling. A message jump ends the message on the row above the
-composer, where your eyes already are; a message taller than the window shows
-its header at the top instead. The =--fullscreen= option enables it for one
+for incremental scrolling. A message jump places the end of the message on the
+row above the composer. If the message is taller than the window, its header
+appears at the top instead. The =--fullscreen= option enables fullscreen for one
 launch without changing the saved preference.
 Pass =nil= to =preferences-set-fullscreen= to return future launches to inline mode.
 Because the viewport owns the mouse, hold =Shift= while dragging to select text
 with the terminal emulator. Fullscreen history lives in the application rather
 than the terminal emulator's native scrollback. The viewport keeps about four
-million characters of recent output; older output leaves memory, and the legend
-shows =(history)= at the oldest kept row. Run =(history)= to load the newest
-page of the output that left.
+million characters of recent output in memory. At the oldest retained row, the
+legend shows =(history)=. Run =(history)= to load a page of older output.
 
 For input with matching saved memories, a dim =@ N relevant memories exist= line
 appears below your message. Its count is the number offered to the model for that
@@ -602,10 +604,10 @@ After an OSC 133 prompt-start marker, it replays active records only.
 Disconnecting the job observer clears its records. Terminal presentation depends
 on the terminal.
 
-  Fullscreen startup presents a brief Lisp-machine boot screen with a centered tip
-  and a rock mascot that adapts to short viewports, then the session banner and
-  transcript above the composer. Mouse wheel scrolling also works through a
-  controlling local-session attachment.
+Fullscreen startup presents a brief Lisp-machine boot screen with a centered tip
+and a rock mascot that adapts to short viewports, then the session banner and
+transcript above the composer. Mouse wheel scrolling also works through a
+controlling local-session attachment.
 
 The boot screen then waits for =Space= or =Enter= before opening the listener,
 rotating the startup tip every ten seconds while it waits. =Ctrl-C= on the
@@ -644,12 +646,12 @@ Nix is the simplest way to install Autolith:
 nix run github:lambda-symbolics/autolith
 #+END_SRC
 
-The first launch builds Lisp images Autolith needs to launch.
-These images live under =${XDG_DATA_HOME:-~/.local/share}/autolith/nix/images/=}.
+The first launch builds the Lisp images needed for startup under
+=${XDG_DATA_HOME:-~/.local/share}/autolith/nix/images/=.
 
 ** Linux binary release
 
-It is possible to install autolith on Linux x86_64 via a shell installer:
+Install the Linux x86-64 binary release with the shell installer:
 
 #+BEGIN_SRC sh
 curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
@@ -720,8 +722,9 @@ With Quicklisp in =~/quicklisp=, bootstrap and check the checkout:
 
 The check runs FiveAM tests in isolated SBCL processes, defaulting to the available
 logical CPU count (one worker if detection fails), and verifies the pristine
-recovery image. Each run first saves an active image of the checked source, so
-cases that start a fresh Autolith boot that core instead of loading the system. List or select test suites and individual cases with:
+recovery image. Each run first saves an active image of the checked source.
+Tests that launch another Autolith process boot that core instead of loading the
+system from scratch. List or select test suites and individual cases with:
 
 #+BEGIN_SRC sh
 ./script/check --list
@@ -743,7 +746,7 @@ mkdir -p ~/.local/bin
 ln -sfn "$PWD/bin/autolith" ~/.local/bin/autolith
 #+END_SRC
 
-This is assuming you have .local/bin/ in PATH.
+Make sure =~/.local/bin/= is in your =PATH=.
 
 ** Windows
 
@@ -833,7 +836,7 @@ Ordinary text is a prompt to the primary agent. It is equivalent to:
 
 =autolith= is reserved, case-insensitively, for the primary agent.
 
-As a shortcut, if you want to submit something to the main agent, you don't need to include the =:to= parameter:
+Omit =:to= to address the primary agent:
 
 #+BEGIN_SRC lisp
 (prompt "Shut yourself down homie")
@@ -881,8 +884,8 @@ through fff. Accepting a match inserts the path and drops the =@=.
 Directories keep a trailing slash so you can keep completing. A completed
 file stays in the draft.
 
-The clanker sees both your source input and its evaluated result apart
-from any other effects it may have.
+The clanker receives your Lisp source and its evaluated result. The form also
+has its usual effects in the active image.
 
 Local Lisp results use syntax highlighting and width-aware pretty printing.
 Small values fit on one line; longer property lists use aligned keyword/value
@@ -1006,6 +1009,12 @@ Papercuts use current-workspace resource URIs:
 The existing =papercut.report= tool and =(papercuts)=, =(papercut "ID")=, and
 =(papercut-close "ID")= commands remain convenient direct interfaces.
 
+Each model papercut report is acknowledged durably in the conversation. Repeated
+reports return the existing workspace papercut instead of creating another one.
+Reports match by an identical title, or by substantial overlap in the title and
+body with a report from the last day. A conversation re-filing its own report
+within an hour uses a looser match to catch rewritten repeats.
+
 Conversation history uses read-only resource URIs:
 
 - =conversation:current= is the current conversation's complete durable
@@ -1022,13 +1031,6 @@ Conversation history uses read-only resource URIs:
   and compaction summaries are searched.
 - =conversation:id/<id>= reads or searches another conversation by its
   identifier. Searches never span several conversations.
-
-Each model report is acknowledged durably in the conversation, and a report
-that repeats an active papercut of the workspace is not recorded again: a
-title matching word for word, or a title and body whose words largely overlap
-a report from the last day, answers with that existing report instead. A
-conversation re-filing within an hour of its own report is matched more
-loosely, since rewritten repeats share fewer words.
 
 ** Memories
 
@@ -1077,10 +1079,9 @@ In inline or noninteractive sessions, these commands print textual listings and
 explanations.
 
 Any unique prefix of a memory ID selects it. =(forget)= names the memories
-that relied on the forgotten one, which are now stale. Recall marks stale
-memories for the model, which rechecks them before relying on them and
-replaces or forgets them, and the recall notice counts them:
-=@ 3 relevant memories exist · 1 stale=.
+that relied on the forgotten one, which are now stale. Recall flags stale
+memories for the model to recheck, replace or forget before use. The recall
+notice counts them: =@ 3 relevant memories exist · 1 stale=.
 
 The model records evidence through the =memory:= resources. =memory-remember=
 and =memory-replace= accept =sources=, objects naming one =file=, =url=, or
@@ -1152,14 +1153,13 @@ otherwise you are asked to allow =rule.admit -- departure v1: ...=.
 (forget "c4dfffae")   ; retract a fact; derived facts that relied on it go too
 #+END_SRC
 
-=(why "ID")= is =(memory "ID")=, and accepts a memory or a fact. Recall offers
-current facts related to your message to the model complete, so it can use
-them without rereading, and counts them in the notice:
-=@ 2 relevant memories exist · 3 facts=. When a fact the model was given earlier
-in a conversation changes, the next turn explains the change to it once, and
-=@ 1 fact given earlier changed= appears. A memory can name a fact as a
-premise and goes stale when the fact stops holding; a fact can cite a memory
-as evidence.
+=(why "ID")= is an alias for =(memory "ID")= and accepts a memory or a fact.
+Recall includes complete current facts related to your message, so the model
+can use them without rereading. The notice counts them:
+=@ 2 relevant memories exist · 3 facts=. When a fact given to the model earlier
+in the conversation changes, the next turn includes an explanation once, and
+=@ 1 fact given earlier changed= appears. A memory can name a fact as a premise
+and goes stale when the fact stops holding; a fact can cite a memory as evidence.
 
 Autolith keeps every current fact, its sources, and the 1,024 most recently
 retracted sources in memory. Older retractions stay in the knowledge log, so
@@ -1200,22 +1200,21 @@ workspace keeps its facts.
 A plan step can name the facts it requires. Its text takes their values, so
 =Leave at {?leave}= requiring =event.departure review ?leave= reads =Leave at
 12:20= and follows the departure when the meeting moves, without replanning.
-A step whose requirements nothing satisfies is shown /blocked/ with the missing
-pattern. A step marked done records the facts it was done with; if they later
-stop holding, the plan says so instead of repeating the step. When such a
-change happens between turns, the model is told once at its next turn and
+A step with unsatisfied requirements is shown /blocked/ with the missing pattern.
+Marking a step done records the facts used to complete it. If those facts later
+stop holding, the plan flags the change without repeating the step. Changes
+between turns are reported to the model once at its next turn, and
 =@ 1 plan step changed with its facts= appears.
 
-A /method/ says how to do a task when facts allow it: its conditions, then
-subtasks and plain steps in order. =plan.expand= turns a task such as
-=prepare review= into a checked plan locally, trying methods in order and
-expanding subtasks within a depth of 8 and 1,000 tasks. It reports a task no
-method describes, methods whose conditions do not hold (naming them), and a
-search that ran out of budget, separately, and leaves the plan unchanged then.
+A /method/ describes how to do a task when its conditions hold, with subtasks
+and plain steps in order. =plan.expand= turns a task such as =prepare review=
+into a plan locally, trying methods in order and expanding subtasks within a
+depth of 8 and 1,000 tasks. If no method describes a task, no method's conditions
+hold, or the search runs out of budget, it reports the reason and leaves the
+plan unchanged. Reports of unsatisfied conditions name the methods involved.
 
 A mission gate of kind =:fact= passes when a fact matching its pattern holds
-on accepted evidence, observations and your statements unless it says
-otherwise:
+on accepted evidence. By default, it accepts observations and your statements:
 
 #+BEGIN_SRC lisp
 (:id "departure-known" :kind :fact :pattern ("event.departure" "review" "?t"))
@@ -1227,23 +1226,24 @@ negated premises included, is accepted. A negated pattern such as
 =(:not ("item.blocked" "a"))= passes on an accepted explicit negation. A gate
 passed on facts that stop holding before acceptance is checked again.
 
-An action /contract/ describes a tool call: argument values it applies to,
-facts it requires, facts it is expected to cause, and facts to read from its
-arguments and JSON result, such as =$arg.to= and =$result.id=. A call whose
-requirements do not hold is refused before it runs, with the reason; like a
-gate, a requirement holds only on undisputed observations or your statements,
-unless the contract's =accepts= also names =model-proposal= so that an earlier
-call's predicted effects count. A
-successful call records its expected effects as predictions and its observed
-values as observations of that call, which is how structured tool output,
-MCP results included, becomes facts. The model defines methods with
-=method-define= and proposes contracts with =contract-define= on =memory:facts=.
-For each new contract version, approve the =contract.admit= request containing
-its complete definition, including observation mappings and =accepts=. Declining
-leaves that version inactive and any previously admitted version active. Any
-edit requires fresh admission; proposing the same admitted content again does
-not. Read proposed and active versions from =memory:contracts=, and methods
-from =memory:methods=.
+An action /contract/ describes a tool call: the argument values it applies to,
+facts it requires, expected effects, and facts to read from its arguments and
+JSON result, such as =$arg.to= and =$result.id=.
+
+A call whose requirements do not hold is refused before execution, with the
+reason. As with a gate, requirements need undisputed observations or your
+statements unless =accepts= also names =model-proposal=. In that case, predicted
+effects from an earlier call can satisfy them. A successful call records its
+expected effects as predictions and its observed values as observations. This
+also works with MCP results.
+
+The model defines methods with =method-define= and proposes contracts with
+=contract-define= on =memory:facts=. For each new contract version, approve the
+=contract.admit= request containing its complete definition, including
+observation mappings and =accepts=. Declining leaves that version inactive and
+any previously admitted version active. Any edit requires fresh admission;
+proposing the same admitted content again does not. Read proposed and active
+versions from =memory:contracts=, and methods from =memory:methods=.
 
 Contract admissions are persisted for the exact definition and version. Older
 contract records without admission provenance are inactive. Exports retain
@@ -1284,15 +1284,18 @@ admitted procedure version and content, with complete usage measurements showing
 both fewer model requests and fewer tokens than its learning baseline. A request
 matching its wording exactly, apart from its parameters, then runs it before the
 model's first request, shown as its =procedure.run= call, and the model answers
-from the results in one request. A wording learned with a word that varied, such as
-=Please= or =Kindly=, matches any word there, so it stays an offer the model
-may decline. A request worded differently, such as =Make the sales forecast
-for q9.=, matches no pattern, but when it shares at least two words with a
-procedure, up to three such procedures are listed as possible fits with their
-parameters to fill in, and =@ learned procedure make-sales-report may fit this
-request= appears; the model decides, and nothing runs on its own. Procedures
-are learned only from turns the model finished: every
-call succeeded, the model answered, and the turn was not cancelled.
+from the results in one request.
+
+If a learned wording pattern has a variable word such as =Please= or =Kindly=,
+any word matches in that position. Such a match is only offered to the model,
+which may decline it. Different wording, such as =Make the sales forecast for
+q9.=, may match no pattern. If it shares at least two words with a procedure,
+Autolith lists up to three possible fits with their parameters to fill in and
+shows =@ learned procedure make-sales-report may fit this request=. The model
+decides whether to use one; none runs automatically on that match.
+
+Procedures are learned only from turns the model finished: every call succeeded,
+the model answered, and the turn was not cancelled.
 
 Every call still asks its own approval and passes its contracts. A run whose
 contract requirements do not hold for the request's values is refused before
@@ -1315,18 +1318,18 @@ and are learned and offered only while =knowledge-mode= is =active=.
 
 *** Diagnosis
 
-With =Diagnostic probes= on, as they are by default (=AUTOLITH_DIAGNOSIS=0= or
-=(settings)= turns them off), and
-structured knowledge active, the model can find out why something fails
-before repairing it, instead of trying repairs in turn. =diagnosis.run= takes
-up to four hypotheses, each predicting facts, and probes: tool calls whose
-contracts observe facts from their results. Facts already known are checked
-first; then the probe telling apart the most remaining hypotheses per cost
-runs, at most three, with no model request between them. A hypothesis is
-ruled out only by an undisputed observation or statement contradicting one of
-its predictions, so a case no probe can settle is reported as still open
-rather than guessed. A diagnosis
-can be saved by name and run again with new values.
+Diagnostic probes are enabled by default. Turn them off in =(settings)= or
+with =AUTOLITH_DIAGNOSIS=0=. With probes enabled and structured knowledge active,
+the model can use =diagnosis.run= to distinguish possible causes before trying
+a repair.
+
+Supply up to four hypotheses, each predicting facts, and probes: tool calls whose
+contracts observe facts from their results. Autolith checks known facts first,
+then selects the probe expected to distinguish the most remaining hypotheses
+per cost. It runs at most three probes, without a model request between them.
+A hypothesis is ruled out only by an undisputed observation or statement that
+contradicts one of its predictions. Cases the probes cannot settle are reported
+as open. Save a diagnosis by name to run it again with new values.
 
 #+BEGIN_SRC text
 Diagnosis remote-service: stale-endpoint. Repair: Update its endpoint.
@@ -1481,7 +1484,7 @@ Full IDs take priority over prefix matches. If a prefix matches more than one
 session, the error lists the matching IDs; use a longer prefix. Current IDs are
 case-sensitive. Legacy hexadecimal IDs accept either case.
 
-=tell= uses input to tell something to a session and resumes a paused session.
+Use =tell= to send input to a session and resume it if paused.
 =pause= cancels active work and holds queued primary work.
 =kill= requests graceful shutdown.
 
@@ -1567,9 +1570,9 @@ Executable initialization loads in this order:
 2. trusted directory =.autolith/init.lisp= files, outermost to nearest
 3. the user XDG =init.lisp=
 
-Missing files are ordinary. A present file that cannot be read or evaluated
-fails startup or reload with its exact pathname. =directory-scopes.sexp=
-is user-owned.
+Missing files are skipped. A file that exists but cannot be read or evaluated
+fails startup or reload, with its exact pathname in the error. The
+=directory-scopes.sexp= file is user-owned.
 
 ** Settings
 
@@ -1838,9 +1841,8 @@ removes only the exact Unix socket created by that runtime.
 
 ** Context
 
-Autolith has a concept of *ephemeral notes*, which can be used to
-add temporary additional information to the context that will
-eventually disappear:
+Use *ephemeral notes* to add temporary information to provider requests without
+adding conversation messages. For example, register advice for release requests:
 
 #+BEGIN_SRC lisp
 (define-context-contributor release-advice (request)
@@ -1854,14 +1856,13 @@ eventually disappear:
      :priority    40)))
 #+END_SRC
 
-- A contributor sees a read-only request snapshot
-- It can return none, one, or many contributions
-- Notes stack unless they deduplicate, supersede, or conflict
-- Priority only comes into play when the advice budget is full
-- You can use =(context)=
+- A contributor receives a read-only request snapshot.
+- It can return zero, one, or many contributions.
+- Notes stack unless they deduplicate, supersede, or conflict.
+- Priority matters only when the advice budget is full.
 
-Note that these are provider-request-only, and don't not count as a conversation turn,
-and do not get attached to your messages.
+Inspect contributions with =(context)=. They apply only to provider requests;
+they do not count as conversation turns or attach to your messages.
 
 Register selective project or user advice as a declarative rule:
 
@@ -2006,13 +2007,13 @@ permits idle precompaction; that route has no declared lifetime by default.
 =(settings :prompt-cache-ttl "1h")= asks the Anthropic API and OpenRouter
 Claude models to keep cache entries for one hour instead of five minutes. A
 one-hour cache write costs twice the base input price, against 1.25 times for
-five minutes, so it pays when a conversation often pauses for between five
-minutes and an hour. Other routes ignore the setting. The requested lifetime
-supplies both the declared lifetime for precompaction and the estimate for idle
-compaction. An explicit =:prompt-cache-retention-seconds= setting takes
-precedence for both local policies. OpenRouter requests
-carry the conversation's cache key as their session identifier for upstream
-routing affinity from the first request.
+five minutes. The longer lifetime can avoid rewrites after pauses of five
+minutes to an hour; whether it saves money depends on reuse. Other routes
+ignore the setting. The requested lifetime supplies both the declared lifetime
+for precompaction and the estimate for idle compaction. An explicit
+=:prompt-cache-retention-seconds= setting takes precedence for both local
+policies. OpenRouter requests carry the conversation's cache key as their
+session identifier for upstream routing affinity from the first request.
 
 Use =(status)= to inspect this process's model-request costs. A request is priced
 by the charge its provider reports, as OpenRouter does, else by a price
@@ -2064,7 +2065,7 @@ provider and are not guaranteed.
 
 ** Providers
 
-Register a OpenAI-compatible provider:
+Register an OpenAI-compatible provider:
 
 #+BEGIN_SRC lisp
 (register-openai-compatible-provider
@@ -2083,10 +2084,9 @@ autolith models | grep gpt
 The command prints one sorted, deduplicated model ID per line from built-in and
 locally configured catalogs.
 
-Inside a session, =(auth)= without a
-provider picks one interactively, and =(auth "my-provider")= selects one
-explicitly. Use
-=autolith auth my-provider= to authenticate during startup.
+Inside a session, use =(auth)= to pick a provider interactively or
+=(auth "my-provider")= to select one explicitly. From the command line, use
+=autolith auth my-provider=.
 
 After a key is saved, static metadata or the last good cache keeps models
 available. =(models)= triggers discovery. You can also pass non-secret
@@ -2862,12 +2862,12 @@ completion notices. Reopen them after restart or compaction without executing
 the command again. Missing, interrupted and pruned captures return diagnostics.
 
 Defaults are 64 MiB per stream, 1 GiB of reserved capture capacity and 256
-retained artifacts. Eligible completed captures become pruneable after seven
-days or under capacity pressure, on the next allocation. Active captures and
-undelivered completion evidence are protected. Delivery evidence observed before child artifact retention
-is recorded on each capture, allowing ordinary pruning after the owner's
-conversation storage is removed. Adjust
-=*shell-log-capture-byte-limit*=, =*shell-log-retention-byte-limit*=,
+retained artifacts. Eligible completed captures can be pruned after seven days
+or under capacity pressure, on the next allocation. Active captures and
+undelivered completion evidence are protected. If delivery is observed before
+child artifact retention, that observation is recorded on each capture, so it
+can be pruned normally after the owner's conversation storage is removed.
+Adjust =*shell-log-capture-byte-limit*=, =*shell-log-retention-byte-limit*=,
 =*shell-log-retention-count-limit*= and =*shell-log-retention-age*= in trusted
 configuration. Captures exceeding their limit are explicitly incomplete.
 Session export collects task metadata independently of local log storage.
@@ -3009,7 +3009,7 @@ autolith resume --pristine --permissions full
 selected private image commit, mutation journal reconstruction, and executable
 user initialization for this process. It implies =--immutable= so ordinary
 self-mutation tools cannot replace the selected private commit. It does not
-erase any mutation or conversation data. Ordinary startup remains unchanged.
+erase mutation or conversation data.
 
 A fatal active failure publishes a private crash capsule and restores the
 terminal. Recovery restores the conversation without duplicating scrollback.
