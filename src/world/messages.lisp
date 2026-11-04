@@ -23,8 +23,8 @@
   "The readable outbox format version.")
 
 (deftype world-delivery-kind ()
-  "Why a delivery reached a channel: addressed to it, subscribed, or mentioned."
-  '(member :post :subscription :mention))
+  "Why a delivery reached a channel: addressed to it, subscribed, mentioned, or a notice for the person residing there."
+  '(member :post :subscription :mention :notice))
 
 (defclass world-delivery ()
   ((identifier
@@ -406,7 +406,9 @@ With NOTIFY-P, the process serving each of those channels is told to read."
               (:subscription
                (format nil "to channel ~A, which you subscribe to" target))
               (:mention
-               (format nil "to channel ~A, mentioning you" target))))
+               (format nil "to channel ~A, mentioning you" target))
+              (:notice
+               (format nil "to channel ~A, for the person" target))))
           (world-delivery-text delivery)))
 
 (-> world-delivery-request (world-delivery) list)
@@ -565,7 +567,10 @@ as they do of every ordinary message said in the channel."
           (when (and mentioned
                      (participant-residence mentioned)
                      (not (string= mention (participant-identifier sender))))
-            (deliver (participant-residence mentioned) ':mention)))))
+            ;; A message for the person is shown to the person, not to the
+            ;; agent of the channel the person happens to be in.
+            (deliver (participant-residence mentioned)
+                     (if (eq (participant-kind mentioned) ':human) ':notice ':mention))))))
     (nreverse pairs)))
 
 (-> world-message-notify (configuration list) list)
@@ -679,7 +684,8 @@ Deliveries CONVERSATION already recorded are settled on the way."
         (remhash (format nil "channel:~A" identifier) taken)))
     (loop for delivery in pending
           for identifier = (world-delivery-pending-identifier delivery)
-          unless (eq (gethash identifier taken) ':taken)
+          unless (or (eq (gethash identifier taken) ':taken)
+                     (eq (world-delivery-kind delivery) ':notice))
             collect (progn
                       (setf (gethash identifier taken) ':taken)
                       (agent-steering-input-create :identifier identifier

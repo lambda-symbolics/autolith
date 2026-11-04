@@ -1194,6 +1194,48 @@
                      "a handle chosen from the base parent skips the reserved name"))))
   nil)
 
+(-> test-world-person-notice () null)
+(defun test-world-person-notice ()
+  "Test a message for the person shows in the channel the person is in, settles there, and starts no agent turn."
+  (with-test-configuration (configuration)
+    (let ((first (world-tests--persisted-conversation configuration "bfirst1" 1000)))
+      (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+      (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+        (declare (ignore first-agent))
+        (let* ((terminal    (make-instance 'waiting-recording-terminal :columns 80))
+               (ui          (terminal-ui-create :terminal terminal))
+               (application (make-instance 'application
+                                           :configuration configuration
+                                           :conversation  first
+                                           :ui            ui))
+               (controller  nil))
+          (with-terminal-ui (active-ui ui)
+            (setf controller (application-input-controller-create application
+                                                                  :load-pending-p nil
+                                                                  :start-reader-p nil))
+            (unwind-protect
+                 (progn
+                   (world-message-send configuration
+                                       :sender   (participant-identifier second-agent)
+                                       :channel  "bsecnd2"
+                                       :text     (format nil "@~A the build is green"
+                                                         (participant-name human))
+                                       :notify-p nil)
+                   (test-assert (eq (world-delivery-kind
+                                     (first (world-inbox-deliveries configuration "bfirst1")))
+                                    ':notice)
+                                "a message for the person lands in the person's channel as a notice")
+                   (test-assert (null (application-world-steering-take application))
+                                "no agent takes a notice as a steer")
+                   (test-assert (zerop (application-world-deliver application))
+                                "a notice starts no agent turn")
+                   (test-assert (search "the build is green" (recording-terminal-output terminal))
+                                "the notice shows in full in the transcript")
+                   (test-assert (null (world-inbox-deliveries configuration "bfirst1"))
+                                "a shown notice leaves the inbox"))
+              (application-input-controller-stop controller)))))))
+  nil)
+
 (-> test-world-staggered-retirement () null)
 (defun test-world-staggered-retirement ()
   "Test a root whose storage vanishes before its child's keeps its mapping and retires with the child."
