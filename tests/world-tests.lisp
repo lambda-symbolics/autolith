@@ -1025,7 +1025,36 @@
         (test-assert (zerop (application-world-deliver application))
                      "without an input controller, deliveries stay in the inbox")
         (test-assert (= (length (world-inbox-deliveries configuration "bsecnd2")) 1)
-                     "the inbox keeps the undelivered message"))))
+                     "the inbox keeps the undelivered message")
+        (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+          (declare (ignore human))
+          (world-message-send configuration
+                              :sender   (participant-identifier second-agent)
+                              :channel  "bsecnd2"
+                              :text     (format nil "@~A please look at the secret plan"
+                                                (participant-name first-agent))
+                              :notify-p nil)
+          (let* ((copy  (first (world-inbox-deliveries configuration "bfirst1")))
+                 (entry (conversation-record-entry
+                         application
+                         (list :message
+                               :role              :user
+                               :content           (world-delivery-label copy)
+                               :automatic-p       t
+                               :operation-request (world-delivery-request copy)
+                               :time              1001)))
+                 (text  (format nil "~{~A~}"
+                                (loop for span in entry
+                                      when (and (consp span) (stringp (rest span)))
+                                        collect (rest span)))))
+            (test-assert (and (eq (world-delivery-kind copy) ':mention)
+                              (search (format nil "@~A mentioned from #b-secnd2 by ~A"
+                                              (participant-name first-agent)
+                                              (participant-name second-agent))
+                                      text)
+                              (not (search "secret plan" text))
+                              (search "secret plan" (world-delivery-label copy)))
+                         "a copy from another channel shows as one line without its text, which the model still gets"))))))
   nil)
 
 (-> test-world-one-resident-agent () null)

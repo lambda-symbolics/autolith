@@ -464,15 +464,43 @@ shares nothing. A delivery that fails is reported and never stops the turn."
 
 (-> application--channel-message-entry (application list (option timestamp)) list)
 (defun application--channel-message-entry (application request timestamp)
-  "Return the transcript entry showing a channel message with its sender and channel."
+  "Return the transcript entry showing a channel message with its sender and channel.
+
+A message said in this channel shows in full. A copy that arrived from
+another channel, because it mentioned a participant here or this channel
+subscribes to that one, shows as one line naming where it came from; its
+text went to the model and stays readable in the inbox and the channel
+resource."
   (let* ((message        (getf request :message))
          (name           (sanitize-text (or (getf message :sender-name) "participant")
                                         :single-line-p t))
          (channel        (conversation-identifier-display (or (getf message :target) "?")))
+         (kind           (getf message :kind))
          (timestamp-text (application--timestamp-text timestamp)))
-    (append (list (terminal-span ':brand "● ")
-                  (terminal-span ':agent-name name)
-                  (terminal-span ':dim (format nil " [channel ~A]~@[ ~A~]~%" channel timestamp-text)))
-            (application-world-mention-spans
-             application
-             (application--markdown-body application (or (getf request :summary) ""))))))
+    (if (member kind '(:mention :subscription))
+        (let ((mentioned (application--mentioned-names application (getf message :mentions))))
+          (list (terminal-span ':brand "● ")
+                (terminal-span ':dim
+                               (format nil "~A from #~A by ~A~@[ ~A~]~%"
+                                       (if (eq kind ':mention)
+                                           (format nil "~{@~A~^, ~} mentioned" mentioned)
+                                           "subscribed message")
+                                       channel name timestamp-text))))
+        (append (list (terminal-span ':brand "● ")
+                      (terminal-span ':agent-name name)
+                      (terminal-span ':dim (format nil " [channel ~A]~@[ ~A~]~%" channel timestamp-text)))
+                (application-world-mention-spans
+                 application
+                 (application--markdown-body application (or (getf request :summary) "")))))))
+
+(-> application--mentioned-names (application list) list)
+(defun application--mentioned-names (application identifiers)
+  "Return the names of the participants IDENTIFIERS, or their display identifiers when the world has no name for one."
+  (let ((world (handler-case (application-world application)
+                 (error ()
+                   nil))))
+    (loop for identifier in identifiers
+          for participant = (and world (world-participant-find world identifier))
+          collect (if participant
+                      (participant-name participant)
+                      (conversation-identifier-display identifier)))))
