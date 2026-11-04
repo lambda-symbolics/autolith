@@ -199,6 +199,10 @@ remaining selected revisions; interruption leaves them pending."
                  (lambda () (application-input-controller-exit-requested-p controller))
                  :direct-input-p-function
                  (lambda () (not (application-input-controller-reader-live-p controller)))))))
+      (let ((notice (config :saved-model-selection-notice configuration)))
+        (when (non-empty-string-p notice)
+          (application-present application notice)
+          (setf (config :saved-model-selection-notice configuration) "")))
       (when (member outcome '(:interrupt :interrupted))
         (application-input-controller--request-exit controller ':interrupt))
       outcome)))
