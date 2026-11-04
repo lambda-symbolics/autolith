@@ -1795,14 +1795,6 @@ than filesystem sockets for its inference and Localgroup protocols, and cleans
 stale Localgroup records itself.
 The management REPL socket also defaults to the state directory, at
 =management/repl.sock=.
-Conversation leases, Localgroup endpoint records, and recovery state live under
-=${XDG_STATE_HOME:-~/.local/state}/autolith/= rather than =XDG_RUNTIME_DIR=.
-They must survive logout so detached sessions, handoffs, and crash recovery can
-continue across login sessions. Autolith uses authenticated loopback TCP rather
-than filesystem sockets for its inference and Localgroup protocols, and cleans
-stale Localgroup records itself.
-The management REPL socket also defaults to the state directory, at
-=management/repl.sock=.
 
 * Configure Autolith
 
