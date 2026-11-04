@@ -818,6 +818,102 @@
                 "a host without a checkpoint capability is refused")))))))
   nil)
 
+(-> test-generation-health () null)
+(defun test-generation-health ()
+  "Exercise runtime drift, fallback, warning presentation and safe selection."
+  (with-test-configuration (configuration)
+    (let* ((*image-state-initialized-p*       t)
+           (*active-image-lineage-identifier* "generation-health-test")
+           (*active-image-commit-identifier*  nil)
+           (*active-image-history-commit*     nil)
+           (stale                             (generation-tests--generation configuration "stale" "0123456789abcdef"))
+           (healthy                           (generation-tests--generation configuration "healthy" "0123456789abcdef"))
+           (application                       (make-instance 'application :configuration configuration))
+           (root                              (test-configuration-root configuration)))
+      (labels ((publish (generation)
+                 (generation-tests--write-fake-core generation)
+                 (generation-tests--write-reconstruction generation)
+                 (generation-publish
+                  configuration generation
+                  :probe-runner (make-instance
+                                 'test-generation-core-probe-runner
+                                 :output (generation-core-probe-output
+                                          (generation-core-probe-record generation)))))
+
+               (check-warning (expected-p)
+                 (let* ((summary   (generation-health-summary configuration))
+                        (warning   (generation-health-warning summary))
+                        (presented nil))
+                   (test-assert (eq expected-p (not (null warning)))
+                                "warnings reflect retained and selected checkpoint health")
+                   (when warning
+                     (test-assert (and (search warning (self-status-render configuration))
+                                       (search warning (generation-render-list configuration)))
+                                  "status and listing present the shared health warning"))
+                   (test-call-with-function-replacements
+                    (list (list 'application-present
+                                (lambda (application spans &rest options)
+                                  (declare (ignore application options))
+                                  (setf presented (test-terminal-row-text spans)))))
+                    (lambda ()
+                      (test-assert
+                       (eq expected-p (application-present-generation-health-warning application))
+                       "ordinary startup presents a warning exactly when needed")))
+                   (test-assert (if warning (search warning presented) (null presented))
+                                "startup presents the shared diagnostic"))))
+        (unwind-protect
+             (progn
+               (let ((summary (generation-health-summary configuration)))
+                 (test-assert (and (zerop (getf summary :retained))
+                                   (zerop (getf summary :compatible)))
+                              "an empty store has zero retained and compatible checkpoints"))
+               (check-warning nil)
+               (publish stale)
+               (generation-tests--make-core-plausible stale)
+               (publish healthy)
+               (generation-select configuration stale)
+               (let ((manifest (read-portable-form (generation-manifest-pathname stale))))
+                 (setf (getf (rest manifest) :sbcl-version) "2.6.4-test")
+                 (snapshot-write (generation-manifest-pathname stale) manifest))
+               (let* ((summary (generation-health-summary configuration))
+                      (health  (getf summary :selected-health)))
+                 (test-assert (and (= 2 (getf summary :retained))
+                                   (zerop (getf summary :compatible))
+                                   (eq ':sbcl-version (getf health :reason-code))
+                                   (search "2.6.4-test" (getf health :reason))
+                                   (search (lisp-implementation-version) (getf health :reason)))
+                              "runtime drift reports saved and current runtimes without offering rollback"))
+               (check-warning t)
+               (let ((pointer (uiop:read-file-string (generation-current-pathname configuration))))
+                 (test-assert
+                  (handler-case (progn (generation-select configuration stale) nil)
+                    (checkpoint-error (condition)
+                      (eq ':selection (checkpoint-error-stage condition))))
+                  "an incompatible checkpoint cannot be selected")
+                 (test-assert
+                  (string= pointer (uiop:read-file-string (generation-current-pathname configuration)))
+                  "a rejected selection leaves the pointer unchanged"))
+               (generation-tests--make-core-plausible healthy)
+               (let ((summary (generation-health-summary configuration)))
+                 (test-assert (and (= 1 (getf summary :compatible))
+                                   (string= "healthy"
+                                            (generation-identifier (getf summary :fallback))))
+                              "a stale selection exposes a compatible fallback"))
+               (check-warning t)
+               (generation-select configuration healthy)
+               (check-warning nil)
+               (test-assert (= 1 (getf (generation-health-summary configuration) :compatible))
+                            "a healthy selection coexists with an incompatible retained checkpoint")
+               (delete-file (generation-core-pathname healthy))
+               (test-assert (eq ':core-missing (getf (generation-health healthy) :reason-code))
+                            "missing core diagnostics preserve the library cause")
+               (check-warning t)
+               (delete-file (generation-manifest-pathname healthy))
+               (test-assert (eq ':manifest-unreadable (getf (generation-health healthy) :reason-code))
+                            "manifest read failures are reported without signaling"))
+          (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))))
+  nil)
+
 (-> test-generation-manifest () null)
 (defun test-generation-manifest ()
   "Test generation publication, loading, selection, and compatibility checks."
@@ -852,18 +948,6 @@
                           "a published generation appears in retained listings")
              (test-assert (not (generation-compatible-p loaded))
                           "a fake one-byte core is never reported as bootable")
-               (test-assert
-                (let ((health (generation-health loaded)))
-                 (and (not (getf health :compatible))
-                      (search "core is unreadable or too small"
-                              (getf health :reason))))
-               "generation health reports why a retained core is unavailable")
-               (test-assert
-                (let ((summary (generation-health-summary configuration)))
-                  (and (= (getf summary :retained) 1)
-                       (zerop (getf summary :compatible))
-                       (null (getf summary :fallback))))
-                "generation health counts compatible rollback targets")
              (test-assert
               (let ((*checkpoint-in-progress-p* t))
                 (handler-case

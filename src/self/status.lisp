@@ -26,12 +26,10 @@
       (image-commit--pointer-state configuration)
     (let* ((pending             (image-commit-pending-records configuration))
            (effective           (image-commit-effective-diff-records configuration))
-           (generations         (generation-list configuration))
            (health              (generation-health-summary configuration))
-           (newest-generation   (first generations))
+           (newest-generation   (first (getf health :generations)))
            (selected-generation (getf health :selected))
-           (selected-health     (getf health :selected-health))
-           (fallback-generation  (getf health :fallback))
+           (warning             (generation-health-warning health))
            (selection-current-p
              (and (equal *active-image-commit-identifier* selected-identifier)
                   (equal *active-image-history-commit*
@@ -55,22 +53,14 @@
             (format stream "~A~%" experiment)))
         (format stream "checkpoint~%  publishing  ~:[no~;yes~]~%"
                 *checkpoint-in-progress-p*)
-        (format stream "generations~%  retained   ~D~%  compatible ~D~%  newest     ~A~%  selected    ~A"
+        (format stream "generations~%  retained   ~D~%  compatible ~D~%  rollback   ~:[unavailable~;available~]~%  newest     ~A~%  selected   ~A"
                 (getf health :retained)
                 (getf health :compatible)
+                (plusp (getf health :compatible))
                 (self-status--generation newest-generation)
                 (self-status--generation selected-generation))
-        (when (and selected-health
-                   (not (getf selected-health :compatible)))
-          (format stream "~%  warning     selected generation is unavailable"))
-        (when (and (getf health :retained)
-                   (zerop (getf health :compatible)))
-          (format stream "~%  warning     rollback unavailable: no compatible retained generation"))
-        (when (and fallback-generation
-                   selected-health
-                   (not (getf selected-health :compatible)))
-          (format stream "~%  fallback    ~A"
-                  (self-status--generation fallback-generation)))))))
+        (when warning
+          (format stream "~%  warning    ~A" warning))))))
 
 (defmethod tool-execute ((tool self-status-tool)
                          (context tool-context)

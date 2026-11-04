@@ -225,46 +225,47 @@ structured type and message survive the round trip."
 
 (-> generation-health (generation) list)
 (defun generation-health (generation)
-  "Return GENERATION's compatibility and an actionable diagnostic reason."
-  (let ((metadata (generation-metadata generation)))
-    (cond
-      ((not (probe-file (generation-manifest-pathname generation)))
-       (list :compatible nil :reason "manifest is missing or unreadable"))
-      ((not (probe-file (generation-core-pathname generation)))
-       (list :compatible nil :reason "core is missing or unreadable"))
-      ((handler-case
-           (<= (with-open-file (stream (generation-core-pathname generation)
-                                   :element-type '(unsigned-byte 8))
-                 (file-length stream))
-               1048576)
-         (error () t))
-       (list :compatible nil :reason "core is unreadable or too small"))
-      ((generation-compatible-p generation)
-       (list :compatible t :reason nil))
-      (t
-       (let ((recorded (getf metadata :sbcl-version))
-             (current  (lisp-implementation-version)))
-         (list :compatible nil
-               :reason
-               (if (and recorded (not (equal recorded current)))
-                   (format nil "runtime mismatch: SBCL recorded ~A, current ~A"
-                           recorded current)
-                   "runtime is incompatible with this core")))))))
+  "Return the library's compatibility verdict, reason and structured cause."
+  (multiple-value-bind (compatible reason reason-code)
+      (generation-compatible-p generation)
+    (list :compatible compatible :reason reason :reason-code reason-code)))
 
 (-> generation-health-summary (configuration) list)
 (defun generation-health-summary (configuration)
-  "Return retained-generation counts and selected/fallback health."
-  (let* ((generations (generation-list configuration))
-         (compatible (remove-if-not
-                      (lambda (generation)
-                        (getf (generation-health generation) :compatible))
-                      generations))
-         (selected (generation-selected configuration)))
-    (list :retained (length generations)
-          :compatible (length compatible)
-          :selected selected
-          :selected-health (and selected (generation-health selected))
-          :fallback (first compatible))))
+  "Return retained generations, compatible counts and selected/fallback health."
+  (let* ((generations     (generation-list configuration))
+         (compatible      (remove-if-not #'generation-compatible-p generations))
+         (selected        (generation-selected configuration))
+         (selected-health (and selected (generation-health selected))))
+    (list :generations     generations
+          :retained        (length generations)
+          :compatible      (length compatible)
+          :selected        selected
+          :selected-health selected-health
+          :fallback        (unless (getf selected-health :compatible)
+                             (first compatible)))))
+
+(-> generation-health-warning (list) (option string))
+(defun generation-health-warning (summary)
+  "Explain unavailable rollback or a stale selection in SUMMARY, or return NIL."
+  (let* ((selected-health    (getf summary :selected-health))
+         (invalid-selected-p (and selected-health
+                                  (not (getf selected-health :compatible)))))
+    (when (or invalid-selected-p
+              (and (plusp (getf summary :retained))
+                   (zerop (getf summary :compatible))))
+      (with-output-to-string (stream)
+        (when invalid-selected-p
+          (format stream "Selected checkpoint is unavailable: ~A "
+                  (getf selected-health :reason)))
+        (let ((fallback (getf summary :fallback)))
+          (if fallback
+              (format stream "Compatible fallback: ~A. "
+                      (generation-identifier fallback))
+              (write-string "Rollback is unavailable: no compatible retained checkpoint. "
+                            stream)))
+        (write-string "Run (checkpoint) from a clean source checkout to create a compatible checkpoint."
+                      stream)))))
 
 (-> generation-find (configuration string) (option generation))
 (defun generation-find (configuration identifier)
@@ -318,29 +319,31 @@ structured type and message survive the round trip."
 
 (-> generation-render-list (configuration) string)
 (defun generation-render-list (configuration)
-  "Return a concise model-visible list of retained generations."
-  (let ((generations (generation-list configuration)))
-    (if generations
-        (with-output-to-string (stream)
-          (dolist (generation generations)
-            (let ((health (generation-health generation)))
-              (format stream
-                      "~A  ~A  source ~A~%  image ~A~%  history ~A~%  replay ~A~%"
-                      (generation-identifier generation)
-                      (if (getf health :compatible)
-                          "compatible"
-                          (format nil "incompatible (~A)"
-                                  (getf health :reason)))
-                      (generation-git-commit generation)
-                      (or (generation-image-commit-identifier generation)
-                          "base")
-                      (or (generation-mutation-history-commit generation)
-                          "unavailable")
-                      (if (generation-reconstruction-pathname generation)
-                          (namestring
-                           (generation-reconstruction-pathname generation))
-                          "unavailable for legacy generation")))))
-        "No retained generations exist.")))
+  "Return retained checkpoint health, identities and rollback availability."
+  (let* ((summary     (generation-health-summary configuration))
+         (generations (getf summary :generations))
+         (warning     (generation-health-warning summary)))
+    (with-output-to-string (stream)
+      (format stream "Retained ~D; compatible ~D; rollback ~:[unavailable~;available~].~%"
+              (getf summary :retained)
+              (getf summary :compatible)
+              (plusp (getf summary :compatible)))
+      (when warning
+        (format stream "Warning: ~A~%" warning))
+      (dolist (generation generations)
+        (let ((health (generation-health generation)))
+          (format stream
+                  "~A  ~A  source ~A~%  image ~A~%  history ~A~%  replay ~A~%"
+                  (generation-identifier generation)
+                  (if (getf health :compatible)
+                      "compatible"
+                      (format nil "incompatible (~A)" (getf health :reason)))
+                  (generation-git-commit generation)
+                  (or (generation-image-commit-identifier generation) "base")
+                  (or (generation-mutation-history-commit generation) "unavailable")
+                  (if (generation-reconstruction-pathname generation)
+                      (namestring (generation-reconstruction-pathname generation))
+                      "unavailable for legacy generation")))))))
 
 
 ;;;; -- Checkpoint Backend --

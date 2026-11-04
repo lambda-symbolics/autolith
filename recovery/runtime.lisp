@@ -501,24 +501,11 @@ generation. Its validator carries this image's own stricter checks."
       :source-commit source-commit))
    (recovery-generation-list context)))
 
-(serapeum:-> recovery-warn-unavailable-generations (recovery-context) null)
-(defun recovery-warn-unavailable-generations (context)
-  "Warn at startup when retained generations are no longer usable."
-  (let* ((generations (recovery-generation-list context))
-         (unavailable (remove-if #'recovery-generation-compatible-p generations)))
-    (when unavailable
-      (format *error-output*
-              "Warning: ~D of ~D retained checkpoint~:P are unavailable to this runtime.~%"
-              (length unavailable)
-              (length generations))))
-  nil)
-
 (serapeum:-> recovery-selected-generation-or-fallback
     (recovery-context &key (:source-commit (or null string)))
     (or null recovery-generation))
 (defun recovery-selected-generation-or-fallback (context &key source-commit)
   "Return the selected or newest bootable generation for SOURCE-COMMIT, if any."
-  (recovery-warn-unavailable-generations context)
   (let ((selected
           (handler-case
               (recovery-selected-generation context)

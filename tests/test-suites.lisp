@@ -1056,6 +1056,7 @@
   test-checkpoint-backend-selection
   test-checkpoint-source-check-diagnostics
   test-checkpoint-source-precheck-order
+  test-generation-health
   test-generation-manifest
   test-crash-capsule-correlation)
 

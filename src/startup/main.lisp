@@ -237,6 +237,19 @@ the terminal wraps the semantic spans for both inline and fullscreen tips."
               "Installed through Nix. Update the flake or profile that provides Autolith."
               "Choose whether to install it before continuing.")))))))
 
+(-> application-present-generation-health-warning (application) boolean)
+(defun application-present-generation-health-warning (application)
+  "Present a retained-generation health warning during ordinary startup."
+  (let* ((configuration (application-configuration application))
+         (warning       (generation-health-warning
+                         (generation-health-summary configuration))))
+    (when warning
+      (application-present
+       application
+       (list (terminal-span ':failure
+                            (format nil "· checkpoint warning: ~A~%" warning))))
+      t)))
+
 (-> application--update-choice-items () list)
 (defun application--update-choice-items ()
   "Return the explicit user choices for a packaged release update."
@@ -477,6 +490,8 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                     (application-mission-schedules-recover application :startup-p t)
                     (application-peer-messages-recover application)
                     (application-recovery-input-vault-present-startup-warning
+                     application)
+                    (application-present-generation-health-warning
                      application)
                     (localgroup-start application)
                     (application-startup-presentation
