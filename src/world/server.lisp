@@ -387,7 +387,8 @@ Return the launcher status a hosted session asked for, or NIL."
     (:channels
      (list :ok :channels (world-server-channels server)))
     (:close
-     (world-server-close server (getf arguments :channel)))
+     (world-server-close server (getf arguments :channel)
+                         :unattached-only-p (not (null (getf arguments :unattached-only-p)))))
     (:stop
      (world-server-stop server)
      (list :ok :operation ':stop :session-id *world-server-identifier*))
@@ -453,8 +454,11 @@ endpoint is published, so the client can attach at once."
                                  (conversation-identifier-display channel))
              :operation  ':close
              :identifier channel))
-    (world-server--close-host host)
-    (list :ok :operation ':close :session-id (world-host-channel host))))
+    (if (and unattached-only-p (world-host-attached-p host))
+        (list :ok :operation ':close :session-id (world-host-channel host) :closed-p nil)
+        (progn
+          (world-server--close-host host)
+          (list :ok :operation ':close :session-id (world-host-channel host) :closed-p t)))))
 
 
 ;;;; -- Hosting --

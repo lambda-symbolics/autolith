@@ -497,6 +497,37 @@
                          "both channels serve again after a failed checkpoint")))))))
   nil)
 
+(-> test-world-server-close-unattached () null)
+(defun test-world-server-close-unattached ()
+  "Test a close meant for an idle channel spares one a terminal controls."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry      (world-client-entry configuration))
+            (id-a       (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
+                              :session-id))
+            (id-b       (getf (rest (world-server-tests--open entry (world-tests--workspace root "b")))
+                              :session-id))
+            (host-a     (world-server--find-host server id-a))
+            (host-b     (world-server--find-host server id-b))
+            (terminal-a (terminal-ui-terminal (application-ui (world-host-application host-a))))
+            (attachment (make-instance 'image-daemon:attachment
+                                       :socket nil
+                                       :stream (make-broadcast-stream)
+                                       :mode   ':control)))
+       (image-daemon:relay-attach terminal-a attachment :rows 24 :columns 80 :styled-p nil
+                                                        :session-id id-a)
+       (let ((answer (localgroup-query-record entry ':close
+                                              (list :channel id-a :unattached-only-p t))))
+         (test-assert (and (null (getf (rest answer) :closed-p))
+                           (world-host-live-p host-a))
+                      "a channel another terminal controls survives a close meant for an idle one"))
+       (let ((answer (localgroup-query-record entry ':close
+                                              (list :channel id-b :unattached-only-p t))))
+         (test-assert (and (getf (rest answer) :closed-p)
+                           (task-tests--wait-until (lambda () (not (world-host-live-p host-b))) 30))
+                      "a channel nobody controls is closed on request")))))
+  nil)
+
 (-> test-world-server-stop () null)
 (defun test-world-server-stop ()
   "Test stopping the server ending every channel and the main thread."

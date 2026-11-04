@@ -633,7 +633,8 @@
   test-world-server-switch
   test-world-server-resume-order
   test-world-server-starting-host
-  test-world-server-launch-options)
+  test-world-server-launch-options
+  test-world-server-close-unattached)
 
 (define-test-suite world-sidebar
   test-world-sidebar-rows
