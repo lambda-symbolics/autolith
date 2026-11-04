@@ -644,6 +644,13 @@ fragment through WORLD-CHANNEL-RESOLVE."
                    (equal (participant-parent participant) participant-identifier))
                  (world-participants world)))
 
+(-> world-participant-descendants (world string) list)
+(defun world-participant-descendants (world participant-identifier)
+  "Return every participant below PARTICIPANT-IDENTIFIER, children first, wherever each resides."
+  (loop for child in (world-participant-children world participant-identifier)
+        collect child
+        append (world-participant-descendants world (participant-identifier child))))
+
 (-> world-human-participant (world) (option participant))
 (defun world-human-participant (world)
   "Return WORLD's oldest human participant, or NIL."
@@ -1055,9 +1062,11 @@ remove; this store holds only identities and relationships."
   "Delete channel IDENTIFIER and return the deleted participant identifiers.
 
 Residents are never deleted implicitly: every resident must be listed in
-PARTICIPANTS, which deletes it with the channel, or moved away first. A
-channel with nested channels is refused; delete those first. Running jobs
-bound to the channel are the caller's check."
+PARTICIPANTS, which deletes it with the channel, or moved away first, and so
+must every descendant of a listed resident, wherever it lives, since a
+participant's deletion takes its descendants with it. A channel with nested
+channels is refused; delete those first. Running jobs bound to the channel
+are the caller's check."
   (world--transact
    configuration
    (lambda (world)
@@ -1078,7 +1087,17 @@ bound to the channel are the caller's check."
                                       identifier (participant-identifier resident))
                   :pathname   nil
                   :operation  ':delete-channel
-                  :identifier identifier)))
+                  :identifier identifier))
+         (dolist (descendant (world-participant-descendants world (participant-identifier resident)))
+           (unless (member (participant-identifier descendant) participants :test #'string=)
+             (error 'world-error
+                    :message    (format nil "Deleting ~A would delete its descendant ~A in channel ~A; move it or include it in the deletion."
+                                        (participant-identifier resident)
+                                        (participant-identifier descendant)
+                                        (participant-residence descendant))
+                    :pathname   nil
+                    :operation  ':delete-channel
+                    :identifier identifier))))
        (let ((records nil) (deleted nil))
          (dolist (resident residents)
            (unless (member (participant-identifier resident) deleted :test #'string=)
