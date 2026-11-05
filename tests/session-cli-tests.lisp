@@ -416,10 +416,12 @@
         (list 'localgroup-query-record
               (lambda (entry operation &optional arguments)
                 (declare (ignore entry))
-                (push (if (eq operation ':close)
-                          (list operation (getf arguments :unattached-only-p))
-                          operation)
-                      queried)
+                ;; The sidebar's own thread asks for the channels it shows.
+                (unless (eq operation ':channels)
+                  (push (if (eq operation ':close)
+                            (list operation (getf arguments :unattached-only-p))
+                            operation)
+                        queried))
                 (list :ok)))
         (list 'localgroup-relay-exit
               (lambda (&rest arguments) (declare (ignore arguments))))

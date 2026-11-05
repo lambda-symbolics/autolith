@@ -148,3 +148,32 @@
                              (zerop (getf (entry "bfirst1") :unread)))
                         "a channel nobody serves shows its waiting deliveries instead of counts"))))))
   nil)
+
+(-> test-world-sidebar-gathers-apart () null)
+(defun test-world-sidebar-gathers-apart ()
+  "Test a started sidebar refreshes without waiting for a slow gather, then shows what it gathered."
+  (with-test-configuration (configuration)
+    (let ((sidebar (world-sidebar-create configuration))
+          (gate    (sb-thread:make-semaphore))
+          (entries (list (list :kind ':workspace :name "w" :path "/w"))))
+      (test-call-with-function-replacements
+       (list (list 'world-sidebar--gather
+                   (lambda (panel now)
+                     (declare (ignore panel now))
+                     (sb-thread:wait-on-semaphore gate)
+                     entries)))
+       (lambda ()
+         (world-sidebar-start sidebar)
+         (unwind-protect
+              (let ((start (get-internal-real-time)))
+                (test-assert (and (null (screen-panel-refresh sidebar))
+                                  (< (- (get-internal-real-time) start)
+                                     (* 1/20 internal-time-units-per-second)))
+                             "a refresh while the world is slow to read returns at once")
+                (sb-thread:signal-semaphore gate 1000)
+                (test-assert (and (task-tests--wait-until (lambda () (screen-panel-refresh sidebar)) 5)
+                                  (equal (world-sidebar-entries sidebar) entries))
+                             "the entries gathered meanwhile show on a later refresh"))
+           (sb-thread:signal-semaphore gate 1000)
+           (world-sidebar-stop sidebar)))))
+    nil))
