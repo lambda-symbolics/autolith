@@ -486,6 +486,8 @@ second reports whether shutdown was prepared."
         (mapc #'deque-clear
               (application-input-controller--queues controller))
         (setf (application-input-controller-stopping-p controller) t
+              (application-deferred-goal-continuation
+               (application-input-controller-application controller)) nil
               (application-input-controller-active-work controller) nil
               (application-input-controller-active-work-identifier controller) nil
               (application-input-controller-pending-snapshot-identifier controller) nil
@@ -2055,6 +2057,8 @@ the active work finishes."
                  (not
                   (application-input-controller-turn-cancellation-p controller)))
         (setf (application-input-controller-turn-cancellation-p controller) t
+              (application-deferred-goal-continuation
+               (application-input-controller-application controller)) nil
               (application-input-controller-turn-cancellation-delivery-pending-p
                controller)
               t
@@ -4189,6 +4193,9 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
             (application-input-controller-active-work-identifier controller))))
     (handler-case
         (progn
+          (with-lock-held ((application-input-controller-lock controller))
+            (unless (eq work (fourth (application-deferred-goal-continuation application)))
+              (setf (application-deferred-goal-continuation application) nil)))
           (application-input-controller--begin-prompt-work controller work)
           (case (first work)
             (:idle-compaction
@@ -4295,7 +4302,7 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
                  (application-handle-expected-error application condition)))))
           ;; Non-message input does not reset the per-message continuation budget.
           (when (and (member (first work) '(:command :lisp :native-lisp))
-                     (not (application-input-controller-stopping-p controller)))
+                     (application--take-deferred-goal-continuation-p application work))
             (application--call-with-model-error-handling
              application
              (lambda ()

@@ -10046,3 +10046,127 @@
           (test-assert (eq :paused (getf (application-goal application) :status))
                        "the empty queue reaches the existing numeric cap"))))))
   nil)
+
+(-> test-goal-interrupted-input-does-not-resume () null)
+(defun test-goal-interrupted-input-does-not-resume ()
+  "Keep an interrupted goal idle after unrelated command and Lisp input."
+  (dolist (work '((:lisp "(status)") (:native-lisp "(+ 1 1)")
+                  (:command "/status")))
+    (goal-input-test--call
+     (lambda (application controller)
+       (let ((turns 0))
+         (test-call-with-function-replacements
+          (list (list 'application--run-turn
+                      (lambda (app &rest arguments)
+                        (declare (ignore app arguments))
+                        (incf turns)
+                        (when (= turns 1)
+                          (test-assert
+                           (application-input-controller--request-active-turn-cancellation
+                            controller :pause-queued-work-p t)
+                           "the active turn accepts cancellation")
+                          (when (application-input-controller--consume-turn-cancellation-delivery-p
+                                 controller)
+                            (error (make-condition 'application-turn-cancelled))))
+                        nil)))
+          (lambda ()
+            (application-input-controller--enqueue controller :message "start")
+            (handler-case
+                (unwind-protect
+                     (application-input-controller--run-work
+                      controller (application-input-controller--next-work controller))
+                  (application-input-controller--finish-work controller))
+              (application-turn-cancelled ()
+                (conversation--repair-incomplete-tool-calls
+                 (application-conversation application))))
+            (test-assert (not (application-input-controller-active-p controller))
+                         "the cancelled turn finished")
+            (test-assert (not (application-input-controller-turn-cancellation-p controller))
+                         "the controller cleared transient cancellation state")
+            (test-assert (eq :active (getf (application-goal application) :status))
+                         "cancelling a turn does not change the durable goal")
+            (application-input-controller--enqueue controller (first work) (second work))
+            (application-input-controller--run-work
+             controller (application-input-controller--next-work controller))
+            (test-assert (= turns 1)
+                         "unrelated input does not authorize another provider turn")))))))
+  nil)
+
+(-> test-goal-deferred-input-ownership () null)
+(defun test-goal-deferred-input-ownership ()
+  "Revoke yielded continuation authority when its input or session changes."
+  (dolist (change '(:cancel :replace-goal :record-change :switch-conversation :replace-input))
+    (goal-input-test--call
+     (lambda (application controller)
+       (let ((turns 0))
+         (test-call-with-function-replacements
+          (list (list 'application--run-turn
+                      (lambda (app &rest arguments)
+                        (declare (ignore app arguments))
+                        (incf turns)
+                        (when (= turns 1)
+                          (application-input-controller--enqueue controller :native-lisp "(+ 1 1)"))
+                        nil)))
+          (lambda ()
+            (application-input-controller--enqueue controller :message "start")
+            (application-input-controller--run-work
+             controller (application-input-controller--next-work controller))
+            (test-assert (= turns 1) "the goal yields to queued input")
+            (case change
+              (:cancel
+               (test-assert
+                (application-input-controller--request-active-turn-cancellation
+                 controller :pause-queued-work-p nil)
+                "cancellation is accepted before the yielded work finishes")
+               (application-input-controller--consume-turn-cancellation-delivery-p controller))
+              (:replace-goal
+               (setf (application-goal application) (copy-tree (application-goal application))))
+              (:record-change
+               (setf (getf (application-goal application) :status) ':paused)
+               (application--record-goal application)
+               (setf (getf (application-goal application) :status) ':active))
+              (:switch-conversation
+               (let ((original (application-conversation application)))
+                 (setf (application-conversation application)
+                       (conversation-create (application-configuration application)
+                                            :identifier "other-goal-input")
+                       (application-conversation application) original))))
+            (application-input-controller--finish-work controller)
+            (let ((work (application-input-controller-take-queued-work controller)))
+              (when (eq change ':replace-input)
+                (application-input-controller--finish-work controller)
+                (application-input-controller--enqueue controller :native-lisp "(+ 1 1)")
+                (setf work (application-input-controller--next-work controller)))
+              (application-input-controller--run-work controller work))
+            (test-assert (= turns 1)
+                         (format nil "~A revokes deferred model-turn authority" change))))))))
+  nil)
+
+(-> test-goal-explicit-resume-yields-to-input () null)
+(defun test-goal-explicit-resume-yields-to-input ()
+  "Retain a fresh deferral created while executing an explicit resume command."
+  (goal-input-test--call
+   (lambda (application controller)
+     (setf (config :goal-continuation-limit (application-configuration application)) 2
+           (getf (application-goal application) :status) ':paused)
+     (let ((turns 0))
+       (test-call-with-function-replacements
+        (list (list 'application--run-turn
+                    (lambda (app &rest arguments)
+                      (declare (ignore app arguments))
+                      (incf turns)
+                      (when (= turns 1)
+                        (application-input-controller--enqueue controller :native-lisp "(+ 1 1)"))
+                      nil)))
+        (lambda ()
+          (application-input-controller--enqueue controller :lisp "(goal :resume)")
+          (application-input-controller--run-work
+           controller (application-input-controller--next-work controller))
+          (test-assert (= turns 1) "explicit resume yields to the next input")
+          (application-input-controller--finish-work controller)
+          (application-input-controller--run-work
+           controller (application-input-controller-take-queued-work controller))
+          (test-assert (= turns 3) "the yielded input resumes the explicit goal work")
+          (test-assert (eq :paused (getf (application-goal application) :status))
+                       "the resumed loop observes its numeric cap"))))))
+  nil)

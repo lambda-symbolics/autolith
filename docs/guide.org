@@ -127,6 +127,10 @@ limit, or =(settings :goal-continuation-limit :unlimited)= to remove it. The
 setting is durable. A completed lightweight goal permits ordinary session-owned
 job-completion wakeups without restarting that goal.
 
+Queued commands and Lisp forms run between goal turns. The goal continues after
+that input only when its loop yielded to it. Send a message to continue after
+interrupting goal work.
+
 For externally verifiable work, install explicit acceptance policy with
 =(mission :start specification)=:
 

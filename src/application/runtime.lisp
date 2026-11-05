@@ -62,6 +62,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-goal
     :type          list
     :documentation "The session goal plist holding objective, status, and continuations.")
+   (deferred-goal-continuation
+    :initform      nil
+    :accessor      application-deferred-goal-continuation
+    :type          list
+    :documentation "Transient authority to resume the goal that yielded to queued input.")
    (context-estimate-cache
     :initform      nil
     :accessor      application-context-estimate-cache
@@ -3428,9 +3433,37 @@ A fullscreen transcript evicts its oldest output; those records page in again."
 (defparameter *application-goal-complete-marker* "[GOAL-COMPLETE]"
   "The literal marker the model includes once the goal is met.")
 
+(defmethod (setf application-goal) :after (value (application application))
+  "Discard deferred continuation authority when replacing the goal."
+  (declare (ignore value))
+  (setf (application-deferred-goal-continuation application) nil))
+
+(defmethod (setf application-conversation) :after (value (application application))
+  "Discard deferred continuation authority when switching conversations."
+  (declare (ignore value))
+  (setf (application-deferred-goal-continuation application) nil))
+
+(-> application--take-deferred-goal-continuation-p (application list) boolean)
+(defun application--take-deferred-goal-continuation-p (application work)
+  "Consume authority for WORK only in the unchanged goal and conversation that yielded."
+  (let ((controller (application-input-controller application)))
+    (when controller
+      (with-lock-held ((application-input-controller-lock controller))
+        (let ((authority (application-deferred-goal-continuation application)))
+          (when (and authority (eq (fourth authority) work))
+            (setf (application-deferred-goal-continuation application) nil)
+            (and (not (application-input-controller-stopping-p controller))
+                 (not (application-input-controller-turn-cancellation-p controller))
+                 (eq (first authority) (application-goal application))
+                 (eq (second authority) (application-conversation application))
+                 (equal (third authority) (application-goal application))
+                 (eq (getf (application-goal application) :status) ':active)
+                 t)))))))
+
 (-> application--record-goal (application) null)
 (defun application--record-goal (application)
   "Append APPLICATION's current goal state to the durable conversation."
+  (setf (application-deferred-goal-continuation application) nil)
   (let ((goal (application-goal application)))
     (conversation-append-record
      (application-conversation application)
@@ -4341,6 +4374,7 @@ Return NIL and the terminal provider result as a secondary value."
 
 The turns stop, leaving the goal active, while a job whose completion will
 wake the model is still queued, running or undelivered."
+  (setf (application-deferred-goal-continuation application) nil)
   (loop
     (let ((goal (application-goal application)))
       (unless (and goal (eq (getf goal :status) ':active))
@@ -4348,8 +4382,20 @@ wake the model is still queued, running or undelivered."
 
       ;; Return to the controller before pausing or starting another turn.
       (let ((controller (application-input-controller application)))
+        (when controller
+          (with-lock-held ((application-input-controller-lock controller))
+            (when (or (application-input-controller-stopping-p controller)
+                      (application-input-controller-turn-cancellation-p controller))
+              (return))))
         (when (and controller
                    (application-input-controller-goal-input-pending-p controller))
+          (with-lock-held ((application-input-controller-lock controller))
+            (unless (or (application-input-controller-stopping-p controller)
+                        (application-input-controller-turn-cancellation-p controller))
+              (setf (application-deferred-goal-continuation application)
+                    (list goal (application-conversation application) (copy-tree goal)
+                          (first (deque->list
+                                  (application-input-controller-work-items controller)))))))
           (return)))
       (when (and (not (mission-goal-p goal))
                  (application--goal-continuations-exhausted-p application goal))

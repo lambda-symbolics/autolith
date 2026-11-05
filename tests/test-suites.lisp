@@ -1509,6 +1509,9 @@
   test-streaming-presentation
   test-provider-retry-presentation
   test-turn-cursor-visibility
+  test-goal-interrupted-input-does-not-resume
+  test-goal-deferred-input-ownership
+  test-goal-explicit-resume-yields-to-input
   test-responsive-model-input
   test-responsive-goal-inspection
   test-responsive-command-scheduling
