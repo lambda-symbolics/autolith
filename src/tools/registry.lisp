@@ -1126,6 +1126,17 @@ RETAIN lists runtime identities another registry shares and still owns."
   (ordered-map-get (tool-registry-tool-map registry)
                    (format nil "~A.~A" namespace name)))
 
+(-> tool-registry-resolve (tool-registry string) (option tool))
+(defun tool-registry-resolve (registry name)
+  "Resolve NAME as a canonical name or a unique display alias in REGISTRY.
+
+Canonical names take precedence. Return NIL for a missing or ambiguous alias."
+  (or (ordered-map-get (tool-registry-tool-map registry) name)
+      (let ((matches (remove-if-not
+                      (lambda (tool) (string= name (tool-display-name tool)))
+                      (tool-registry-tools registry))))
+        (and (null (rest matches)) (first matches)))))
+
 (-> tool-context-execution-runtime (tool-context) t)
 (defun tool-context-execution-runtime (context)
   "Return CONTEXT's shared inspectable execution runtime, or NIL when absent."

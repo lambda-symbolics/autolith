@@ -566,6 +566,8 @@
 (define-test-suite diagnosis
   test-diagnosis-predictions
   test-diagnosis-display-names
+  test-diagnosis-name-collisions
+  test-diagnosis-missing-probe-budget
   test-diagnosis-single-fact-hypotheses
   test-diagnosis-remote-service
   test-diagnosis-setting

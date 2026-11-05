@@ -115,14 +115,20 @@ original metadata as provenance and adapt visible section ranges to its prefix."
                    :error-code        (tool-result-error-code result)
                    :denied-p          (tool-result-denied-p result))))
 
-(-> tool-contracts-for-call (configuration tool json-object) list)
-(defun tool-contracts-for-call (configuration tool arguments)
-  "Return (CONTRACT ENVIRONMENT) for each contract describing this call of TOOL, by its display or canonical name."
+(-> tool-contracts-for-call
+    (configuration tool json-object &key (:registry (option tool-registry))) list)
+(defun tool-contracts-for-call (configuration tool arguments &key registry)
+  "Return contract matches for TOOL's canonical name and unambiguous display alias.
+
+When REGISTRY is supplied, include display-name contracts only if the alias
+resolves to TOOL. Without a registry, match only the canonical name."
   (let ((display   (tool-display-name tool))
         (canonical (tool-canonical-name tool)))
-    (append (knowledge-contracts-for-call configuration display arguments)
-            (and (string/= display canonical)
-                 (knowledge-contracts-for-call configuration canonical arguments)))))
+    (append (knowledge-contracts-for-call configuration canonical arguments)
+            (and registry
+                 (string/= display canonical)
+                 (eq tool (tool-registry-resolve registry display))
+                 (knowledge-contracts-for-call configuration display arguments)))))
 
 (-> tool-execute-with-contracts (tool tool-context json-object) tool-result)
 (defun tool-execute-with-contracts (tool context arguments)
@@ -134,7 +140,9 @@ server's tool, or by its canonical dispatch name; both find it."
          (name          (tool-canonical-name tool))
          (matches       (and configuration
                              (knowledge-capture-p configuration)
-                             (handler-case (tool-contracts-for-call configuration tool arguments)
+                             (handler-case (tool-contracts-for-call
+                                            configuration tool arguments
+                                            :registry (tool-context-registry context))
                                (knowledge-error (condition)
                                  (return-from tool-execute-with-contracts
                                    (tool-failure

@@ -359,7 +359,7 @@ one hypothesis remains and names one, and :OPEN when several remain."
                view)))
       (loop for view = (weigh)
             while (and (rest hypotheses) (< (length ran) *knowledge-diagnosis-run-limit*))
-            do (let ((probe (knowledge--best-probe configuration view
+            do (let ((probe (knowledge--best-probe context view
                                                    :hypotheses hypotheses
                                                    :probes     available)))
                  (unless probe
@@ -408,17 +408,26 @@ one hypothesis remains and names one, and :OPEN when several remain."
 
 ;;;; -- Private Functions --
 
-(-> knowledge--probe-observations (configuration list) list)
-(defun knowledge--probe-observations (configuration probe)
+(-> knowledge--probe-contracts (tool-context list) list)
+(defun knowledge--probe-contracts (context probe)
+  "Return contract matches for PROBE's resolved tool, or NIL if unavailable."
+  (let* ((registry (tool-context-registry context))
+         (tool     (tool-registry-resolve registry (getf probe :tool))))
+    (when tool
+      (tool-contracts-for-call (tool-context-configuration context) tool
+                              (knowledge--probe-arguments probe) :registry registry))))
+
+(-> knowledge--probe-observations (tool-context list) list)
+(defun knowledge--probe-observations (context probe)
   "Return (PREDICATE VALUE...) for each fact PROBE's contracts observe.
 
 Values known before the call are read by the predicate's schema; values the
 result will supply are NIL."
-  (let* ((arguments (knowledge--probe-arguments probe))
-         (base      (knowledge-base-read configuration))
-         (workspace (knowledge--workspace configuration)))
-    (loop for (contract environment) in (knowledge-contracts-for-call
-                                         configuration (getf probe :tool) arguments)
+  (let* ((configuration (tool-context-configuration context))
+         (arguments     (knowledge--probe-arguments probe))
+         (base          (knowledge-base-read configuration))
+         (workspace     (knowledge--workspace configuration)))
+    (loop for (contract environment) in (knowledge--probe-contracts context probe)
           append (loop for observation in (getf (rest contract) :observes)
                        for schema = (knowledge-base-schema base (getf observation :predicate)
                                                            :workspace workspace)
@@ -504,20 +513,19 @@ they agree or neither predicts it."
       (t
        0))))
 
-(-> knowledge--probe-admissible-p (configuration list) boolean)
-(defun knowledge--probe-admissible-p (configuration probe)
+(-> knowledge--probe-admissible-p (tool-context list) boolean)
+(defun knowledge--probe-admissible-p (context probe)
   "Return true when PROBE's contracted requirements permit its call now."
   (handler-case
       (not (knowledge-contract-refusal
-            configuration
-            (knowledge-contracts-for-call configuration (getf probe :tool)
-                                          (knowledge--probe-arguments probe))))
+            (tool-context-configuration context)
+            (knowledge--probe-contracts context probe)))
     (knowledge-error ()
       nil)))
 
 (-> knowledge--best-probe
-    (configuration knowledge-view &key (:hypotheses list) (:probes list)) (option list))
-(defun knowledge--best-probe (configuration view &key hypotheses probes)
+    (tool-context knowledge-view &key (:hypotheses list) (:probes list)) (option list))
+(defun knowledge--best-probe (context view &key hypotheses probes)
   "Return the probe telling apart the most pairs of HYPOTHESES per unit of cost, or NIL.
 
 Each pair counts by its best separation over the facts the probe observes, as
@@ -527,10 +535,10 @@ refuse the call are ineligible before consuming the bounded execution budget."
   (let ((best       nil)
         (best-score 0))
     (dolist (probe (remove-if-not (lambda (candidate)
-                                   (knowledge--probe-admissible-p configuration candidate))
+                                   (knowledge--probe-admissible-p context candidate))
                                 probes))
       (let* ((keys  (loop for observation in (handler-case
-                                                 (knowledge--probe-observations configuration probe)
+                                                 (knowledge--probe-observations context probe)
                                                (knowledge-error ()
                                                  nil))
                           for key = (knowledge--observation-key view observation)
@@ -550,12 +558,7 @@ refuse the call are ineligible before consuming the bounded execution budget."
 (defun knowledge--run-probe (context probe)
   "Run PROBE through CONTEXT's tool registry and return what it observed."
   (let* ((arguments     (knowledge--probe-arguments probe))
-         ;; A probe names its tool as people see it, such as service.ping
-         ;; for an MCP server's tool, or by its canonical dispatch name.
-         (tool          (find-if (lambda (candidate)
-                                   (or (string= (getf probe :tool) (tool-display-name candidate))
-                                       (string= (getf probe :tool) (tool-canonical-name candidate))))
-                                 (tool-registry-tools (tool-context-registry context))))
+         (tool          (tool-registry-resolve (tool-context-registry context) (getf probe :tool)))
          (result        (if tool
                             (tool-registry-execute-call
                              (tool-context-registry context)
@@ -565,7 +568,8 @@ refuse the call are ineligible before consuming the bounded execution budget."
                                           "name" (tool-name tool)
                                           "arguments" (json-encode arguments))
                              context)
-                            (tool-failure (format nil "Tool ~A is not available here." (getf probe :tool)))))
+                            (tool-failure (format nil "Tool ~A is unavailable or its display name is ambiguous."
+                                                  (getf probe :tool)))))
          (configuration (tool-context-configuration context))
          (view          (knowledge-view-current configuration)))
     (list :tool           (getf probe :tool)
@@ -573,8 +577,7 @@ refuse the call are ineligible before consuming the bounded execution budget."
           :status         (if (tool-result-success-p result) ':ok ':failed)
           :observed       (and (tool-result-success-p result)
                                (loop for observation in (handler-case
-                                                            (knowledge--probe-observations configuration
-                                                                                           probe)
+                                                            (knowledge--probe-observations context probe)
                                                           (knowledge-error ()
                                                             nil))
                                      for key = (knowledge--observation-key view observation)
