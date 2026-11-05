@@ -931,59 +931,114 @@
                                (null (participant-residence
                                       (world-participant-find (world-load configuration)
                                                               (participant-identifier agent-b))))
-                               (gethash (participant-identifier agent-b) *world-carried-contexts*))
-                          "a dismissal through the server parks the agent with its context and leaves its hosted channel without one"))
+                               (string= (nth-value 1 (world-context-read
+                                                      configuration (participant-identifier agent-b)))
+                                        id-b))
+                          "a dismissal through the server parks the agent with its context kept and leaves its hosted channel without one"))
+           (test-call-with-function-replacements
+            (list (list 'application-world-prepare-agent
+                        (lambda (application participant)
+                          (declare (ignore application participant))
+                          (error 'world-error :message "synthetic provider failure" :operation ':move))))
+            (lambda ()
+              (test-assert (and (refused-p (participant-name agent-a) id-b)
+                                (equal (participant-residence
+                                        (world-participant-find (world-load configuration)
+                                                                (participant-identifier agent-a)))
+                                       id-a)
+                                (application-world-agent-present-p app-a)
+                                (not (application-world-agent-present-p app-b))
+                                (not (application-localgroup-paused-p app-a)))
+                           "a destination that cannot start the agent's runtime refuses the move and leaves the agent working where it was")))
            (localgroup-query-record entry ':close (list :channel id-b))
            (test-assert (task-tests--wait-until
                          (lambda () (null (world-server--find-host server id-b)))
                          20)
                         "the channel without an agent closes like any other")
-           (let ((answer (move (participant-name agent-a) id-b)))
-             (test-assert (and (string= (getf answer :participant) (participant-identifier agent-a))
+           (let* ((controller (application-input-controller app-a))
+                  (answer     nil)
+                  (thread     nil))
+             ;; The agent is in a turn: the move waits for its safe boundary.
+             (application-input-controller-begin-external-work controller)
+             (unwind-protect
+                  (progn
+                    (setf thread (make-thread (lambda ()
+                                                (setf answer (move (participant-name agent-a) id-b)))
+                                              :name "Autolith world server test move"))
+                    ;; The move asks the turn to stop; the turn here is this
+                    ;; thread, which takes the request at its safe boundary.
+                    (test-assert (handler-case (progn (sleep 5) nil)
+                                   (application-turn-cancelled ()
+                                     t))
+                                 "a move asks the agent's turn to stop")
+                    (sleep 0.3)
+                    (test-assert (and (null answer)
+                                      (equal (participant-residence
+                                              (world-participant-find (world-load configuration)
+                                                                      (participant-identifier agent-a)))
+                                             id-a))
+                                 "until the turn ends the move waits, and the world store has not moved the agent"))
+               (application-input-controller-finish-external-work controller))
+             (sb-thread:join-thread thread :default nil :timeout 30)
+             (test-assert (and answer
+                               (string= (getf answer :participant) (participant-identifier agent-a))
                                (string= (getf answer :source) id-a)
                                (string= (getf answer :channel) id-b)
                                (zerop (getf answer :dropped)))
                           "a move answers with the agent, the channel left and the destination"))
-           (test-assert (and (not (application-world-agent-present-p app-a))
-                             (gethash (participant-identifier agent-a) *world-carried-contexts*))
-                        "the channel left has no agent, and the context waits for the unhosted destination")
-           (let ((waiting (gethash (participant-identifier agent-a) *world-carried-contexts*)))
+           (let ((waiting (world-context-read configuration (participant-identifier agent-a))))
+             (test-assert (and (not (application-world-agent-present-p app-a))
+                               (some (lambda (row) (search "first words in a" (getf row :wire-json)))
+                                     waiting))
+                          "the channel left has no agent, and the context waits for the unserved destination")
              (world-channel-create configuration
                                    :id        "bthird3"
                                    :owner     (participant-identifier human)
                                    :workspace (world-tests--workspace root "c"))
              (move (participant-identifier agent-a) "bthird3")
              (move (participant-identifier agent-a) id-b)
-             (test-assert (eq (gethash (participant-identifier agent-a) *world-carried-contexts*)
-                              waiting)
+             (test-assert (equal (world-context-read configuration (participant-identifier agent-a))
+                                 waiting)
                           "moves between channels nobody serves keep the waiting context with the agent"))
-           (let* ((opened (localgroup-query-record entry ':open (list :channel  id-b
-                                                                      :rows     30
-                                                                      :columns  90
-                                                                      :styled-p nil)))
-                  (app-b  (world-host-application
-                           (world-server--find-host server (getf (rest opened) :session-id)))))
+           (let* ((opened  (localgroup-query-record entry ':open (list :channel  id-b
+                                                                       :rows     30
+                                                                       :columns  90
+                                                                       :styled-p nil)))
+                  (app-b   (world-host-application
+                            (world-server--find-host server (getf (rest opened) :session-id))))
+                  (adopted (find ':context-adoption
+                                 (application-tests--conversation-records
+                                  (application-conversation app-b))
+                                 :key #'first :from-end t)))
              (test-assert (and (string= (getf (rest opened) :session-id) id-b)
-                               (conversation-context-prefix (application-conversation app-b))
-                               (null (gethash (participant-identifier agent-a)
-                                              *world-carried-contexts*)))
-                          "a channel opened later receives the context its agent carried")
+                               adopted
+                               (string= (getf (rest adopted) :participant) (participant-identifier agent-a))
+                               (not (probe-file (world-context-pathname
+                                                 configuration (participant-identifier agent-a)))))
+                          "a channel opened later adopts the context its agent carried, durably, and the waiting copy goes")
              (let ((answer (move (participant-identifier agent-a) id-a)))
                (test-assert (string= (getf answer :source) id-b)
                             "the agent moves on from the channel opened for it"))
-             (let ((record (first (last (application-tests--conversation-records
-                                         (application-conversation app-a))))))
+             (let* ((record (first (last (application-tests--conversation-records
+                                          (application-conversation app-a)))))
+                    (text   (json-encode (coerce (conversation-input-items-for-request
+                                                  (application-conversation app-a))
+                                                 'vector))))
                (test-assert (and (application-world-agent-present-p app-a)
                                  (not (application-world-agent-present-p app-b))
                                  (string= (participant-identifier
                                            (world-session-participant
                                             configuration (application-conversation app-a)))
                                           (participant-identifier agent-a))
-                                 (conversation-context-prefix (application-conversation app-a))
                                  (eq (first record) ':message)
                                  (getf (rest record) :automatic-p)
                                  (search "were moved into channel" (getf (rest record) :content))
                                  (zerop (deque-count (application-input-controller-work-items
                                                       (application-input-controller app-a)))))
-                            "the destination adopts the agent with its context, tells it so durably, and starts no turn"))))))))
+                            "the destination adopts the agent, tells it so durably, and starts no turn")
+               (test-assert (and (search "first words in a" text)
+                                 (not (search "first words in a" text
+                                              :start2 (1+ (search "first words in a" text))))
+                                 (not (search "first words in b" text)))
+                            "back where it began, the agent's context holds its own history once and nothing of the other channel's earlier agent"))))))))
   nil)
