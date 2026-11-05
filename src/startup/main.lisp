@@ -262,14 +262,18 @@ the terminal wraps the semantic spans for both inline and fullscreen tips."
 
 (-> application--offer-startup-update (application) null)
 (defun application--offer-startup-update (application)
-  "Offer an attended update for APPLICATION's validated packaged release."
-  (let ((availability (application-update-availability application)))
+  "Offer APPLICATION's cached release only through an interactive terminal."
+  ;; Startup offers precede installation of the input controller.
+  (let ((availability (application-update-availability application))
+        (ui           (application-ui application)))
     (when (and availability
-               (eq (update-availability-method availability) ':release))
+               (eq (update-availability-method availability) ':release)
+               ui
+               (terminal-interactive-p (terminal-ui-terminal ui)))
       (let* ((tag (update-availability-tag availability))
              (choice
                (terminal-ui-select
-                (application-ui application)
+                ui
                 :title           (format nil "Autolith ~A is available" (subseq tag 1))
                 :items           (application--update-choice-items)
                 :resize-callback #'application-pending-terminal-size)))

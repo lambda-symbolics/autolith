@@ -552,19 +552,50 @@
                           :current-tag (format nil "v~A" *autolith-version*)))
          (release-availability
            (make-instance 'update-availability :tag tag :method ':release)))
-    (labels ((make-application (events)
-               "Return a release application scripted with EVENTS."
+    (labels ((make-application (events &key (terminal
+                                             (make-instance 'scripted-terminal
+                                                            :columns 72
+                                                            :events  events)))
+               "Return a release application scripted with EVENTS or using TERMINAL."
                (make-instance
                 'application
                 :configuration           configuration
                 :installation-provenance release-provenance
                 :update-availability     release-availability
-                :ui                      (terminal-ui-create
-                                          :terminal (make-instance 'scripted-terminal
-                                                                   :columns 72
-                                                                   :events  events)))))
+                :ui                      (terminal-ui-create :terminal terminal))))
       (unwind-protect
            (progn
+             (let* ((application
+                      (make-application
+                       nil :terminal (stream-terminal-create
+                                      :input-stream          (make-string-input-stream "")
+                                      :output-stream         (make-string-output-stream)
+                                      :input-file-descriptor -1)))
+                    (ui         (application-ui application))
+                    (selections 0))
+               (test-call-with-function-replacements
+                (list
+                 (list 'terminal-ui-select
+                       (lambda (&rest arguments)
+                         (declare (ignore arguments))
+                         (incf selections)
+                         "Skip this version")))
+                (lambda ()
+                  (with-terminal-ui (active-ui ui)
+                    (test-assert
+                     (and (terminal-started-p (terminal-ui-terminal ui))
+                          (not (terminal-interactive-p (terminal-ui-terminal ui))))
+                     "an unattended startup uses an active noninteractive terminal")
+                    (application--offer-startup-update application))))
+               (test-assert (zerop selections)
+                            "an unattended startup never enters the update picker")
+               (test-assert
+                (eq (application-update-availability application) release-availability)
+                "an unattended startup retains the cached release for explicit updates")
+               (test-assert
+                (null (update-state-dismissed-tag (update-state-load configuration)))
+                "an unattended startup does not dismiss a release without a choice"))
+
              (let* ((application (make-application (list :submit)))
                     (ui          (application-ui application))
                     (notice      (application--update-notice application))
