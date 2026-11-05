@@ -1729,9 +1729,13 @@ names, by handle, identifier or a part of it, into this channel, and
 =(move "WHO" "ID")= into channel =ID=. The move stops the agent where it is
 the way a steer does: the tool call in flight finishes, no new request
 starts, and the prompts it had not started are dropped with a notice in
-the channel it leaves. In its new channel the agent keeps the context it
-had, until the world server restarts, and waits: it works again when you
-write there or someone mentions it from another channel. A move into a
+the channel it leaves; nothing moves until the turn has stopped. In its new
+channel the agent keeps the context it had, followed by what is said there
+from the move onward, and its own model; the channel's earlier history stays
+readable at =channel:id/ID= but is not part of the agent's context. The
+context is kept on disk, so a restart, or a channel opened only later, finds
+it. The agent then waits: it works again when you write there or someone
+mentions it from another channel. A move into a
 channel that already has an agent is refused, and so is moving yourself;
 you move by attaching a terminal. =(dismiss "WHO")= parks an agent instead,
 after it stops the same way: a parked agent resides in no channel and keeps
@@ -1741,7 +1745,8 @@ agent reaches nobody, and the send says the agent is parked. A channel
 without an agent, because its agent moved or was parked, keeps its history,
 you and its subscribers, and refuses typed prompts until =(move "WHO")=
 brings an agent or =(domestic)= creates a new one for it, named after the
-workspace and using this session's model. Messages sent to such a channel
+workspace and using this session's model and starting with no context but the channel's
+history to read. Messages sent to such a channel
 wait in its inbox until an agent is there to read them.
 
 Typing =@= in the composer completes participant handles the way it completes

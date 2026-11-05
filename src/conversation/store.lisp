@@ -183,11 +183,6 @@
     :accessor      conversation-persisted-p
     :type          boolean
     :documentation "True after the header and first durable record are published.")
-   (context-prefix
-    :initform      nil
-    :accessor      conversation-context-prefix
-    :type          list
-    :documentation "Provider items a moved agent carries from its previous channel, put before this conversation's own in every request; never persisted, so a restart starts from this conversation alone.")
    (incomplete-tail-p
     :initarg       :incomplete-tail-p
     :initform      nil
@@ -1858,21 +1853,17 @@ this append's original EOF, including when publication failed after the write."
     list)
 (defun conversation-input-items-for-request
     (conversation &key (include-ephemeral-p t))
-  "Return a fresh provider projection, optionally excluding request-local items.
-
-The context a moved agent carries from its previous channel comes first,
-before this conversation's own items."
+  "Return a fresh provider projection, optionally excluding request-local items."
   (with-recursive-lock-held ((conversation-append-lock conversation))
-    (append (copy-list (conversation-context-prefix conversation))
-            (if include-ephemeral-p
-                (copy-list (conversation-input-items conversation))
-                (let ((ephemeral-items (make-hash-table :test #'eq)))
-                  (dolist (entry (conversation-ephemeral-input-entries conversation))
-                    (setf (gethash (getf entry :item) ephemeral-items) t))
-                  (remove-if
-                   (lambda (item)
-                     (gethash item ephemeral-items))
-                   (conversation-input-items conversation)))))))
+    (if include-ephemeral-p
+        (copy-list (conversation-input-items conversation))
+        (let ((ephemeral-items (make-hash-table :test #'eq)))
+          (dolist (entry (conversation-ephemeral-input-entries conversation))
+            (setf (gethash (getf entry :item) ephemeral-items) t))
+          (remove-if
+           (lambda (item)
+             (gethash item ephemeral-items))
+           (conversation-input-items conversation))))))
 
 (-> conversation-input-item-family (conversation json-object) (option keyword))
 (defun conversation-input-item-family (conversation item)
