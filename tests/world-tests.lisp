@@ -263,6 +263,26 @@
     (conversation-append-user-message conversation (format nil "hello from ~A" identifier))
     conversation))
 
+(-> test-world-agent-keeps-model-choice () null)
+(defun test-world-agent-keeps-model-choice ()
+  "Test a model chosen in a channel becomes its resident agent's own setting."
+  (with-test-configuration (configuration)
+    (let* ((conversation (world-tests--persisted-conversation configuration "bmodel1" 1000))
+           (application  (make-instance 'application
+                                        :configuration configuration
+                                        :conversation  conversation)))
+      (world-reconcile-sessions configuration :now 2000)
+      (application--persist-model-selection
+       application
+       (configuration-copy configuration :model "gpt-6-luna" :reasoning-effort "low"))
+      (let ((agent (find ':agent (world-channel-residents (world-load configuration) "bmodel1")
+                         :key #'participant-kind)))
+        (test-assert (and (equal (getf (participant-settings agent) :model) "gpt-6-luna")
+                          (equal (getf (participant-settings agent) :reasoning-effort) "low")
+                          (equal (conversation-model conversation) "gpt-6-luna"))
+                     "the conversation and its agent both take the chosen model and effort"))))
+  nil)
+
 (-> test-world-session-reconciliation () null)
 (defun test-world-session-reconciliation ()
   "Test conversations map onto channels and agents, re-sync when newer, and retire when deleted."
@@ -296,6 +316,15 @@
                          "a migrated session's agent resides in its channel under the human, named after the workspace")
             (test-assert (= (nth-value 1 (world-reconcile-sessions configuration :now 3001)) 0)
                          "an unchanged conversation is not migrated again")
+            (world-participant-update configuration (participant-identifier agent)
+                                      :settings '(:model "gpt-moved" :reasoning-effort "low"))
+            (conversation-append-user-message second "after the agent chose its model")
+            (world-reconcile-sessions configuration :now 3001)
+            (test-assert (equal (participant-settings
+                                 (world-participant-find (world-load configuration)
+                                                         (participant-identifier agent)))
+                                '(:model "gpt-moved" :reasoning-effort "low"))
+                         "a conversation's header does not overwrite the settings its agent has since")
             (conversation-append-user-message first "a newer message")
             (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3002)
               (test-assert (= count 1) "a newer conversation is migrated again")

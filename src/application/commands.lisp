@@ -744,13 +744,19 @@ notice preference is on, so enabling it mid-session takes effect immediately."
 
 (-> application--persist-model-selection (application configuration) null)
 (defun application--persist-model-selection (application configuration)
-  "Record the selected provider, model and effort on the active conversation."
+  "Record the selected provider, model and effort on the active conversation and its resident agent."
   (let ((provider (config :model-provider configuration)))
     (conversation-set-model-selection
      (application-conversation application)
      (config :model configuration)
      (config :reasoning-effort configuration)
-     :provider (and (non-empty-string-p provider) provider)))
+     :provider (and (non-empty-string-p provider) provider))
+    (application-world-agent-settings-update
+     application
+     (append (list :model (config :model configuration))
+             (and (non-empty-string-p provider) (list :model-provider provider))
+             (let ((effort (config :reasoning-effort configuration)))
+               (and effort (list :reasoning-effort effort))))))
   nil)
 
 (-> application-set-reasoning-effort (application string) null)

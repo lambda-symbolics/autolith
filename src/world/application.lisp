@@ -483,6 +483,25 @@ session."
           (error ()
             t)))))
 
+(-> application-world-agent-settings-update (application list) null)
+(defun application-world-agent-settings-update (application settings)
+  "Give the agent residing in APPLICATION's channel SETTINGS, its model, provider and effort.
+
+The agent keeps them wherever it moves. A world that cannot be written
+leaves the session's own choice in place: the world never blocks a session."
+  (let ((channel (application-world--served-channel application)))
+    (when channel
+      (handler-case
+          (let* ((configuration (application-configuration application))
+                 (agent         (find ':agent (world-channel-residents (world-load configuration) channel)
+                                      :key #'participant-kind)))
+            (when (and agent (not (equal (participant-settings agent) settings)))
+              (world-participant-update configuration (participant-identifier agent)
+                                        :settings settings)))
+        (autolith-error ()
+          nil))))
+  nil)
+
 (-> application-world-stop-agent (application) null)
 (defun application-world-stop-agent (application)
   "Hold APPLICATION's new work and wait until its agent's turn reached a safe boundary.
