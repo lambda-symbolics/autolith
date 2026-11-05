@@ -34,16 +34,16 @@
     :initarg       :display
     :reader        diagnosis-tests--wire-named-tool-display
     :type          string
-    :documentation "The name people see, as an MCP server's tool shows server.tool."))
-  (:documentation "A scripted tool whose canonical name differs from its display name, as an MCP tool's does."))
+    :documentation "The tool's display alias."))
+  (:documentation "A scripted tool with separate canonical and display names."))
 
 (defmethod tool-display-name ((tool diagnosis-tests--wire-named-tool))
-  "Show the tool by its server and operation name."
+  "Return the scripted display name."
   (diagnosis-tests--wire-named-tool-display tool))
 
 (-> diagnosis-tests--wire-named-tool (tool-registry string function) tool)
 (defun diagnosis-tests--wire-named-tool (registry tool respond)
-  "Register scripted TOOL under a wire name, as MCP tools are, showing TOOL as its display name."
+  "Register a scripted tool with TOOL as its display alias."
   (let* ((dot      (position #\. tool))
          (instance (make-instance 'diagnosis-tests--wire-named-tool
                                   :namespace   (format nil "mcp__~A_0a1b2c" (subseq tool 0 dot))
@@ -61,8 +61,7 @@
 (defun diagnosis-tests--world-create (configuration fault &key (config-p t) wire-names-p)
   "Return a world under CONFIGURATION whose service has FAULT; without CONFIG-P its endpoint cannot be read.
 
-With WIRE-NAMES-P its probe tools have wire names and show service.ping and
-the rest only as their display names, as an MCP server's tools do."
+With WIRE-NAMES-P, probe tools have separate canonical and display names."
   (let* ((registry (make-default-tool-registry :configuration configuration))
          (world    (make-instance 'diagnosis-tests--world :fault fault :registry registry)))
     (flet ((fault-p (name)

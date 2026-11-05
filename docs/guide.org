@@ -1253,9 +1253,9 @@ effects from an earlier call can satisfy them. A successful call records its
 expected effects as predictions and its observed values as observations. This
 also works with MCP results.
 
-Contracts and diagnostic probes name a tool as Autolith shows it, such as
-=service.ping= for the =ping= tool of the MCP server =service=. The provider
-name of the same tool works too.
+Name tools in contracts and diagnostic probes by display name, such as
+=service.ping=, or canonical dispatch name. Canonical names take precedence;
+a display alias must identify one registered tool.
 
 The model defines methods with =method-define= and proposes contracts with
 =contract-define= on =memory:facts=. For each new contract version, approve the
@@ -1346,10 +1346,10 @@ repair.
 
 Supply up to four hypotheses, each with predicted facts, and probes: tool calls
 whose contracts observe facts from their results. Autolith checks known facts
-first. It then selects the probe expected to distinguish the most remaining
-hypotheses for its cost. A hypothesis may predict a single fact; a probe that
-can rule out one hypothesis of a pair counts, though less than one where both
-predict. It runs at most three probes without a model request between them.
+first, then ranks probes by prediction differences per unit cost. For each
+hypothesis pair, the ranking weight is 1 for two different predictions and 1/4
+for a prediction from only one hypothesis. It runs at most three probes without
+a model request between them.
 
 A hypothesis is ruled out only by an undisputed observation or statement that
 contradicts one of its predictions. Cases the probes cannot settle are reported

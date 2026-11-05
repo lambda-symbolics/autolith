@@ -14,14 +14,13 @@
 ;;;    :probes ((:tool "service.ping" :arguments (("service" "?service")) :cost 1)))
 ;;;
 ;;; Each hypothesis predicts facts. A probe is a tool call whose action
-;;; contracts observe facts from its result. Running a diagnosis first checks
-;;; the predictions against facts already known, then repeatedly runs the
-;;; probe that tells apart the most pairs of remaining hypotheses per unit of
-;;; cost, at most three, until one hypothesis remains or no probe can tell the
-;;; rest apart. A hypothesis is eliminated only when a fact contradicts one of
-;;; its predictions; a prediction nothing observed stays open. Probes run as
-;;; ordinary tool calls inside one step, so no model request falls between
-;;; them, and every case is recorded with the facts that decided it.
+;;; contracts observe facts from its result. A diagnosis checks known facts,
+;;; then ranks available probes by their prediction differences and cost.
+;;; It runs at most three probes, stopping when at most one hypothesis remains
+;;; or no eligible probe has a positive score. A hypothesis is eliminated only
+;;; when an admissible fact contradicts one of its predictions. Probes run as
+;;; ordinary tool calls without a model request between them. Each case
+;;; records the observations and facts used to eliminate hypotheses.
 
 (defparameter *knowledge-diagnosis-hypothesis-limit* 4
   "The most hypotheses one diagnosis weighs.")
@@ -497,12 +496,11 @@ The key arguments are OBSERVATION's; every other argument is a variable."
 
 (-> knowledge--pair-separation (list list list) rational)
 (defun knowledge--pair-separation (left right key-pattern)
-  "Return how far observing the fact KEY-PATTERN identifies tells hypotheses LEFT and RIGHT apart.
+  "Return a probe-ranking weight for LEFT and RIGHT at KEY-PATTERN.
 
-1 when they predict different values, so every outcome rules one of them out.
-1/4 when only one predicts a value: the silent hypothesis is never ruled out,
-and while it holds, the outcome contradicts the other only by chance. 0 when
-they agree or neither predicts it."
+Use 1 when both hypotheses have different prediction forms, 1/4 when only
+one has a prediction, and 0 when their predictions are equal or both absent.
+These weights rank probes; they are not outcome probabilities."
   (let ((left-prediction  (knowledge--prediction-about left key-pattern))
         (right-prediction (knowledge--prediction-about right key-pattern)))
     (cond
@@ -526,12 +524,11 @@ they agree or neither predicts it."
 (-> knowledge--best-probe
     (tool-context knowledge-view &key (:hypotheses list) (:probes list)) (option list))
 (defun knowledge--best-probe (context view &key hypotheses probes)
-  "Return the probe telling apart the most pairs of HYPOTHESES per unit of cost, or NIL.
+  "Return the eligible probe with the highest positive score per unit cost, or NIL.
 
-Each pair counts by its best separation over the facts the probe observes, as
-`knowledge--pair-separation' weighs it. A fact already known tells nothing
-new, so a probe only observing known facts is not run. Probes whose contracts
-refuse the call are ineligible before consuming the bounded execution budget."
+For each hypothesis pair, use its largest `knowledge--pair-separation' weight
+across the probe's unknown observations. Sum these weights and divide by cost.
+Skip unavailable tools, known observations, and calls refused by contracts."
   (let ((best       nil)
         (best-score 0))
     (dolist (probe (remove-if-not (lambda (candidate)

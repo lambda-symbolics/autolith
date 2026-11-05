@@ -132,10 +132,9 @@ resolves to TOOL. Without a registry, match only the canonical name."
 
 (-> tool-execute-with-contracts (tool tool-context json-object) tool-result)
 (defun tool-execute-with-contracts (tool context arguments)
-  "Execute TOOL with ARGUMENTS under CONTEXT, honoring the contracts describing the call.
+  "Execute TOOL with ARGUMENTS under CONTEXT, applying matching contracts.
 
-A contract names its tool as people see it, such as service.ping for an MCP
-server's tool, or by its canonical dispatch name; both find it."
+Match canonical names and unique display aliases through CONTEXT's registry."
   (let* ((configuration (tool-context-configuration context))
          (name          (tool-canonical-name tool))
          (matches       (and configuration
