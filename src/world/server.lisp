@@ -502,118 +502,86 @@ started must not end one another terminal attached to since."
 
 ;;;; -- Moves --
 
-(defvar *world-carried-contexts* (make-hash-table :test #'equal :synchronized t)
-  "The context each moved agent carries, by participant identifier, until its destination channel is served.
-
-A world server keeps it for the agents it moved into channels it does not
-serve yet; it is never persisted, so a restart starts those agents from their
-destination's own history.")
-
 (-> world-server-move (world-server t t) list)
 (defun world-server-move (server participant channel)
   "Move agent PARTICIPANT into CHANNEL, both designators, and answer with what happened.
 
-The channel it leaves, when served, stops it; the destination, when served,
-adopts it with the context it carries, else that context waits here for the
-channel's next open. Context already waiting moves on with the agent, once.
-The world store refuses a destination that has an agent."
+The channel it leaves, when served, stops it first; the destination, when
+served, adopts it with the context it carries, else that context waits for
+the channel's next open. Nothing changes when the agent cannot stop or the
+destination cannot take it."
   (unless (and (stringp participant) (stringp channel))
     (error 'world-error
            :message   "A move names the participant to move and the channel to move it into."
            :operation ':move))
   (let* ((configuration (world-server-configuration server))
          (world         (values (world-reconcile-sessions configuration)))
-         (agent         (or (world-participant-designated world participant)
-                            (error 'world-error
-                                   :message    (format nil "No participant is named ~A." participant)
-                                   :pathname   nil
-                                   :operation  ':move
-                                   :identifier participant)))
+         (agent         (world-server--designated-participant world participant ':move))
          (target        (channel-identifier (world-channel-designated world configuration channel)))
          (source-host   (and (participant-residence agent)
                              (world-server--find-host server (participant-residence agent))))
          (target-host   (world-server--find-host server target))
-         ;; The context comes from the conversation it leaves, or, when that
-         ;; channel is not served or it is parked, from what waits for it here.
-         (prefix        (world-server--carried-context agent source-host)))
-    (unless (eq (participant-kind agent) ':agent)
-      (error 'world-error
-             :message    (format nil "~A is not an agent; the person moves by attaching a terminal."
-                                 (participant-name agent))
-             :pathname   nil
-             :operation  ':move
-             :identifier (participant-identifier agent)))
-    (let ((result (world-move-agent configuration agent target
-                                    :source-application      (and source-host
-                                                                  (world-host-application source-host))
-                                    :destination-application (and target-host
-                                                                  (world-host-application target-host))
-                                    :prefix                  prefix)))
-      (if target-host
-          (remhash (participant-identifier agent) *world-carried-contexts*)
-          (setf (gethash (participant-identifier agent) *world-carried-contexts*) prefix))
-      (list :ok :operation ':move :participant (participant-identifier agent)
-                :source (getf result :source) :channel target :dropped (getf result :dropped)))))
+         (result        (world-move-agent configuration agent target
+                                          :source-application      (and source-host
+                                                                        (world-host-application source-host))
+                                          :destination-application (and target-host
+                                                                        (world-host-application target-host)))))
+    (list :ok :operation ':move :participant (participant-identifier agent)
+              :source (getf result :source) :channel target :dropped (getf result :dropped))))
 
 (-> world-server-dismiss (world-server t) list)
 (defun world-server-dismiss (server participant)
   "Park agent PARTICIPANT, a designator, leaving its channel without an agent, and answer with what happened.
 
-The channel, when served, stops the agent. The context it carries waits here
-for the channel a later move brings it into."
+The channel, when served, stops the agent first. The context it carries
+waits in its context file for the channel a later move brings it into."
   (unless (stringp participant)
     (error 'world-error
            :message   "A dismissal names the agent to park."
            :operation ':park))
   (let* ((configuration (world-server-configuration server))
          (world         (values (world-reconcile-sessions configuration)))
-         (agent         (or (world-participant-designated world participant)
-                            (error 'world-error
-                                   :message    (format nil "No participant is named ~A." participant)
-                                   :pathname   nil
-                                   :operation  ':park
-                                   :identifier participant)))
+         (agent         (world-server--designated-participant world participant ':park))
          (residence     (participant-residence agent))
          (host          (and residence (world-server--find-host server residence)))
-         (prefix        (world-server--carried-context agent host))
          (result        (world-park-agent configuration agent
                                           :application (and host (world-host-application host)))))
-    (setf (gethash (participant-identifier agent) *world-carried-contexts*) prefix)
     (list :ok :operation ':park :participant (participant-identifier agent)
               :name (participant-name agent)
               :channel (getf result :channel) :dropped (getf result :dropped))))
 
-(-> world-server--carried-context (participant (option world-host)) list)
-(defun world-server--carried-context (agent host)
-  "Return the context AGENT carries: its conversation's items when HOST serves its channel, else what waits for it here."
-  (if host
-      (let ((application (world-host-application host)))
-        (conversation-input-items-for-family
-         (application-conversation application)
-         (provider-family (application-provider application))
-         :include-ephemeral-p nil))
-      (values (gethash (participant-identifier agent) *world-carried-contexts*))))
+(-> world-server--designated-participant (world string keyword) participant)
+(defun world-server--designated-participant (world designator operation)
+  "Return the participant DESIGNATOR names in WORLD, or refuse OPERATION."
+  (or (world-participant-designated world designator)
+      (error 'world-error
+             :message    (format nil "No participant is named ~A." designator)
+             :pathname   nil
+             :operation  operation
+             :identifier designator)))
 
-(-> world-server--carry-context (application) null)
-(defun world-server--carry-context (application)
-  "Give APPLICATION's conversation the context its agent carried here, when one waits.
+(-> world-server--adopt-waiting-context (application) null)
+(defun world-server--adopt-waiting-context (application)
+  "Let the agent residing in APPLICATION's channel adopt the context waiting for it, when one waits.
 
 The agent is the channel's resident, found in the world store: the channel
 may have been opened before it ever had a durable message, so its session
 mapping cannot be relied on."
-  (let* ((conversation (application-conversation application))
-         (world        (handler-case (world-load (application-configuration application))
-                         (autolith-error ()
-                           nil)))
-         (agent        (and world
-                            (find ':agent (world-channel-residents
-                                           world (conversation-identifier conversation))
-                                  :key #'participant-kind))))
-    (when agent
-      (let ((prefix (gethash (participant-identifier agent) *world-carried-contexts*)))
-        (when prefix
-          (setf (conversation-context-prefix conversation) (copy-list prefix))
-          (remhash (participant-identifier agent) *world-carried-contexts*)))))
+  (let* ((configuration (application-configuration application))
+         (world         (handler-case (world-load configuration)
+                          (autolith-error ()
+                            nil)))
+         (agent         (and world
+                             (find ':agent (world-channel-residents
+                                            world (conversation-identifier
+                                                   (application-conversation application)))
+                                   :key #'participant-kind))))
+    (when (and agent
+               (probe-file (world-context-pathname configuration (participant-identifier agent))))
+      (multiple-value-bind (rows source)
+          (world-context-read configuration (participant-identifier agent))
+        (application-world-install-agent application agent :rows rows :source source)
+        (world-context-delete configuration (participant-identifier agent)))))
   nil)
 
 
@@ -916,7 +884,7 @@ forgotten again when no thread could start."
                                                            :styled-p (getf arguments :styled-p)))))
          (host          (make-instance 'world-host :application application)))
     (setf (application-world-server application) server)
-    (world-server--carry-context application)
+    (world-server--adopt-waiting-context application)
     (with-lock-held ((world-server-lock server))
       (push host (world-server-hosts server)))
     (handler-case
