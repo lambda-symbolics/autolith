@@ -170,6 +170,12 @@ Client
 - Deliver human and agent messages through the same participant interface.
   - Agent clients trigger inference; human clients present the messages to the user.
   - Working agent recipient: deliver as a clearly labeled steer with sender and source channel.
+- Explicit sends between agents have no hop limit or rate limit until a loop is
+  seen in practice; every delivery names its sender and source channel, since a
+  child may well receive several steering messages from its parent. A channel
+  message carries no authority of its own: the recipient acts under its own
+  permission mode and approvals, a child's report to its parent included.
+  (Decided 2026-11-05.)
 - Other participants' tool calls, results, and execution activity do not trigger inference.
 - Idle agents yield until a message or job completion requires work, without polling.
 - Human and agent clients set their own participant presence. Agent clients also expose
@@ -222,7 +228,15 @@ Client
 - Each client has an independent interface to shared channels; several clients may
   inspect and interact with the same channel.
 - At startup, select the latest-touched channel matching the client's launch CWD,
-  or offer to create a new channel there.
+  or offer to create a new channel there. Latest touched means the newest
+  conversation file write time. Whether the server holds the channel in memory
+  or its agent is working does not count. The sidebar uses the same order.
+  (Decided 2026-11-05.)
+- A checkpoint waits until no agent in any channel is working and no job is
+  running, and jobs that would start while it waits are held until it ends.
+  (Decided 2026-11-05.)
+- The world store appends each change to its log rather than rewriting it;
+  rewrites happen only for repair and explicit compaction. (Decided 2026-11-05.)
 - Each channel has its own CWD, independent of the server's launch directory.
 
 * Implementation details left
@@ -234,12 +248,12 @@ Client
 - Ownership, descendant controls, and reference cleanup on deletion; whether the
   working memory-transfer choice above stands.
 - Whether startup offers to create a channel when no channel matches the launch
-  directory, or creates one; and what "latest touched" means exactly.
+  directory, or creates one.
 - Independent terminal views: how a smaller observer sees a shared frame, and
   whether unread and mention counts are per terminal only, as today, or kept.
 - Memory transfer, history-reference tracking, and retention of referenced history.
 - N:1 startup, reconnection, persistence, concurrent updates, and shared-image mutation.
-- CWD matching and the meaning of "latest touched".
+- CWD matching.
 - Channel URI addressing, bounded-history schema, and supported resource edits.
 - Exact migration fields, freshness comparison, reconciliation triggers, and removal
   of existing 1:1 session assumptions.
