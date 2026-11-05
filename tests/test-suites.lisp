@@ -688,6 +688,7 @@
   test-world-client-refusal-ends-start)
 
 (define-test-suite world-sidebar
+  test-world-sidebar-gathers-apart
   test-world-sidebar-rows
   test-world-sidebar-visibility
   test-world-sidebar-unread)
