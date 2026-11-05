@@ -342,7 +342,7 @@
 
 (-> test-world-server-resume-order () null)
 (defun test-world-server-resume-order ()
-  "Test a workspace reopens its most recently active conversation, not its newest channel record."
+  "Test a workspace opens its latest touched conversation, not its newest channel record."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bolder1" 1000)
     (world-tests--persisted-conversation configuration "bnewer2" 2000)
@@ -351,26 +351,48 @@
     (world-channel-update configuration "bnewer2" :title "Newer work" :now 3600)
     (let* ((world     (world-load configuration))
            (workspace (channel-workspace (world-channel-find world "bolder1")))
+           (server    (make-instance 'world-server
+                                     :configuration            configuration
+                                     :permission-mode          ':ask
+                                     :pristine-p               nil
+                                     :mutation-replay-failures nil))
            (dates     (list (cons "bolder1" 5000) (cons "bnewer2" 4000))))
       (test-call-with-function-replacements
        (list (list 'conversation-storage-write-date
                    (lambda (pathname)
                      (or (rest (assoc (pathname-name pathname) dates :test #'string=)) 0))))
        (lambda ()
-         (test-assert (equal (mapcar #'channel-identifier
-                                     (world-server--resume-candidates configuration world
-                                                                      :workspace workspace))
-                             '("bolder1" "bnewer2"))
+         (test-assert (equal (world-server--latest-candidates server workspace)
+                             '(("bolder1") ("bnewer2")))
                       "the conversation written last comes first whatever its channel's record says")
-         (test-assert (equal (mapcar #'channel-identifier
-                                     (world-server--resume-candidates configuration world
-                                                                      :workspace workspace
-                                                                      :hosted    '("bolder1")))
-                             '("bnewer2"))
-                      "a channel already hosted is not a candidate")))
-      (test-assert (null (world-server--resume-candidates configuration world
-                                                          :workspace "/nowhere/"))
-                   "another workspace has no candidates")))
+         (test-assert (null (world-server--latest-candidates server "/nowhere/"))
+                      "another workspace has no candidates")))))
+  nil)
+
+(-> test-world-server-open-latest-touched () null)
+(defun test-world-server-open-latest-touched ()
+  "Test a workspace open takes the latest touched channel even when an older one is hosted."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry     (world-client-entry configuration))
+            (workspace (world-tests--workspace root "a"))
+            (hosted    (getf (rest (world-server-tests--open entry workspace)) :session-id)))
+       (world-tests--persisted-conversation
+        (configuration-copy configuration :working-directory workspace) "blater1" 1000)
+       (let ((dates (list (cons hosted 1000) (cons "blater1" 5000))))
+         (test-call-with-function-replacements
+          (list (list 'conversation-storage-write-date
+                      (lambda (pathname)
+                        (or (rest (assoc (pathname-name pathname) dates :test #'string=)) 0))))
+          (lambda ()
+            (multiple-value-bind (host started-p)
+                (world-server--host-for server (list :directory workspace))
+              (test-assert (and started-p (string= (world-host-channel host) "blater1"))
+                           "a conversation written after the hosted one wins the open")
+              (multiple-value-bind (again again-started-p)
+                  (world-server--host-for server (list :directory workspace))
+                (test-assert (and (eq again host) (not again-started-p))
+                             "the next open joins it rather than starting it twice")))))))))
   nil)
 
 (-> world-server--channels-of (cons) list)

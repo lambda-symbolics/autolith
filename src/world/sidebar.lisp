@@ -121,11 +121,49 @@
 (-> world-sidebar--gather (world-sidebar real) list)
 (defun world-sidebar--gather (sidebar now)
   "Return the sidebar's entries for the world as it is at internal time NOW."
-  (let ((configuration (world-sidebar-configuration sidebar)))
+  (let ((configuration (world-sidebar-configuration sidebar))
+        (statuses      (world-sidebar--statuses sidebar)))
     (world-sidebar--entries sidebar
-                            :world    (world-sidebar--world sidebar now)
-                            :statuses (world-sidebar--statuses sidebar)
+                            :channels (world-sidebar--channels configuration
+                                                               (world-sidebar--world sidebar now)
+                                                               statuses)
+                            :statuses statuses
                             :pending  (world-sidebar--pending configuration))))
+
+(-> world-sidebar--channels (configuration world list) list)
+(defun world-sidebar--channels (configuration world statuses)
+  "Return WORLD's channels and the hosted ones STATUSES report beyond them, the latest touched first.
+
+Latest touched is the newest write of a channel's conversation file. A hosted
+channel the world does not know yet has no file: it started just now, shows
+first, and belongs to the workspace its status names."
+  (let* ((now    (get-universal-time))
+         (person (world-human-participant world))
+         (fresh  (loop for status in statuses
+                       for identifier = (getf status :session-id)
+                       for directory = (getf status :cwd)
+                       when (and (stringp identifier)
+                                 (stringp directory)
+                                 (null (world-channel-find world identifier)))
+                         collect (make-instance 'channel
+                                                :identifier identifier
+                                                :owner      (if person
+                                                                (participant-identifier person)
+                                                                identifier)
+                                                :workspace  (world-workspace-name directory)
+                                                :title      (getf status :conversation-title)
+                                                :created-at now
+                                                :updated-at now))))
+    (mapcar #'rest
+            (stable-sort
+             (append (mapcar (lambda (channel) (cons now channel)) fresh)
+                     (mapcar (lambda (channel)
+                               (cons (conversation-storage-write-date
+                                      (conversation-pathname-for-id configuration
+                                                                    (channel-identifier channel)))
+                                     channel))
+                             (world-channels world)))
+             #'> :key #'first))))
 
 (-> world-sidebar--world (world-sidebar real) world)
 (defun world-sidebar--world (sidebar now)
@@ -175,20 +213,21 @@ A world that cannot be read shows as empty rather than ending the client."
         nil)))
 
 (-> world-sidebar--entries
-    (world-sidebar &key (:world world) (:statuses list) (:pending list))
+    (world-sidebar &key (:channels list) (:statuses list) (:pending list))
     list)
-(defun world-sidebar--entries (sidebar &key world statuses pending)
-  "Return workspace and channel entries of WORLD, with STATUSES and PENDING deliveries folded in.
+(defun world-sidebar--entries (sidebar &key channels statuses pending)
+  "Return workspace and channel entries of CHANNELS, with STATUSES and PENDING deliveries folded in.
 
-The workspace of the current channel comes first, then the others by their
-newest change. Within a workspace, channels nest under their parents."
+CHANNELS arrive latest touched first. The workspace of the current channel
+comes first, then the others in that order. Within a workspace, channels nest
+under their parents."
   (let ((current (world-sidebar-current sidebar))
         (table   (make-hash-table :test #'equal)))
     (dolist (status statuses)
       (let ((identifier (getf status :session-id)))
         (when (stringp identifier)
           (setf (gethash identifier table) status))))
-    (loop for (workspace . members) in (world-sidebar--groups (world-channels world) current)
+    (loop for (workspace . members) in (world-sidebar--groups channels current)
           append (cons (list :kind ':workspace
                              :name (world-workspace-leaf workspace)
                              :path (world-sidebar--short-path workspace))
