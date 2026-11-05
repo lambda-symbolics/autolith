@@ -15,6 +15,7 @@
   test-context-admission-mission-reviewer
   test-context-admission-mission-refusal-settlement
   test-context-admission-mission-refusal-proof
+  test-context-admission-mission-handoff-reasons
   test-context-admission-boundary
   test-context-admission-fresh-projection
   test-context-admission-final-request
@@ -26,6 +27,14 @@
   test-cache-review-final-wire)
 
 (define-test-suite compaction-acceptance
+  test-compaction-request-view-isolation
+  test-compaction-summary-mission-ownership
+  test-compaction-summary-mission-failures
+  test-compaction-native-view-mission-ownership
+  test-compaction-final-projection-gap
+  test-compaction-final-admission-trigger
+  test-compaction-mission-admission-trigger
+  test-compaction-admission-recovery-bounds
   test-compaction-summary-acceptance
   test-compaction-native-paid-rejection
   test-compaction-next-request-admission

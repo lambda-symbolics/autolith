@@ -156,7 +156,15 @@ child UNKNOWN audit; unproven uncertainty requires conservative quarantine."
                  (values-list results))
              (error (condition)
                (setf failure condition)
-               (error condition))))
+               (let ((refusal (rest admission-state)))
+                 ;; Preserve the supervisor failure for settlement and audit.
+                 (error (if (and local-refusal-p
+                                 (eq (first admission-state) :pending)
+                                 (typep refusal 'provider-context-budget-error)
+                                 (typep condition 'mission-error)
+                                 (eq (mission-error-reason condition) :failed))
+                            refusal
+                            condition))))))
       (when (and reservation (not settled-p))
         (sb-sys:without-interrupts
           (setf settled-p t)

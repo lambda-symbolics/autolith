@@ -458,18 +458,26 @@
                                  (list :turn-limit 4 :token-limit 100 :turns-used 0 :tokens-used 0))))
             (application-mission-start application (mission-test--specification :turns 4 :tokens 100))
             (unwind-protect
-                 (let* ((context (mission-context-find conversation))
-                        (goal    (mission-context-goal context)))
+                 (let* ((context          (mission-context-find conversation))
+                        (goal             (mission-context-goal context))
+                        (original-refusal nil))
                    (test-assert
                     (handler-case
                         (mission--account-inference
                          context
                          (lambda ()
-                           (funcall (if native-p #'provider-open-native-compaction #'provider-open-response-stream)
-                                    provider (json-object "max_output_tokens" 6000)))
+                           (handler-bind ((provider-context-budget-error
+                                            (lambda (condition) (setf original-refusal condition))))
+                             (funcall (if native-p #'provider-open-native-compaction #'provider-open-response-stream)
+                                      provider (json-object "max_output_tokens" 6000))))
                          (lambda (results) (declare (ignore results)) nil)
                          :allowance reviewer)
-                      (mission-error () t))
+                      (error (condition)
+                        (and (typep condition 'provider-context-budget-error)
+                             (eq condition original-refusal)
+                             (= 6000 (provider-context-budget-error-output-reserve condition))
+                             (= 5000 (provider-context-budget-error-context-window condition))
+                             (plusp (provider-context-budget-error-estimated-input-tokens condition)))))
                     "the accounted request is refused by ordinary admission")
                    (test-assert (zerop (context-admission-test-provider-network-calls provider))
                                 "local refusal never enters the transport")
@@ -775,5 +783,43 @@
                                   "goal append, compaction and reload retain full allocation and child audit"))))
             (when job (task-job-await job nil))
             (task-orchestrator-close orchestrator)
+            (mission-detach application))))))
+  nil)
+
+(-> test-context-admission-mission-handoff-reasons () null)
+(defun test-context-admission-mission-handoff-reasons ()
+  "Keep cancellation and deadline supervisor failures despite retained refusal proof."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+    (dolist (reason '(:aborted :exhausted :gate-timeout))
+      (with-test-configuration (configuration)
+        (let* ((provider     (make-instance 'context-admission-test-provider :configuration configuration))
+               (application  (mission-inference-test--application configuration provider))
+               (conversation (application-conversation application))
+               (failure      (make-condition 'mission-error :reason reason :message "Supervisor stopped.")))
+          (application-mission-start application (mission-test--specification :turns 4 :tokens 100))
+          (unwind-protect
+               (test-call-with-function-replacements
+                (list (list 'mission--supervise
+                            (lambda (context label function)
+                              (declare (ignore context label))
+                              (handler-case (funcall function)
+                                (provider-context-budget-error () (error failure))))))
+                (lambda ()
+                  (let ((context (mission-context-find conversation)))
+                    (test-assert
+                     (handler-case
+                         (mission--account-inference
+                          context
+                          (lambda () (provider-open-response-stream
+                                      provider (json-object "max_output_tokens" 6000)))
+                          (lambda (results) (declare (ignore results)) nil))
+                       (mission-error (condition) (eq condition failure)))
+                     "nonfailure supervisor reasons preserve their original condition")
+                    (test-assert
+                     (and (zerop (context-admission-test-provider-network-calls provider))
+                          (zerop (getf (mission-context-goal context) :unknown-usage 0))
+                          (zerop (getf (mission-context-goal context) :requests-outstanding)))
+                     "the handoff guard does not change d0 settlement"))))
             (mission-detach application))))))
   nil)

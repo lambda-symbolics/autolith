@@ -229,3 +229,426 @@ the strict shape, and whether the only allowed request publishes it."
                                                 "literal continuation 3")
                    "the latest exact user continuation survives publication and replay")))
   nil)
+
+(defvar *compaction-gap-test-contributions* nil
+  "Dynamically bound contributor invocation counter for recovery fixtures.")
+
+(-> compaction-gap-test--contribute (request-context) context-contribution)
+(defun compaction-gap-test--contribute (context)
+  "Record one invocation and deliver a real request-local instruction."
+  (declare (ignore context))
+  (incf (first *compaction-gap-test-contributions*))
+  (make-context-contribution :identifier "recovery" :instruction "Keep the continuation concise."))
+
+(defclass compaction-gap-test-provider
+    (compaction-admission-test-provider context-admission-test-provider)
+  ((mode :initarg :mode :initform nil :reader compaction-gap-test-mode
+         :documentation "Optional failure control at actual request admission.")
+   (attempts :initform 0 :accessor compaction-gap-test-attempts
+             :documentation "Ordinary attempts, including locally refused ones.")
+   (reservations :initform nil :accessor compaction-gap-test-reservations
+                 :documentation "Independent mission reservations seen by each attempt."))
+  (:documentation "Use real encoded admission before deterministic scripted responses."))
+
+(defmethod provider-stream-turn
+    ((provider compaction-gap-test-provider) (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Exercise final admission without credentials or network access."
+  (declare (ignore event-callback))
+  (unless compaction-p
+    (incf (compaction-gap-test-attempts provider)))
+  (let ((context (mission-context-find conversation)))
+    (when context
+      (let ((ledger (mission-context-goal context)))
+        (push (list (getf ledger :requests-outstanding) (getf ledger :tokens-used)
+                    (getf ledger :tokens-reserved) *provider-mission-output-allowance*)
+              (compaction-gap-test-reservations provider)))))
+  (when (and (not compaction-p) (eq (compaction-gap-test-mode provider) :generic))
+    (error 'provider-protocol-error :message "Scripted transport failure."
+           :status nil :code nil :request-id nil :response-id nil :response nil))
+  (let ((before (and *compaction-gap-test-contributions* (first *compaction-gap-test-contributions*))))
+    (multiple-value-bind (request delivery)
+        (provider-request-object provider conversation tool-namespaces
+                                 :goal-context goal-context :compaction-p compaction-p)
+      (declare (ignore delivery))
+      (when (and before (not compaction-p))
+        (push (- (first *compaction-gap-test-contributions*) before)
+              (rest *compaction-gap-test-contributions*)))
+      (when (and (not compaction-p)
+                 (or (eq (compaction-gap-test-mode provider) :refuse)
+                     (and (eq (compaction-gap-test-mode provider) :second-refusal)
+                          (> (compaction-gap-test-attempts provider) 1))))
+        (setf (gethash "max_output_tokens" request) 6000))
+      (provider-open-response-stream provider request :conversation conversation)))
+  (call-next-method))
+
+(defclass compaction-gap-test-observer (agent-observer)
+  ((compactions :initform 0 :accessor compaction-gap-test-compactions
+                :documentation "Automatic compaction announcements."))
+  (:documentation "Observe automatic compaction without changing its decision."))
+
+(defmethod agent-observer-status ((observer compaction-gap-test-observer) status details)
+  "Count announced automatic compactions."
+  (declare (ignore details))
+  (when (eq status :compaction-started)
+    (incf (compaction-gap-test-compactions observer)))
+  nil)
+
+(-> compaction-gap-test--recover
+    (boolean &key (:mode (option keyword)) (:proactive-p boolean)
+                  (:request-limit (integer 1)) (:failure-type symbol)
+                  (:compactions (integer 0)) (:network-calls (integer 0)))
+    null)
+(defun compaction-gap-test--recover
+    (mission-p &key mode proactive-p (request-limit 512) (failure-type 'null)
+                   (compactions 1) (network-calls 2))
+  "Exercise local refusal and recovery, optionally under mission accounting."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+    (with-test-configuration (configuration)
+      (let* ((provider
+               (make-instance 'compaction-gap-test-provider
+                              :configuration configuration
+                              :mode          mode
+                              :results       (list (agent-test-result "summary" (list (agent-test-compaction-message)))
+                                                   (agent-test-result "answer" (list (agent-test-message "OK"))))))
+             (application
+               (when mission-p (mission-inference-test--application configuration provider)))
+             (conversation
+               (if application (application-conversation application) (conversation-create configuration)))
+             (observer
+               (make-instance 'compaction-gap-test-observer))
+             (agent
+               (agent-create :configuration configuration :conversation conversation
+                             :provider provider :tool-registry (make-instance 'tool-registry)))
+             (goal
+               (make-string 10000 :initial-element #\g))
+             (*conversation-compaction-tail-characters*
+               1024)
+             (*agent-maximum-provider-requests-per-turn*
+               request-limit)
+             (*context-contributors*
+               nil)
+             (*context-resolver*
+               (cl-llm-provider-api:make-context-resolver))
+             (*compaction-gap-test-contributions*
+               (list 0)))
+        (register-context-contributor "recovery" 'compaction-gap-test--contribute)
+        (when application
+          (application-mission-start application (mission-test--specification :turns 8 :tokens 100000)))
+        (unwind-protect
+             (progn
+               (conversation-append-user-message conversation (make-string 12000 :initial-element #\h))
+               (conversation-append-user-message conversation "continue")
+               (test-call-with-function-replacements
+                (list (list 'system-prompt (lambda (c) (declare (ignore c)) "small"))
+                      (list 'request-context-session-state
+                            (lambda (c &key hurry-up-p) (declare (ignore c hurry-up-p)) ""))
+                      (list 'agent-should-compact-p
+                            (let ((original (symbol-function 'agent-should-compact-p)))
+                              (lambda (candidate)
+                                (if proactive-p t (funcall original candidate))))))
+                (lambda ()
+                  (test-assert (eq (not (null proactive-p)) (agent-should-compact-p agent))
+                               "the controlled soft trigger matches this scenario")
+                  (let ((failure nil))
+                    (handler-case (agent--run-provider-loop agent observer :goal-context goal :tools-p nil)
+                      (error (condition) (setf failure condition)))
+                    (format t "~&FINAL-ADMISSION-WITNESS mission=~S compactions=~D transport=~D error=~S~%"
+                            mission-p (compaction-gap-test-compactions observer)
+                            (context-admission-test-provider-network-calls provider)
+                            (and failure (type-of failure)))
+                    (test-assert (typep failure failure-type) "the ordinary attempt has the expected outcome")
+                    (test-assert (= compactions (compaction-gap-test-compactions observer))
+                                 "the step uses at most one compaction opportunity")
+                    (test-assert (= network-calls (context-admission-test-provider-network-calls provider))
+                                 "only admitted summary and ordinary requests reach inert transport"))))
+               (test-assert (every (lambda (count) (= 1 count))
+                                   (rest *compaction-gap-test-contributions*))
+                            "each ordinary preparation invokes its contributor exactly once")
+               (when application
+                 (let ((ledger (mission-context-goal (mission-context-find conversation))))
+                   (format t "~&MISSION-LEDGER-WITNESS status=~S used=~D turns=~D unknown=~D reserved=~D outstanding=~D attempts=~S~%"
+                           (getf ledger :status) (getf ledger :tokens-used) (getf ledger :turns-used)
+                           (getf ledger :unknown-usage 0) (getf ledger :tokens-reserved)
+                           (getf ledger :requests-outstanding) (compaction-gap-test-reservations provider))
+                   (test-assert
+                    (every (lambda (snapshot)
+                             (destructuring-bind (outstanding used reserved allowance) snapshot
+                               (declare (ignore used))
+                               (and (= 1 outstanding) (= reserved allowance))))
+                           (compaction-gap-test-reservations provider))
+                    "each attempt owns a single independent reservation")
+                   (when (eq mode :second-refusal)
+                     (test-assert (and (eq ':active (getf ledger :status))
+                                       (zerop (getf ledger :unknown-usage 0))
+                                       (zerop (getf ledger :tokens-reserved))
+                                       (zerop (getf ledger :requests-outstanding))
+                                       (= (* 2 network-calls) (getf ledger :tokens-used))
+                                       (= (+ 2 network-calls) (getf ledger :turns-used)))
+                                  "both refused attempts and the paid summary reserve turns"))
+                   (unless (eq mode :second-refusal)
+                     (test-assert (and (eq ':active (getf ledger :status))
+                                       (zerop (getf ledger :unknown-usage 0))
+                                       (zerop (getf ledger :tokens-reserved))
+                                       (zerop (getf ledger :requests-outstanding))
+                                       (= (* 2 network-calls) (getf ledger :tokens-used))
+                                       (= (+ 1 network-calls) (getf ledger :turns-used)))
+                                  "recovery settles all reservations without unknown usage")))))
+          (when application (mission-detach application))))))
+  nil)
+
+(-> test-compaction-final-admission-trigger () null)
+(defun test-compaction-final-admission-trigger ()
+  "Recover a final request larger than the known-history projection."
+  (compaction-gap-test--recover nil))
+
+(-> test-compaction-mission-admission-trigger () null)
+(defun test-compaction-mission-admission-trigger ()
+  "Recover outside mission ownership after a proven zero-usage refusal."
+  (compaction-gap-test--recover t))
+
+(-> test-compaction-admission-recovery-bounds () null)
+(defun test-compaction-admission-recovery-bounds ()
+  "Bound recovery, share the proactive opportunity and preserve unrelated errors."
+  (dolist (mission-p '(nil t))
+    (compaction-gap-test--recover mission-p :mode ':second-refusal
+                                 :failure-type 'provider-context-budget-error :network-calls 1)
+    (compaction-gap-test--recover mission-p :mode ':refuse :proactive-p t
+                                 :failure-type 'provider-context-budget-error :network-calls 1)
+    (compaction-gap-test--recover mission-p :request-limit 1
+                                 :failure-type 'agent-loop-error :compactions 0 :network-calls 0)
+    (compaction-gap-test--recover mission-p :request-limit 2
+                                 :failure-type 'agent-loop-error :network-calls 1))
+  (compaction-gap-test--recover nil :mode ':generic :failure-type 'provider-protocol-error
+                               :compactions 0 :network-calls 0)
+  nil)
+
+(-> test-compaction-final-projection-gap () null)
+(defun test-compaction-final-projection-gap ()
+  "Characterize the difference between known history and final encoded admission."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+    (with-test-configuration (configuration)
+      (let* ((conversation (conversation-create configuration))
+             (provider     (make-instance 'context-admission-test-provider :configuration configuration))
+             (agent        (agent-create :configuration configuration :conversation conversation
+                                         :provider provider :tool-registry (make-instance 'tool-registry))))
+        (conversation-append-user-message conversation (make-string 12000 :initial-element #\h))
+        (test-call-with-function-replacements
+         (list (list 'system-prompt (lambda (c) (declare (ignore c)) "small"))
+               (list 'request-context-session-state
+                     (lambda (c &key hurry-up-p) (declare (ignore c hurry-up-p)) "")))
+         (lambda ()
+           (test-assert (not (agent-should-compact-p agent))
+                        "the fresh known estimate is below the soft threshold")
+           (let ((request (provider-request-object provider conversation #()
+                                                   :goal-context (make-string 10000 :initial-element #\g))))
+             (test-assert (handler-case (progn (provider-check-request-context provider request) nil)
+                            (provider-context-budget-error () t))
+                          "the final encoded request nevertheless exceeds the hard window")))))))
+  nil)
+
+
+;;;; -- Mission Ownership of Detached Compaction Requests --
+
+(defclass compaction-ownership-test-provider (compaction-gap-test-provider)
+  ((summary-mode :initarg       :summary-mode
+                 :initform      ':known
+                 :reader        compaction-ownership-test-summary-mode
+                 :documentation "Known, unknown, failed or locally refused summary requests.")
+   (views :initform nil :accessor compaction-ownership-test-views
+          :documentation "Request views and exact mission identity during dispatch.")
+   (native-p :initarg :native-p :initform nil :reader compaction-ownership-test-native-p
+             :documentation "Whether to enter an actual native request attempt."))
+  (:documentation "Observe detached request ownership without credentials or network access."))
+
+(defmethod provider-stream-turn
+    ((provider compaction-ownership-test-provider) (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Record summary identity and exercise ordinary failure accounting."
+  (declare (ignore tool-namespaces event-callback goal-context))
+  (when compaction-p
+    (push (list conversation (mission-context-find conversation))
+          (compaction-ownership-test-views provider))
+    (case (compaction-ownership-test-summary-mode provider)
+      (:error
+       (error 'provider-protocol-error :message "Scripted summary failure."
+              :status nil :code nil :request-id nil :response-id nil :response nil))
+      (:refuse
+       (provider-open-response-stream
+        provider (json-object "input" "short" "max_output_tokens" 6000)
+        :conversation conversation))))
+  (call-next-method))
+
+(defmethod provider-native-compact-conversation
+    ((provider compaction-ownership-test-provider) (conversation conversation)
+     &key tool-namespaces event-callback)
+  "Enter the native-attempt boundary only when this fixture supports native requests."
+  (if (compaction-ownership-test-native-p provider)
+      (provider-attempt-native-compaction provider conversation
+                                          :tool-namespaces tool-namespaces
+                                          :force-refresh nil :event-callback event-callback)
+      (values nil nil)))
+
+(defmethod provider-attempt-native-compaction
+    ((provider compaction-ownership-test-provider) (conversation conversation)
+     &key tool-namespaces force-refresh event-callback)
+  "Report separately paid native usage without an opaque checkpoint."
+  (declare (ignore tool-namespaces force-refresh event-callback))
+  (push (list conversation (mission-context-find conversation))
+        (compaction-ownership-test-views provider))
+  (case (compaction-ownership-test-summary-mode provider)
+    (:native-error
+     (error 'provider-protocol-error :message "Scripted native failure."
+            :status nil :code nil :request-id nil :response-id nil :response nil))
+    (:native-refuse
+     (provider-open-response-stream
+      provider (json-object "input" "short" "max_output_tokens" 6000)
+      :conversation conversation)))
+  (values nil (if (eq (compaction-ownership-test-summary-mode provider) :native-unknown)
+                  (json-object)
+                  (json-object "input_tokens" 2 "output_tokens" 3))))
+
+(-> compaction-ownership-test--run
+    (&key (:mission-p boolean) (:mode keyword) (:native-p boolean)
+          (:turns (integer 1)) (:continued-p boolean)) null)
+(defun compaction-ownership-test--run
+    (&key (mission-p t) (mode ':known) native-p (turns 8) continued-p)
+  "Verify actual usage, refusal, budget and cleanup on a private mission."
+  (with-test-environment (("AUTOLITH_CONTEXT_WINDOW" "5000")
+                          ("AUTOLITH_CONTEXT_OUTPUT_RESERVE" "256"))
+    (with-test-configuration (configuration)
+      (let* ((usage        (if (eq mode :unknown) (json-object)
+                              (json-object "input_tokens" 1 "output_tokens" 1)))
+             (provider     (make-instance
+                            'compaction-ownership-test-provider
+                            :configuration configuration :summary-mode mode :native-p native-p
+                            :results (append
+                                      (when continued-p
+                                        (list (agent-test-result "unfinished" nil :turn-completion ':continue)))
+                                      (list (agent-test-result
+                                             "summary" (list (agent-test-compaction-message))
+                                             :usage usage)))))
+             (application  (when mission-p (mission-inference-test--application configuration provider)))
+             (conversation (if application (application-conversation application)
+                               (conversation-create configuration)))
+             (agent        (agent-create :configuration configuration :conversation conversation
+                                         :provider      provider :tool-registry (make-instance 'tool-registry)))
+             (failure      nil)
+             (context      nil))
+        (when application
+          (application-mission-start application (mission-test--specification :turns turns :tokens 100000))
+          (setf context (mission-context-find conversation)))
+        (unwind-protect
+             (progn
+               (conversation-append-user-message conversation "Preserve this exact instruction.")
+               (when (and application (= turns 1))
+                 (mission-inference-test--call
+                  (make-instance 'scripted-provider
+                                 :configuration configuration
+                                 :results       (list (agent-test-result "prior" (list (agent-test-message "prior")))))
+                  conversation))
+               (test-call-with-function-replacements
+                (list (list 'system-prompt (lambda (c) (declare (ignore c)) "small"))
+                      (list 'request-context-session-state
+                            (lambda (c &key hurry-up-p) (declare (ignore c hurry-up-p)) "")))
+                (lambda ()
+                  (handler-case (agent-compact-conversation agent (make-instance 'agent-observer))
+                    (error (condition) (setf failure condition)))))
+               (dolist (entry (compaction-ownership-test-views provider))
+                 (test-assert (eq context (second entry)) "the request uses its source's exact mission identity")
+                 (test-assert (null (mission-context-find (first entry))) "fresh ownership ends on every unwind"))
+               (when application
+                 (let* ((ledger      (mission-context-goal context))
+                        (blocked-p   (member mode '(:unknown :error :native-unknown :native-error)))
+                        (exhausted-p (= turns 1))
+                        (expected-tokens
+                          (cond
+                            (exhausted-p
+                             2)
+                            (blocked-p
+                             0)
+                            ((member mode '(:refuse :native-refuse))
+                             0)
+                            (t
+                             (+ (if native-p 5 0) (if continued-p 4 2))))))
+                   (format t "~&OWNERSHIP-WITNESS mode=~S native=~S turns=~D error=~S ledger=~S~%"
+                           mode native-p turns (and failure (type-of failure)) ledger)
+                   (test-assert (= expected-tokens (getf ledger :tokens-used)) "only actual reported usage is charged")
+                   (test-assert (= (if blocked-p 1 0) (getf ledger :unknown-usage 0)) "unknown follows ordinary mission policy")
+                   (test-assert (zerop (getf ledger :requests-outstanding)) "all request reservations settle")
+                   (test-assert (zerop (getf ledger :tokens-reserved)) "no output reservation leaks")
+                   (cond
+                     (exhausted-p
+                      (test-assert failure "the exhausted mission refuses summary dispatch")
+                      (test-assert (null (compaction-ownership-test-views provider)) "no summary enters after turn exhaustion"))
+                     (blocked-p
+                      (test-assert (eq ':blocked (getf ledger :status)) "unknown summary usage blocks new mission requests"))
+                     ((member mode '(:refuse :native-refuse))
+                      (test-assert (typep failure 'provider-context-budget-error) "a local refusal retains its type")
+                      (test-assert (eq ':active (getf ledger :status)) "a local compaction refusal has known zero usage"))
+                     (t
+                      (test-assert (null failure) "owned compaction succeeds")
+                      (test-assert (= (+ (if native-p 1 0) (if continued-p 2 1)) (getf ledger :turns-used))
+                                   "each actual native or continued summary request reserves one turn"))))))
+          (when application (mission-detach application))))))
+  nil)
+
+(-> test-compaction-summary-mission-ownership () null)
+(defun test-compaction-summary-mission-ownership ()
+  "Charge known summaries and bound view ownership, including unsupported native probes."
+  (compaction-ownership-test--run)
+  (compaction-ownership-test--run :continued-p t)
+  (compaction-ownership-test--run :mission-p nil))
+
+(-> test-compaction-summary-mission-failures () null)
+(defun test-compaction-summary-mission-failures ()
+  "Retain ordinary UNKNOWN and budget policies without invented usage."
+  (dolist (mode '(:unknown :error :refuse))
+    (compaction-ownership-test--run :mode mode))
+  (compaction-ownership-test--run :turns 1))
+
+(-> test-compaction-native-view-mission-ownership () null)
+(defun test-compaction-native-view-mission-ownership ()
+  "Charge the detached native request and summary exactly once each."
+  (compaction-ownership-test--run :native-p t)
+  (dolist (mode '(:native-unknown :native-error :native-refuse))
+    (compaction-ownership-test--run :native-p t :mode mode))
+  (compaction-ownership-test--run :native-p t :turns 1))
+
+(-> test-compaction-request-view-isolation () null)
+(defun test-compaction-request-view-isolation ()
+  "Bound exact mission aliases without clobbering nested or unrelated request owners."
+  (with-test-configuration (configuration)
+    (let* ((first-application  (mission-test--application configuration))
+           (second-application (mission-test--application configuration))
+           (first-source       (application-conversation first-application))
+           (second-source      (application-conversation second-application))
+           (view               (conversation-create configuration)))
+      (application-mission-start first-application (mission-test--specification))
+      (application-mission-start second-application (mission-test--specification))
+      (unwind-protect
+           (let ((first-context  (mission-context-find first-source))
+                 (second-context (mission-context-find second-source)))
+             (mission-call-with-request-view
+              first-context view
+              (lambda ()
+                (test-assert (eq first-context (mission-context-find view)) "the outer request owns its fresh view")
+                (mission-call-with-request-view
+                 second-context view
+                 (lambda ()
+                   (test-assert (eq first-context (mission-context-find view)) "nested work cannot replace an existing owner")))
+                (test-assert (eq first-context (mission-context-find view)) "nested cleanup preserves the outer association")))
+             (test-assert (null (mission-context-find view)) "outer cleanup removes only its introduced association")
+             (mission-context-bind second-context view)
+             (mission-call-with-request-view
+              first-context view
+              (lambda ()
+                (test-assert (eq second-context (mission-context-find view)) "unrelated existing ownership is preserved")))
+             (test-assert (eq second-context (mission-context-find view)) "cleanup never removes an unrelated association")
+             (with-lock-held (*mission-contexts-lock*)
+               (remhash view *mission-contexts*)))
+        (mission-detach first-application)
+        (mission-detach second-application))))
+  nil)
