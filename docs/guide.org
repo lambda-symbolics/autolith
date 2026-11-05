@@ -1469,9 +1469,9 @@ description or argument rule makes models fail.
 *** Starting and switching channels
 
 One background server hosts your channels. Run =autolith= in a directory to
-connect to it, starting the server if needed. The client opens the most
-recently changed channel in that workspace that no other terminal controls,
-or creates a channel if none qualifies. Use =autolith resume ID= to open a
+connect to it, starting the server if needed. The client opens the channel
+in that workspace whose conversation file changed last and that no other
+terminal controls, or creates a channel if none qualifies. Use =autolith resume ID= to open a
 specific channel.
 
 Closing the terminal, detaching, or losing the connection leaves the channel
@@ -1520,7 +1520,8 @@ running one.
 
 In fullscreen mode, an attached terminal can show the world's channels in a
 sidebar on the left. Channels are grouped by workspace, with the current
-workspace first and child channels nested under their parents.
+workspace first. Within a workspace, the channel whose conversation changed
+last comes first, and child channels are nested under their parents.
 
 | Marker | Meaning |
 |--------+---------|

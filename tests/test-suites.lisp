@@ -639,6 +639,7 @@
   test-world-server-stop
   test-world-server-switch
   test-world-server-resume-order
+  test-world-server-open-latest-touched
   test-world-server-starting-host
   test-world-server-launch-options
   test-world-server-close-unattached
