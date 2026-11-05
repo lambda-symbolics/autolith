@@ -1232,75 +1232,78 @@ of the world follows the terminal from channel to channel."
                                 :recovery-diagnosis recovery-diagnosis
                                 :launch             launch)
     (when session-id
-      (loop
-        with panel = (world-sidebar-create configuration)
-        with origin = nil
-        do
-        (let* ((record (localgroup--find-record configuration session-id))
-               (exit
-                 (flet ((close-started ()
-                          ;; A channel started for this terminal would
-                          ;; otherwise idle in the server. The server closes
-                          ;; it only while no terminal controls it: another
-                          ;; one may have attached since this one started it.
-                          (when started-p
-                            ; mallet:suppress no-ignore-errors -- best-effort close of a channel nobody attached to
-                            (ignore-errors
-                              (let ((world (world-client-entry configuration)))
-                                (when world
-                                  (localgroup-query-record world ':close
-                                                          (list :channel           session-id
-                                                                :unattached-only-p t))))))))
-                   (handler-case
-                       (progn
-                         (setf (world-sidebar-current panel) session-id)
-                         (localgroup-attach-record configuration record ':control :panel panel))
-                     (localgroup-error (condition)
-                       (close-started)
-                       ;; A switch whose channel refuses this terminal, as
-                       ;; when another terminal controls it, returns it to
-                       ;; the channel it left.
-                       (unless (and origin
-                                    (eq (image-daemon:daemon-error-operation condition) ':attach))
-                         (error condition))
-                       (format *error-output* "~&Autolith: could not switch to ~A: ~A~%"
-                               (conversation-identifier-display session-id)
-                               (autolith-error-message condition))
-                       (force-output *error-output*)
-                       (list ':return))
-                     (serious-condition (condition)
-                       (close-started)
-                       (error condition))))))
-          (cond
-            ((and (consp exit) (eq (first exit) ':return))
-             (setf session-id origin
-                   origin     nil
-                   started-p  nil))
-            ((and (consp exit) (eq (first exit) ':switch))
-              ;; A switch navigates: it states none of this start's launch
-              ;; options, and a channel that refuses it leaves the terminal
-              ;; where it was.
-             (let ((left session-id))
-               (handler-case
-                   (progn
-                     (multiple-value-setq (session-id started-p)
-                       (world-client-open configuration
-                                          :channel         (getf (rest exit) :session-id)
-                                          :permission-mode permission-mode
-                                          :immutable-p     immutable-p
-                                          :pristine-p      pristine-p))
-                     (setf origin left))
-                 (localgroup-error (condition)
-                   (format *error-output* "~&Autolith: could not switch to ~A: ~A~%"
-                           (conversation-identifier-display (getf (rest exit) :session-id))
-                           (autolith-error-message condition))
-                   (force-output *error-output*)
-                   (setf session-id left
+      (let ((panel (world-sidebar-create configuration)))
+        (world-sidebar-start panel)
+        (unwind-protect
+             (loop
+               with origin = nil
+              do
+              (let* ((record (localgroup--find-record configuration session-id))
+                     (exit
+                       (flet ((close-started ()
+                                ;; A channel started for this terminal would
+                                ;; otherwise idle in the server. The server closes
+                                ;; it only while no terminal controls it: another
+                                ;; one may have attached since this one started it.
+                                (when started-p
+                                  ; mallet:suppress no-ignore-errors -- best-effort close of a channel nobody attached to
+                                  (ignore-errors
+                                    (let ((world (world-client-entry configuration)))
+                                      (when world
+                                        (localgroup-query-record world ':close
+                                                                (list :channel           session-id
+                                                                      :unattached-only-p t))))))))
+                         (handler-case
+                             (progn
+                               (setf (world-sidebar-current panel) session-id)
+                               (localgroup-attach-record configuration record ':control :panel panel))
+                           (localgroup-error (condition)
+                             (close-started)
+                             ;; A switch whose channel refuses this terminal, as
+                             ;; when another terminal controls it, returns it to
+                             ;; the channel it left.
+                             (unless (and origin
+                                          (eq (image-daemon:daemon-error-operation condition) ':attach))
+                               (error condition))
+                             (format *error-output* "~&Autolith: could not switch to ~A: ~A~%"
+                                     (conversation-identifier-display session-id)
+                                     (autolith-error-message condition))
+                             (force-output *error-output*)
+                             (list ':return))
+                           (serious-condition (condition)
+                             (close-started)
+                             (error condition))))))
+                (cond
+                  ((and (consp exit) (eq (first exit) ':return))
+                   (setf session-id origin
                          origin     nil
-                         started-p  nil)))))
-            (t
-             (localgroup-relay-exit configuration exit ':control)
-             (return t))))))))
+                         started-p  nil))
+                  ((and (consp exit) (eq (first exit) ':switch))
+                    ;; A switch navigates: it states none of this start's launch
+                    ;; options, and a channel that refuses it leaves the terminal
+                    ;; where it was.
+                   (let ((left session-id))
+                     (handler-case
+                         (progn
+                           (multiple-value-setq (session-id started-p)
+                             (world-client-open configuration
+                                                :channel         (getf (rest exit) :session-id)
+                                                :permission-mode permission-mode
+                                                :immutable-p     immutable-p
+                                                :pristine-p      pristine-p))
+                           (setf origin left))
+                       (localgroup-error (condition)
+                         (format *error-output* "~&Autolith: could not switch to ~A: ~A~%"
+                                 (conversation-identifier-display (getf (rest exit) :session-id))
+                                 (autolith-error-message condition))
+                         (force-output *error-output*)
+                         (setf session-id left
+                               origin     nil
+                               started-p  nil)))))
+                  (t
+                   (localgroup-relay-exit configuration exit ':control)
+                   (return t)))))
+          (world-sidebar-stop panel))))))
 
 (-> main--session-options () list)
 (defun main--session-options ()

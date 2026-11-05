@@ -6,6 +6,9 @@
 ;;; of the world grouped by workspace, with what runs there, who is attached,
 ;;; and what arrived since this client last looked. The counts are the
 ;;; client's own view and live nowhere else; a fresh client starts caught up.
+;;; A started sidebar gathers on its own thread, so reading the world, the
+;;; server and the inboxes never holds up the terminal's keystrokes; the
+;;; panel only takes what the thread gathered last.
 
 (defparameter *world-sidebar-width* 28
   "The columns the sidebar takes left of the channel.")
@@ -70,7 +73,37 @@
     :initform      #'get-internal-real-time
     :reader        world-sidebar-clock-function
     :type          function
-    :documentation "Returns the internal real time, replaceable by tests."))
+    :documentation "Returns the internal real time, replaceable by tests.")
+   (world-cache
+    :initform      nil
+    :accessor      world-sidebar-world-cache
+    :type          (option cons)
+    :documentation "The (TOKEN . WORLD) the sidebar read last, read again only once the world log changed.")
+   (lock
+    :initform      (make-lock "Autolith world sidebar")
+    :reader        world-sidebar-lock
+    :type          t
+    :documentation "Protects the gathered entries and the gatherer's stop request.")
+   (condition-variable
+    :initform      (make-condition-variable :name "Autolith world sidebar")
+    :reader        world-sidebar-condition-variable
+    :type          t
+    :documentation "Wakes the gatherer early when it is asked to stop.")
+   (gatherer
+    :initform      nil
+    :accessor      world-sidebar-gatherer
+    :type          t
+    :documentation "The thread gathering entries, or NIL when the panel gathers as it refreshes.")
+   (gathered
+    :initform      nil
+    :accessor      world-sidebar-gathered
+    :type          list
+    :documentation "(ENTRIES) as the gatherer last produced them, or NIL when nothing new waits.")
+   (stopping-p
+    :initform      nil
+    :accessor      world-sidebar-stopping-p
+    :type          boolean
+    :documentation "Whether the gatherer was asked to stop."))
   (:documentation "A client's view of the world's channels beside its own."))
 
 (-> world-sidebar-create (configuration &key (:clock-function function)) world-sidebar)
@@ -98,16 +131,23 @@
   *world-sidebar-minimum-columns*)
 
 (defmethod screen-panel-refresh ((panel world-sidebar))
-  "Gather the world when a refresh is due and return whether the entries changed."
-  (let ((now  (funcall (world-sidebar-clock-function panel)))
-        (last (world-sidebar-refreshed-at panel)))
-    (if (and last
-             (< (- now last) (* *world-sidebar-refresh-seconds* internal-time-units-per-second)))
-        nil
-        (let ((entries (world-sidebar--gather panel now)))
-          (setf (world-sidebar-refreshed-at panel) now)
-          (prog1 (not (equal entries (world-sidebar-entries panel)))
-            (setf (world-sidebar-entries panel) entries))))))
+  "Take the newest gathered entries and return whether they changed.
+
+A started sidebar's thread gathers; without one the panel gathers itself when
+a refresh is due."
+  (if (world-sidebar-gatherer panel)
+      (let ((gathered (with-lock-held ((world-sidebar-lock panel))
+                        (shiftf (world-sidebar-gathered panel) nil))))
+        (and gathered
+             (world-sidebar--take panel (first gathered))))
+      (let ((now  (funcall (world-sidebar-clock-function panel)))
+            (last (world-sidebar-refreshed-at panel)))
+        (if (and last
+                 (< (- now last) (* *world-sidebar-refresh-seconds* internal-time-units-per-second)))
+            nil
+            (progn
+              (setf (world-sidebar-refreshed-at panel) now)
+              (world-sidebar--take panel (world-sidebar--gather panel now)))))))
 
 (defmethod screen-panel-rows ((panel world-sidebar) terminal height)
   "Render the sidebar's entries as HEIGHT rows for TERMINAL."
@@ -117,6 +157,56 @@
 
 
 ;;;; -- Gathering --
+
+(-> world-sidebar-start (world-sidebar) null)
+(defun world-sidebar-start (sidebar)
+  "Gather SIDEBAR's entries on a thread of its own from now on, until `world-sidebar-stop'."
+  (unless (world-sidebar-gatherer sidebar)
+    (setf (world-sidebar-stopping-p sidebar) nil
+          (world-sidebar-gatherer sidebar)
+          (make-thread (lambda () (world-sidebar--gather-loop sidebar))
+                       :name "Autolith world sidebar")))
+  nil)
+
+(-> world-sidebar-stop (world-sidebar) null)
+(defun world-sidebar-stop (sidebar)
+  "Stop SIDEBAR's gathering thread and wait for it; the panel gathers itself again afterwards."
+  (let ((thread (world-sidebar-gatherer sidebar)))
+    (when thread
+      (with-lock-held ((world-sidebar-lock sidebar))
+        (setf (world-sidebar-stopping-p sidebar) t)
+        (sb-thread:condition-broadcast (world-sidebar-condition-variable sidebar)))
+      (sb-thread:join-thread thread :default nil)
+      (setf (world-sidebar-gatherer sidebar) nil)))
+  nil)
+
+(-> world-sidebar--gather-loop (world-sidebar) null)
+(defun world-sidebar--gather-loop (sidebar)
+  "Gather SIDEBAR's entries every refresh interval until it is asked to stop.
+
+A failed gather keeps the entries shown before; the next one tries again."
+  (loop
+    (let ((entries (handler-case
+                       (world-sidebar--gather sidebar (funcall (world-sidebar-clock-function sidebar)))
+                     (error ()
+                       nil))))
+      (with-lock-held ((world-sidebar-lock sidebar))
+        (when entries
+          (setf (world-sidebar-gathered sidebar) (list entries)))
+        (when (world-sidebar-stopping-p sidebar)
+          (return))
+        (condition-wait (world-sidebar-condition-variable sidebar)
+                        (world-sidebar-lock sidebar)
+                        :timeout *world-sidebar-refresh-seconds*)
+        (when (world-sidebar-stopping-p sidebar)
+          (return)))))
+  nil)
+
+(-> world-sidebar--take (world-sidebar list) boolean)
+(defun world-sidebar--take (sidebar entries)
+  "Show ENTRIES in SIDEBAR and return whether they differ from those shown before."
+  (prog1 (not (equal entries (world-sidebar-entries sidebar)))
+    (setf (world-sidebar-entries sidebar) entries)))
 
 (-> world-sidebar--gather (world-sidebar real) list)
 (defun world-sidebar--gather (sidebar now)
@@ -179,7 +269,8 @@ A world that cannot be read shows as empty rather than ending the client."
             (progn
               (setf (world-sidebar-reconciled-at sidebar) now)
               (values (world-reconcile-sessions configuration)))
-            (world-load configuration))
+            (rest (setf (world-sidebar-world-cache sidebar)
+                        (world--cached configuration (world-sidebar-world-cache sidebar)))))
       (autolith-error ()
         (make-instance 'world)))))
 
