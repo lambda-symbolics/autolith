@@ -206,13 +206,13 @@ snapshot cannot change the meaning of an already finalized transcript entry."
            (values "the session goal is paused" "Use (goal :resume) to continue it."))
           ((and goal (not (eq status ':active)))
            (values (format nil "the session goal is ~A" status) review))
-          ((and goal (>= (getf goal :continuations 0) *application-goal-continuation-limit*))
-           (values (format nil "the session goal used ~D of ~D automatic continuations (effective limit ~D)"
-                           (getf goal :continuations 0) *application-goal-continuation-limit*
-                           *application-goal-continuation-limit*)
-                   (format nil "Send a message to reset the count, or raise the limit with ~
-                                (setf autolith::*application-goal-continuation-limit* ~D) for this process."
-                           (* 2 *application-goal-continuation-limit*))))
+          ((and goal (application--goal-continuations-exhausted-p application goal))
+           (let ((limit (application-goal-continuation-limit application)))
+             (values (format nil "the session goal used ~D of ~D automatic continuations (effective limit ~D)"
+                             (getf goal :continuations 0) limit limit)
+                     (format nil "Send a message to reset the count, or raise the limit with ~
+                                  (settings :goal-continuation-limit ~D)."
+                             (* 2 limit)))))
           (t
            (values "the result is not eligible for automatic continuation" review)))
       (format nil "No automatic continuation: ~A. ~A" reason action))))
