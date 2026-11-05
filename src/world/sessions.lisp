@@ -462,16 +462,15 @@ channel gets its ancestry."
                                                 :updated-at (max now (created-at change)))))
                       (emit (world--participant-record agent))
                       (participant-identifier agent)))
-                   ((or (not (equal (participant-settings existing) settings))
-                        (and adopted-p
-                             (not (equal (participant-parent existing)
-                                         (participant-identifier parent)))))
+                   ;; An agent's settings are its own once it exists: the
+                   ;; header only says what the conversation began with, and
+                   ;; an agent moved in brings its own.
+                   ((and adopted-p
+                         (not (equal (participant-parent existing)
+                                     (participant-identifier parent))))
                     (emit (world--participant-record
                            (world--copy-participant existing
-                                                    :settings   settings
-                                                    :parent     (if adopted-p
-                                                                    (participant-identifier parent)
-                                                                    (participant-parent existing))
+                                                    :parent     (participant-identifier parent)
                                                     :updated-at (max now (participant-updated-at
                                                                           existing)))))
                     (participant-identifier existing))
