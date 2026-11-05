@@ -183,6 +183,10 @@ are normalized after executable init and cache loading establish their provider.
                (configuration--model-problem saved-model configuration))
       (configuration-unset configuration :model-provider))
     (configuration-validate-deferred configuration)
+    ;; Dropping a durable model exposes its default without validating that
+    ;; default against an explicit provider. Reject an unusable final pair.
+    (setting-validate (configuration-setting configuration :model)
+                      (config :model configuration) configuration)
     (when (or (and (eq model-source ':durable)
                    (not (equal saved-model (config :model configuration))))
               (and (eq provider-source ':durable)

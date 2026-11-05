@@ -397,6 +397,94 @@ Source precedence, source recording, and value rejection belong to setinka."
                              "the stale provider is dropped with its saved model")))))))))
   nil)
 
+(-> test-preferences-provider-selection-restoration () null)
+(defun test-preferences-provider-selection-restoration ()
+  "Recover per launch without overwriting preferences needed after re-registration."
+  (preferences-tests--without-model-environment
+   (lambda ()
+     (with-test-environment (("AUTOLITH_MODEL_PROVIDER" nil))
+       (provider-selection-tests--with-providers
+        (lambda ()
+          (with-test-configuration (configuration)
+            (let ((saved '(:preferences :version 8 :model "restored-model"
+                           :model-provider "restored-provider" :future-key 17)))
+              (snapshot-write (configuration-preferences-path configuration) saved)
+              (dotimes (launch 2)
+                (declare (ignorable launch))
+                (let ((created (provider-bootstrap-configuration
+                                (preferences-tests--create
+                                 configuration :defer-provider-validation-p t))))
+                  (test-assert (configuration-model-registration created)
+                               "each unavailable launch uses a registered fallback")
+                  (test-assert (non-empty-string-p (config :saved-model-selection-notice created))
+                               "a fresh startup reports recovery again")
+                  (test-assert (equal saved (snapshot-read
+                                             (configuration-preferences-path configuration)))
+                               "recovery leaves the durable selection and unrelated keys intact")))
+              (register-provider "restored-provider" :family ':codex
+                                 :models                     '("restored-model")
+                                 :factory                    #'provider-selection-tests--factory)
+              (let ((created (provider-bootstrap-configuration
+                              (preferences-tests--create
+                               configuration :defer-provider-validation-p t))))
+                (test-assert (and (string= (config :model created) "restored-model")
+                                  (string= (provider-registration-name
+                                            (configuration-model-registration created))
+                                           "restored-provider"))
+                             "re-registering the provider restores the exact saved selection")
+                (test-assert (not (non-empty-string-p
+                                   (config :saved-model-selection-notice created)))
+                             "a restored selection needs no recovery notice")))))))))
+  nil)
+
+(-> test-preferences-mixed-provider-selection () null)
+(defun test-preferences-mixed-provider-selection ()
+  "Validate recovered defaults and precedence using only local registrations."
+  (preferences-tests--without-model-environment
+   (lambda ()
+     (provider-selection-tests--with-providers
+      (lambda ()
+        (dolist (case '(("dead-model" nil nil (:model-provider "selection-a") nil)
+                        ("dead-model" nil "selection-a" nil nil)
+                        ("dead-model" nil nil (:model-provider "chatgpt") "chatgpt")
+                        ("dead-model" nil "chatgpt" nil "chatgpt")
+                        ("shared" nil "selection-b" (:model-provider "selection-a") "selection-a")
+                        ("shared" nil "selection-a" nil "selection-a")
+                        ("dead-model" "shared" "selection-b" (:model-provider "selection-a") "selection-a")
+                        ("dead-model" "dead-model" "occ-dead"
+                         (:model "shared" :model-provider "selection-a") "selection-a")
+                        ("shared" "dead-model" "selection-a" nil nil)
+                        ("shared" nil "selection-a" (:model "dead-model") nil)
+                        ("shared" nil "occ-dead" nil nil)))
+          (destructuring-bind (saved-model environment-model environment-provider overrides expected) case
+            (with-test-configuration (configuration)
+              (snapshot-write (configuration-preferences-path configuration)
+                              (list :preferences :version 8 :model saved-model
+                                    :model-provider "occ-dead"))
+              (with-test-environment (("AUTOLITH_MODEL" environment-model)
+                                      ("AUTOLITH_MODEL_PROVIDER" environment-provider))
+                (let* ((created (apply #'preferences-tests--create configuration
+                                       :defer-provider-validation-p t overrides))
+                       (failure (handler-case
+                                    (progn
+                                      (setf created (provider-bootstrap-configuration created))
+                                      nil)
+                                  (setting-invalid (condition) condition))))
+                  (if expected
+                      (progn
+                        (test-assert (null failure) "the winning mixed-source pair is valid")
+                        (test-assert (and (string= (config :model created)
+                                                  (if (string= expected "chatgpt")
+                                                      *default-model* "shared"))
+                                          (string= (config :model-provider created) expected)
+                                          (string= (provider-registration-name
+                                                    (configuration-model-registration created))
+                                                   expected))
+                                     "CLI overrides environment, which overrides the saved pair"))
+                      (test-assert (typep failure 'setting-invalid)
+                                   "an unusable explicit selection fails before provider construction")))))))))))
+  nil)
+
 (-> test-preferences-provider-selection-controls () null)
 (defun test-preferences-provider-selection-controls ()
   "Preserve valid saved pairs and reject explicit invalid selections."

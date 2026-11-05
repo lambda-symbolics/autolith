@@ -1643,8 +1643,11 @@ an explicit command-line choice, the setting's environment variable, then the
 saved file. A saved model or effort that no registered provider serves is
 dropped rather than applied. An unavailable saved provider or incompatible saved
 model/provider pair falls back to a registered selection after user initialization.
-Startup displays a notice when it drops a saved model selection. Invalid explicit
-command-line and environment choices report an error.
+Startup displays a recovery notice once per session. Recovery does not rewrite
+saved preferences; re-registering the provider restores the saved selection at the
+next startup. Invalid explicit command-line and environment choices report an
+error, including a provider that cannot serve the fallback model. Choose a model
+registered for that provider with =--model= or =AUTOLITH_MODEL=.
 
 From Lisp, user initialization and replay scripts read a setting with
 =(config :model)=, which uses the current configuration, or

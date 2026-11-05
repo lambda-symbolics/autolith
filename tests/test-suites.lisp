@@ -592,6 +592,8 @@
   test-preferences
   test-preferences-unavailable-provider-selection
   test-preferences-provider-selection-controls
+  test-preferences-mixed-provider-selection
+  test-preferences-provider-selection-restoration
   test-preferences-provider-aliases
   test-preferences-xdg-migration
   test-preferences-xdg-migration-failure

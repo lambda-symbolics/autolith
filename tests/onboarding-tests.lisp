@@ -347,7 +347,12 @@
                      "the notice reaches the terminal presentation path")
         (test-assert (not (non-empty-string-p
                            (config :saved-model-selection-notice configuration)))
-                     "the pending notice is consumed after presentation")))))
+                     "the pending notice is consumed after presentation")
+        (let ((offset (length (recording-terminal-output terminal))))
+          (application-startup-presentation application controller :onboarding-p nil)
+          (test-assert (not (search "Recovered saved selection."
+                                    (subseq (recording-terminal-output terminal) offset)))
+                       "a second presentation in the same session does not repeat recovery"))))))
   nil)
 
 (-> test-onboarding-choice-exercise () null)
