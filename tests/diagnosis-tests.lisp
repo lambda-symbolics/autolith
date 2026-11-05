@@ -217,6 +217,31 @@ the rest only as their display names, as an MCP server's tools do."
                     "probes named service.ping and service.config run the wire-named tools and find the stale endpoint"))))
   nil)
 
+(-> test-diagnosis-single-fact-hypotheses () null)
+(defun test-diagnosis-single-fact-hypotheses ()
+  "Test probes settle hypotheses that each predict one fact the others leave open."
+  (loop for fault in '("unavailable" "stale-endpoint" "credentials")
+        do (let ((fault fault))
+             (diagnosis-tests--call-with
+              (format nil "~A from single-fact hypotheses" fault)
+              (lambda (configuration)
+                (let* ((world  (diagnosis-tests--world-create configuration fault))
+                       (report (diagnosis-tests--diagnose
+                                configuration world
+                                (json-decode "{\"parameters\": [\"service\"],
+  \"bindings\": {\"service\": \"billing\"},
+  \"hypotheses\": [
+    {\"id\": \"unavailable\", \"predicts\": [[\"service.reachable\", \"?service\", false]]},
+    {\"id\": \"stale-endpoint\", \"predicts\": [[\"endpoint.current\", \"?service\", false]]},
+    {\"id\": \"credentials\", \"predicts\": [[\"auth.accepted\", \"?service\", false]]}],
+  \"probes\": [
+    {\"tool\": \"service.ping\", \"arguments\": {\"service\": \"?service\"}},
+    {\"tool\": \"service.config\", \"arguments\": {\"service\": \"?service\"}},
+    {\"tool\": \"service.auth\", \"arguments\": {\"service\": \"?service\"}}]}"))))
+                  (test-assert (search (format nil "Diagnosis given: ~A~%" fault) report)
+                               (format nil "probes leave only ~A: ~A" fault report)))))))
+  nil)
+
 (-> test-diagnosis-predictions () null)
 (defun test-diagnosis-predictions ()
   "Test deciding predictions from facts and validating diagnoses."
@@ -315,8 +340,12 @@ the rest only as their display names, as an MCP server's tools do."
   (diagnosis-tests--call-with
    "ambiguous"
    (lambda (configuration)
-     (let* ((world  (diagnosis-tests--world-create configuration "stale-endpoint" :config-p nil))
-            (report (diagnosis-tests--diagnose configuration world (diagnosis-tests--definition))))
+     (let* ((world     (diagnosis-tests--world-create configuration "stale-endpoint" :config-p nil))
+            (arguments (diagnosis-tests--definition))
+            (report    (progn
+                         ;; Without service.auth, only the missing service.config tells the two apart.
+                         (setf (gethash "probes" arguments) (subseq (gethash "probes" arguments) 0 2))
+                         (diagnosis-tests--diagnose configuration world arguments))))
        (test-assert (and (search "Diagnosis remote-service is still open: stale-endpoint, credentials remain"
                                  report)
                          (search "service.config" report)

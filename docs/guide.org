@@ -1347,8 +1347,9 @@ repair.
 Supply up to four hypotheses, each with predicted facts, and probes: tool calls
 whose contracts observe facts from their results. Autolith checks known facts
 first. It then selects the probe expected to distinguish the most remaining
-hypotheses for its cost. It runs at most three probes without a model request
-between them.
+hypotheses for its cost. A hypothesis may predict a single fact; a probe that
+can rule out one hypothesis of a pair counts, though less than one where both
+predict. It runs at most three probes without a model request between them.
 
 A hypothesis is ruled out only by an undisputed observation or statement that
 contradicts one of its predictions. Cases the probes cannot settle are reported

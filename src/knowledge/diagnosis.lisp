@@ -486,6 +486,24 @@ The key arguments are OBSERVATION's; every other argument is a variable."
                     (nth-value 1 (knowledge--unify key-pattern atom nil)))))
            (getf hypothesis :predicts)))
 
+(-> knowledge--pair-separation (list list list) rational)
+(defun knowledge--pair-separation (left right key-pattern)
+  "Return how far observing the fact KEY-PATTERN identifies tells hypotheses LEFT and RIGHT apart.
+
+1 when they predict different values, so every outcome rules one of them out.
+1/4 when only one predicts a value: the silent hypothesis is never ruled out,
+and while it holds, the outcome contradicts the other only by chance. 0 when
+they agree or neither predicts it."
+  (let ((left-prediction  (knowledge--prediction-about left key-pattern))
+        (right-prediction (knowledge--prediction-about right key-pattern)))
+    (cond
+      ((and left-prediction right-prediction)
+       (if (equal left-prediction right-prediction) 0 1))
+      ((or left-prediction right-prediction)
+       1/4)
+      (t
+       0))))
+
 (-> knowledge--probe-admissible-p (configuration list) boolean)
 (defun knowledge--probe-admissible-p (configuration probe)
   "Return true when PROBE's contracted requirements permit its call now."
@@ -502,10 +520,10 @@ The key arguments are OBSERVATION's; every other argument is a variable."
 (defun knowledge--best-probe (configuration view &key hypotheses probes)
   "Return the probe telling apart the most pairs of HYPOTHESES per unit of cost, or NIL.
 
-A pair is told apart when the two hypotheses predict differently about a fact
-the probe observes. A fact already known tells nothing new, so a probe only
-observing known facts is not run. Probes whose contracts refuse the call are
-ineligible before consuming the bounded execution budget."
+Each pair counts by its best separation over the facts the probe observes, as
+`knowledge--pair-separation' weighs it. A fact already known tells nothing
+new, so a probe only observing known facts is not run. Probes whose contracts
+refuse the call are ineligible before consuming the bounded execution budget."
   (let ((best       nil)
         (best-score 0))
     (dolist (probe (remove-if-not (lambda (candidate)
@@ -520,11 +538,8 @@ ineligible before consuming the bounded execution budget."
                             collect key))
              (pairs (loop for (left . others) on hypotheses
                           sum (loop for right in others
-                                    count (some (lambda (key)
-                                                  (let ((a (knowledge--prediction-about left key))
-                                                        (b (knowledge--prediction-about right key)))
-                                                    (and a b (not (equal a b)))))
-                                                keys))))
+                                    sum (loop for key in keys
+                                              maximize (knowledge--pair-separation left right key)))))
              (score (/ pairs (getf probe :cost))))
         (when (> score best-score)
           (setf best probe

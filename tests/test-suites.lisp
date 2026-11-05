@@ -566,6 +566,7 @@
 (define-test-suite diagnosis
   test-diagnosis-predictions
   test-diagnosis-display-names
+  test-diagnosis-single-fact-hypotheses
   test-diagnosis-remote-service
   test-diagnosis-setting
   test-diagnosis-commands)
