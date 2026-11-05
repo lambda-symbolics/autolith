@@ -21,7 +21,7 @@ git cl+ssl https://github.com/cl-plus-ssl/cl-plus-ssl.git :ref d7a92f9ed0cbae10f
 git clinedi https://github.com/lambda-symbolics/clinedi.git :ref 32cabe46c00c4152b3b096f5f566fa9868e21cf0
 git clermaid https://github.com/lambda-symbolics/clermaid.git :ref 7a4497aff7514134dd69ab28b7d07c06335b7852
 git cl-jobpond https://github.com/lambda-symbolics/cl-jobpond.git :ref 26940f414741addba4703a9c12e3220da64191c0
-git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 1a2af5d4c7441fe756ead213c96a7f332ea8ce25
+git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref bfba366773c7a9cefcc88ed4172c94fdc6310342
 git cl-rfc8252 https://github.com/lambda-symbolics/cl-rfc8252.git :ref e2bbd2374ec159f86123c046c020fce27fce2d99
 git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref 38d5b6ae81a24031ad6c95b4f42ba99f2cf0a6c3
 git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref a66f97ef6dfcea18b5367734d180a80dfa1f9c71
