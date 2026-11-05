@@ -351,8 +351,7 @@
   (let* ((service          (application-mission-schedules application))
          (scheduler        (mission-schedule-scheduler service))
          (wakeup           nil)
-         (withheld         nil)
-         (control-unwind-p nil))
+         (withheld         nil))
     (with-recursive-lock-held ((mission-schedule-lock service))
       (mission-schedule--require-active service)
       (setf wakeup (find (getf ticket :id) (getf (cl-jobpond:scheduler-snapshot scheduler) :wakeups)
@@ -372,44 +371,37 @@
     (when withheld
       (mission-schedule--present-outcomes application (list withheld))
       (return-from application-mission-schedule-execute withheld))
-    ;; Observe non-error controls without intercepting their handlers or restarts.
-    (handler-bind ((autolith-control-condition
-                    (lambda (condition)
-                      (declare (ignore condition))
-                      (setf control-unwind-p t))))
-     (unwind-protect
-          (handler-case
-              (let* ((value   (funcall (mission-schedule-run service) application (getf (getf wakeup :payload) :content)))
-                     (outcome (mission-schedule--runner-outcome value)))
-                 (setf control-unwind-p nil)
-                (with-recursive-lock-held ((mission-schedule-lock service))
-                  (case (mission-schedule-outcome-state outcome)
-                    (:completed
-                     (mission-schedule--settle service wakeup :outcome ':completed :result ':executed))
-                    (:failed
-                     (mission-schedule--settle
-                      service wakeup :outcome ':failed
-                      :result                 (if (eq (mission-schedule-outcome-reason outcome) ':provider-failed)
-                                                  ':provider-failed ':runner-failed)))
-                    (:unknown
-                     wakeup))))
-            (serious-condition (condition)
-              (setf control-unwind-p nil)
-              (let ((cause (if (and (typep condition 'mission-error) (mission-error-cause condition))
-                               (mission-error-cause condition) condition)))
-                (when (application-lisp--control-condition-p cause)
-                  (setf control-unwind-p t)
-                  (error cause)))
-              ;; HANDLER-CASE runs only after terminal unwind, not at a recoverable signal.
-              (when (mission-schedule--provider-failure-p condition)
-                (with-recursive-lock-held ((mission-schedule-lock service))
-                  (mission-schedule--settle service wakeup :outcome ':failed :result ':provider-failed)))
-              (error condition)))
-       (with-recursive-lock-held ((mission-schedule-lock service))
-         (remhash (getf wakeup :id) (mission-schedule-executing service)))
-       ;; Publication must not replace a pending cancellation, fatal or non-error control transfer.
-       ;; Reconcile the retained UNKNOWN at recovery instead.
-       (unless control-unwind-p (mission-schedule--announce service))))))
+    (multiple-value-prog1
+        (unwind-protect
+             (handler-case
+                 (let* ((value   (funcall (mission-schedule-run service) application (getf (getf wakeup :payload) :content)))
+                        (outcome (mission-schedule--runner-outcome value)))
+                   (with-recursive-lock-held ((mission-schedule-lock service))
+                     (case (mission-schedule-outcome-state outcome)
+                       (:completed
+                        (mission-schedule--settle service wakeup :outcome ':completed :result ':executed))
+                       (:failed
+                        (mission-schedule--settle
+                         service wakeup :outcome ':failed
+                         :result (if (eq (mission-schedule-outcome-reason outcome) ':provider-failed)
+                                     ':provider-failed ':runner-failed)))
+                       (:unknown
+                        wakeup))))
+               (serious-condition (condition)
+                 (let ((cause (if (and (typep condition 'mission-error) (mission-error-cause condition))
+                                  (mission-error-cause condition) condition)))
+                   (when (application-lisp--control-condition-p cause)
+                     (error cause)))
+                 ;; HANDLER-CASE runs only after terminal unwind, not at a recoverable signal.
+                 (when (mission-schedule--provider-failure-p condition)
+                   (with-recursive-lock-held ((mission-schedule-lock service))
+                     (mission-schedule--settle service wakeup :outcome ':failed :result ':provider-failed)))
+                 (error condition)))
+          (with-recursive-lock-held ((mission-schedule-lock service))
+            (remhash (getf wakeup :id) (mission-schedule-executing service))))
+      ;; Publish only after normal return. Every nonlocal exit retains its durable
+      ;; FAILED/UNKNOWN outcome for recovery without risking a second exit here.
+      (mission-schedule--announce service))))
 
 (-> application-mission-schedule-resolve
     (application list &key (:token integer) (:action keyword)) list)

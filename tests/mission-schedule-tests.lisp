@@ -706,12 +706,13 @@
                  (test-assert (and (typep escaped 'mission-error) (eq ':failed (mission-error-reason escaped)))
                               "the actual provider failure escapes through mission supervision")
                  (test-assert (eq ':failed (getf wakeup :state)) "known provider failure is durably failed")
-                 (test-assert (= 1 (length (notices id))) "exactly one occurrence-keyed durable notice")
-                 (test-assert (not (test-object-contains-string-p (notices id) "fixture_private_schedule_failure"))
-                              "notices contain no provider payload")
-                 (test-assert (= 1 (length (wakeups))) "failure creates no retry occurrence")
-                 (application-mission-schedules-recover application)
-                 (test-assert (= 1 (length (notices id))) "reopening the scheduler deduplicates durable notices")))
+                  (test-assert (= 1 (length (wakeups))) "failure creates no retry occurrence")
+                  (application-mission-schedules-recover application)
+                  (test-assert (= 1 (length (notices id))) "recovery publishes the deferred occurrence notice")
+                  (test-assert (not (test-object-contains-string-p (notices id) "fixture_private_schedule_failure"))
+                               "notices contain no provider payload")
+                  (application-mission-schedules-recover application)
+                  (test-assert (= 1 (length (notices id))) "reopening the scheduler deduplicates durable notices")))
           (image-daemon:daemon-runtime-stop runtime)
           (remhash application *mission-schedule-services*)
           (terminal-ui-stop (application-ui application))))))
@@ -955,4 +956,56 @@
            (mission-schedule--announce service)
            (test-assert (= 1 (length (mission-schedule-test--notices application)))
                         "later reconciliation publishes the retained interruption"))))))
+  nil)
+
+
+(-> test-mission-schedule-pending-exits () null)
+(defun test-mission-schedule-pending-exits ()
+  "Preserve every pending exit when occurrence publication would fail."
+  (dolist (kind '(:ordinary :provider :cancel :fatal :throw))
+    (mission-schedule-tests--fixture
+     (lambda (application service path clock commands executions)
+       (declare (ignore commands executions))
+       (let* ((failure (case kind
+                         (:provider
+                          (make-condition 'provider-error :message "private-fixture"))
+                         (:cancel
+                          (make-condition 'application-turn-cancelled))
+                         (:fatal
+                          (make-condition 'agent-loop-error :message "fatal-fixture"
+                                                           :conversation-id "fixture" :request-number nil))
+                         (otherwise
+                          (make-condition 'simple-error :format-control "runner-fixture"))))
+              (caught nil)
+              (published-p nil))
+         (setf (slot-value service 'run)
+               (lambda (owner content)
+                 (declare (ignore owner content))
+                 (if (eq kind ':throw) (throw 'runner-exit ':escaped) (error failure))))
+         (application-mission-schedule-add application :id "pending" :content "Exit" :at 100)
+         (let ((ticket (mission-schedule-tests--ticket (first (application-mission-schedules-wake application)))))
+           (test-call-with-function-replacements
+            (list (list 'mission-schedule--publish-notice
+                        (lambda (&rest arguments)
+                          (declare (ignore arguments))
+                          (setf published-p t)
+                          (error "publication-fixture"))))
+            (lambda ()
+              (handler-case
+                  (setf caught (catch 'runner-exit
+                                 (application-mission-schedule-execute application ticket)))
+                (serious-condition (condition) (setf caught condition)))))
+           (test-assert (if (eq kind ':throw) (eq caught ':escaped) (eq caught failure))
+                        "the pending exit retains its original identity or value")
+           (test-assert (not published-p) "unwinding does not invoke the notice publisher")
+           (test-assert (zerop (hash-table-count (mission-schedule-executing service)))
+                        "every exit releases the reservation")
+           (let* ((restored (mission-schedule-service-create application :path path :clock clock))
+                  (record (first (getf (cl-jobpond:scheduler-snapshot (mission-schedule-scheduler restored)) :wakeups))))
+             (test-assert (eq (if (eq kind ':provider) ':failed ':unknown) (getf record :state))
+                          "the durable outcome survives the failed turn")
+             (mission-schedule--announce restored)
+             (mission-schedule--announce restored)
+             (test-assert (= 1 (length (mission-schedule-test--notices application)))
+                          "recovery publishes the retained outcome exactly once")))))))
   nil)

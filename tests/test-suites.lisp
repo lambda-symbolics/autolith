@@ -255,6 +255,7 @@
   test-mission-schedule-restored-failure-notices
   test-mission-schedule-notice-conversation-switch
   test-mission-schedule-non-error-controls
+  test-mission-schedule-pending-exits
   test-mission-schedule-native-wakeup-stale-claim-process
   test-mission-schedule-lisp-restart-policy
   test-vault-edit-accepts-native-lisp)
