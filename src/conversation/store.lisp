@@ -2260,8 +2260,9 @@ transcript show automatic INPUT as a short notice."
   "Return ITEM after rejecting provider calls that would poison durable replay."
   (when (function-call-item-p item)
     (handler-case
-        (clinker-transcript:validate-function-call
-         item :preceding-items (conversation-input-items conversation))
+        (with-recursive-lock-held ((conversation-append-lock conversation))
+          (clinker-transcript:projection-validate-function-call
+           (conversation-projection conversation) item))
       (clinker-transcript:reconciliation-error (condition)
         (error 'conversation-invariant-error
                :message  (format nil "Invalid provider function call: ~A" condition)
