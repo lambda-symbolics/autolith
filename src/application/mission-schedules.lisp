@@ -348,10 +348,10 @@
 (-> application-mission-schedule-execute (application list) t)
 (defun application-mission-schedule-execute (application ticket)
   "Execute an admitted ticket only once and recheck mission authority at consumption."
-  (let* ((service          (application-mission-schedules application))
-         (scheduler        (mission-schedule-scheduler service))
-         (wakeup           nil)
-         (withheld         nil))
+  (let* ((service   (application-mission-schedules application))
+         (scheduler (mission-schedule-scheduler service))
+         (wakeup    nil)
+         (withheld  nil))
     (with-recursive-lock-held ((mission-schedule-lock service))
       (mission-schedule--require-active service)
       (setf wakeup (find (getf ticket :id) (getf (cl-jobpond:scheduler-snapshot scheduler) :wakeups)
@@ -383,8 +383,8 @@
                        (:failed
                         (mission-schedule--settle
                          service wakeup :outcome ':failed
-                         :result (if (eq (mission-schedule-outcome-reason outcome) ':provider-failed)
-                                     ':provider-failed ':runner-failed)))
+                         :result                 (if (eq (mission-schedule-outcome-reason outcome) ':provider-failed)
+                                                     ':provider-failed ':runner-failed)))
                        (:unknown
                         wakeup))))
                (serious-condition (condition)
@@ -481,60 +481,74 @@ Explicit failure/unknown keywords are never treated as successful execution."
            (eq (mission-error-reason condition) ':failed)
            (typep (mission-error-cause condition) 'provider-error))))
 
-(-> mission-schedule--append-notice (mission-schedule-service string list) null)
+(-> mission-schedule--append-notice (mission-schedule-service string list) list)
 (defun mission-schedule--append-notice (service source spans)
-  "Append only to the captured owner, even when the application has switched conversations."
+  "Append to the captured owner and return the durable record without presenting it."
   (let* ((conversation (mission-schedule-notice-conversation service))
-         (application  (mission-schedule-application service))
          (properties   (list :source source :spans spans)))
     (application-side-status--validate-record
      conversation (list* :seq  (conversation-next-sequence conversation)
                          :time (get-universal-time) properties))
-    (let ((record (conversation-append-record conversation (list* :side-status properties))))
-      ;; The caller holds the notice lock, also used by the conversation setter.
-      (when (and (eq conversation (application-conversation application))
-                 (application-ui application))
-        (application--present-conversation-record application record))))
-  nil)
+    (conversation-append-record conversation (list* :side-status properties))))
+
+(-> mission-schedule--notice-current-p (mission-schedule-service list) boolean)
+(defun mission-schedule--notice-current-p (service wakeup)
+  "Recheck a notice snapshot while holding SERVICE's reservation lock."
+  (let ((current (find (getf wakeup :id)
+                       (getf (cl-jobpond:scheduler-snapshot (mission-schedule-scheduler service)) :wakeups)
+                       :key (lambda (entry) (getf entry :id)) :test #'equal)))
+    (and (not (mission-schedule-retired-p service))
+         (not (gethash (getf wakeup :id) (mission-schedule-executing service)))
+         (not (null (member (getf current :state) '(:failed :unknown))))
+         (eql (getf current :token) (getf wakeup :token))
+         (eq (getf current :state) (getf wakeup :state))
+         (equal (getf current :result) (getf wakeup :result)))))
 
 (-> mission-schedule--publish-notice (mission-schedule-service list keyword) null)
 (defun mission-schedule--publish-notice (service wakeup reason)
-  "Serialize durable lookup and append against the same captured conversation."
+  "Revalidate and append atomically with recovery; present outside the scheduler lock."
   (let* ((application  (mission-schedule-application service))
          (conversation (mission-schedule-notice-conversation service))
-         (source       (format nil "mission-schedule occurrence ~A" (getf wakeup :id)))
-         (found-p      nil))
+         (source       (format nil "mission-schedule occurrence ~A claim ~D ~A"
+                               (getf wakeup :id) (getf wakeup :token) (getf wakeup :state)))
+         (body         (ecase reason
+                         (:provider-failed
+                          "Provider turn failed; not retried. Effects may be partial.")
+                         (:runner-failed
+                          "Scheduled work failed; not retried. Effects may be partial.")
+                         (:admission-refused
+                          "Scheduled work admission refused; not retried.")
+                         (:interrupted
+                          "Scheduled work interrupted; outcome unknown. Effects may be partial.")))
+         (spans        (if (application-ui application)
+                           (application--transcript-entry application :style ':failure
+                                                         :header "Scheduled occurrence" :body body)
+                           (list (terminal-span ':failure "Scheduled occurrence")
+                                 (terminal-span ':plain (format nil "~%~A" body)))))
+         (record       nil))
     (with-recursive-lock-held (*mission-schedule-notice-lock*)
-      (with-recursive-lock-held ((conversation-append-lock conversation))
-        (conversation-map-records
-         conversation (lambda (record)
-                        (when (and (eq (first record) ':side-status)
-                                   (equal source (getf (rest record) :source)))
-                          (setf found-p t))))
-        (unless found-p
-          (let ((body (ecase reason
-                        (:provider-failed
-                         "Provider turn failed; not retried. Effects may be partial.")
-                        (:runner-failed
-                         "Scheduled work failed; not retried. Effects may be partial.")
-                        (:admission-refused
-                         "Scheduled work admission refused; not retried.")
-                        (:interrupted
-                         "Scheduled work interrupted; outcome unknown. Effects may be partial."))))
-            (mission-schedule--append-notice
-             service source
-             (if (application-ui application)
-                 (application--transcript-entry application :style ':failure
-                                               :header "Scheduled occurrence" :body body)
-                 (list (terminal-span ':failure "Scheduled occurrence")
-                       (terminal-span ':plain (format nil "~%~A" body))))))))))
+      (with-recursive-lock-held ((mission-schedule-lock service))
+        (when (mission-schedule--notice-current-p service wakeup)
+          (with-recursive-lock-held ((conversation-append-lock conversation))
+            (let ((found-p nil))
+              (conversation-map-records
+               conversation (lambda (entry)
+                              (when (and (eq (first entry) ':side-status)
+                                         (equal source (getf (rest entry) :source)))
+                                (setf found-p t))))
+              (unless found-p
+                (setf record (mission-schedule--append-notice service source spans)))))))
+      ;; Conversation replacement uses the notice lock, not the scheduler lock.
+      (when (and record (eq conversation (application-conversation application))
+                 (application-ui application))
+        (application--present-conversation-record application record))))
   nil)
 
 (-> mission-schedule--announce (mission-schedule-service) null)
 (defun mission-schedule--announce (service)
   "Reconcile retained FAILED/UNKNOWN occurrences with durable notice history.
-Jobpond retains terminal wakeups and results without eviction. Executing UNKNOWN
-records are excluded under the reservation lock; publication holds no scheduler lock."
+Jobpond retains terminal wakeups and results without eviction. Publication rechecks
+snapshots under the reservation lock; terminal presentation runs outside that lock."
   (let ((pending nil))
     (with-recursive-lock-held ((mission-schedule-lock service))
       (unless (mission-schedule-retired-p service)

@@ -649,6 +649,7 @@
      (test-assert (= 1 (length (application-mission-schedules-wake application)))
                   "recognized active state can admit the next interval")))
   nil)
+
 (-> test-mission-schedule-provider-failure-notice () null)
 (defun test-mission-schedule-provider-failure-notice ()
   "Drive a real scheduled provider failure and inspect durable occurrence delivery."
@@ -673,7 +674,8 @@
                  (remove-if-not
                   (lambda (record)
                     (and (eq (first record) ':side-status)
-                         (equal (getf (rest record) :source) (format nil "mission-schedule occurrence ~A" id))))
+                         (eql 0 (search (format nil "mission-schedule occurrence ~A claim " id)
+                                        (getf (rest record) :source)))))
                   (conversation--read-records (conversation-pathname (application-conversation application))))))
         (unwind-protect
              (progn
@@ -706,13 +708,13 @@
                  (test-assert (and (typep escaped 'mission-error) (eq ':failed (mission-error-reason escaped)))
                               "the actual provider failure escapes through mission supervision")
                  (test-assert (eq ':failed (getf wakeup :state)) "known provider failure is durably failed")
-                  (test-assert (= 1 (length (wakeups))) "failure creates no retry occurrence")
-                  (application-mission-schedules-recover application)
-                  (test-assert (= 1 (length (notices id))) "recovery publishes the deferred occurrence notice")
-                  (test-assert (not (test-object-contains-string-p (notices id) "fixture_private_schedule_failure"))
-                               "notices contain no provider payload")
-                  (application-mission-schedules-recover application)
-                  (test-assert (= 1 (length (notices id))) "reopening the scheduler deduplicates durable notices")))
+                 (test-assert (= 1 (length (wakeups))) "failure creates no retry occurrence")
+                 (application-mission-schedules-recover application)
+                 (test-assert (= 1 (length (notices id))) "recovery publishes the deferred occurrence notice")
+                 (test-assert (not (test-object-contains-string-p (notices id) "fixture_private_schedule_failure"))
+                              "notices contain no provider payload")
+                 (application-mission-schedules-recover application)
+                 (test-assert (= 1 (length (notices id))) "reopening the scheduler deduplicates durable notices")))
           (image-daemon:daemon-runtime-stop runtime)
           (remhash application *mission-schedule-services*)
           (terminal-ui-stop (application-ui application))))))
@@ -958,7 +960,6 @@
                         "later reconciliation publishes the retained interruption"))))))
   nil)
 
-
 (-> test-mission-schedule-pending-exits () null)
 (defun test-mission-schedule-pending-exits ()
   "Preserve every pending exit when occurrence publication would fail."
@@ -966,17 +967,17 @@
     (mission-schedule-tests--fixture
      (lambda (application service path clock commands executions)
        (declare (ignore commands executions))
-       (let* ((failure (case kind
-                         (:provider
-                          (make-condition 'provider-error :message "private-fixture"))
-                         (:cancel
-                          (make-condition 'application-turn-cancelled))
-                         (:fatal
-                          (make-condition 'agent-loop-error :message "fatal-fixture"
-                                                           :conversation-id "fixture" :request-number nil))
-                         (otherwise
-                          (make-condition 'simple-error :format-control "runner-fixture"))))
-              (caught nil)
+       (let* ((failure     (case kind
+                             (:provider
+                              (make-condition 'provider-error :message "private-fixture"))
+                             (:cancel
+                              (make-condition 'application-turn-cancelled))
+                             (:fatal
+                              (make-condition 'agent-loop-error :message "fatal-fixture"
+                                                               :conversation-id "fixture" :request-number nil))
+                             (otherwise
+                              (make-condition 'simple-error :format-control "runner-fixture"))))
+              (caught      nil)
               (published-p nil))
          (setf (slot-value service 'run)
                (lambda (owner content)
@@ -1001,11 +1002,117 @@
            (test-assert (zerop (hash-table-count (mission-schedule-executing service)))
                         "every exit releases the reservation")
            (let* ((restored (mission-schedule-service-create application :path path :clock clock))
-                  (record (first (getf (cl-jobpond:scheduler-snapshot (mission-schedule-scheduler restored)) :wakeups))))
+                  (record   (first (getf (cl-jobpond:scheduler-snapshot (mission-schedule-scheduler restored)) :wakeups))))
              (test-assert (eq (if (eq kind ':provider) ':failed ':unknown) (getf record :state))
                           "the durable outcome survives the failed turn")
              (mission-schedule--announce restored)
              (mission-schedule--announce restored)
              (test-assert (= 1 (length (mission-schedule-test--notices application)))
                           "recovery publishes the retained outcome exactly once")))))))
+  nil)
+
+(-> test-mission-schedule-retry-failure-notices () null)
+(defun test-mission-schedule-retry-failure-notices ()
+  "A prior interruption notice cannot suppress a later explicit failure or retry."
+  (dolist (action '(:failed :retry))
+    (mission-schedule-tests--fixture
+     (lambda (application service path clock commands executions)
+       (declare (ignore commands executions))
+       (setf (slot-value service 'run)
+             (lambda (owner content)
+               (declare (ignore owner content))
+               (make-mission-schedule-outcome)))
+       (application-mission-schedule-add application :id "retry-notice" :content "Retry" :at 100)
+       (let* ((wakeup (first (application-mission-schedules-wake application)))
+              (ticket (mission-schedule-tests--ticket wakeup)))
+         (application-mission-schedule-execute application ticket)
+         (test-assert (= 1 (length (mission-schedule-test--notices application)))
+                      "the interrupted attempt was announced")
+         (application-mission-schedule-resolve application (getf ticket :id)
+                                               :token (getf ticket :token) :action action)
+         (when (eq action ':retry)
+           (setf (slot-value service 'run)
+                 (lambda (owner content)
+                   (declare (ignore owner content))
+                   (make-mission-schedule-outcome :state ':failed :reason ':provider-failed)))
+           (application-mission-schedule-execute
+            application (mission-schedule-tests--ticket (first (application-mission-schedules-wake application)))))
+         (mission-schedule--announce service)
+         (test-assert (= 2 (length (mission-schedule-test--notices application)))
+                      "a later terminal failure has its own durable notice")
+         (let ((restored (mission-schedule-service-create application :path path :clock clock)))
+           (mission-schedule--announce restored)
+           (test-assert (= 2 (length (mission-schedule-test--notices application)))
+                        "reopening deduplicates both announcement identities"))))))
+  nil)
+
+(-> test-mission-schedule-hosted-notice-resolution () null)
+(defun test-mission-schedule-hosted-notice-resolution ()
+  "Recheck a daemon timer's snapshot after primary recovery changes its outcome."
+  (mission-schedule-tests--fixture
+   (lambda (application service path clock commands executions)
+     (declare (ignore commands executions))
+     (let* ((now          (get-universal-time))
+            (entered      (sb-thread:make-semaphore))
+            (release      (sb-thread:make-semaphore))
+            (finished     (sb-thread:make-semaphore))
+            (primary      sb-thread:*current-thread*)
+            (timer-thread nil)
+            (publisher    (symbol-function 'mission-schedule--publish-notice))
+            (runtime      (image-daemon:daemon-runtime-create
+                           :directory  (uiop:pathname-directory-pathname path)
+                           :identifier (conversation-identifier (application-conversation application))
+                           :publish-p nil :request-function
+                           (lambda (host request &key socket stream)
+                             (declare (ignore host request socket stream)) (list :ok)))))
+       (unwind-protect
+            (progn
+              (image-daemon:daemon-runtime-start runtime)
+              (application-mission-schedules-host application runtime)
+              (setf now (get-universal-time))
+              (funcall clock now)
+              (setf (slot-value service 'run)
+                    (lambda (owner content)
+                      (declare (ignore owner content))
+                      (throw 'interrupted nil)))
+              (application-mission-schedule-add application :id "timer-resolution" :content "Timer"
+                                               :at (- now 3590) :interval 3600)
+              (application-mission-schedules-wake application)
+              (let ((ticket (mission-schedule-tests--ticket
+                             (first (getf (cl-jobpond:scheduler-snapshot
+                                           (mission-schedule-scheduler service)) :wakeups)))))
+                (catch 'interrupted (application-mission-schedule-execute application ticket))
+                (test-call-with-function-replacements
+                 (list (list 'mission-schedule--publish-notice
+                             (lambda (owner wakeup reason)
+                               (when (eq reason ':interrupted)
+                                (setf timer-thread sb-thread:*current-thread*)
+                                (sb-thread:signal-semaphore entered)
+                                (unless (sb-thread:wait-on-semaphore release :timeout 10)
+                                  (error "Primary did not release timer publication.")))
+                               (unwind-protect (funcall publisher owner wakeup reason)
+                                 (sb-thread:signal-semaphore finished)))))
+                 (lambda ()
+                   (funcall clock (+ now 10))
+                   (unless (sb-thread:wait-on-semaphore entered :timeout 15)
+                     (error "Daemon timer did not reach occurrence publication."))
+                   (test-assert (and timer-thread (not (eq primary timer-thread)))
+                                "the real daemon timer runs independently of primary recovery")
+                   ;; Resolution mutates the scheduler before synchronous daemon notification.
+                   ;; Release the timer at that boundary, then perform the real notification.
+                   (let ((notify (symbol-function 'mission-schedule--notify)))
+                     (test-call-with-function-replacements
+                      (list (list 'mission-schedule--notify
+                                  (lambda (owner)
+                                    (sb-thread:signal-semaphore release)
+                                    (funcall notify owner))))
+                      (lambda ()
+                        (application-mission-schedule-resolve application (getf ticket :id)
+                                                              :token (getf ticket :token) :action ':completed))))
+                   (unless (sb-thread:wait-on-semaphore finished :timeout 8)
+                     (error "Daemon timer did not finish occurrence publication."))
+                   (test-assert (null (mission-schedule-test--notices application))
+                                "a resolved outcome cannot publish a stale interruption notice")))))
+         (sb-thread:signal-semaphore release)
+         (image-daemon:daemon-runtime-stop runtime)))))
   nil)
