@@ -410,7 +410,7 @@
 
 (-> test-world-server-checkpoint-quiescence () null)
 (defun test-world-server-checkpoint-quiescence ()
-  "Test a checkpoint pauses every channel until only the server's thread lives, then serves them again."
+  "Test a checkpoint waits for the work under way, pauses every channel until only the server's thread lives, then serves them again."
   (let ((baseline (sb-thread:list-all-threads)))
     (world-server-tests--call
      (lambda (server configuration root)
@@ -433,6 +433,9 @@
               (observed    nil))
          (image-daemon:relay-attach terminal-a attachment :rows 24 :columns 80 :styled-p nil
                                                           :session-id id-a)
+         ;; A job run in B leaves its pool's reusable workers waiting.
+         (test-assert (eql 42 (world-server-tests--run-job (world-host-application host-b)))
+                      "a job runs in the other channel before the checkpoint")
          (test-call-with-function-replacements
           (list (list 'image-daemon:attachment-finish
                       (let ((finish (symbol-function 'image-daemon:attachment-finish)))
@@ -480,22 +483,40 @@
                                       (image-daemon:daemon-runtime-token session-a))
                              (localgroup-session-linger-p restarted-a))
                         "every endpoint restarts under its token and keeps lingering"))
-         (let ((controller (application-input-controller (world-host-application host-b))))
+         (test-assert (eql 42 (world-server-tests--run-job (world-host-application host-b)))
+                      "the other channel's jobs run again after the checkpoint")
+         (let* ((controller (application-input-controller (world-host-application host-b)))
+                (outcome    nil)
+                (thread     nil))
            (application-input-controller-begin-external-work controller)
            (unwind-protect
-                (test-assert
-                 (handler-case
-                     (progn
-                       (world-server-call-quiesced
-                        server application
-                        (lambda () (funcall *checkpoint-thread-quiescer* (lambda () t))))
-                       nil)
-                   (checkpoint-error (condition)
-                     (search "is working" (autolith-error-message condition))))
-                 "a working channel refuses another channel's checkpoint")
-             (application-input-controller-finish-external-work controller)))
-         (test-assert (and (world-host-live-p host-a) (world-host-live-p host-b))
-                      "a refused checkpoint leaves the channels serving")
+                (progn
+                  (setf thread (make-thread
+                                (lambda ()
+                                  (setf outcome
+                                        (world-server-call-quiesced
+                                         server application
+                                         (lambda ()
+                                           (funcall *checkpoint-thread-quiescer* (lambda () ':saved))))))
+                                :name "Autolith world server test checkpoint"))
+                  (test-assert (task-tests--wait-until
+                                (lambda () (application-world-held-p (world-host-application host-a)))
+                                10)
+                               "a checkpoint holds every channel's new turns while it waits")
+                  (sleep 0.5)
+                  (test-assert (and (null outcome)
+                                    (world-host-live-p host-b)
+                                    (not (world-server-checkpointing-p server)))
+                               "a checkpoint waits for a working channel instead of refusing"))
+             (application-input-controller-finish-external-work controller))
+           (test-assert (and (eq (sb-thread:join-thread thread :default ':timeout :timeout 30) ':saved)
+                             (eq outcome ':saved))
+                        "the waiting checkpoint saves once the channel's work is done")
+           (test-assert (and (task-tests--wait-until
+                              (lambda () (and (world-host-live-p host-a) (world-host-live-p host-b)))
+                              30)
+                             (not (application-world-held-p (world-host-application host-a))))
+                        "the channels serve again and their held turns may start"))
          (setf (world-server-checkpointing-p server) t)
          (test-assert (handler-case
                           (progn (world-server-tests--open (world-client-entry configuration)
@@ -536,6 +557,19 @@
                           30)
                          "both channels serve again after a failed checkpoint")))))))
   nil)
+
+(-> world-server-tests--run-job (application) t)
+(defun world-server-tests--run-job (application)
+  "Run one job in APPLICATION's tool job pool, wait for it and return its result."
+  (let* ((orchestrator (application-task-presentation-orchestrator application))
+         (job          (first (job-pool-submit-batch
+                               (task-orchestrator-execution-pool orchestrator)
+                               (list (list :name     "probe"
+                                           :function (lambda (job)
+                                                       (declare (ignore job))
+                                                       42)))))))
+    (job-await job)
+    (job-result job)))
 
 (-> test-world-server-close-unattached () null)
 (defun test-world-server-close-unattached ()

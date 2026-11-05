@@ -3601,6 +3601,7 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                (not (application-input-controller-stopping-p controller))
                (not (application-input-controller-queued-work-paused-p controller))
                (not (application-localgroup-paused-p application))
+               (not (application-world-held-p application))
                (not (eql (application-input-controller-follow-up-edit-index controller)
                          0))
                (not (deque-empty-p
@@ -3639,6 +3640,8 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
          (not (application-input-controller-stopping-p controller))
          (not (application-input-controller-queued-work-paused-p controller))
          (not (application-localgroup-paused-p
+               (application-input-controller-application controller)))
+         (not (application-world-held-p
                (application-input-controller-application controller)))
          (not (eql (application-input-controller-follow-up-edit-index controller)
                    0))
@@ -3805,10 +3808,13 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
            ;; Publish active WORK after releasing the controller lock.
            (setf persist-p t)
            (return)))
-        (when (setf work
-                    (or (and (null (application-input-controller-follow-up-edit-index controller))
-                             (application-job-completions--take-work controller))
-                        (application-job-completions--take-maintenance controller)))
+        ;; A checkpoint waiting for the work under way holds the turns that
+        ;; job completions and maintenance would start.
+        (when (and (not (application-world-held-p application))
+                   (setf work
+                         (or (and (null (application-input-controller-follow-up-edit-index controller))
+                                  (application-job-completions--take-work controller))
+                             (application-job-completions--take-maintenance controller))))
           (setf (application-input-controller-active-p controller) t)
           (return))
         (let* ((cache-wait        (application-input-controller--idle-compaction-wait controller))

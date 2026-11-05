@@ -52,7 +52,12 @@
     :initform      nil
     :accessor      world-host-identity
     :type          list
-    :documentation "The :TOKEN and :CREATED-AT of the endpoint a paused session's clients wait for."))
+    :documentation "The :TOKEN and :CREATED-AT of the endpoint a paused session's clients wait for.")
+   (quiesced-tools
+    :initform      nil
+    :accessor      world-host-quiesced-tools
+    :type          list
+    :documentation "The tool runtimes a checkpoint closed in this channel, restarted when it is served again."))
   (:documentation "One channel's application and the thread serving it.
 
 A host paused for a checkpoint keeps its application; its thread ended so
@@ -84,6 +89,11 @@ the process could fork, and a new thread serves the application again."))
     :accessor      world-server-checkpointing-p
     :type          boolean
     :documentation "Whether a checkpoint pauses the channels; opens are refused until it is over.")
+   (holding-p
+    :initform      nil
+    :accessor      world-server-holding-p
+    :type          boolean
+    :documentation "Whether a checkpoint waits for the work under way; no channel starts a new turn meanwhile.")
    (lease
     :initform      nil
     :accessor      world-server-lease
@@ -1122,14 +1132,18 @@ another thread with RESUME-P, RECONNECT-ID for its clients and NOTICE."
 ;;;; -- Checkpoints --
 
 ;;; A fork checkpoint needs the forking thread to be the only live thread.
-;;; The server's main thread takes it: every channel's session ends, its
-;;; clients told to reconnect, its thread joined, then the endpoints, the
-;;; management REPL and Slynk stop around the fork, and every channel is
-;;; served again on a new thread. A channel asks for a checkpoint and lets
-;;; its turn end, since its own thread is among those that must end.
+;;; The server's main thread takes it. First it holds every channel's new
+;;; turns and waits, however long that takes, until no turn runs and no job
+;;; is live: work already under way finishes, with any jobs it starts and
+;;; waits for. Then every channel's session ends, its clients told to
+;;; reconnect, its thread joined, its tool runtimes and job pools closed, and
+;;; the endpoints, the management REPL and Slynk stop around the fork. Every
+;;; channel is then served again on a new thread and the held turns start.
+;;; A channel asks for a checkpoint and lets its turn end, since its own
+;;; thread is among those that must end.
 
-(defparameter *world-server-checkpoint-idle-seconds* 10
-  "How long a checkpoint waits for every channel to finish its turn before it gives up.")
+(defparameter *world-server-checkpoint-poll-seconds* 0.05
+  "How often a waiting checkpoint looks again for work under way.")
 
 (defparameter *world-server-checkpoint-join-seconds* 60
   "How long a checkpoint waits for a pausing channel's thread to end before it gives up.")
@@ -1243,58 +1257,84 @@ RECONNECT-ID, and stops the process services around its thunk. The process
 saves its heap with APPLICATION as the active application, so a rollback
 into the checkpoint resumes that channel. NOTICE-FUNCTION, given an
 application, returns what its channel is told once served again."
-  ;; An open admitted before this point holds the open lock until its host is
-  ;; registered and served, so the checkpoint declares itself only once every
-  ;; host it will pause is listed, and later opens are refused.
-  (with-lock-held ((world-server-open-lock server))
-    (with-lock-held ((world-server-lock server))
-      (setf (world-server-checkpointing-p server) t)))
-  (setf *active-application* application)
   (unwind-protect
-       (let ((*checkpoint-thread-quiescer*
-               (lambda (thunk)
-                 (world-server--pause-channels server reconnect-id)
-                 (world-server--call-with-services-stopped server thunk))))
-         (funcall function))
+       (progn
+         (world-server--drain server)
+         ;; An open admitted before this point holds the open lock until its
+         ;; host is registered and served, so the checkpoint declares itself
+         ;; only once every host it will pause is listed, and later opens are
+         ;; refused.
+         (with-lock-held ((world-server-open-lock server))
+           (with-lock-held ((world-server-lock server))
+             (setf (world-server-checkpointing-p server) t)))
+         (setf *active-application* application)
+         (let ((*checkpoint-thread-quiescer*
+                 (lambda (thunk)
+                   (world-server--pause-channels server application reconnect-id)
+                   (world-server--call-with-services-stopped server thunk))))
+           (funcall function)))
     (setf *active-application* nil)
     (world-server--resume-channels server application reconnect-id
                                    :notice-function notice-function)))
 
-(-> world-server--pause-channels (world-server string) null)
-(defun world-server--pause-channels (server reconnect-id)
-  "End every channel's session for a checkpoint and join its thread.
+(-> world-server--drain (world-server) null)
+(defun world-server--drain (server)
+  "Hold every channel's new turns and wait until no turn runs and no job is live.
 
-Each session's clients are told to reconnect under RECONNECT-ID first. A
-channel still working refuses the checkpoint, since its turn would be cut
-in half; one that does not end in time refuses it too."
-  (let ((hosts    (world-server--hosts server))
-        (deadline (+ (get-internal-real-time)
-                     (* *world-server-checkpoint-idle-seconds* internal-time-units-per-second))))
+Opens still pass meanwhile: a channel opened now is held like the others.
+Work already under way finishes, and so do the jobs it starts, since a turn
+or a job may be waiting for them. The wait has no deadline."
+  (with-lock-held ((world-server-lock server))
+    (setf (world-server-holding-p server) t))
+  (loop while (some #'world-server--host-busy-p (world-server--hosts server))
+        do (sleep *world-server-checkpoint-poll-seconds*))
+  nil)
+
+(-> world-server--host-busy-p (world-host) boolean)
+(defun world-server--host-busy-p (host)
+  "Return true while HOST is starting, runs a turn, or has a live job."
+  (let* ((application  (world-host-application host))
+         (controller   (application-input-controller application))
+         (orchestrator (application-task-presentation-orchestrator application)))
+    (cond
+      ((or (world-host-failure host) (world-host-exit-reason host))
+       nil)
+      ((null controller)
+       t)
+      ((application-input-controller-turn-active-p controller)
+       t)
+      ((and orchestrator (plusp (task-orchestrator-session-live-count orchestrator)))
+       t)
+      (t
+       nil))))
+
+(-> application-world-held-p (application) boolean)
+(defun application-world-held-p (application)
+  "Return true while APPLICATION's world server holds new turns for a checkpoint.
+
+The input controller asks under its own lock, so the flag is read without the
+server's lock; a turn that slips past a stale read is one the checkpoint then
+waits for."
+  (let ((server (application-world-server application)))
+    (and (typep server 'world-server)
+         (world-server-holding-p server)
+         t)))
+
+(-> world-server--pause-channels (world-server application string) null)
+(defun world-server--pause-channels (server application reconnect-id)
+  "End every channel's session for a checkpoint, join its thread and close its tool runtimes.
+
+Each session's clients are told to reconnect under RECONNECT-ID first. The
+server waits for a channel still starting or working, which after the drain
+is only one opened since. The tool runtimes of every channel but
+APPLICATION's, which its checkpoint backend closes, are closed and kept on
+the host to restart: their job pools own threads the fork must not see."
+  (let ((hosts (world-server--hosts server)))
     (flet ((controller (host)
              "Return HOST's input controller, or NIL."
-             (application-input-controller (world-host-application host)))
-           (busy-p (host)
-             "Return true while HOST is starting or its channel works."
-             (let ((controller (application-input-controller (world-host-application host))))
-               (or (and (null controller)
-                        (null (world-host-failure host))
-                        (null (world-host-exit-reason host)))
-                   (and controller
-                        (application-input-controller-turn-active-p controller))))))
-      (loop
-        (let ((busy (remove-if-not #'busy-p hosts)))
-          (cond
-            ((null busy)
-             (return))
-            ((>= (get-internal-real-time) deadline)
-             (error 'checkpoint-error
-                    :message  (format nil "Channel ~A is working; checkpoint when every channel is idle."
-                                      (conversation-identifier-display
-                                       (world-host-channel (first busy))))
-                    :stage    ':validation
-                    :pathname nil))
-            (t
-             (sleep 0.05)))))
+             (application-input-controller (world-host-application host))))
+      (loop while (some #'world-server--host-busy-p hosts)
+            do (sleep *world-server-checkpoint-poll-seconds*))
       (dolist (host hosts)
         (let ((session (application-localgroup-session (world-host-application host))))
           (when (and session (controller host) (null (world-host-exit-reason host)))
@@ -1316,7 +1356,20 @@ in half; one that does not end in time refuses it too."
                    :message  (format nil "Channel ~A did not pause in time."
                                      (conversation-identifier-display (world-host-channel host)))
                    :stage    ':fork
-                   :pathname nil))))))
+                   :pathname nil))))
+      (dolist (host hosts)
+        (let ((served (world-host-application host)))
+          (when (and (world-host-paused-p host) (not (eq served application)))
+            (multiple-value-bind (quiesced failure)
+                (tool-registry-quiesce-runtime-state (application-tool-registry served))
+              (setf (world-host-quiesced-tools host) quiesced)
+              (when failure
+                (error 'checkpoint-error
+                       :message  (format nil "Channel ~A could not stop its tools: ~A"
+                                         (conversation-identifier-display (world-host-channel host))
+                                         (bounded-string (princ-to-string failure) :limit 400))
+                       :stage    ':fork
+                       :pathname nil))))))))
   nil)
 
 (-> world-server--call-with-services-stopped (world-server function) t)
@@ -1333,12 +1386,22 @@ in half; one that does not end in time refuses it too."
     (world-server application string &key (:notice-function (option function)))
     null)
 (defun world-server--resume-channels (server application reconnect-id &key notice-function)
-  "Serve every paused channel of SERVER again, each told its notice, and let opens through.
+  "Serve every paused channel of SERVER again, each told its notice, then let opens and held turns through.
 
-APPLICATION, the channel that asked, is told its notice directly when it
-never paused, as when the checkpoint was refused before the pause."
+A paused channel's closed tool runtimes restart first; one that cannot is
+told so, and serves without them. APPLICATION, the channel that asked, is
+told its notice directly when it never paused, as when the checkpoint failed
+before the pause."
   (dolist (host (world-server--hosts server))
-    (let ((served (world-host-application host)))
+    (let ((served (world-host-application host))
+          (tools  (shiftf (world-host-quiesced-tools host) nil)))
+      (when tools
+        (handler-case
+            (tool-registry-resume-runtime-state (application-tool-registry served) :tools tools)
+          (serious-condition (condition)
+            (application-present served
+                                 (format nil "Some tools did not restart after the checkpoint: ~A"
+                                         (bounded-string (princ-to-string condition) :limit 400))))))
       (cond
         ((world-host-paused-p host)
          (with-lock-held ((world-server-lock server))
@@ -1353,6 +1416,13 @@ never paused, as when the checkpoint was refused before the pause."
         ((and notice-function (eq served application))
          (application-present served (funcall notice-function served))))))
   (with-lock-held ((world-server-lock server))
-    (setf (world-server-checkpointing-p server) nil)
+    (setf (world-server-checkpointing-p server) nil
+          (world-server-holding-p server)       nil)
     (sb-thread:condition-broadcast (world-server-condition-variable server)))
+  (dolist (host (world-server--hosts server))
+    (let ((controller (application-input-controller (world-host-application host))))
+      (when controller
+        (with-lock-held ((application-input-controller-lock controller))
+          (sb-thread:condition-broadcast
+           (application-input-controller-condition-variable controller))))))
   nil)
