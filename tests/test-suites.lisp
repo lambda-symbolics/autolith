@@ -14,6 +14,7 @@
   test-context-admission-mission-final-recheck
   test-context-admission-mission-reviewer
   test-context-admission-mission-refusal-settlement
+  test-context-admission-mission-refusal-proof
   test-context-admission-boundary
   test-context-admission-fresh-projection
   test-context-admission-final-request
