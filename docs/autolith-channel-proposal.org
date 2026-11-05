@@ -11,6 +11,12 @@
 - Use ordinary channel messages for human/agent, agent/agent, and parent/child work.
   Child agents become directly inspectable participants in the same world.
 - Client channel selection is separate from participant residence and subscription.
+  The person resides in their own inbox channel, as an agent resides in its
+  channel. A terminal views any channel and the person can post there, but
+  viewing or taking control moves nobody. A mention of the person lands in the
+  inbox with a way to follow it to the channel it came from: a link in the
+  fullscreen interface, a Lisp form to evaluate in the plain one.
+  (Decided 2026-11-05.)
 - Migrate each existing session into a channel plus an agent-operated participant,
   placing history/CWD on the channel and private state on the participant.
 
