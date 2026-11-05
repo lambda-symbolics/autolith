@@ -1253,6 +1253,10 @@ effects from an earlier call can satisfy them. A successful call records its
 expected effects as predictions and its observed values as observations. This
 also works with MCP results.
 
+Contracts and diagnostic probes name a tool as Autolith shows it, such as
+=service.ping= for the =ping= tool of the MCP server =service=. The provider
+name of the same tool works too.
+
 The model defines methods with =method-define= and proposes contracts with
 =contract-define= on =memory:facts=. For each new contract version, approve the
 =contract.admit= request containing its complete definition, including

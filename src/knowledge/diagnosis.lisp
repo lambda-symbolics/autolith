@@ -535,8 +535,12 @@ ineligible before consuming the bounded execution budget."
 (defun knowledge--run-probe (context probe)
   "Run PROBE through CONTEXT's tool registry and return what it observed."
   (let* ((arguments     (knowledge--probe-arguments probe))
-         (tool          (find (getf probe :tool) (tool-registry-tools (tool-context-registry context))
-                              :key #'tool-canonical-name :test #'string=))
+         ;; A probe names its tool as people see it, such as service.ping
+         ;; for an MCP server's tool, or by its canonical dispatch name.
+         (tool          (find-if (lambda (candidate)
+                                   (or (string= (getf probe :tool) (tool-display-name candidate))
+                                       (string= (getf probe :tool) (tool-canonical-name candidate))))
+                                 (tool-registry-tools (tool-context-registry context))))
          (result        (if tool
                             (tool-registry-execute-call
                              (tool-context-registry context)
