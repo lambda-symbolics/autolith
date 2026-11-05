@@ -712,11 +712,12 @@
 
 (-> test-world-client-switch-navigates () null)
 (defun test-world-client-switch-navigates ()
-  "Test a terminal switching channels states no launch options, and stays in its channel when the other refuses."
+  "Test a terminal switching channels states no launch options, and stays in its channel when the other refuses it."
   (with-test-configuration (configuration)
-    (let ((opens    nil)
-          (attaches nil)
-          (refuse-p nil))
+    (let ((opens     nil)
+          (attaches  nil)
+          (refuse-p  nil)
+          (rejects-p nil))
       (flet ((run ()
                "Run the client loop for a terminal started with launch options, switching once."
                (setf opens nil attaches nil)
@@ -734,9 +735,15 @@
                               (lambda (candidate record mode &rest arguments)
                                 (declare (ignore candidate mode arguments))
                                 (push (first record) attaches)
-                                (if (= (incf calls) 1)
-                                    (list ':switch :session-id "bsecnd2")
-                                    ':detached)))
+                                (cond
+                                  ((= (incf calls) 1)
+                                   (list ':switch :session-id "bsecnd2"))
+                                  ((and rejects-p (equal (first record) "bsecnd2"))
+                                   (error 'localgroup-error
+                                          :message   "Another terminal controls b-secnd2."
+                                          :operation ':attach))
+                                  (t
+                                   ':detached))))
                         (list 'localgroup-relay-exit
                               (lambda (&rest arguments)
                                 (declare (ignore arguments))
@@ -766,7 +773,12 @@
         (setf refuse-p t)
         (run)
         (test-assert (equal (reverse attaches) '("bfirst1" "bfirst1"))
-                     "a channel that refuses the switch leaves the terminal in the channel it came from"))))
+                     "a channel that refuses the switch leaves the terminal in the channel it came from")
+        (setf refuse-p  nil
+              rejects-p t)
+        (run)
+        (test-assert (equal (reverse attaches) '("bfirst1" "bsecnd2" "bfirst1"))
+                     "a channel that opens but rejects the terminal's attachment returns it to the channel it came from"))))
   nil)
 
 (-> test-world-client-refusal-ends-start () null)
