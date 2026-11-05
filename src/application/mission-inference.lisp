@@ -111,17 +111,20 @@
 ALLOWANCE optionally charges the same request to an independent reviewer policy.
 Provider-reported billable usage includes input tokens. Output allocations do not
 bound total provider billing or retry exposure. Preserve all provider return values.
-A request refused before invoking FUNCTION has known zero usage. After dispatch,
-an exact child's missing usage charges its finite admitted allocation once and
-retains child UNKNOWN audit; unproven uncertainty requires conservative quarantine."
+A request refused before invoking FUNCTION or at its first local context-admission
+boundary has known zero usage. After entry into an admitted provider request, an
+exact child's missing usage charges its finite admitted allocation once and retains
+child UNKNOWN audit; unproven uncertainty requires conservative quarantine."
   (let ((originating-child
           (and (typep *mission-admitted-operation* 'task-job)
                (eq (task-job-mission-context *mission-admitted-operation*) context)
                *mission-admitted-operation*))
-        (reservation  nil)
-        (dispatched-p nil)
-        (settled-p    nil)
-        (failure      nil))
+        (reservation     nil)
+        (dispatched-p    nil)
+        (admission-state (list :pending))
+        (local-refusal-p nil)
+        (settled-p       nil)
+        (failure         nil))
     (unwind-protect
          (progn
            (sb-sys:without-interrupts
@@ -132,7 +135,14 @@ retains child UNKNOWN audit; unproven uncertainty requires conservative quaranti
                                                             context "Mission inference"
                                                             (lambda ()
                                                               (setf dispatched-p t)
-                                                              (multiple-value-list (funcall function)))))
+                                                              (let ((*provider-context-admission-state* admission-state))
+                                                                ;; Capture origin before supervision serializes the condition.
+                                                                (handler-bind
+                                                                    ((error
+                                                                       (lambda (condition)
+                                                                         (setf local-refusal-p
+                                                                               (eq condition (rest admission-state))))))
+                                                                  (multiple-value-list (funcall function)))))))
                       (tokens                              (rlm-usage-billable-tokens
                                                             (provider-usage-normalize (funcall usage-function results)))))
                  (sb-sys:without-interrupts
@@ -146,12 +156,24 @@ retains child UNKNOWN audit; unproven uncertainty requires conservative quaranti
                  (values-list results))
              (error (condition)
                (setf failure condition)
-               (error condition))))
+               (let ((refusal (rest admission-state)))
+                 ;; Preserve the supervisor failure for settlement and audit.
+                 (error (if (and local-refusal-p
+                                 (eq (first admission-state) :pending)
+                                 (typep refusal 'provider-context-budget-error)
+                                 (typep condition 'mission-error)
+                                 (eq (mission-error-reason condition) :failed))
+                            refusal
+                            condition))))))
       (when (and reservation (not settled-p))
         (sb-sys:without-interrupts
           (setf settled-p t)
           (mission--settle-inference
-           context reservation (if dispatched-p nil 0)
+           context reservation
+           (if (or (not dispatched-p)
+                   (and local-refusal-p (eq (first admission-state) :pending)))
+               0
+               nil)
            :allowance         allowance
            :originating-child originating-child
            :failure           (or failure "Inference interrupted before usage settlement.")))))))

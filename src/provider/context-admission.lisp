@@ -2,6 +2,31 @@
 
 ;;;; -- Request Context Admission --
 
+
+(-> provider-effective-context-window (model-provider) (integer 1))
+(defun provider-effective-context-window (provider)
+  "Return the configured window or this request's unspent recovery allowance."
+  (let ((configured (config :context-window (provider-configuration provider)))
+        (permit     *provider-compaction-recovery-permit*))
+    (if (and permit (eq provider (first permit)) (eq :ready (third permit)))
+        (max configured (second permit))
+        configured)))
+
+(-> provider-consume-compaction-recovery-permit (model-provider) null)
+(defun provider-consume-compaction-recovery-permit (provider)
+  "Consume a recovery permit only at an admitted transport boundary."
+  (when (and *provider-compaction-recovery-permit*
+             (eq provider (first *provider-compaction-recovery-permit*)))
+    (setf (third *provider-compaction-recovery-permit*) :spent))
+  nil)
+
+(defparameter *provider-context-admission-state* nil
+  "Request-local proof shared with mission accounting during supervised execution.
+
+When bound, FIRST is :PENDING until a provider boundary admits a request, then
+:ENTERED permanently. REST holds the exact condition from a local admission
+refusal. Neither function entry nor a condition's class proves zero usage.")
+
 (defparameter *provider-image-token-estimate* 16384
   "Portable admission allowance per image when a provider supplies no token count.
 
@@ -94,7 +119,7 @@ may use provider token counts when available; the default is not a tokenizer."))
   (multiple-value-bind (input non-text-p)
       (provider-request-input-token-estimate provider request)
     (let ((reserve (provider-request-output-reserve provider request))
-          (window  (config :context-window (provider-configuration provider))))
+          (window  (provider-effective-context-window provider)))
       (when (> (+ input reserve) window)
         (error 'provider-context-budget-error
                :message                (format nil
@@ -110,13 +135,21 @@ may use provider token counts when available; the default is not a tokenizer."))
     ((provider model-provider) (request hash-table) &key credentials conversation)
   "Admit the fully encoded streaming request after provider-specific modifications."
   (declare (ignore credentials conversation))
-  (provider-check-request-context provider request))
+  (provider-context--admit-request provider request)
+  (provider-consume-compaction-recovery-permit provider)
+  (when *provider-context-admission-state*
+    (setf (first *provider-context-admission-state*) :entered
+          (rest *provider-context-admission-state*) nil)))
 
 (defmethod provider-open-native-compaction :before
     ((provider model-provider) (request hash-table) &key credentials conversation)
   "Apply context admission to native compaction requests as well as ordinary turns."
   (declare (ignore credentials conversation))
-  (provider-check-request-context provider request))
+  (provider-context--admit-request provider request)
+  (provider-consume-compaction-recovery-permit provider)
+  (when *provider-context-admission-state*
+    (setf (first *provider-context-admission-state*) :entered
+          (rest *provider-context-admission-state*) nil)))
 
 (define-condition provider-context-budget-error (autolith-error)
   ((estimated-input-tokens
@@ -141,6 +174,17 @@ may use provider token counts when available; the default is not a tokenizer."))
     :documentation "Whether image or opaque payload estimates affected admission."))
   (:documentation "Local context admission refused a request before transport."))
 
+(-> provider-context--admit-request (model-provider hash-table) null)
+(defun provider-context--admit-request (provider request)
+  "Check a real provider boundary and retain its exact local refusal condition."
+  (handler-bind
+      ((provider-context-budget-error
+         (lambda (condition)
+           (when (and *provider-context-admission-state*
+                      (eq (first *provider-context-admission-state*) :pending))
+             (setf (rest *provider-context-admission-state*) condition)))))
+    (provider-check-request-context provider request)))
+
 (-> provider-call-with-mission-output-allowance (model-provider hash-table function) t)
 (defun provider-call-with-mission-output-allowance (provider request continuation)
   "Bound internal mission headroom at the final encoded request boundary.
@@ -154,8 +198,8 @@ refuse the reduced candidate, but cannot bypass ordinary admission."
       (let ((ceilings (provider-request-output-ceilings request :enclosed-p t)))
         (let ((*provider-maximum-output-tokens*
                 (when ceilings (reduce #'max ceilings))))
-          (provider-check-request-context provider request))
-        (let* ((window    (config :context-window (provider-configuration provider)))
+          (provider-context--admit-request provider request))
+        (let* ((window    (provider-effective-context-window provider))
                (ceiling
                  (reduce #'min ceilings
                          :initial-value
@@ -170,11 +214,11 @@ refuse the reduced candidate, but cannot bypass ordinary admission."
                            candidate
                            (provider-request-with-output-ceiling provider request effective)))
                      (*provider-maximum-output-tokens* effective))
-                (provider-check-request-context provider final-request)
+                (provider-context--admit-request provider final-request)
                 (funcall continuation final-request))
               ;; No positive output envelope exists for this encoded candidate.
               (let ((*provider-maximum-output-tokens* ceiling))
-                (provider-check-request-context provider candidate)))))))
+                (provider-context--admit-request provider candidate)))))))
 
 (defmethod provider-open-native-compaction :around
     ((provider model-provider) (request hash-table) &key credentials conversation)

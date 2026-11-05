@@ -637,6 +637,55 @@ Report identity relative to the guarded goal, never arbitrary goal evidence."
       (setf (gethash identity *mission-contexts*) context)))
   nil)
 
+(defparameter *mission-native-compaction-view* nil
+  "Exact detached native request view and owning context during compaction dispatch.")
+
+(-> mission-call-with-request-view ((option mission-context) conversation function) t)
+(defun mission-call-with-request-view (context view function)
+  "Bind a fresh VIEW to CONTEXT during FUNCTION without replacing an existing owner."
+  (let ((introduced-p nil))
+    (unwind-protect
+         (progn
+           (when context
+             (with-lock-held (*mission-contexts-lock*)
+               (unless (gethash view *mission-contexts*)
+                 (setf (gethash view *mission-contexts*) context
+                       introduced-p t))))
+           (funcall function))
+      (when introduced-p
+        (with-lock-held (*mission-contexts-lock*)
+          (when (eq context (gethash view *mission-contexts*))
+            (remhash view *mission-contexts*)))))))
+
+(-> mission-request-view-context (conversation) (option mission-context))
+(defun mission-request-view-context (conversation)
+  "Return CONVERSATION's exact context only when its current request is mission work."
+  (let ((context (mission--conversation-context conversation)))
+    (and context (mission--request-owned-p context conversation) context)))
+
+(-> mission-call-with-native-compaction-view ((option mission-context) conversation function) t)
+(defun mission-call-with-native-compaction-view (context view function)
+  "Capture VIEW's owner for actual native attempts, leaving unsupported probes unowned."
+  (let ((*mission-native-compaction-view* (cons view context)))
+    (funcall function)))
+
+;; Specialize the native backend so the telemetry MODEL-PROVIDER wrapper composes.
+(defmethod provider-attempt-native-compaction :around
+    ((provider codex-subscription-provider) (conversation conversation)
+     &key tool-namespaces force-refresh event-callback)
+  "Account detached native views at real attempts, not at unsupported capability probes."
+  (declare (ignore tool-namespaces force-refresh event-callback))
+  (let ((context (and (eq conversation (first *mission-native-compaction-view*))
+                      (rest *mission-native-compaction-view*))))
+    ;; Already bound conversations are accounted by the outer native generic.
+    (if (and context (not (mission-context-find conversation)))
+        (mission-call-with-request-view
+         context conversation
+         (lambda ()
+           (mission-review--account context conversation
+                                    :function #'call-next-method :usage-function #'second)))
+        (call-next-method))))
+
 (-> mission--agent-context (agent) (option mission-context))
 (defun mission--agent-context (agent)
   "Return the exact admitted mission, including an explicitly captured absence."

@@ -1036,25 +1036,30 @@ original condition or weakening the streaming safety limit."
                   (lambda (condition)
                     (error (provider--authentication-condition
                             provider condition :refreshable-p refreshable-p)))))))
-      (handler-case
-          (call-with-streaming-retries #'attempt-with-authentication #'observe
-                                      :maximum-retries maximum-retries)
-        (provider-retryable-error (condition)
-          ;; The same final attempt must escape the ladder. A callback failure,
-          ;; cancellation, or streaming safety stop is not transient exhaustion.
-          (when (and last-failure
-                     (eq condition (provider-attempt-failed-event-condition last-failure))
-                     (> retryable-failures maximum-retries))
-            (funcall event-callback
-                     (make-instance 'provider-retries-exhausted-event
-                                    :attempt     (provider-attempt-failed-event-attempt last-failure)
-                                    :elapsed-seconds
-                                    (provider-attempt-failed-event-elapsed-seconds last-failure)
-                                    :output-received-p
-                                    (provider-attempt-failed-event-output-received-p last-failure)
-                                    :retryable-p t
-                                    :condition   condition)))
-          (error condition))))))
+      (if *provider-compaction-recovery-permit*
+          ;; A recovery permit authorizes one dispatch, never an authentication or
+          ;; streaming retry. Preserve the original unrelated failure for the caller.
+          (provider--call-with-transport-normalization
+           (lambda () (funcall attempt-function nil event-callback)))
+          (handler-case
+              (call-with-streaming-retries #'attempt-with-authentication #'observe
+                                          :maximum-retries maximum-retries)
+            (provider-retryable-error (condition)
+              ;; The same final attempt must escape the ladder. A callback failure,
+              ;; cancellation, or streaming safety stop is not transient exhaustion.
+              (when (and last-failure
+                         (eq condition (provider-attempt-failed-event-condition last-failure))
+                         (> retryable-failures maximum-retries))
+                (funcall event-callback
+                         (make-instance 'provider-retries-exhausted-event
+                                        :attempt     (provider-attempt-failed-event-attempt last-failure)
+                                        :elapsed-seconds
+                                        (provider-attempt-failed-event-elapsed-seconds last-failure)
+                                        :output-received-p
+                                        (provider-attempt-failed-event-output-received-p last-failure)
+                                        :retryable-p t
+                                        :condition   condition)))
+              (error condition)))))))
 
 (defmethod provider-stream-turn
     ((provider subscription-provider)
