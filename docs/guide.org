@@ -1523,11 +1523,13 @@ channel also stops the server because the image is shared.
 
 *** Checkpoints and launch options
 
-Wait until every channel is idle before requesting a checkpoint. It saves
-the whole process and records the requesting channel as the rollback target.
-The server pauses all channels, and each terminal reconnects automatically.
-Every channel receives the outcome; the requesting channel also receives the
-generation ID. A busy channel prevents the checkpoint. A terminal started
+A checkpoint saves the whole process and records the requesting channel as
+the rollback target. It first waits, however long it takes, until no channel
+runs a turn and no job is running. Work already under way finishes, with the
+jobs it starts; no channel starts a new turn meanwhile. Then the server
+pauses all channels, and each terminal reconnects automatically. Every
+channel receives the outcome; the requesting channel also receives the
+generation ID. The turns held during the wait then start. A terminal started
 during the pause waits for the server instead of starting another one.
 
 On Windows, run a channel directly to checkpoint it. The world server
