@@ -46,7 +46,7 @@ git idsmall https://github.com/lambda-symbolics/idsmall.git :ref 00cdcc08c950792
 git mcparen https://github.com/lambda-symbolics/mcparen.git :ref bef9d739fa6c187dcf1c2cfd8995d51b2c942b0b
 git sbcl-generations https://github.com/lambda-symbolics/sbcl-generations.git :ref a6d1a97626d0a385b6a167bdab4761f1edfd5e4b
 git sexp-config https://github.com/lambda-symbolics/sexp-config.git :ref 9280b5bf0dc056dee49dcf8c9940f30c049015f9
-git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref 2da08f067f50dca8cd1c546e9b7adf45f6386f87
+git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref 2afac2d8d551da250ea5645d4597191e4b6d0432
 git sophisticated-clipboard https://github.com/lambda-symbolics/sophisticated-clipboard.git :ref b933a913481bdcdc0ca0895f053d19eca314eac5
 git sbcl-workers https://github.com/lambda-symbolics/sbcl-workers.git :ref cded09d0c0d2a3c889f6fbb3414342b957978d74
 git surgeon https://github.com/lambda-symbolics/surgeon.git :ref b159c64231f35d2b20aedd41544f8621d16a0c29
