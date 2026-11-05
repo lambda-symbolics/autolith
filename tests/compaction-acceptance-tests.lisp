@@ -569,8 +569,10 @@ the strict shape, and whether the only allowed request publishes it."
                              2)
                             (blocked-p
                              0)
-                            ((member mode '(:refuse :native-refuse))
+                            ((eq mode :refuse)
                              0)
+                            ((eq mode :native-refuse)
+                             2)
                             (t
                              (+ (if native-p 5 0) (if continued-p 4 2))))))
                    (format t "~&OWNERSHIP-WITNESS mode=~S native=~S turns=~D error=~S ledger=~S~%"
@@ -585,9 +587,12 @@ the strict shape, and whether the only allowed request publishes it."
                       (test-assert (null (compaction-ownership-test-views provider)) "no summary enters after turn exhaustion"))
                      (blocked-p
                       (test-assert (eq ':blocked (getf ledger :status)) "unknown summary usage blocks new mission requests"))
-                     ((member mode '(:refuse :native-refuse))
+                     ((eq mode :refuse)
                       (test-assert (typep failure 'provider-context-budget-error) "a local refusal retains its type")
                       (test-assert (eq ':active (getf ledger :status)) "a local compaction refusal has known zero usage"))
+                     ((eq mode :native-refuse)
+                      (test-assert (null failure) "exhausted native admission falls back to the admitted portable summary")
+                      (test-assert (eq ':active (getf ledger :status)) "known-zero native refusals do not invent token usage"))
                      (t
                       (test-assert (null failure) "owned compaction succeeds")
                       (test-assert (= (+ (if native-p 1 0) (if continued-p 2 1)) (getf ledger :turns-used))

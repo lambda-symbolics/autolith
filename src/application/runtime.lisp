@@ -2657,15 +2657,15 @@ has no faithful invocation."
        (when (application--tool-result-visible-p application record)
          (application-tool-result-entry tool application record))))
     (:summary
-     (application--compaction-rule application))
+     (application--compaction-rule application :recovery (getf (rest record) :recovery)))
     (otherwise
      nil)))
 
 (defparameter *application-compaction-label* " CONTEXT COMPACTED "
   "The label centered in the transcript rule marking a context compaction.")
 
-(-> application--compaction-rule (application) terminal-styled-text)
-(defun application--compaction-rule (application)
+(-> application--compaction-rule (application &key (:recovery list)) terminal-styled-text)
+(defun application--compaction-rule (application &key recovery)
   "Return a transcript-wide cut line announcing that earlier context was compacted.
 
 The rule is laid out once at the current terminal width, like other transcript
@@ -2676,9 +2676,13 @@ rows."
                           (terminal-ui-terminal (application-ui application))))))
          (left  (floor (- width (length label)) 2))
          (right (- width (length label) left)))
-    (list (terminal-span ':success (make-string left :initial-element #\━))
-          (terminal-span ':failure label)
-          (terminal-span ':success (make-string right :initial-element #\━)))))
+    (append
+     (list (terminal-span ':success (make-string left :initial-element #\━))
+           (terminal-span ':failure label)
+           (terminal-span ':success (make-string right :initial-element #\━)))
+     (when recovery
+       (list (terminal-span ':notice
+                            (format nil "~%~A" (compaction-recovery-notice recovery))))))))
 
 (-> application--command-presentation-entry
     (application-command-invocation (or string list))

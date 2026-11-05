@@ -2,6 +2,24 @@
 
 ;;;; -- Request Context Admission --
 
+
+(-> provider-effective-context-window (model-provider) (integer 1))
+(defun provider-effective-context-window (provider)
+  "Return the configured window or this request's unspent recovery allowance."
+  (let ((configured (config :context-window (provider-configuration provider)))
+        (permit     *provider-compaction-recovery-permit*))
+    (if (and permit (eq provider (first permit)) (eq :ready (third permit)))
+        (max configured (second permit))
+        configured)))
+
+(-> provider-consume-compaction-recovery-permit (model-provider) null)
+(defun provider-consume-compaction-recovery-permit (provider)
+  "Consume a recovery permit only at an admitted transport boundary."
+  (when (and *provider-compaction-recovery-permit*
+             (eq provider (first *provider-compaction-recovery-permit*)))
+    (setf (third *provider-compaction-recovery-permit*) :spent))
+  nil)
+
 (defparameter *provider-context-admission-state* nil
   "Request-local proof shared with mission accounting during supervised execution.
 
@@ -101,7 +119,7 @@ may use provider token counts when available; the default is not a tokenizer."))
   (multiple-value-bind (input non-text-p)
       (provider-request-input-token-estimate provider request)
     (let ((reserve (provider-request-output-reserve provider request))
-          (window  (config :context-window (provider-configuration provider))))
+          (window  (provider-effective-context-window provider)))
       (when (> (+ input reserve) window)
         (error 'provider-context-budget-error
                :message                (format nil
@@ -118,6 +136,7 @@ may use provider token counts when available; the default is not a tokenizer."))
   "Admit the fully encoded streaming request after provider-specific modifications."
   (declare (ignore credentials conversation))
   (provider-context--admit-request provider request)
+  (provider-consume-compaction-recovery-permit provider)
   (when *provider-context-admission-state*
     (setf (first *provider-context-admission-state*) :entered
           (rest *provider-context-admission-state*) nil)))
@@ -127,6 +146,7 @@ may use provider token counts when available; the default is not a tokenizer."))
   "Apply context admission to native compaction requests as well as ordinary turns."
   (declare (ignore credentials conversation))
   (provider-context--admit-request provider request)
+  (provider-consume-compaction-recovery-permit provider)
   (when *provider-context-admission-state*
     (setf (first *provider-context-admission-state*) :entered
           (rest *provider-context-admission-state*) nil)))
@@ -179,7 +199,7 @@ refuse the reduced candidate, but cannot bypass ordinary admission."
         (let ((*provider-maximum-output-tokens*
                 (when ceilings (reduce #'max ceilings))))
           (provider-context--admit-request provider request))
-        (let* ((window    (config :context-window (provider-configuration provider)))
+        (let* ((window    (provider-effective-context-window provider))
                (ceiling
                  (reduce #'min ceilings
                          :initial-value

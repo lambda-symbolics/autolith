@@ -129,6 +129,7 @@
                   :seq         (getf (rest record) :seq)
                   :time        (getf (rest record) :time)
                   :through-seq (getf (rest record) :through-seq)
+                  :recovery    (copy-tree (getf (rest record) :recovery))
                   :content     summary))))
     (:side-status
      (list ':side-status
@@ -259,9 +260,10 @@ whole history when a crash or retention boundary interrupted sequencing."
              (or (getf (rest record) :status) ':unknown)
              (or (getf (rest record) :output) "")))
     (:summary
-     (format stream "context compacted through sequence ~A~%~A~%"
+     (format stream "context compacted through sequence ~A~%~A~%~@[~A~%~]"
              (getf (rest record) :through-seq)
-             (or (getf (rest record) :content) "")))
+             (or (getf (rest record) :content) "")
+             (compaction-recovery-notice (getf (rest record) :recovery))))
     (:side-status
      (format stream "~A~%" (getf (rest record) :content)))
     (:user-operation
