@@ -663,10 +663,10 @@ hosts, two leases or two threads."
   "Return the host holding the channel ARGUMENTS select, and whether it was started now.
 
 A named channel is held by its host, starting or serving, or started. A
-directory is served by a host of that workspace nobody controls, starting or
-serving, else by the most recently active top-level channel of that
-workspace whose conversation is free, else by a new channel there. The
-caller waits for a starting host the same way as for one it started."
+directory is served by the latest touched top-level channel of that workspace
+that no client controls and whose conversation is free, whether or not this
+server already hosts it, else by a new channel there. The caller waits for a
+starting host the same way as for one it started."
   (let ((channel   (getf arguments :channel))
         (directory (getf arguments :directory)))
     (cond
@@ -689,18 +689,15 @@ caller waits for a starting host the same way as for one it started."
          (error 'world-error
                 :message   (format nil "The directory ~A does not exist." directory)
                 :operation ':open))
-       (let* ((workspace (world-workspace-name directory))
-              (idle      (world-server--idle-host server workspace)))
-         (cond
-           ((and idle (null (world-server--launch-conflict idle (getf arguments :launch))))
-            (world-server--reconcile-launch server idle (getf arguments :launch))
-            (values idle nil))
-           (t
-            (values (or (world-server--resume-host server workspace arguments)
-                        (world-server--start-host server
-                                                  :directory workspace
-                                                  :arguments arguments))
-                    t)))))
+       (let ((workspace (world-workspace-name directory)))
+         (multiple-value-bind (host started-p)
+             (world-server--latest-host server workspace arguments)
+           (if host
+               (values host started-p)
+               (values (world-server--start-host server
+                                                 :directory workspace
+                                                 :arguments arguments)
+                       t)))))
       (t
        (error 'world-error
               :message   "An open names a channel or a directory."
@@ -716,52 +713,67 @@ caller waits for a starting host the same way as for one it started."
         (channel-workspace channel)
         (world-workspace-name (config :working-directory configuration)))))
 
-(-> world-server--idle-host (world-server string) (option world-host))
-(defun world-server--idle-host (server workspace)
-  "Return SERVER's host of WORKSPACE that no client controls, starting or serving, or NIL."
-  (find-if (lambda (host)
-             (and (world-host-reserved-p host)
-                  (string= workspace (world-host-workspace host))
-                  (not (world-host-attached-p host))))
-           (world-server--hosts server)))
+(-> world-server--latest-candidates (world-server string) list)
+(defun world-server--latest-candidates (server workspace)
+  "Return (IDENTIFIER . HOST) for WORKSPACE's top-level channels, the latest touched first.
 
-(-> world-server--resume-candidates
-    (configuration world &key (:workspace string) (:hosted list))
-    list)
-(defun world-server--resume-candidates (configuration world &key workspace hosted)
-  "Return WORKSPACE's top-level channels of WORLD not among HOSTED, the most recently active first.
-
-Activity is the newest durable write of a channel's conversation, so recent
-work in an old channel outranks a newer channel's creation or a title change,
-which only move the channel's own record."
-  (stable-sort (remove-if-not (lambda (channel)
-                                (and (null (channel-parent channel))
-                                     (string= workspace (channel-workspace channel))
-                                     (not (member (channel-identifier channel) hosted
-                                                  :test #'string=))))
-                              (world-channels world))
-               #'>
-               :key (lambda (channel)
-                      (conversation-storage-write-date
-                       (conversation-pathname-for-id configuration (channel-identifier channel))))))
-
-(-> world-server--resume-host (world-server string list) (option world-host))
-(defun world-server--resume-host (server workspace arguments)
-  "Start the host of WORKSPACE's most recently active free channel, or return NIL."
+HOST is the server's host of the channel, starting or serving, or NIL. Latest
+touched is the newest write of the channel's conversation file; a hosted
+channel with no file yet was started just now and counts as the newest."
   (let* ((configuration (world-server-configuration server))
          (world         (values (world-reconcile-sessions configuration)))
-         (hosted        (mapcar #'world-host-channel (world-server--hosts server))))
-    (dolist (channel (world-server--resume-candidates configuration world
-                                                      :workspace workspace
-                                                      :hosted    hosted)
-                     nil)
-      (handler-case
-          (return (world-server--start-host server
-                                            :conversation-id (channel-identifier channel)
-                                            :directory       workspace
-                                            :arguments       arguments))
-        (conversation-in-use ()
-          nil)))))
+         (hosts         (remove-if-not (lambda (host)
+                                         (and (world-host-reserved-p host)
+                                              (string= workspace (world-host-workspace host))))
+                                       (world-server--hosts server)))
+         (candidates    nil))
+    (dolist (channel (world-channels world))
+      (when (and (null (channel-parent channel))
+                 (string= workspace (channel-workspace channel)))
+        (push (cons (channel-identifier channel)
+                    (find (channel-identifier channel) hosts
+                          :key #'world-host-channel :test #'string=))
+              candidates)))
+    (dolist (host hosts)
+      (unless (or (assoc (world-host-channel host) candidates :test #'string=)
+                  (world-channel-find world (world-host-channel host)))
+        (push (cons (world-host-channel host) host) candidates)))
+    (flet ((touched (candidate)
+             (let ((written (conversation-storage-write-date
+                             (conversation-pathname-for-id configuration (first candidate)))))
+               (if (and (zerop written) (rest candidate))
+                   (get-universal-time)
+                   written))))
+      (mapcar #'rest
+              (stable-sort (mapcar (lambda (candidate) (cons (touched candidate) candidate))
+                                   candidates)
+                           #'> :key #'first)))))
+
+(-> world-server--latest-host (world-server string list) (values (option world-host) boolean))
+(defun world-server--latest-host (server workspace arguments)
+  "Return the host of WORKSPACE's latest touched free channel, and whether it was started now.
+
+A hosted channel serves when no client controls it and the launch options of
+ARGUMENTS can apply to it; an unhosted one starts when its conversation is
+free. Return NIL when no channel qualifies."
+  (let ((launch (getf arguments :launch)))
+    (dolist (candidate (world-server--latest-candidates server workspace) (values nil nil))
+      (destructuring-bind (identifier . host) candidate
+        (cond
+          (host
+           (unless (or (world-host-attached-p host)
+                       (world-server--launch-conflict host launch))
+             (world-server--reconcile-launch server host launch)
+             (return (values host nil))))
+          (t
+           (handler-case
+               (return (values (world-server--start-host server
+                                                         :conversation-id identifier
+                                                         :directory       workspace
+                                                         :arguments       arguments)
+                               t))
+             (conversation-in-use ()
+               nil))))))))
 
 (-> world-server--launch-conflict (world-host list) (option string))
 (defun world-server--launch-conflict (host launch)
