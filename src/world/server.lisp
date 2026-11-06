@@ -773,10 +773,10 @@ free. Return NIL when no channel qualifies."
 (defun world-server--launch-conflict (host launch)
   "Return the option of LAUNCH that channel HOST runs differently and cannot change, or NIL.
 
-The model, provider, immutable mode, fullscreen mode and theme are fixed when
-a channel's application is built. The permission mode changes only while the
-channel is not working: a turn or a job already running keeps the mode it
-started under."
+The model, provider, immutable mode, fullscreen or plain presentation and
+theme are fixed when a channel's application is built. The permission mode
+changes only while the channel is not working: a turn or a job already
+running keeps the mode it started under."
   (let* ((application   (world-host-application host))
          (configuration (application-configuration application))
          (model         (getf launch :model))
@@ -796,6 +796,8 @@ started under."
        "--immutable")
       ((and (getf launch :fullscreen-p) (not (config :fullscreen-p configuration)))
        "--fullscreen")
+      ((and (getf launch :plain-p) (config :fullscreen-p configuration))
+       "--plain")
       ((and theme (not (eq theme (config :terminal-theme configuration))))
        "--almighty")
       (t
@@ -874,9 +876,8 @@ forgotten again when no thread could start."
          (configuration (apply #'configuration-copy base
                                :working-directory (uiop:ensure-directory-pathname directory)
                                (append
-                                (when (or (getf arguments :fullscreen-p)
-                                          (getf launch :fullscreen-p))
-                                  (list :fullscreen-p t))
+                                (list :fullscreen-p (not (null (or (getf arguments :fullscreen-p)
+                                                                   (getf launch :fullscreen-p)))))
                                 (when (getf launch :model)
                                   (list :model                      (getf launch :model)
                                         :model-provider             (or (getf launch :provider) "")

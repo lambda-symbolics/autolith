@@ -534,18 +534,20 @@ and fails if they exceed the shutdown timeout.
 
 * Fullscreen terminal
 
-Autolith uses the ordinary inline terminal presentation by default. Opt into the
-application-owned fullscreen viewport for a session with:
+Autolith owns the whole terminal by default: a fullscreen viewport with the
+transcript above a bottom-pinned composer. To keep the transcript in the
+terminal's own scrollback instead, start a session with:
 
 #+BEGIN_SRC sh
-autolith --fullscreen
+autolith --plain
 #+END_SRC
 
 Save the preference for future launches at the Autolith prompt:
 
 #+BEGIN_SRC lisp
-(preferences-set-fullscreen (application-configuration *active-application*) t)
+(setf (config :fullscreen-p) nil)
 #+END_SRC
+
 In fullscreen mode, scroll the transcript above the bottom-pinned composer,
 modeline, command, RLM, and task activity rows. Use =PageUp= and =PageDown= for
 page movement. Use =Ctrl-PageUp= and =Ctrl-PageDown= to jump between user and
@@ -555,12 +557,11 @@ for incremental scrolling. In a terminal attached to a hosted channel,
 =Ctrl-T= hides and shows the channel sidebar; see Local sessions. A message
 jump places the end of the message on the row above the composer. If the
 message is taller than the window, its header appears at the top instead. The
-=--fullscreen= option enables fullscreen for one
-launch without changing the saved preference.
-Pass =nil= to =preferences-set-fullscreen= to return future launches to inline
-mode. Because the viewport owns the mouse, hold =Shift= while dragging to select
-text with the terminal emulator. Fullscreen history lives in the application,
-not the terminal emulator's native scrollback. The viewport keeps about four
+=--fullscreen= and =--plain= options choose the mode for one launch without
+changing the saved preference. Set =(config :fullscreen-p)= back to =t= to
+return future launches to fullscreen. Because the viewport owns the mouse, hold
+=Shift= while dragging to select text with the terminal emulator. Fullscreen
+history lives in the application, not the terminal emulator's native scrollback. The viewport keeps about four
 million characters of recent output in memory. At the oldest retained row, the
 legend shows =(history)=. Run =(history)= to load a page of older output.
 
@@ -1511,8 +1512,8 @@ Use =--detached= for a standalone session outside the server. Set
 own process.
 
 For a new channel, specify =--model=, =--permissions=, =--immutable=,
-=--fullscreen=, or =--almighty= at startup. Supply =--provider= only together
-with =--model=, as on a direct start. An existing channel accepts an explicit
+=--fullscreen=, =--plain=, or =--almighty= at startup. Supply =--provider=
+only together with =--model=, as on a direct start. An existing channel accepts an explicit
 =--permissions= override only when no terminal controls it. Other launch
 options are rejected, with the option named in the error. When opening a
 workspace, those other options create a new channel instead of reusing a

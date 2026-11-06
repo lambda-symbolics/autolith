@@ -144,10 +144,10 @@
     ((:plain "Configuring a language server in ")
      (:code "lsp.sexp")
      (:plain " under your Autolith config directory adds definition, hover, and diagnostics tools for workspace code."))
-    ((:code "autolith --fullscreen")
-     (:plain " uses a scrollable transcript and bottom-pinned composer. Save the choice for future launches with ")
-     (:code "(setf (config :fullscreen-p) t)")
-     (:plain "; nil restores the inline default."))
+    ((:code "autolith --plain")
+     (:plain " keeps the transcript in your terminal's own scrollback instead of fullscreen. Save the choice for future launches with ")
+     (:code "(setf (config :fullscreen-p) nil)")
+     (:plain "; t restores the fullscreen default."))
     ((:plain "Claude caches a prompt for five minutes. If you often pause longer, ")
      (:code "(setf (config :prompt-cache-ttl) \"1h\")")
      (:plain " asks Anthropic and OpenRouter Claude models for one hour, at twice the cache-write price."))
@@ -935,8 +935,16 @@ state, including an empty list after successful or pristine startup."
                                        (main--model-arguments command)))))
               ;; The command line beats the saved preference; provider
               ;; validation stays deferred until executable user init.
+              (when (and (getopt* command ':plain)
+                         (or (getopt* command ':fullscreen) (getopt* command ':almighty)))
+                (error 'configuration-error
+                       :message (format nil "--plain cannot be combined with ~:[--almighty~;--fullscreen~]."
+                                        (getopt* command ':fullscreen))))
               (when (getopt* command ':fullscreen)
                 (configuration-set base (configuration-setting base :fullscreen-p) t
+                                   :source ':override))
+              (when (getopt* command ':plain)
+                (configuration-set base (configuration-setting base :fullscreen-p) nil
                                    :source ':override))
               (when (getopt* command ':almighty)
                 (configuration-set base (configuration-setting base :terminal-theme)
@@ -1200,6 +1208,8 @@ request it conflicts with from one that says nothing."
             (list :immutable-p t))
           (when (or (getopt* command ':fullscreen) (getopt* command ':almighty))
             (list :fullscreen-p t))
+          (when (getopt* command ':plain)
+            (list :plain-p t))
           (when (getopt* command ':almighty)
             (list :theme ':almighty))))
 
@@ -1331,6 +1341,11 @@ of the world follows the terminal from channel to channel."
                 :key         ':fullscreen
                 :persistent  t
                 :description "use a scrollable alternate-screen UI with a pinned composer")
+   (make-option ':flag
+                :long-name   "plain"
+                :key         ':plain
+                :persistent  t
+                :description "keep the transcript in the terminal's own scrollback instead of fullscreen")
    (make-option ':flag
                 :long-name   "almighty"
                 :key         ':almighty

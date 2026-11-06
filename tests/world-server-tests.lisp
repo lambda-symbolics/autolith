@@ -332,7 +332,16 @@
                                    (application-configuration
                                     (world-host-application
                                      (world-server--find-host server other)))))
-                      "a workspace open with a conflicting option gets another channel that takes it")))))
+                      "a workspace open with a conflicting option gets another channel that takes it")
+         (test-assert (handler-case
+                          (progn (localgroup-query-record
+                                  entry ':open
+                                  (list :channel other :launch '(:plain-p t)
+                                        :rows 30 :columns 90 :styled-p nil))
+                                 nil)
+                        (autolith-error (condition)
+                          (search "--plain" (autolith-error-message condition))))
+                      "a fullscreen channel refuses a plain open, naming the option")))))
   nil)
 
 (-> test-world-server-resume-order () null)

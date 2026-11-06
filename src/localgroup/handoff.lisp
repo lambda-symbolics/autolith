@@ -348,8 +348,9 @@ before any shell is involved."
      (list "--immutable"))
    (when pristine-p
      (list "--pristine"))
-   (when (config :fullscreen-p configuration)
-     (list "--fullscreen"))
+   (if (config :fullscreen-p configuration)
+       (list "--fullscreen")
+       (list "--plain"))
    (when (eq (config :terminal-theme configuration) ':almighty)
      (list "--almighty"))
    (let ((site-config-root (config :site-config-root configuration)))
