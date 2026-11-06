@@ -1307,5 +1307,5 @@
                (application-world-before-turn
                 (world-host-application (world-server--find-host server id-d)) ':message)
                (test-assert (not (context-file-p))
-                            "the opened channel adopts the context before the agent's first turnfirst turn")))))))))
+                            "the opened channel adopts the context before the agent's first turn")))))))))
   nil)
