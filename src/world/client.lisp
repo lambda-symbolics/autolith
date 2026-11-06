@@ -83,14 +83,17 @@ other."
     (configuration &key (:directory (or null string pathname)) (:channel (option string))
                         (:permission-mode keyword) (:immutable-p boolean)
                         (:pristine-p boolean) (:resume-command-p boolean)
-                        (:recovery-diagnosis (option string)) (:launch list) (:new-p boolean))
+                        (:recovery-diagnosis (option string)) (:launch list) (:new-p boolean)
+                        (:images list))
     (values string boolean))
 (defun world-client-open
     (configuration &key directory channel (permission-mode ':ask) immutable-p pristine-p
-                        resume-command-p recovery-diagnosis launch new-p)
+                        resume-command-p recovery-diagnosis launch new-p images)
   "Open CHANNEL, or a channel for DIRECTORY, in CONFIGURATION's world server.
 
-NEW-P opens a new channel for DIRECTORY instead of its latest one.
+NEW-P opens a new channel for DIRECTORY instead of its latest one. IMAGES,
+absolute namestrings of local images, become the opened channel's composer
+draft.
 The first client starts the server; later ones find it running. LAUNCH is
 the plist of launch options this start stated explicitly; a new channel
 takes them, and a channel already served refuses the ones it cannot change.
@@ -119,6 +122,8 @@ sharing one it already served."
                                 (list :launch launch))
                               (when new-p
                                 (list :new-p t))
+                              (when images
+                                (list :images images))
                               (list :permission-mode    permission-mode
                                     :fullscreen-p       (not (null (config :fullscreen-p configuration)))
                                     :resume-command-p   (not (null resume-command-p))

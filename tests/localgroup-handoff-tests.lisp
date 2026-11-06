@@ -498,7 +498,6 @@
                   :authenticate-p           nil
                   :recovery-conversation-id nil
                   :recovery-diagnosis       nil
-                  :image-values             nil
                   :simulate-crash-p         nil
                   arguments)))
     (let ((ordinary (client-p :resume-requested-p nil :resume-id nil)))
@@ -516,7 +515,6 @@
         :resume-id                nil
         :recovery-conversation-id "K-8vQ2mp"
         :recovery-diagnosis       "diagnose the crash"
-        :image-values             nil
         :simulate-crash-p         nil)
        (main--client-session-p
         :handoff-record           nil
@@ -525,7 +523,6 @@
         :resume-id                nil
         :recovery-conversation-id nil
         :recovery-diagnosis       nil
-        :image-values             nil
         :simulate-crash-p         nil))
    "crash recovery keeps the same client-first path as an ordinary start")
   (test-assert
@@ -536,7 +533,6 @@
          :resume-id                nil
          :recovery-conversation-id nil
          :recovery-diagnosis       nil
-         :image-values             nil
          :simulate-crash-p         nil))
    "the spawned session itself runs direct")
   nil)

@@ -283,6 +283,16 @@ emergency terminal input responsive while another thread owns presentation."
   "Return the visible composer label for image NUMBER."
   (format nil "[Image #~D]" number))
 
+(-> terminal-ui-image-draft (list) (option user-message-input))
+(defun terminal-ui-image-draft (pathnames)
+  "Return a composer draft attaching the images at PATHNAMES under their labels, or NIL for none."
+  (when pathnames
+    (user-message-input-create
+     :text            (format nil "~{~A~^ ~}"
+                              (loop for number from 1 to (length pathnames)
+                                    collect (terminal-ui--image-label number)))
+     :image-pathnames pathnames)))
+
 (-> terminal-ui--copy-image-attachments (list) list)
 (defun terminal-ui--copy-image-attachments (attachments)
   "Return a detached copy of draft ATTACHMENTS."
