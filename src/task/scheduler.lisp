@@ -283,7 +283,9 @@ that a body returned. An artifact that cannot be written downgrades the state to
 A job admitted just as its parent was cancelled can miss that cancellation's
 cross-pool walk. Checking retained ancestry before any work closes that window.
 An evicted ancestor counts as live because a normally completed parent is no
-reason to stop a detached descendant."
+reason to stop a detached descendant. Nor is an ancestor interrupted for the
+reason :moved, because its agent moved or parked: a move never affects that
+agent's children."
   (let ((jobs
           (task-orchestrator-list-jobs
            (session-job-orchestrator job))))
@@ -292,7 +294,7 @@ reason to stop a detached descendant."
               (find identifier jobs :key #'job-identifier :test #'string=)))
         (when ancestor
           (let ((reason (job-cancellation-reason ancestor)))
-            (when reason
+            (when (and reason (not (eq reason ':moved)))
               (return reason))))))))
 
 (-> task-job--cancelled-ancestor-reason (task-job) (option keyword))

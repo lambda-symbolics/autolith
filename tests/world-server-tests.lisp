@@ -921,7 +921,7 @@
 
 (-> test-world-server-move-running-child () null)
 (defun test-world-server-move-running-child ()
-  "Test a child agent whose task runs in its parent's task pool is neither moved nor parked until the task ends."
+  "Test moving or parking a child agent interrupts the task its parent's pool runs it in, and leaves its own children's tasks alone."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry (world-client-entry configuration))
@@ -931,50 +931,62 @@
        (conversation-append-user-message (application-conversation app-a) "first words in a")
        (let* ((world   (values (world-reconcile-sessions configuration)))
               (human   (world-human-participant world))
-              (agent-a (find ':agent (world-channel-residents world id-a) :key #'participant-kind))
-              (job     (task-tests--register-job (application--task-orchestrator app-a)
-                                                 (application-agent app-a)
-                                                 (acp-extension-job-tests--definition)
-                                                 :name "child"))
-              (task    (task-job-execution-identifier job)))
-         (world-channel-create configuration
-                               :id        task
-                               :owner     (participant-identifier agent-a)
-                               :workspace (world-tests--workspace root "a")
-                               :parent    id-a)
+              (agent-a (find ':agent (world-channel-residents world id-a) :key #'participant-kind)))
          (world-channel-create configuration
                                :id        "bdest11"
                                :owner     (participant-identifier human)
                                :workspace (world-tests--workspace root "b"))
-         (let ((child (world-participant-create configuration
-                                                :kind      ':agent
-                                                :name      "child"
-                                                :residence task
-                                                :parent    (participant-identifier agent-a))))
-           (flet ((refusal (operation arguments)
+         (labels ((running-child (name)
+                    "Return a child agent NAME and the task that runs it, in a channel of its own."
+                    (let* ((job  (task-tests--register-job (application--task-orchestrator app-a)
+                                                           (application-agent app-a)
+                                                           (acp-extension-job-tests--definition)
+                                                           :name name))
+                           (task (task-job-execution-identifier job)))
+                      (world-channel-create configuration
+                                            :id        task
+                                            :owner     (participant-identifier agent-a)
+                                            :workspace (world-tests--workspace root "a")
+                                            :parent    id-a)
+                      (values (world-participant-create configuration
+                                                        :kind      ':agent
+                                                        :name      name
+                                                        :residence task
+                                                        :parent    (participant-identifier agent-a))
+                              job)))
+
+                  (refusal (operation arguments)
                     "Return the message refusing OPERATION with ARGUMENTS, or NIL when it succeeds."
                     (handler-case (progn (localgroup-query-record entry operation arguments) nil)
                       (localgroup-error (condition)
-                        (autolith-error-message condition)))))
-             (test-assert (and (search "running a task"
-                                       (refusal ':move (list :participant (participant-identifier child)
+                        (autolith-error-message condition))))
+
+                  (residence (participant)
+                    "Return where PARTICIPANT resides now."
+                    (participant-residence
+                     (world-participant-find (world-load configuration)
+                                             (participant-identifier participant)))))
+           (multiple-value-bind (child job) (running-child "child")
+             (let ((grandchild (task-tests--register-job (application--task-orchestrator app-a)
+                                                         (application-agent app-a)
+                                                         (acp-extension-job-tests--definition)
+                                                         :name              "grandchild"
+                                                         :owner-identifiers (list (job-identifier job)))))
+               (test-assert (and (null (refusal ':move (list :participant (participant-identifier child)
                                                              :channel     "bdest11")))
-                               (search "running a task"
-                                       (refusal ':dismiss (list :participant
-                                                                (participant-identifier child))))
-                               (equal (participant-residence
-                                       (world-participant-find (world-load configuration)
-                                                               (participant-identifier child)))
-                                      task))
-                          "a child whose task runs is neither moved nor parked, and stays where it was")
-             (task-tests--publish-terminal job ':completed (task-tests--terminal-result job))
-             (test-assert (and (null (refusal ':move (list :participant (participant-identifier child)
-                                                           :channel     "bdest11")))
-                               (equal (participant-residence
-                                       (world-participant-find (world-load configuration)
-                                                               (participant-identifier child)))
-                                      "bdest11"))
-                          "once its task ended the child moves")))))))
+                                 (equal (residence child) "bdest11")
+                                 (job-terminal-p job)
+                                 (eq (job-cancellation-reason job) ':moved))
+                            "moving a child whose task runs interrupts the task and moves the child")
+               (test-assert (and (not (job-terminal-p grandchild))
+                                 (null (job-cancellation-reason grandchild))
+                                 (null (task-job--cancelled-ancestor-reason grandchild)))
+                            "the task of the child's own child goes on, and may still start")))
+           (multiple-value-bind (child job) (running-child "second")
+             (test-assert (and (null (refusal ':dismiss (list :participant (participant-identifier child))))
+                               (null (residence child))
+                               (eq (job-cancellation-reason job) ':moved))
+                          "dismissing a child whose task runs interrupts the task and parks the child")))))))
   nil)
 
 (-> test-world-server-move-goal () null)
