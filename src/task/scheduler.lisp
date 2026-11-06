@@ -278,14 +278,13 @@ that a body returned. An artifact that cannot be written downgrades the state to
     (session-job)
     (option keyword))
 (defun session-job--cancelled-ancestor-reason (job)
-  "Return the reason an ancestor of JOB was cancelled, or NIL when none was.
+  "Return JOB's inherited cancellation reason, or NIL.
 
 A job admitted just as its parent was cancelled can miss that cancellation's
 cross-pool walk. Checking retained ancestry before any work closes that window.
 An evicted ancestor counts as live because a normally completed parent is no
-reason to stop a detached descendant. Nor is an ancestor interrupted for the
-reason :moved, because its agent moved or parked: a move never affects that
-agent's children."
+reason to stop a detached descendant. An ancestor's :moved cancellation,
+caused by its agent moving or parking, is also ignored here."
   (let ((jobs
           (task-orchestrator-list-jobs
            (session-job-orchestrator job))))
