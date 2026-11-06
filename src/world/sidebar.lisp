@@ -2,9 +2,10 @@
 
 ;;;; -- World Sidebar --
 
-;;; The side panel a terminal client shows beside its channel: every channel
-;;; of the world grouped by workspace, with what runs there, who is attached,
-;;; and what arrived since this client last looked. The counts are the
+;;; The side panel a terminal client shows beside its channel: the person's
+;;; inbox first, with the messages waiting there unread, then every other
+;;; channel of the world grouped by workspace, with what runs there, who is
+;;; attached, and what arrived since this client last looked. The counts are the
 ;;; client's own view and live nowhere else; a fresh client starts caught up.
 ;;; A started sidebar gathers on its own thread, so reading the world, the
 ;;; server and the inboxes never holds up the terminal's keystrokes; the
@@ -211,18 +212,18 @@ A failed gather keeps the entries shown before; the next one tries again."
 (-> world-sidebar--gather (world-sidebar real) list)
 (defun world-sidebar--gather (sidebar now)
   "Return the sidebar's entries for the world as it is at internal time NOW."
-  (let ((configuration (world-sidebar-configuration sidebar))
-        (statuses      (world-sidebar--statuses sidebar)))
+  (let* ((configuration (world-sidebar-configuration sidebar))
+         (statuses      (world-sidebar--statuses sidebar))
+         (world         (world-sidebar--world sidebar now)))
     (world-sidebar--entries sidebar
-                            :channels (world-sidebar--channels configuration
-                                                               (world-sidebar--world sidebar now)
-                                                               statuses)
+                            :inbox    (world-inbox-channel world)
+                            :channels (world-sidebar--channels configuration world statuses)
                             :statuses statuses
                             :pending  (world-sidebar--pending configuration))))
 
 (-> world-sidebar--channels (configuration world list) list)
 (defun world-sidebar--channels (configuration world statuses)
-  "Return WORLD's channels and the hosted ones STATUSES report beyond them, the latest touched first.
+  "Return WORLD's channels but the inbox, and the hosted ones STATUSES report beyond them, the latest touched first.
 
 Latest touched is the newest write of a channel's conversation file. A hosted
 channel the world does not know yet has no file: it started just now, shows
@@ -252,7 +253,7 @@ first, and belongs to the workspace its status names."
                                       (conversation-pathname-for-id configuration
                                                                     (channel-identifier channel)))
                                      channel))
-                             (world-channels world)))
+                             (remove-if #'channel-inbox-p (world-channels world))))
              #'> :key #'first))))
 
 (-> world-sidebar--world (world-sidebar real) world)
@@ -304,32 +305,41 @@ A world that cannot be read shows as empty rather than ending the client."
         nil)))
 
 (-> world-sidebar--entries
-    (world-sidebar &key (:channels list) (:statuses list) (:pending list))
+    (world-sidebar &key (:inbox (option channel)) (:channels list) (:statuses list)
+                        (:pending list))
     list)
-(defun world-sidebar--entries (sidebar &key channels statuses pending)
-  "Return workspace and channel entries of CHANNELS, with STATUSES and PENDING deliveries folded in.
+(defun world-sidebar--entries (sidebar &key inbox channels statuses pending)
+  "Return the INBOX entry, then workspace and channel entries of CHANNELS, with STATUSES and PENDING deliveries folded in.
 
-CHANNELS arrive latest touched first. The workspace of the current channel
-comes first, then the others in that order. Within a workspace, channels nest
-under their parents."
+The inbox's unread count is what waits in it for the person, so it stays
+true across clients and restarts. CHANNELS arrive latest touched first. The
+workspace of the current channel comes first, then the others in that order.
+Within a workspace, channels nest under their parents."
   (let ((current (world-sidebar-current sidebar))
         (table   (make-hash-table :test #'equal)))
     (dolist (status statuses)
       (let ((identifier (getf status :session-id)))
         (when (stringp identifier)
           (setf (gethash identifier table) status))))
-    (loop for (workspace . members) in (world-sidebar--groups channels current)
-          append (cons (list :kind ':workspace
-                             :name (world-workspace-leaf workspace)
-                             :path (world-sidebar--short-path workspace))
-                       (loop for (channel . depth) in (world-sidebar--tree members)
-                             collect (world-sidebar--channel-entry
-                                      sidebar channel
-                                      :depth   depth
-                                      :status  (gethash (channel-identifier channel) table)
-                                      :pending (rest (assoc (channel-identifier channel)
-                                                            pending
-                                                            :test #'string=))))))))
+    (append
+     (when inbox
+       (list (list :kind      ':inbox
+                   :id        (channel-identifier inbox)
+                   :current-p (equal (channel-identifier inbox) current)
+                   :unread    (or (rest (assoc (channel-identifier inbox) pending :test #'string=))
+                                  0))))
+     (loop for (workspace . members) in (world-sidebar--groups channels current)
+           append (cons (list :kind ':workspace
+                              :name (world-workspace-leaf workspace)
+                              :path (world-sidebar--short-path workspace))
+                        (loop for (channel . depth) in (world-sidebar--tree members)
+                              collect (world-sidebar--channel-entry
+                                       sidebar channel
+                                       :depth   depth
+                                       :status  (gethash (channel-identifier channel) table)
+                                       :pending (rest (assoc (channel-identifier channel)
+                                                             pending
+                                                             :test #'string=)))))))))
 
 (-> world-sidebar--groups (list (option string)) list)
 (defun world-sidebar--groups (channels current)
@@ -441,8 +451,16 @@ Entries past the rows available are counted on the last row they would take."
 
 (-> world-sidebar--entry-spans (list) list)
 (defun world-sidebar--entry-spans (entry)
-  "Return the styled spans of one workspace or channel ENTRY."
+  "Return the styled spans of one inbox, workspace or channel ENTRY."
   (ecase (getf entry :kind)
+    (:inbox
+     (append
+      (list (if (getf entry :current-p)
+                (terminal-span ':legend-accent "▸ ")
+                (terminal-span ':plain "  "))
+            (terminal-span (if (plusp (getf entry :unread)) ':strong ':plain) "✉ inbox"))
+      (when (plusp (getf entry :unread))
+        (list (terminal-span ':notice (format nil " ~D unread" (getf entry :unread)))))))
     (:workspace
      (list (terminal-span ':strong (format nil " ~A" (getf entry :name)))
            (terminal-span ':dim (format nil "  ~A" (getf entry :path)))))

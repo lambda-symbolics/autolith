@@ -51,6 +51,11 @@
                         (search "… 4 more" (fourth cut))
                         (search "Ctrl-T" (fifth cut)))
                    "entries past the height are counted on the last body row")))
+  (let ((lines (world-sidebar-tests--text
+                (world-sidebar--rows (list (list :kind ':inbox :id "f6uouHJ" :current-p nil :unread 2))
+                                     3))))
+    (test-assert (search "✉ inbox 2 unread" (second lines))
+                 "the inbox row shows how many messages wait unread"))
   nil)
 
 (-> test-world-sidebar-visibility () null)
@@ -146,7 +151,28 @@
            (test-assert (and (equal (getf (entry "bfirst1") :state) ':absent)
                              (= (getf (entry "bfirst1") :pending) 1)
                              (zerop (getf (entry "bfirst1") :unread)))
-                        "a channel nobody serves shows its waiting deliveries instead of counts"))))))
+                        "a channel nobody serves shows its waiting deliveries instead of counts")
+           (let ((inbox (world-tests--inbox configuration)))
+             (world-inbox-append configuration inbox
+                                 (list (make-instance 'world-delivery
+                                                      :identifier  "d2"
+                                                      :time        3000
+                                                      :sender      "bsecnd2"
+                                                      :sender-name "autolith"
+                                                      :source      "bsecnd2"
+                                                      :target      "bsecnd2"
+                                                      :text        "@user look"
+                                                      :mentions    nil
+                                                      :kind        ':notice)))
+             (advance)
+             (screen-panel-refresh sidebar)
+             (let ((first (first (world-sidebar-entries sidebar))))
+               (test-assert (and (eq (getf first :kind) ':inbox)
+                                 (equal (getf first :id) inbox)
+                                 (= (getf first :unread) 1)
+                                 (= 1 (count inbox (world-sidebar-entries sidebar)
+                                             :key (lambda (entry) (getf entry :id)) :test #'equal)))
+                            "the inbox comes first, once, counting the messages waiting there"))))))))
   nil)
 
 (-> test-world-sidebar-gathers-apart () null)
