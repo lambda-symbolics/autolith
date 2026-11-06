@@ -3,8 +3,8 @@
 ;;;; -- Memory Sources and Premises --
 
 ;;; A memory may cite the evidence it was written from. Sources are
-;;; alternative evidence for the memory's own content; premises are other
-;;; memories it was derived from, all of which it requires. Both are stored as
+;;; alternative evidence for the memory's own content; premises are memories or
+;;; knowledge claims it was derived from, all of which it requires. Both are
 ;;; optional portable fields of the ordinary memory record, so memories without
 ;;; them keep their exact earlier form.
 

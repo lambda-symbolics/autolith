@@ -555,10 +555,11 @@ matching memories when the prefix is ambiguous."
 
 SOURCES are complete source records; file paths may be absolute and are
 recorded relative to the memory's workspace when inside it. PREMISES are memory
-identifiers, recorded with their current digests. A replacement that omits
-SOURCES or PREMISES keeps the recorded versions unchanged, so restating or
-retagging a stale memory leaves it stale; supplying them again rebinds the
-memory to the evidence as it is now."
+or knowledge-claim identifiers. Memory premises record content digests; claim
+premises record the claim identifier and text. A replacement that omits SOURCES
+or PREMISES keeps the recorded versions unchanged, so restating or retagging a
+stale memory leaves it stale; supplying them again rebinds the memory to the
+evidence as it is now."
   (let ((validated-title
           (memory--validate-text title "title" *memory-title-limit*))
         (validated-content
