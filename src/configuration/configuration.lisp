@@ -997,12 +997,12 @@ selects its own registration, rather than inheriting the previous provider."
 
 (-> configuration-world-path (configuration) pathname)
 (defun configuration-world-path (configuration)
-  "Return the append-only log of participants and channels."
+  "Return the pathname of the append-only participants and channels log."
   (merge-pathnames "world/world.sexp" (config :data-root configuration)))
 
 (-> configuration-world-sessions-path (configuration) pathname)
 (defun configuration-world-sessions-path (configuration)
-  "Return the atomic mapping of legacy conversations onto world participants."
+  "Return the pathname of the legacy conversation-to-participant mapping."
   (merge-pathnames "world/sessions.sexp" (config :data-root configuration)))
 
 (-> configuration-image-commit-root (configuration) pathname)
