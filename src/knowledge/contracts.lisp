@@ -12,8 +12,8 @@
 ;;;
 ;;; Before a matching call runs, its requirements must hold; a requirement that
 ;;; fails or cannot be decided refuses the call with the reason. After the call
-;;; succeeds, its effects are recorded as the model's predictions, which no
-;;; fact gate accepts, and its observations are read from the call's arguments
+;;; succeeds, its effects are recorded as the model's predictions, rejected by
+;;; default by fact gates. Its observations are read from the call's arguments
 ;;; and its JSON result and recorded as observations of that call. This is how
 ;;; structured tool output, including MCP results, becomes facts: only through
 ;;; a contract that names the predicate for each value.
