@@ -1521,7 +1521,9 @@ running one.
 *** Channel sidebar
 
 In fullscreen mode, an attached terminal can show the world's channels in a
-sidebar on the left. Channels are grouped by workspace, with the current
+sidebar on the left. Your inbox comes first, with the number of messages
+waiting there unread; that count is kept on disk, so every terminal shows
+the same one. The other channels are grouped by workspace, with the current
 workspace first. Within a workspace, the channel whose conversation changed
 last comes first, and child channels are nested under their parents.
 
@@ -1664,7 +1666,9 @@ Autolith is moving from one session per process to one shared world of
 channels and participants. A channel is an addressable conversation and
 execution location with its own working directory and history. A participant
 is a person or an agent with private state; each resides in one channel and
-may subscribe to others. Every durable conversation is kept in step with a
+may subscribe to others. You reside in your inbox, a channel of your own
+named =inbox= where no agent ever lives; viewing or controlling another
+channel moves nobody. Every durable conversation is kept in step with a
 channel of the same identifier and an agent participant residing there, all
 owned by the one human participant, so =conversation:id/X= and =channel:id/X=
 name the same history. A conversation newer than its channel is migrated
@@ -1707,14 +1711,15 @@ readable at =channel:id/ID= but is not part of the agent's context. The
 context is kept on disk, so a restart, or a channel opened only later, finds
 it. The agent then waits: it works again when you write there or someone
 mentions it from another channel. A move into a
-channel that already has an agent is refused, and so is moving yourself;
-you move by attaching a terminal. =(dismiss "WHO")= parks an agent instead,
+channel that already has an agent is refused, and so is a move into the
+inbox or of yourself: you stay in the inbox while a terminal shows you any
+channel. =(dismiss "WHO")= parks an agent instead,
 after it stops the same way: a parked agent resides in no channel and keeps
 its identity, its children and its context, and =(move "WHO")= brings it into
 a channel again. Parking never affects its children. A mention of a parked
 agent reaches nobody, and the send says the agent is parked. A channel
-without an agent, because its agent moved or was parked, keeps its history,
-you and its subscribers, and refuses typed prompts until =(move "WHO")=
+without an agent, because its agent moved or was parked, keeps its history
+and its subscribers, and refuses typed prompts until =(move "WHO")=
 brings an agent or =(domestic)= creates a new one for it, named after the
 workspace and using this session's model and starting with no context but the channel's
 history to read. Messages sent to such a channel
@@ -1747,8 +1752,16 @@ the message goes to the nearest ancestor agent that is not, and to you when
 none is left. An idle agent wakes with the message; a working one receives it
 as a steer labeled with the sender and the channel. The transcript shows the
 sender's name and the channel. A message for you, one that mentions you or
-reaches you through =@parent=, is a notice: it shows in full in the
-transcript of the channel you are in, and no agent there takes it as a turn. Messages wait in the channel's inbox under
+reaches you through =@parent=, is a notice: it goes to your inbox and no
+agent takes it as a turn. Once a terminal shows the inbox, the notice is
+recorded in the inbox's history and shown in full; until then it waits,
+unread, and the sidebar counts it. Each notice ends with the form that goes
+where it was said, such as =(switch "b-6uouHJ")=; in fullscreen, clicking it
+runs it as if you had typed it. =(switch "inbox")= opens the inbox, which
+=(resume)= and the conversation picker never offer. Typing in the inbox
+reaches no agent; =(tell "ID" "text")= writes to a channel from there.
+Messages you write elsewhere name the channel you wrote them in as their
+source. Messages wait in the channel's inbox under
 =world/inbox/= until a process serves the channel, and a crash between
 delivery and the durable record repeats nothing. A send is recorded under
 =world/outbox/= before its copies go out, so a copy an inbox refuses because
