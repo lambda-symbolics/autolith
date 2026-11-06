@@ -268,16 +268,15 @@
                                                   :identity-pathname identity-pathname
                                                   :version           version
                                                   :expected-sha256   expected-sha256)))
-        ;; Only the pinned release has a verified source archive. A newer
-        ;; SBCL still satisfies the minimum, so it runs Autolith; workers
-        ;; then report that matching implementation source is unavailable.
+        ;; Install only source archives listed in the checksum table. Other
+        ;; compatible runtimes can use an explicit matching source tree.
         (if expected-sha256
             (runtime-install-source runtime-root managed-source
                                     :identity-pathname identity-pathname
                                     :version           version
                                     :expected-sha256   expected-sha256)
             (format *error-output*
-                    "~&SBCL ~A has no tracked source archive; implementation source stays unavailable to Lisp workers until the release pinned in sbcl.version is used.~%"
+                    "~&SBCL ~A has no tracked source archive; continuing without managed implementation sources.~%"
                     version)))
       (autolith-script-setenv "AUTOLITH_SBCL" runtime-command)
       (let ((source (or (runtime-configured-source version)
