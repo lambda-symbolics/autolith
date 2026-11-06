@@ -542,11 +542,11 @@ SENDER, @parent mentions the participant its message to its parent reaches."
 (-> world-message-plan
     (world &key (:sender participant) (:channel channel) (:text string) (:mentions list)
                 (:identifier string) (:now timestamp) (:post-p boolean)
-                (:subscribers-p boolean))
+                (:subscribers-p boolean) (:source (option string)))
     list)
 (defun world-message-plan (world &key sender channel text mentions identifier
                                       (now (get-universal-time)) (post-p t)
-                                      (subscribers-p post-p))
+                                      (subscribers-p post-p) source)
   "Return the deliveries one message from SENDER to CHANNEL produces, as (CHANNEL-ID . DELIVERY) pairs.
 
 The channel itself gets a post for its residents. Each subscriber and each
@@ -555,7 +555,9 @@ one per channel, subscriptions before mentions; a parked agent resides
 nowhere and gets none. Without POST-P the channel
 gets nothing: the message was said there already. SUBSCRIBERS-P, which
 follows POST-P unless given, says whether its subscribers still hear of it,
-as they do of every ordinary message said in the channel."
+as they do of every ordinary message said in the channel. SOURCE is the
+channel the message was said from, the sender's residence unless given: the
+person resides in the inbox but speaks in the channel on screen."
   (let ((target  (channel-identifier channel))
         (pairs   nil)
         (covered (if post-p nil (list (channel-identifier channel)))))
@@ -570,7 +572,7 @@ as they do of every ordinary message said in the channel."
                                           :sender      (participant-identifier sender)
                                           :sender-name (participant-name sender)
                                           :sender-kind (participant-kind sender)
-                                          :source      (participant-residence sender)
+                                          :source      (or source (participant-residence sender))
                                           :target      target
                                           :text        text
                                           :mentions    mentions
@@ -626,16 +628,16 @@ inbox until a process installs its conversation."
 (-> world-message-send
     (configuration &key (:sender string) (:channel string) (:text string) (:mentions list)
                         (:notify-p boolean) (:now timestamp) (:post-p boolean)
-                        (:subscribers-p boolean))
+                        (:subscribers-p boolean) (:source (option string)))
     list)
 (defun world-message-send (configuration &key sender channel text mentions (notify-p t)
                                               (now (get-universal-time)) (post-p t)
-                                              (subscribers-p post-p))
+                                              (subscribers-p post-p) source)
   "Send TEXT from participant SENDER to channel CHANNEL and return what happened.
 
 MENTIONS are explicit participant designators added to the @mentions found in
 TEXT. Without POST-P only the mentioned participants residing elsewhere are
-told. The send is recorded before any inbox is written, so a copy an inbox
+told. SOURCE names the channel it was said from, as in `world-message-plan'. The send is recorded before any inbox is written, so a copy an inbox
 refuses, or one a crash skips, is delivered later under the same identifier.
 The result is a plist of :id, :channels (every inbox written), :pending (the
 channels whose inbox refused its copy for now), :parked (the names of the
@@ -672,7 +674,8 @@ channels whose serving process was reached)."
                                           :identifier    identifier
                                           :now           now
                                           :post-p        post-p
-                                          :subscribers-p subscribers-p)))
+                                          :subscribers-p subscribers-p
+                                          :source        source)))
       (when pairs
         (world-outbox-write configuration identifier pairs))
       (multiple-value-bind (delivered refused)

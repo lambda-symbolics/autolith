@@ -263,6 +263,24 @@
     (conversation-append-user-message conversation (format nil "hello from ~A" identifier))
     conversation))
 
+(-> world-tests--channel-identifiers (world) list)
+(defun world-tests--channel-identifiers (world)
+  "Return the identifiers of WORLD's channels other than the person's inbox."
+  (mapcar #'channel-identifier (remove-if #'channel-inbox-p (world-channels world))))
+
+(-> world-tests--mapped (configuration) list)
+(defun world-tests--mapped (configuration)
+  "Return the conversations CONFIGURATION's session mappings name, other than the person's inbox."
+  (let ((inbox (world-inbox-channel (world-load configuration))))
+    (remove (and inbox (channel-identifier inbox))
+            (mapcar #'world-session-mapping-conversation (world-session-mappings configuration))
+            :test #'equal)))
+
+(-> world-tests--inbox (configuration) string)
+(defun world-tests--inbox (configuration)
+  "Return the identifier of the person's inbox in CONFIGURATION's world."
+  (channel-identifier (world-inbox-channel (world-load configuration))))
+
 (-> test-world-agent-keeps-model-choice () null)
 (defun test-world-agent-keeps-model-choice ()
   "Test a model chosen in a channel becomes its resident agent's own setting."
@@ -291,9 +309,18 @@
           (second (world-tests--persisted-conversation configuration "b-second" 2000)))
       (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3000)
         (let ((human          (world-human-participant world))
+              (inbox          (world-inbox-channel world))
               (first-channel  (world-channel-find world "b-first"))
               (second-channel (world-channel-find world "b-second")))
-          (test-assert (= count 2) "every persisted conversation is migrated")
+          (test-assert (= count 3) "every persisted conversation is migrated, with the inbox made for the person")
+          (test-assert (and inbox
+                            (string= (channel-title inbox) "inbox")
+                            (string= (participant-residence human) (channel-identifier inbox))
+                            (null (find ':agent (world-channel-residents world (channel-identifier inbox))
+                                        :key #'participant-kind))
+                            (conversation-inbox-pathname-p
+                             (conversation-pathname-for-id configuration (channel-identifier inbox))))
+                       "the person resides in an inbox channel of their own, which has no agent")
           (test-assert (and human first-channel second-channel
                             (string= (channel-owner first-channel) (participant-identifier human))
                             (string= (channel-owner second-channel) (participant-identifier human))
@@ -335,8 +362,10 @@
                                               :key #'participant-kind))
                               2)
                            "re-migration keeps the same agent participants"))
-            (test-assert (equal (mapcar #'world-session-mapping-conversation
-                                        (world-session-mappings configuration))
+            (test-assert (equal (remove (channel-identifier inbox)
+                                        (mapcar #'world-session-mapping-conversation
+                                                (world-session-mappings configuration))
+                                        :test #'string=)
                                 '("b-first" "b-second"))
                          "mappings are kept per conversation")
             (platform-delete-directory-tree
@@ -348,16 +377,14 @@
               (test-assert (and (null (world-channel-find world "b-second"))
                                 (null (world-participant-find world (participant-identifier agent)))
                                 (string= (participant-residence (world-human-participant world))
-                                         "b-first"))
-                           "the retired channel and agent are gone and the human moved")
-              (test-assert (equal (mapcar #'world-session-mapping-conversation
-                                          (world-session-mappings configuration))
+                                         (channel-identifier inbox)))
+                           "the retired channel and agent are gone and the person stays in the inbox")
+              (test-assert (equal (remove (channel-identifier inbox)
+                                          (mapcar #'world-session-mapping-conversation
+                                                  (world-session-mappings configuration))
+                                          :test #'string=)
                                   '("b-first"))
-                           "the retired mapping is removed"))
-            (test-assert (string= (participant-residence
-                                   (world-session-select configuration "b-first"))
-                                  "b-first")
-                         "selecting a conversation moves the human into its channel"))))))
+                           "the retired mapping is removed")))))))
   nil)
 
 (-> test-world-application-sync () null)
@@ -385,15 +412,12 @@
         (flet ((residence ()
                  "Return the channel the person lives in."
                  (participant-residence (world-human-participant (world-load configuration)))))
-          (let ((before (residence)))
-            (let ((*world-selection-p* nil))
-              (application-world-sync hosted :all-p t))
-            (test-assert (and (world-channel-find (world-load configuration) "b-other")
-                              (string= (residence) before))
-                         "a sync without selection, as a world server's, migrates but moves nobody")
-            (world-session-select configuration "b-other")
-            (test-assert (string= (residence) "b-other")
-                         "an explicit selection is what moves the person"))))))
+          (application-world-sync hosted :all-p t)
+          (test-assert (and (world-channel-find (world-load configuration) "b-other")
+                            (string= (residence)
+                                     (channel-identifier
+                                      (world-inbox-channel (world-load configuration)))))
+                       "a sync migrates the conversation and the person stays in the inbox")))))
   nil)
 
 (-> world-tests--read (configuration conversation string &rest t) string)
@@ -423,12 +447,13 @@
     (let ((first  (world-tests--persisted-conversation configuration "bfirst1" 1000))
           (second (world-tests--persisted-conversation configuration "bsecnd2" 2000)))
       (let ((listing (world-tests--read configuration first "list")))
-        (test-assert (and (search "2 channels" listing)
+        (test-assert (and (search "3 channels" listing)
+                          (search "inbox" listing)
                           (search "b-first1" listing)
                           (search "b-secnd2" listing)
                           (search "(agent " listing)
                           (search "user (human" listing))
-                     "channel:list surveys every migrated conversation with its residents"))
+                     "channel:list surveys every migrated conversation and the inbox with their residents"))
       (let ((current (world-tests--read configuration first "current")))
         (test-assert (and (search "Channel b-first1" current)
                           (search "Residents: " current)
@@ -1120,7 +1145,7 @@
 
 (-> test-world-one-resident-agent () null)
 (defun test-world-one-resident-agent ()
-  "Test a channel holds one resident agent: an agent is refused a channel another agent lives in, the person is not."
+  "Test a channel holds one resident agent and the person stays in the inbox."
   (with-test-configuration (configuration root)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
@@ -1135,11 +1160,15 @@
                             (search (participant-name second-agent)
                                     (autolith-error-message condition)))))
                    "an agent is refused a channel whose resident agent is named in the refusal")
-      (test-assert (string= (participant-residence
-                             (world-participant-move configuration
-                                                     (participant-identifier human) "bsecnd2"))
-                            "bsecnd2")
-                   "the person moves into a channel with an agent")
+      (test-assert (handler-case
+                       (progn (world-participant-move configuration
+                                                      (participant-identifier human) "bsecnd2")
+                              nil)
+                     (world-error ()
+                       (string= (participant-residence
+                                 (world-human-participant (world-load configuration)))
+                                (world-tests--inbox configuration))))
+                   "the person is not moved out of the inbox")
       (world-channel-create configuration
                             :id        "bempty3"
                             :owner     (participant-identifier human)
@@ -1155,6 +1184,53 @@
                                                      (participant-identifier first-agent) "bempty3"))
                             "bempty3")
                    "moving an agent where it already is changes nothing")))
+  nil)
+
+(-> test-world-inbox () null)
+(defun test-world-inbox ()
+  "Test the inbox is named inbox, keeps agents out, stays out of the resume list, and the person's messages name where they were said."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+      (declare (ignore second-agent))
+      (let* ((inbox (world-tests--inbox configuration))
+             (world (world-load configuration)))
+        (test-assert (string= (channel-identifier (world-channel-designated world configuration "inbox"))
+                              inbox)
+                     "the word inbox names the person's inbox")
+        (test-assert (handler-case
+                         (progn (world-move-agent configuration first-agent inbox) nil)
+                       (world-error (condition)
+                         (and (eq (world-error-operation condition) ':move)
+                              (search "inbox" (autolith-error-message condition)))))
+                     "an agent is refused the inbox before anything stops")
+        (test-assert (handler-case
+                         (progn (world-participant-move configuration
+                                                        (participant-identifier first-agent) inbox)
+                                nil)
+                       (world-error ()
+                         t))
+                     "the store refuses an agent in the inbox as well")
+        (test-assert (and (conversation-inbox-pathname-p (conversation-pathname-for-id configuration inbox))
+                          (not (conversation-inbox-pathname-p
+                                (conversation-pathname-for-id configuration "bfirst1"))))
+                     "only the inbox's conversation says it is one")
+        (let ((application (make-instance 'application
+                                          :configuration configuration
+                                          :conversation  (conversation-load-by-id configuration "bfirst1"))))
+          (test-assert (notany (lambda (item) (search (conversation-identifier-display inbox)
+                                                      (princ-to-string item)))
+                               (application--conversation-items application))
+                       "the resume picker leaves the inbox out")
+          (world-participant-subscribe configuration (participant-identifier first-agent) "bsecnd2")
+          (test-assert (and (application-world-send application :channel "bsecnd2" :text "status?")
+                            (let ((copy (find "bsecnd2" (world-inbox-deliveries configuration "bfirst1")
+                                              :key #'world-delivery-target :test #'string=)))
+                              (and copy
+                                   (string= (world-delivery-sender copy) (participant-identifier human))
+                                   (string= (world-delivery-source copy) "bfirst1"))))
+                       "the person's message names the channel it was sent from, not the inbox")))))
   nil)
 
 (-> world-tests--child-conversation
@@ -1257,44 +1333,46 @@
 
 (-> test-world-person-notice () null)
 (defun test-world-person-notice ()
-  "Test a message for the person shows in the channel the person is in, settles there, and starts no agent turn."
+  "Test a message for the person lands in the inbox, shows there, settles, and starts no agent turn."
   (with-test-configuration (configuration)
-    (let ((first (world-tests--persisted-conversation configuration "bfirst1" 1000)))
-      (world-tests--persisted-conversation configuration "bsecnd2" 2000)
-      (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
-        (declare (ignore first-agent))
-        (let* ((terminal    (make-instance 'waiting-recording-terminal :columns 80))
-               (ui          (terminal-ui-create :terminal terminal))
-               (application (make-instance 'application
-                                           :configuration configuration
-                                           :conversation  first
-                                           :ui            ui))
-               (controller  nil))
-          (with-terminal-ui (active-ui ui)
-            (setf controller (application-input-controller-create application
-                                                                  :load-pending-p nil
-                                                                  :start-reader-p nil))
-            (unwind-protect
-                 (progn
-                   (world-message-send configuration
-                                       :sender   (participant-identifier second-agent)
-                                       :channel  "bsecnd2"
-                                       :text     (format nil "@~A the build is green"
-                                                         (participant-name human))
-                                       :notify-p nil)
-                   (test-assert (eq (world-delivery-kind
-                                     (first (world-inbox-deliveries configuration "bfirst1")))
-                                    ':notice)
-                                "a message for the person lands in the person's channel as a notice")
-                   (test-assert (null (application-world-steering-take application))
-                                "no agent takes a notice as a steer")
-                   (test-assert (zerop (application-world-deliver application))
-                                "a notice starts no agent turn")
-                   (test-assert (search "the build is green" (recording-terminal-output terminal))
-                                "the notice shows in full in the transcript")
-                   (test-assert (null (world-inbox-deliveries configuration "bfirst1"))
-                                "a shown notice leaves the inbox"))
-              (application-input-controller-stop controller)))))))
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+      (declare (ignore first-agent))
+      (let* ((inbox       (world-tests--inbox configuration))
+             (terminal    (make-instance 'waiting-recording-terminal :columns 80))
+             (ui          (terminal-ui-create :terminal terminal))
+             (application (make-instance 'application
+                                         :configuration configuration
+                                         :conversation  (conversation-load-by-id configuration inbox)
+                                         :ui            ui))
+             (controller  nil))
+        (with-terminal-ui (active-ui ui)
+          (setf controller (application-input-controller-create application
+                                                                :load-pending-p nil
+                                                                :start-reader-p nil))
+          (unwind-protect
+               (progn
+                 (world-message-send configuration
+                                     :sender   (participant-identifier second-agent)
+                                     :channel  "bsecnd2"
+                                     :text     (format nil "@~A the build is green"
+                                                       (participant-name human))
+                                     :notify-p nil)
+                 (test-assert (and (null (world-inbox-deliveries configuration "bfirst1"))
+                                   (eq (world-delivery-kind
+                                        (first (world-inbox-deliveries configuration inbox)))
+                                       ':notice))
+                              "a message for the person lands in the inbox as a notice")
+                 (test-assert (null (application-world-steering-take application))
+                              "no agent takes a notice as a steer")
+                 (test-assert (zerop (application-world-deliver application))
+                              "a notice starts no agent turn")
+                 (test-assert (search "the build is green" (recording-terminal-output terminal))
+                              "the notice shows in full in the inbox")
+                 (test-assert (null (world-inbox-deliveries configuration inbox))
+                              "a shown notice leaves the inbox"))
+            (application-input-controller-stop controller))))))
   nil)
 
 (-> test-world-staggered-retirement () null)
@@ -1319,9 +1397,7 @@
         (test-assert (and (world-channel-find world "broot11")
                           (world-channel-find world "exec-one")
                           (find ':agent (world-channel-residents world "broot11") :key #'participant-kind)
-                          (member "broot11" (mapcar #'world-session-mapping-conversation
-                                                    (world-session-mappings configuration))
-                                  :test #'string=))
+                          (member "broot11" (world-tests--mapped configuration) :test #'string=))
                      "a root whose child still lives keeps its channel, its agent and its mapping"))
       (platform-delete-directory-tree *platform*
                                       (merge-pathnames "tasks/broot11/"
@@ -1330,14 +1406,12 @@
       (let ((world (values (world-reconcile-sessions configuration :now 3002))))
         (test-assert (and (null (world-channel-find world "exec-one"))
                           (null (world-channel-find world "broot11"))
-                          (equal (mapcar #'channel-identifier (world-channels world)) '("bthird3"))
-                          (equal (mapcar #'world-session-mapping-conversation
-                                         (world-session-mappings configuration))
-                                 '("bthird3")))
+                          (equal (world-tests--channel-identifiers world) '("bthird3"))
+                          (equal (world-tests--mapped configuration) '("bthird3")))
                      "once the child goes, the root retires with it and no mapping lingers"))
       (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3003)
         (test-assert (and (zerop count)
-                          (equal (mapcar #'channel-identifier (world-channels world)) '("bthird3")))
+                          (equal (world-tests--channel-identifiers world) '("bthird3")))
                      "a later reconciliation has nothing left to retire"))))
   nil)
 
@@ -1358,7 +1432,7 @@
                                 :key #'participant-kind))
               (channel    (world-channel-find world "exec-one"))
               (task-agent (first (world-channel-residents world "exec-one"))))
-          (test-assert (= count 2) "the root and its child are migrated")
+          (test-assert (= count 3) "the root and its child are migrated, with the person's inbox")
           (test-assert (and channel
                             (equal (channel-parent channel) "broot11")
                             (string= (channel-owner channel)
@@ -1369,8 +1443,9 @@
                             (equal (participant-parent task-agent)
                                    (participant-identifier root-agent)))
                        "a child agent whose conversation records no name is named agent, under the root's agent")
-          (test-assert (string= (participant-residence (world-human-participant world)) "broot11")
-                       "the human stays in the root channel")
+          (test-assert (string= (participant-residence (world-human-participant world))
+                                (world-tests--inbox configuration))
+                       "the person resides in the inbox")
           (let ((text (world-tests--read configuration root "id/exec-one")))
             (test-assert (and (search "Channel exec-one" text)
                               (search "nested under b-root11" text)
@@ -1453,16 +1528,13 @@
                               (null (world-participant-find
                                      world (participant-identifier root-agent)))
                               (string= (participant-residence (world-human-participant world))
-                                       "bthird3"))
+                                       (world-tests--inbox configuration)))
                          "pruning a root with its child retires both channels and participants, parent last")
-            (test-assert (equal (mapcar #'world-session-mapping-conversation
-                                        (world-session-mappings configuration))
-                                '("bthird3"))
+            (test-assert (equal (world-tests--mapped configuration) '("bthird3"))
                          "only the surviving conversation keeps a mapping"))
           (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 3002)
             (test-assert (and (zerop count)
-                              (equal (mapcar #'channel-identifier (world-channels world))
-                                     '("bthird3")))
+                              (equal (world-tests--channel-identifiers world) '("bthird3")))
                          "a second reconciliation finds nothing left to retire"))))))
   nil)
 

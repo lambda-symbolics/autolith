@@ -25,6 +25,9 @@
 (defparameter *world-settings-limit* 32
   "The maximum plist elements in one participant settings plist.")
 
+(defparameter *world-inbox-designator* "inbox"
+  "The word that names the person's inbox wherever a channel is designated.")
+
 (defvar *world-lock* (make-recursive-lock "Autolith world")
   "Serializes in-process world transactions.")
 
@@ -122,6 +125,12 @@
     :reader        channel-title
     :type          (option non-empty-string)
     :documentation "The human-readable channel title, when one is known.")
+   (inbox-p
+    :initarg       :inbox-p
+    :initform      nil
+    :reader        channel-inbox-p
+    :type          boolean
+    :documentation "Whether this is the person's inbox, where the person resides and no agent ever does.")
    (created-at
     :initarg       :created-at
     :reader        channel-created-at
@@ -243,6 +252,7 @@ becomes one hyphen, with no hyphen at either end."
         :owner      (channel-owner channel)
         :workspace  (channel-workspace channel)
         :title      (channel-title channel)
+        :inbox-p    (channel-inbox-p channel)
         :created-at (channel-created-at channel)
         :updated-at (channel-updated-at channel)))
 
@@ -295,6 +305,7 @@ becomes one hyphen, with no hyphen at either end."
                  (non-empty-string-p (getf properties :workspace))
                  (or (null (getf properties :title))
                      (world--name-p (getf properties :title)))
+                 (typep (getf properties :inbox-p) 'boolean)
                  (typep (getf properties :created-at) 'timestamp)
                  (typep (getf properties :updated-at) 'timestamp)
                  (<= (getf properties :created-at) (getf properties :updated-at)))
@@ -310,6 +321,7 @@ becomes one hyphen, with no hyphen at either end."
                    :owner      (getf properties :owner)
                    :workspace  (getf properties :workspace)
                    :title      (getf properties :title)
+                   :inbox-p    (getf properties :inbox-p)
                    :created-at (getf properties :created-at)
                    :updated-at (getf properties :updated-at))))
 
@@ -357,6 +369,7 @@ becomes one hyphen, with no hyphen at either end."
                        :owner      (channel-owner channel)
                        :workspace  (channel-workspace channel)
                        :title      (channel-title channel)
+                       :inbox-p    (channel-inbox-p channel)
                        :created-at (channel-created-at channel)
                        :updated-at (channel-updated-at channel)))))
 
@@ -421,7 +434,11 @@ becomes one hyphen, with no hyphen at either end."
                (let ((residence (participant-residence participant)))
                  (unless (or (and (null residence) (eq (participant-kind participant) ':agent))
                              (and residence (gethash residence (world--channel-table world))))
-                   (fail "A participant resides in a channel that does not exist." identifier)))
+                   (fail "A participant resides in a channel that does not exist." identifier))
+                 (when (and residence
+                            (eq (participant-kind participant) ':agent)
+                            (channel-inbox-p (gethash residence (world--channel-table world))))
+                   (fail "An agent cannot reside in the person's inbox." identifier)))
                (let ((parent (participant-parent participant)))
                  (when (and parent (not (gethash parent (world--participant-table world))))
                    (fail "A participant's parent does not exist." identifier)))
@@ -430,6 +447,18 @@ becomes one hyphen, with no hyphen at either end."
                    (fail "A participant subscribes to a channel that does not exist."
                          identifier))))
              (world--participant-table world))
+    (let ((inboxes (loop for channel being the hash-values of (world--channel-table world)
+                         when (channel-inbox-p channel)
+                           collect (channel-identifier channel))))
+      (when (rest inboxes)
+        (fail "The world has more than one inbox." (second inboxes)))
+      (when inboxes
+        (maphash (lambda (identifier participant)
+                   (when (and (eq (participant-kind participant) ':human)
+                              (not (equal (participant-residence participant) (first inboxes))))
+                     (fail "The person resides in the inbox; viewing another channel moves nobody."
+                           identifier)))
+                 (world--participant-table world))))
     (maphash (lambda (identifier channel)
                (unless (gethash (channel-owner channel) (world--participant-table world))
                  (fail "A channel's owner does not exist." identifier))
@@ -604,10 +633,12 @@ ends."
 (defun world-channel-designated (world configuration designator)
   "Return the channel DESIGNATOR names in WORLD by identifier, legacy alias or fragment.
 
-A full identifier, in either form or as a retained legacy alias of
-CONFIGURATION, names its channel directly; anything else is resolved as a
-fragment through WORLD-CHANNEL-RESOLVE."
-  (or (let ((resolved (handler-case
+The word inbox names the person's inbox. A full identifier, in either form
+or as a retained legacy alias of CONFIGURATION, names its channel directly;
+anything else is resolved as a fragment through WORLD-CHANNEL-RESOLVE."
+  (or (and (string-equal designator *world-inbox-designator*)
+           (world-inbox-channel world))
+      (let ((resolved (handler-case
                           (conversation-identifier-migration-resolve configuration designator)
                         (conversation-error ()
                           nil))))
@@ -674,6 +705,25 @@ fragment through WORLD-CHANNEL-RESOLVE."
   (loop for child in (world-participant-children world participant-identifier)
         collect child
         append (world-participant-descendants world (participant-identifier child))))
+
+(-> world-inbox-channel (world) (option channel))
+(defun world-inbox-channel (world)
+  "Return WORLD's inbox, the channel where the person resides, or NIL before it exists."
+  (loop for channel being the hash-values of (world--channel-table world)
+        when (channel-inbox-p channel)
+          return channel))
+
+(-> world-inbox-refuse-agent (world string keyword) null)
+(defun world-inbox-refuse-agent (world channel-identifier operation)
+  "Signal WORLD-ERROR for OPERATION when CHANNEL-IDENTIFIER is the person's inbox, where no agent resides."
+  (let ((channel (world-channel-find world channel-identifier)))
+    (when (and channel (channel-inbox-p channel))
+      (error 'world-error
+             :message    "The inbox is where the person resides; no agent lives there. Pick another channel."
+             :pathname   nil
+             :operation  operation
+             :identifier channel-identifier)))
+  nil)
 
 (-> world-human-participant (world) (option participant))
 (defun world-human-participant (world)
@@ -952,7 +1002,7 @@ participant owns and resides in, as a plist of :id, :workspace, :title and
 
 Other residents of either channel stay where they are. A channel has at most
 one resident agent, so an agent is refused a channel where another already
-resides; the person moves freely."
+resides. Once the inbox exists the person resides there and is not moved."
   (world--transact
    configuration
    (lambda (world)

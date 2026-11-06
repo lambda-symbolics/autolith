@@ -327,6 +327,16 @@ value lists the conversation identifiers whose mappings end."
                "Return the human participant, or NIL before one exists."
                (world-human-participant preview))
 
+             (inbox-p (change)
+               "Return true when CHANGE's conversation is the person's inbox."
+               (world-session--inbox-header-p (getf change :header)))
+
+             (title-of (change)
+               "Return the channel title of CHANGE's conversation; the inbox is always called inbox."
+               (if (inbox-p change)
+                   *world-inbox-designator*
+                   (world-session--title (getf change :identity) (getf change :header))))
+
              (created-at (change)
                "Return the creation time CHANGE's conversation header records."
                (getf (rest (getf change :header)) :created-at))
@@ -362,8 +372,8 @@ or whose parent is gone, falls back to its root."
                                                      :owner      identifier
                                                      :workspace  (world-session--workspace
                                                                   configuration header)
-                                                     :title      (world-session--title
-                                                                  (getf change :identity) header)
+                                                     :title      (title-of change)
+                                                     :inbox-p    (inbox-p change)
                                                      :created-at (created-at change)
                                                      :updated-at (max now (created-at change))))
                           (person     (make-instance 'participant
@@ -387,7 +397,7 @@ was known gets that ancestry once the parent appears."
                (let* ((header    (getf change :header))
                       (existing  (world-channel-find preview (getf change :id)))
                       (workspace (world-session--workspace configuration header))
-                      (title     (world-session--title (getf change :identity) header))
+                      (title     (title-of change))
                       (parent    (let ((parent (parent-of change)))
                                    (and parent (world-channel-find preview parent) parent)))
                       (keeper    (participant-identifier (or (parent-agent change) owner))))
@@ -400,6 +410,7 @@ was known gets that ancestry once the parent appears."
                                           :owner      keeper
                                           :workspace  workspace
                                           :title      title
+                                          :inbox-p    (inbox-p change)
                                           :created-at (created-at change)
                                           :updated-at (max now (created-at change))))))
                    ((or (not (string= (channel-workspace existing) workspace))
@@ -429,8 +440,9 @@ channel gets its ancestry."
                       (parent      (parent-agent change))
                       (adopted-p   (let ((before (world-channel-find world (getf change :id))))
                                      (and before parent (null (channel-parent before)))))
-                      ;; A channel whose agent moved away, or that was left
-                      ;; without one on purpose, gets no invented agent; only
+                      ;; The inbox, a channel whose agent moved away, or one
+                      ;; left without an agent on purpose, gets no invented
+                      ;; agent; only
                       ;; a mapping whose agent is gone from the world is
                       ;; repaired with a new one.
                       (agentless-p (and mapping
@@ -439,7 +451,7 @@ channel gets its ancestry."
                                             (world-participant-find
                                              preview (world-session-mapping-participant mapping))))))
                  (cond
-                   (agentless-p
+                   ((or agentless-p (inbox-p change))
                     nil)
                    ((null existing)
                     (let ((agent (make-instance 'participant
@@ -476,6 +488,18 @@ channel gets its ancestry."
                     (participant-identifier existing))
                    (t
                     (participant-identifier existing)))))
+
+             (settle-human (change)
+               "Keep the person resident in CHANGE's channel when it is the inbox."
+               (let ((person (human)))
+                 (when (and person
+                            (inbox-p change)
+                            (not (equal (participant-residence person) (getf change :id))))
+                   (emit (world--participant-record
+                          (world--copy-participant
+                           person
+                           :residence  (getf change :id)
+                           :updated-at (max now (participant-updated-at person))))))))
 
              (retire (mapping)
                "Delete MAPPING's participant with its descendants; its channel ends in the sweep.
@@ -534,13 +558,21 @@ parent is never left behind its retired children."
                          (setf gone-p t))))
                    (unless gone-p
                      (return))))))
-      ;; Top-level conversations first, then child agents in the order they
-      ;; were created, so a parent is always planned before its children.
+      ;; The inbox first, so the person is created there, then top-level
+      ;; conversations, then child agents in the order they were created,
+      ;; so a parent is always planned before its children.
       (dolist (change (stable-sort (copy-list changes) #'<
                                    :key (lambda (change)
-                                          (if (parent-of change) (created-at change) -1))))
+                                          (cond
+                                            ((inbox-p change)
+                                             -2)
+                                            ((parent-of change)
+                                             (created-at change))
+                                            (t
+                                             -1)))))
         (let ((owner (ensure-human change)))
           (ensure-channel change owner)
+          (settle-human change)
           (push (make-instance 'world-session-mapping
                                :conversation (getf change :id)
                                :participant  (ensure-agent change owner)
@@ -617,24 +649,41 @@ IDENTITIES limits the work to those conversation identity pathnames; otherwise
 every durable conversation is examined, primaries before child tasks. A
 conversation whose source token matches its mapping costs one stat. With
 PRUNE-P, mappings whose conversation no longer exists retire their
-participant and, once empty, their channel."
+participant and, once empty, their channel. A world that has anything in it
+gets the person's inbox: the first reconciliation without one examines every
+conversation and creates the inbox's when none is found."
   (with-recursive-lock-held (*world-sessions-lock*)
-    (let ((mappings   (world-session-mappings configuration))
-          (identities (if identities-p
-                          identities
-                          (append (conversation-list configuration)
-                                  (conversation-task-identities configuration)))))
+    (let* ((mappings   (world-session-mappings configuration))
+           ;; A world without an inbox is examined whole, so the inbox is
+           ;; found, or made, before anything else is mapped.
+           (all-p      (or (not identities-p)
+                           (null (world-inbox-channel (world-load configuration)))))
+           (identities (if all-p
+                           (append (conversation-list configuration)
+                                   (conversation-task-identities configuration))
+                           identities)))
       (multiple-value-bind (changes vanished)
-          (let ((world (world-load configuration)))
-            (world-session--changes identities mappings
-                                    :all-p    (not identities-p)
-                                    :orphan-p (lambda (identifier root root-requested-p)
-                                                (let ((channel (world-channel-find world identifier)))
-                                                  (and channel
-                                                       (null (channel-parent channel))
-                                                       (or root-requested-p
-                                                           (world-channel-find world root))
-                                                       t)))))
+          (flet ((changes (identities)
+                   "Return the changes and vanished mappings among IDENTITIES."
+                   (let ((world (world-load configuration)))
+                     (world-session--changes identities mappings
+                                             :all-p    all-p
+                                             :orphan-p (lambda (identifier root root-requested-p)
+                                                         (let ((channel (world-channel-find world identifier)))
+                                                           (and channel
+                                                                (null (channel-parent channel))
+                                                                (or root-requested-p
+                                                                    (world-channel-find world root))
+                                                                t)))))))
+            (multiple-value-bind (changes vanished) (changes identities)
+              (if (and all-p
+                       (or changes (world-human-participant (world-load configuration)))
+                       (null (world-inbox-channel (world-load configuration)))
+                       (notany (lambda (change)
+                                 (world-session--inbox-header-p (getf change :header)))
+                               changes))
+                  (changes (append identities (list (world-session--create-inbox configuration))))
+                  (values changes vanished))))
         (unless prune-p
           (setf vanished nil))
         (if (and (null changes)
@@ -667,17 +716,26 @@ participant and, once empty, their channel."
                                     mappings)))
                 (values committed (+ (length changes) (length vanished))))))))))
 
-(-> world-session-select (configuration string &key (:now timestamp)) (option participant))
-(defun world-session-select (configuration conversation-identifier &key (now (get-universal-time)))
-  "Move the human participant into CONVERSATION-IDENTIFIER's channel and return it.
+(-> world-session--inbox-header-p (list) boolean)
+(defun world-session--inbox-header-p (header)
+  "Return true when conversation HEADER marks the person's inbox."
+  (eq (getf (rest header) :inbox-p) t))
 
-Returns NIL when the channel or the human participant does not exist yet."
-  (let* ((world  (world-load configuration))
-         (person (world-human-participant world)))
-    (and person
-         (world-channel-find world conversation-identifier)
-         (world-participant-move configuration (participant-identifier person)
-                                 conversation-identifier :now now))))
+(-> world-session--create-inbox (configuration) pathname)
+(defun world-session--create-inbox (configuration)
+  "Create the durable conversation of the person's inbox and return its identity pathname.
+
+The inbox begins in the home directory, since it belongs to no workspace,
+and its first record names it."
+  (let ((conversation (conversation-create configuration
+                                           :inbox-p          t
+                                           :origin-directory (namestring
+                                                              (user-homedir-pathname)))))
+    (conversation-append-record conversation
+                                (list :title
+                                      :value  *world-inbox-designator*
+                                      :source ':initial))
+    (conversation-pathname conversation)))
 
 
 ;;;; -- Conditions --
