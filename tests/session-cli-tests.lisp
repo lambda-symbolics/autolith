@@ -479,13 +479,11 @@
                                               :message   "No world server could start."))
            (test-assert (handler-case
                             (progn (main-dispatch '()) nil)
-                          (configuration-error (condition)
-                            (and direct-p
-                                 (search "direct startup" (autolith-error-message condition)))))
-                        "a failed open starts directly in this terminal")
-           (test-assert (search "No world server could start"
-                                (get-output-stream-string *error-output*))
-                        "the failed open is reported before the direct start")
+                          (localgroup-error (condition)
+                            (and (not direct-p)
+                                 (search "The world server is not available: No world server could start"
+                                         (autolith-error-message condition)))))
+                        "a failed open ends the start with its reason instead of starting directly")
            (setf open-error nil
                  opened     nil
                  attached   nil
