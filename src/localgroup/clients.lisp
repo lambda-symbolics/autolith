@@ -20,9 +20,15 @@
 ;;;   (:answer :id N :approval ID :value CHOICE)
 ;;;   (:mode :id N :value MODE)
 ;;;   (:state :id N)
+;;;   (:operation :id N :method METHOD :params PARAMS)
 ;;;
 ;;; and the server answers each with (:reply :id N :ok T ...) or
-;;; (:reply :id N :error MESSAGE), in order with the events.
+;;; (:reply :id N :error MESSAGE), in order with the events. An operation
+;;; runs on a thread of its own, since it may wait for the channel while the
+;;; channel waits for the client; its reply may come after later ones. A submit's reply
+;;; carries :BUSY-P, whether the channel has work after it: when it does not,
+;;; the submission ran at once or its work already finished, and its
+;;; :WORK-FINISHED event came before the reply.
 
 (defparameter *localgroup-client-permission-modes* '(:ask :auto :sandboxed :full-access)
   "The permission modes a structured client may select for its channel.")
@@ -54,7 +60,16 @@
                               (error ()
                                 nil))
                while (and packet (not (channel-client-closed-p client)))
-               do (channel-client-enqueue client (localgroup--client-reply session packet)))
+               do (if (eq (first packet) ':operation)
+                      ;; An operation may wait for the channel, and the channel
+                      ;; for this client's answer to an approval, which arrives
+                      ;; on this connection after it.
+                      (let ((command packet))
+                        (make-thread (lambda ()
+                                       (channel-client-enqueue client
+                                                               (localgroup--client-reply session command)))
+                                     :name "Autolith client operation"))
+                      (channel-client-enqueue client (localgroup--client-reply session packet))))
       (application-clients-remove application client)))
   nil)
 
@@ -95,7 +110,7 @@
              :text            text
              :image-pathnames (mapcar #'image-input-validate-pathname images))
             :steer-p (not (null (getf arguments :steer-p))))
-           nil))
+           (list :busy-p (application-input-controller-busy-p controller))))
         (:cancel
          (list :accepted-p
                (and controller
@@ -116,13 +131,31 @@
                       (not (application--command-sandbox-available-p)))
              (refuse (application--command-sandbox-unavailable-message)))
            (setf (application-permission-mode application) mode)
-           (application-clients-publish application
-                                        (list :state :state (localgroup-status-snapshot session)))
+           (application-clients-publish-state application)
            nil))
         (:state
          (list :state (localgroup-status-snapshot session)))
+        (:operation
+         (let ((method (getf arguments :method))
+               (params (client-json (getf arguments :params))))
+           (unless (stringp method)
+             (refuse "An operation names its method."))
+           (list :result (acp-extension-run application method
+                                            (if (hash-table-p params) params (json-object))))))
         (otherwise
          (refuse (format nil "Unknown client command ~S." command)))))))
+
+
+;;;; -- State --
+
+(-> application-clients-publish-state (application) null)
+(defun application-clients-publish-state (application)
+  "Send APPLICATION's channel state to its structured clients, as after a mode or setting change."
+  (let ((session (application-localgroup-session application)))
+    (when session
+      (application-clients-publish application
+                                   (list :state :state (localgroup-status-snapshot session)))))
+  nil)
 
 
 ;;;; -- Connecting --

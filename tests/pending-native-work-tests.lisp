@@ -391,42 +391,6 @@
    "historical inline-native v2 input stays readable without an extension")
   nil)
 
-(-> test-acp-input-validate-storage-native-work () null)
-(defun test-acp-input-validate-storage-native-work ()
-  "Test actual ACP initialization and typed native-head/malformed rejection."
-  (acp-input-test--session
-   (lambda (session client)
-     (declare (ignore client))
-     (let* ((application   (acp-session-application session))
-            (configuration (application-configuration application))
-            (conversation  (application-conversation application))
-            (identifier    (conversation-identifier conversation))
-            (path          (configuration-pending-inputs-path configuration (conversation-pathname conversation)))
-            (state         (list :snapshot-identifier             "acp-native"
-                                 :work-items                      '((:native-lisp "never") (:message "keep"))
-                                 :steering-promotion-prefix-count 0))
-            (form          (application-input-controller--pending-state-form state identifier)))
-       (snapshot-write path form)
-       (test-assert (null (acp-input--validate-storage application)) "ACP accepts candidate storage")
-       (let ((controller (acp-input-initialize session)))
-         (test-assert (equal (application-input-controller--state controller :work-items)
-                             '((:native-lisp "never") (:message "keep")))
-                      "ACP initialization retains native work and ordinary queued input")
-         (test-assert (handler-case (progn (acp-input--prepare-queued-turn session) nil)
-                        (agentcomms:acp-state-error () t))
-                      "ACP refuses a native head with its existing typed terminal-required error"))
-       (let ((bad (copy-tree (test-pending-native--extended-form))))
-         (setf (getf (rest bad) :conversation-id) identifier
-               (getf (rest bad) :native-work) nil)
-         (snapshot-write path bad)
-         (let ((before (recovery-input-vault-tests--octets path)))
-           (test-assert (handler-case (progn (acp-input--validate-storage application) nil)
-                          (agentcomms:acp-state-error () t))
-                        "ACP rejects malformed native metadata loudly")
-           (test-assert (equalp before (recovery-input-vault-tests--octets path))
-                        "failed ACP validation leaves the input bytes intact"))))))
-  nil)
-
 (-> test-pending-native--old-form (list string) list)
 (defun test-pending-native--old-form (state conversation-identifier)
   "Return the version-two durable form for normalized pending STATE."

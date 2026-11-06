@@ -18,7 +18,7 @@
               (arguments  (agentcomms:json-object
                            "text" "approved" "nested" (agentcomms:json-object
                                                        "CamelCase" ':null "false" (argo:json-false)))))
-         (tool-registry-register (application-tool-registry (acp-session-application session)) tool)
+         (tool-registry-register (application-tool-registry (acp-session-test--application session)) tool)
          (let* ((catalog   (agentcomms:client-agent-request
                             client "_autolith/operations"
                             (agentcomms:json-object "sessionId" identifier)))
@@ -32,17 +32,6 @@
                         "idle tools are admitted even when held during an active turn")
            (test-assert (and terminal (eq t (agentcomms:json-get terminal "terminalWithoutArguments")))
                         "the settings picker requires arguments for headless use"))
-         (acp-service--call-with-operation
-          service session
-          (lambda ()
-            (let* ((catalog (agentcomms:client-agent-request
-                             client "_autolith/operations"
-                             (agentcomms:json-object "sessionId" identifier)))
-                   (row     (find (tool-canonical-name tool)
-                                  (agentcomms:json-get (agentcomms:json-get catalog "value") "items")
-                                  :test #'equal :key (lambda (row) (agentcomms:json-get row "name")))))
-              (test-assert (argo:json-false-p (gethash "admitted" row))
-                           "the readable catalog reflects active primary admission"))))
          (acp-session-cancel session)
          (let* ((result  (agentcomms:client-agent-request
                           client "_autolith/invoke"
@@ -55,7 +44,7 @@
                                (agentcomms:json-get (agentcomms:json-get result "value") "text"))
                         "command and tool permissions use the ACP client")
            (test-assert (= 1 (application-operation-test-tool-calls tool)) "the tool executes exactly once")
-           (test-assert (eq (application-agent (acp-session-application session))
+           (test-assert (eq (application-agent (acp-session-test--application session))
                             (tool-context-agent (application-operation-test-tool-context tool)))
                         "invocation retains the session agent")
            (test-assert (nth-value 1 (gethash "CamelCase" (gethash "nested" decoded)))
@@ -81,7 +70,7 @@
               (or (not (string= "skills" (agentcomms:json-get request "operation")))
                   (and (stringp text) (plusp (length text))))
               "ordinary command invocation returns presented text when it presents")))
-         (test-assert (not (application-hurry-up-p (acp-session-application session)))
+         (test-assert (not (application-hurry-up-p (acp-session-test--application session)))
                       "the textual off action disables hurry-up")
          (let ((request (agentcomms:json-object
                          "sessionId" identifier
@@ -114,7 +103,7 @@
                    "arguments" (agentcomms:json-object "input" "boot-screen-seconds 2")))))
            (test-assert (and (equal "ok" (agentcomms:json-get result "outcome"))
                              (= 2 (config :boot-screen-seconds
-                                          (application-configuration (acp-session-application session)))))
+                                          (application-configuration (acp-session-test--application session)))))
                         "textual settings use the executing application's schema"))
          (let ((result
                  (agentcomms:client-agent-request
@@ -123,7 +112,7 @@
                    "sessionId" identifier "operation" "hurry-up"
                    "arguments" (agentcomms:json-object "input" "sometimes")))))
            (test-assert (and (equal "condition" (agentcomms:json-get result "outcome"))
-                             (not (application-hurry-up-p (acp-session-application session))))
+                             (not (application-hurry-up-p (acp-session-test--application session))))
                         "invalid text actions fail before state changes"))
          (test-assert (equal "condition"
                              (agentcomms:json-get

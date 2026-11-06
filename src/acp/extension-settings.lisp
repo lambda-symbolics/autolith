@@ -97,11 +97,11 @@
                   ':null
                   "The setting is fixed by process configuration."))))
 
-(-> acp-extension-settings (acp-session hash-table) hash-table)
-(defun acp-extension-settings (session params)
+(-> acp-extension-settings (application hash-table) hash-table)
+(defun acp-extension-settings (application params)
   "Return all visible settings and their current portable values."
   (declare (ignore params))
-  (let* ((application   (acp-session-application session))
+  (let* ((application   application)
          (configuration (application-configuration application)))
     (agentcomms:json-object
      "items"
@@ -122,11 +122,11 @@
     (credentials-unavailable ()
       nil)))
 
-(-> acp-extension--model-item (acp-session provider-registration provider-model &key (:stored-p boolean)) hash-table)
-(defun acp-extension--model-item (session registration model &key stored-p)
+(-> acp-extension--model-item (application provider-registration provider-model &key (:stored-p boolean)) hash-table)
+(defun acp-extension--model-item (application registration model &key stored-p)
   "Return model metadata and only locally observed credential verification."
-  (let ((verified-at (with-lock-held ((acp-session-extension-lock session))
-                       (gethash (provider-model-name model) (acp-session-extension-verified-models session)))))
+  (let ((verified-at (gethash (provider-model-name model)
+                              (client-hub-verified-models (application-client-hub application)))))
     (agentcomms:json-object
      "id" (provider-model-name model)
      "provider" (provider-registration-name registration)
@@ -135,23 +135,23 @@
                             t (argo:json-false))
      "contextWindow" (or (provider-model-context-window model) ':null))))
 
-(-> acp-extension-models (acp-session hash-table) hash-table)
-(defun acp-extension-models (session params)
+(-> acp-extension-models (application hash-table) hash-table)
+(defun acp-extension-models (application params)
   "Return the registered provider models without exposing credentials."
   (declare (ignore params))
-  (let ((configuration (application-configuration (acp-session-application session))))
+  (let ((configuration (application-configuration application)))
     (agentcomms:json-object
      "items"
      (coerce (loop for registration in (provider-registrations)
                    for stored-p = (acp-extension--credential-stored-p configuration registration)
                    append (loop for model in (provider-registration-models registration)
-                                collect (acp-extension--model-item session registration model :stored-p stored-p)))
+                                collect (acp-extension--model-item application registration model :stored-p stored-p)))
              'vector))))
 
-(-> acp-extension-set-setting (acp-session hash-table) hash-table)
-(defun acp-extension-set-setting (session params)
+(-> acp-extension-set-setting (application hash-table) hash-table)
+(defun acp-extension-set-setting (application params)
   "Apply one existing adjustable setting and return its complete updated item."
-  (let* ((application   (acp-session-application session))
+  (let* ((application   application)
          (configuration (application-configuration application))
          (name          (agentcomms:acp-field params "name" :type ':string :required-p t))
          (value         (agentcomms:acp-field params "value" :required-p t))
@@ -165,13 +165,5 @@
       (error 'acp-extension-unavailable :reason "The requested setting is not adjustable."))
     (application-apply-setting application (setting-name setting)
                                (if (argo:json-false-p value) nil value))
-    (when (member (setting-name setting) '(:idle-compaction-p :prompt-cache-retention-seconds))
-      (acp-completion-wake session))
-    (when (eq (setting-name setting) ':permission-mode)
-      (with-lock-held ((acp-session-lock session))
-        (setf (acp-session-mode session) (application-permission-mode application))
-        (clrhash (acp-session-permissions session)))
-      (agentcomms:agent-send-update
-       (acp-session-service session) (acp-session-identifier session)
-       (agentcomms:acp-update-current-mode (string-downcase (symbol-name (acp-session-mode session))))))
+    (application-clients-publish-state application)
     (acp-extension--setting-item application (application-configuration application) setting)))

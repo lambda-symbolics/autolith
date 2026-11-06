@@ -18,21 +18,30 @@
 (defun world-server-tests--call (function)
   "Call FUNCTION with a served test world server, its configuration and root, then stop it."
   (with-test-configuration (configuration root)
-    (configuration-ensure-directories configuration)
-    (test-call-with-function-replacements
-     (world-server-tests--stubs)
-     (lambda ()
-       (let* ((server (world-server-create configuration :permission-mode ':auto))
-              (main   (make-thread (lambda () (world-server-serve server))
-                                   :name "Autolith world server test main")))
-         (unwind-protect
-              (funcall function server configuration root)
-           (world-server-stop server)
-           (test-assert (task-tests--wait-until
-                         (lambda () (not (thread-alive-p main))) 30)
-                        "a stopped world server ends once its channels ended")
-           (image-daemon:daemon-stop-thread main)
-           (world-server--shutdown server))))))
+    (world-server-tests--call-with-server
+     configuration
+     (lambda (server)
+       (funcall function server configuration root))))
+  nil)
+
+(-> world-server-tests--call-with-server (configuration function &key (:permission-mode keyword)) null)
+(defun world-server-tests--call-with-server (configuration function &key (permission-mode ':auto))
+  "Call FUNCTION with a world server served for CONFIGURATION in this process, then stop it."
+  (configuration-ensure-directories configuration)
+  (test-call-with-function-replacements
+   (world-server-tests--stubs)
+   (lambda ()
+     (let* ((server (world-server-create configuration :permission-mode permission-mode))
+            (main   (make-thread (lambda () (world-server-serve server))
+                                 :name "Autolith world server test main")))
+       (unwind-protect
+            (funcall function server)
+         (world-server-stop server)
+         (test-assert (task-tests--wait-until
+                       (lambda () (not (thread-alive-p main))) 30)
+                      "a stopped world server ends once its channels ended")
+         (image-daemon:daemon-stop-thread main)
+         (world-server--shutdown server)))))
   nil)
 
 (-> world-server-tests--open (cons string &rest t) list)
@@ -401,7 +410,7 @@
 
 (-> test-world-server-open-images-and-new () null)
 (defun test-world-server-open-images-and-new ()
-  "Test an open's images become the channel's composer draft, new or running, and :new-p opens a channel of its own."
+  "Test an open's images become the channel's composer draft, new or running, :new-p opens a channel of its own, and a running channel refuses MCP servers."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry     (world-client-entry configuration))
@@ -429,7 +438,16 @@
                         "the running channel's draft takes the new images")
            (let ((fresh (getf (rest (world-server-tests--open entry workspace :new-p t)) :session-id)))
              (test-assert (and (stringp fresh) (not (equal fresh opened)))
-                          "an open asking for a new channel gets one of its own")))))))
+                          "an open asking for a new channel gets one of its own"))
+           (test-assert (handler-case
+                            (progn (world-server-tests--open entry workspace
+                                                             :channel     opened
+                                                             :mcp-servers '((:object "name" "editor")))
+                                   nil)
+                          (localgroup-error (condition)
+                            (search "cannot take the editor's MCP servers"
+                                    (autolith-error-message condition))))
+                        "a running channel refuses an editor's MCP servers its tools would need"))))))
   nil)
 
 (-> world-server--channels-of (cons) list)
