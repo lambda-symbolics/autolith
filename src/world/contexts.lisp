@@ -44,14 +44,14 @@
                    (config :data-root configuration)))
 
 (-> world-context-write
-    (configuration string &key (:source (option string)) (:rows list)
+    (configuration string &key (:source (option string)) (:rows list) (:goal list)
                                (:destination (option string)) (:transition (option string)))
     null)
-(defun world-context-write (configuration participant &key source rows destination transition)
-  "Keep ROWS, the context agent PARTICIPANT carries from channel SOURCE, until channel DESTINATION adopts it.
+(defun world-context-write (configuration participant &key source rows goal destination transition)
+  "Keep ROWS and GOAL, the context and goal agent PARTICIPANT carries from channel SOURCE, until channel DESTINATION adopts them.
 
-A NIL DESTINATION keeps it for a parked agent. TRANSITION names the move
-that writes it, so its adoption happens once."
+A NIL DESTINATION keeps them for a parked agent. TRANSITION names the move
+that writes them, so their adoption happens once."
   (let ((pathname (world-context-pathname configuration participant)))
     (ensure-directories-exist pathname)
     (handler-case
@@ -60,6 +60,7 @@ that writes it, so its adoption happens once."
                                           :participant participant
                                           :rows        rows
                                           (append (and source (list :source source))
+                                                  (and goal (list :goal goal))
                                                   (and destination (list :destination destination))
                                                   (and transition (list :transition transition)))))
       (sexp-store:store-error (cause)
@@ -72,9 +73,9 @@ that writes it, so its adoption happens once."
   nil)
 
 (-> world-context-read (configuration string)
-    (values list (option string) (option string) (option string)))
+    (values list (option string) (option string) (option string) list))
 (defun world-context-read (configuration participant)
-  "Return the context rows agent PARTICIPANT carries, the channel they came from, the channel they go to and the transition taking them.
+  "Return the context rows agent PARTICIPANT carries, the channel they came from, the channel they go to, the transition taking them and the agent's goal.
 
 An agent with no kept context carries none."
   (let ((pathname (world-context-pathname configuration participant)))
@@ -100,8 +101,9 @@ An agent with no kept context carries none."
                    :operation  ':context
                    :identifier participant))
           (values (getf properties :rows) (getf properties :source)
-                  (getf properties :destination) (getf properties :transition)))
-        (values nil nil nil nil))))
+                  (getf properties :destination) (getf properties :transition)
+                  (getf properties :goal)))
+        (values nil nil nil nil nil))))
 
 (-> world-context-waiting-p (configuration participant) boolean)
 (defun world-context-waiting-p (configuration participant)
