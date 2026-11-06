@@ -3368,10 +3368,9 @@
 
 (-> test-provider-usage-limit-streams () null)
 (defun test-provider-usage-limit-streams ()
-  "Classify genuine HTTP conditions through Codex and its unchanged retry boundary.
+  "Classify HTTP conditions through Codex's retry boundary.
 
-Transport is synthetic. Only retry sleeps are suppressed in this component test;
-the separately retained local HTTP proof uses ordinary transport and delays."
+Transport is synthetic; retry delays are suppressed."
   (with-test-configuration (configuration)
     (let ((provider                       (provider-create configuration))
           (*bounded-retry-sleep-function* (lambda (seconds) (declare (ignore seconds))))
