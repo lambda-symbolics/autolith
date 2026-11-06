@@ -1135,5 +1135,38 @@
                                  nil)
                              (world-error (condition)
                                (search "moved while" (autolith-error-message condition))))
-                           "the store moves an agent only from where the move found it"))))))))
+                           "the store moves an agent only from where the move found it")
+             (let* ((id-d  (getf (rest (world-server-tests--open entry (world-tests--workspace root "d")))
+                                 :session-id))
+                    (app-d (world-host-application (world-server--find-host server id-d))))
+               (conversation-append-user-message (application-conversation app-d) "first words in d")
+               (localgroup-query-record
+                entry ':dismiss
+                (list :participant (participant-identifier
+                                    (find ':agent (world-channel-residents
+                                                   (values (world-reconcile-sessions configuration))
+                                                   id-d)
+                                          :key #'participant-kind))))
+               (localgroup-query-record entry ':close (list :channel id-d))
+               (task-tests--wait-until (lambda () (null (world-server--find-host server id-d))) 20)
+               (move (participant-identifier agent-a) id-d)
+               (test-call-with-function-replacements
+                (list (list 'application-world-install-agent
+                            (lambda (&rest arguments)
+                              (declare (ignore arguments))
+                              (error 'world-error :message   "synthetic adoption failure."
+                                                  :operation ':move))))
+                (lambda ()
+                  (let ((opened (localgroup-query-record entry ':open (list :channel  id-d
+                                                                            :rows     30
+                                                                            :columns  90
+                                                                            :styled-p nil))))
+                    (test-assert (and (string= (getf (rest opened) :session-id) id-d)
+                                      (world-server--find-host server id-d)
+                                      (context-file-p))
+                                 "a channel whose waiting context cannot be adopted still opens, and the context keeps waiting"))))
+               (application-world-before-turn
+                (world-host-application (world-server--find-host server id-d)) ':message)
+               (test-assert (not (context-file-p))
+                            "the opened channel adopts the context before the agent's first turnfirst turn")))))))))
   nil)
