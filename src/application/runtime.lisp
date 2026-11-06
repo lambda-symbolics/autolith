@@ -3558,47 +3558,53 @@ A fullscreen transcript evicts its oldest output; those records page in again."
                  (eq (getf (application-goal application) :status) ':active)
                  t)))))))
 
+(-> goal->record ((option list)) list)
+(defun goal->record (goal)
+  "Return the durable goal record of GOAL, or the record clearing the goal for NIL."
+  (if goal
+      (cons :goal (copy-tree goal))
+      (list :goal
+            :objective nil
+            :status        ':cleared
+            :continuations 0
+            :created-at    nil)))
+
 (-> application--record-goal (application) null)
 (defun application--record-goal (application)
   "Append APPLICATION's current goal state to the durable conversation."
   (setf (application-deferred-goal-continuation application) nil)
-  (let ((goal (application-goal application)))
-    (conversation-append-record
-     (application-conversation application)
-     (if goal
-         (cons :goal (copy-tree goal))
-         (list :goal
-               :objective nil
-               :status        ':cleared
-               :continuations 0
-               :created-at    nil))))
+  (conversation-append-record (application-conversation application)
+                              (goal->record (application-goal application)))
   nil)
+
+(-> goal-record->goal ((option list)) (option list))
+(defun goal-record->goal (record)
+  "Return the goal durable goal RECORD describes, or NIL for none or a cleared one."
+  (let ((objective (and record (getf (rest record) :objective)))
+        (status    (and record (getf (rest record) :status))))
+    (and (non-empty-string-p objective)
+         (member status '(:active :paused :complete :verified :blocked
+                          :exhausted :cancelled :failed))
+         (if (eq (getf (rest record) :kind) ':mission)
+             (let ((goal (copy-tree (rest record))))
+               (loop while (remf goal :seq))
+               (loop while (remf goal :time))
+               goal)
+             (list :objective objective
+                   :status    status
+                   :continuations
+                   (let ((count (getf (rest record) :continuations)))
+                     (if (integerp count) count 0))
+                   :created-at
+                   (let ((time (getf (rest record) :created-at)))
+                     (if (integerp time) time (getf (rest record) :time))))))))
 
 (-> application--load-goal (application) null)
 (defun application--load-goal (application)
   "Restore APPLICATION's goal from the newest durable goal record."
-  (let* ((record
-           (conversation-latest-goal-record
-            (application-conversation application)))
-         (objective (and record (getf (rest record) :objective)))
-         (status    (and record (getf (rest record) :status))))
-    (setf (application-goal application)
-          (and (non-empty-string-p objective)
-               (member status '(:active :paused :complete :verified :blocked
-                                :exhausted :cancelled :failed))
-               (if (eq (getf (rest record) :kind) ':mission)
-                 (let ((goal (copy-tree (rest record))))
-                   (loop while (remf goal :seq))
-                   (loop while (remf goal :time))
-                   goal)
-                 (list :objective objective
-                       :status    status
-                       :continuations
-                       (let ((count (getf (rest record) :continuations)))
-                         (if (integerp count) count 0))
-                       :created-at
-                       (let ((time (getf (rest record) :created-at)))
-                         (if (integerp time) time (getf (rest record) :time))))))))
+  (setf (application-goal application)
+        (goal-record->goal (conversation-latest-goal-record
+                            (application-conversation application))))
   (mission-restore application)
   (application-mission-schedules application)
   nil)
