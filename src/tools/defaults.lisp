@@ -421,7 +421,7 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
    "Revision-gated observation and structured editing of model-addressable resources.")
   (tool-registry-describe-namespace
    registry "fs"
-   "Workspace file reading, listing, complete writes, and compatibility editing.")
+   "Local image inspection.")
   (let ((resource-registry (tool-registry-resource-registry registry)))
     (resource-registry-register
      resource-registry
