@@ -30,10 +30,10 @@
   (:documentation "Return HEIGHT display rows of PANEL rendered for TERMINAL, each exactly its width."))
 
 (defgeneric screen-panel-shown-p (panel)
-  (:documentation "Return whether the person wants PANEL beside the session.
+  (:documentation "Return PANEL's visibility preference, or :SCREEN to use the screen's.
 
-The choice belongs to the panel, which outlives the screens of a terminal's
-successive attachments, so hiding it holds across a reconnect or a switch."))
+Specialize this and its setter to retain the choice across reconnects and
+switches. The default methods leave the choice local to each screen."))
 
 (defgeneric (setf screen-panel-shown-p) (shown-p panel)
   (:documentation "Record whether the person wants PANEL beside the session."))
@@ -162,10 +162,10 @@ the panel."
 
 (-> localgroup-screen-toggle-panel (localgroup-screen) null)
 (defun localgroup-screen-toggle-panel (screen)
-  "Show or hide SCREEN's side panel, noting the pane's new size for the session.
+  "Toggle SCREEN's side panel and report any pane-size change to the session.
 
-The choice is recorded on the panel, so the next screen of this terminal
-starts the way the person left it."
+Store the choice on the screen and, if supported, on the panel for reuse
+across attachments."
   (let ((panel (localgroup-screen-panel screen)))
     (when panel
       (with-lock-held ((localgroup-screen-lock screen))
