@@ -1143,7 +1143,7 @@ leaves no registrations of the user init it ran."
 
 Reset request context, migrate conversation identifiers, load the durable
 mutation journal and, unless IMAGE-REPLAY-FAILURES says startup already did,
-the private image state. Return the private image replay failures. This runs
+the private image state. Return the private image replay failures. Call this
 once per process; APPLICATION--BUILD then constructs each application."
   (context-runtime-reset)
   (configuration-ensure-directories configuration)
@@ -1170,12 +1170,12 @@ once per process; APPLICATION--BUILD then constructs each application."
                         recovery-p mutation-replay-failures relay-presentation)
   "Build one connected application on bootstrapped CONFIGURATION.
 
-Load CONVERSATION-ID, with RECOVERY-P the conversation automatic recovery
-selected, or else a fresh one. MUTATION-REPLAY-FAILURES are the private image
-replay diagnostics the application reports. RELAY-PRESENTATION, a plist of
-:ROWS, :COLUMNS and :STYLED-P, gives the application a relay terminal of that
-geometry awaiting a client; otherwise the terminal follows this process's
-startup. Every resource is released again when construction fails."
+Load CONVERSATION-ID if supplied; otherwise try automatic recovery when
+RECOVERY-P is true, falling back to a fresh conversation.
+MUTATION-REPLAY-FAILURES are the private image replay diagnostics to report.
+RELAY-PRESENTATION is a plist of :ROWS, :COLUMNS and :STYLED-P for a relay
+terminal awaiting a client. Without it, use this process's terminal setup.
+Release acquired resources if construction fails."
   (let* ((recovery-state
            (if recovery-p
                (multiple-value-list
@@ -3579,7 +3579,7 @@ A fullscreen transcript evicts its oldest output; those records page in again."
 
 (-> goal-record->goal ((option list)) (option list))
 (defun goal-record->goal (record)
-  "Return the goal durable goal RECORD describes, or NIL for none or a cleared one."
+  "Return the goal described by durable RECORD, or NIL if absent or cleared."
   (let ((objective (and record (getf (rest record) :objective)))
         (status    (and record (getf (rest record) :status))))
     (and (non-empty-string-p objective)
