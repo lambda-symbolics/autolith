@@ -624,6 +624,7 @@
   test-world-agent-hierarchy
   test-world-parent-mention
   test-world-person-notice
+  test-world-inbox
   test-world-one-resident-agent
   test-world-agent-move
   test-world-agentless-channel
@@ -644,7 +645,7 @@
   test-world-server-starting-host
   test-world-server-launch-options
   test-world-server-close-unattached
-  test-world-server-attachment-selects
+  test-world-server-attachment-moves-nobody
   test-world-server-open-before-checkpoint
   test-world-server-move
   test-world-client-joins-winner

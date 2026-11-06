@@ -6,33 +6,22 @@
 ;;; The reconciliation hook is release machinery that leaves with
 ;;; src/world/sessions.lisp.
 
-(defvar *world-selection-p* t
-  "Whether reconciling an application's conversation also moves the person into its channel.
-
-True in a terminal running its own session, where the conversation on screen
-is the person's choice. The world server binds it to NIL: the hosts it
-builds and the conversations they install are not where the person is, and
-only a terminal's own attachment or switch moves the person.")
-
 (-> application-world-sync (application &key (:all-p boolean)) null)
 (defun application-world-sync (application &key all-p)
-  "Reconcile the active conversation, or every conversation with ALL-P, and select its channel.
+  "Reconcile the active conversation, or every conversation with ALL-P.
 
-The selection moves the person only while *WORLD-SELECTION-P* holds.
-Failures are reported as warnings: the world is a projection of the
-conversations and never blocks a session."
+Viewing a channel moves nobody: the person resides in the inbox wherever
+the terminal is. Failures are reported as warnings: the world is a
+projection of the conversations and never blocks a session."
   (let* ((configuration (application-configuration application))
          (conversation  (and (slot-boundp application 'conversation)
                              (application-conversation application))))
     (handler-case
-        (progn
-          (if all-p
-              (world-reconcile-sessions configuration)
-              (when (and conversation (conversation-persisted-p conversation))
-                (world-reconcile-sessions configuration
-                                          :identities (list (conversation-pathname conversation)))))
-          (when (and conversation *world-selection-p*)
-            (world-session-select configuration (conversation-identifier conversation))))
+        (if all-p
+            (world-reconcile-sessions configuration)
+            (when (and conversation (conversation-persisted-p conversation))
+              (world-reconcile-sessions configuration
+                                        :identities (list (conversation-pathname conversation)))))
       (error (cause)
         (warn 'world-session-warning
               :pathname (configuration-world-sessions-path configuration)
@@ -78,6 +67,13 @@ conversations and never blocks a session."
     (and conversation
          (conversation-persisted-p conversation)
          (conversation-identifier conversation))))
+
+(-> application-world-inbox-p (application) boolean)
+(defun application-world-inbox-p (application)
+  "Return true when APPLICATION's conversation is the person's inbox."
+  (let ((conversation (and (slot-boundp application 'conversation)
+                           (application-conversation application))))
+    (and conversation (conversation-inbox-p conversation))))
 
 (-> application-world--unsettled (application string) (values list list))
 (defun application-world--unsettled (application channel)
@@ -302,11 +298,9 @@ participant is left in place, only the scan moves past it."
 
 (-> application-world-attached (application) null)
 (defun application-world-attached (application)
-  "Move the person into APPLICATION's channel: a terminal just took control of it.
+  "Map APPLICATION's conversation onto its channel: a terminal just took control of it.
 
-Only a channel the world server hosts moves anyone, and only once the
-attachment is admitted; a direct session selected its conversation when it
-opened, and a terminal whose attachment fails moves nobody. A world that
+Taking control moves nobody; the person resides in the inbox. A world that
 cannot be read only warns."
   (when (and (application-world-server application)
              (slot-boundp application 'configuration))
@@ -314,13 +308,9 @@ cannot be read only warns."
           (configuration (application-configuration application)))
       (when channel
         (handler-case
-            (progn
-              ;; A conversation that persisted since the last reconciliation
-              ;; gets its channel first, so there is one to move into.
-              (world-reconcile-sessions configuration
-                                        :identities (list (conversation-pathname
-                                                           (application-conversation application))))
-              (world-session-select configuration channel))
+            (world-reconcile-sessions configuration
+                                      :identities (list (conversation-pathname
+                                                         (application-conversation application))))
           (error (cause)
             (warn 'world-session-warning
                   :pathname (configuration-world-sessions-path
@@ -381,7 +371,8 @@ stops the turn."
                                         :text          text
                                         :mentions      elsewhere
                                         :post-p        nil
-                                        :subscribers-p t)
+                                        :subscribers-p t
+                                        :source        channel)
                     :channels)))
         (autolith-error (condition)
           (application-present application
@@ -716,6 +707,7 @@ agent until the channel is served."
              :pathname   nil
              :operation  ':move
              :identifier identifier))
+    (world-inbox-refuse-agent world channel ':move)
     (when (find ':agent (world-channel-residents world channel) :key #'participant-kind)
       (error 'world-error
              :message    (format nil "Channel ~A already has an agent." (conversation-identifier-display channel))
@@ -810,6 +802,7 @@ channel's history is there for it to read."
                                    :operation ':domestic)))
          (world         (values (world-reconcile-sessions configuration)))
          (person        (world-human-participant world)))
+    (world-inbox-refuse-agent world channel ':domestic)
     (when (find ':agent (world-channel-residents world channel) :key #'participant-kind)
       (error 'world-error
              :message    (format nil "Channel ~A already has an agent."
@@ -881,6 +874,7 @@ channel's history is there for it to read."
   (let* ((configuration (application-configuration application))
          (person        (world-human-participant
                          (values (world-reconcile-sessions configuration))))
+         (served        (application-world--served-channel application))
          (result        (progn
                           (unless person
                             (error 'world-error
@@ -891,8 +885,8 @@ channel's history is there for it to read."
                                               :sender   (participant-identifier person)
                                               :channel  channel
                                               :text     text
-                                              :mentions mentions)))
-         (served        (application-world--served-channel application)))
+                                              :mentions mentions
+                                              :source   served))))
     (when (and served (member served (getf result :channels) :test #'string=))
       (application-world-deliver application))
     result))

@@ -697,7 +697,8 @@ starting host the same way as for one it started."
 
 HOST is the server's host of the channel, starting or serving, or NIL. Latest
 touched is the newest write of the channel's conversation file; a hosted
-channel with no file yet was started just now and counts as the newest."
+channel with no file yet was started just now and counts as the newest. The
+person's inbox is never a candidate: it is opened only by name."
   (let* ((configuration (world-server-configuration server))
          (world         (values (world-reconcile-sessions configuration)))
          (hosts         (remove-if-not (lambda (host)
@@ -707,6 +708,7 @@ channel with no file yet was started just now and counts as the newest."
          (candidates    nil))
     (dolist (channel (world-channels world))
       (when (and (null (channel-parent channel))
+                 (not (channel-inbox-p channel))
                  (string= workspace (channel-workspace channel)))
         (push (cons (channel-identifier channel)
                     (find (channel-identifier channel) hosts
@@ -869,19 +871,17 @@ forgotten again when no thread could start."
                                   (list :immutable-p t))
                                 (when (getf launch :theme)
                                   (list :terminal-theme (getf launch :theme))))))
-         (application   (let ((*world-selection-p* nil))
-                          ;; Hosting a channel is not the person's choice of one.
-                          (application--build
-                           configuration
-                           :conversation-id          conversation-id
-                           :permission-mode          (world-server--permission-mode
-                                                      server (or (getf launch :permission-mode)
-                                                                 (getf arguments :permission-mode)))
-                           :pristine-p               (world-server-pristine-p server)
-                           :mutation-replay-failures (world-server-mutation-replay-failures server)
-                           :relay-presentation       (list :rows     (getf arguments :rows)
-                                                           :columns  (getf arguments :columns)
-                                                           :styled-p (getf arguments :styled-p)))))
+         (application   (application--build
+                         configuration
+                         :conversation-id          conversation-id
+                         :permission-mode          (world-server--permission-mode
+                                                    server (or (getf launch :permission-mode)
+                                                               (getf arguments :permission-mode)))
+                         :pristine-p               (world-server-pristine-p server)
+                         :mutation-replay-failures (world-server-mutation-replay-failures server)
+                         :relay-presentation       (list :rows     (getf arguments :rows)
+                                                         :columns  (getf arguments :columns)
+                                                         :styled-p (getf arguments :styled-p))))
          (host          (make-instance 'world-host :application application)))
     (setf (application-world-server application) server)
     (world-server--adopt-waiting-context application)
@@ -937,7 +937,6 @@ itself so that threads those threads start inherit it too."
   (let* ((inherited (cons 'bordeaux-threads:*default-special-bindings* nil))
          (bindings  (list (cons '*active-application* (list 'quote application))
                           (cons '*localgroup-startup-record* nil)
-                          (cons '*world-selection-p* nil)
                           inherited)))
     (setf (rest inherited) (list 'quote bindings))
     bindings))

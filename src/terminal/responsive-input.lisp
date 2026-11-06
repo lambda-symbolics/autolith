@@ -1707,7 +1707,9 @@ the ordinary FIFO queue."
   (unless (application-world-agent-present-p (application-input-controller-application controller))
     (application-present
      (application-input-controller-application controller)
-     "· this channel has no agent. (move \"ID\") brings one here; (domestic) creates a new one")
+     (if (application-world-inbox-p (application-input-controller-application controller))
+         "· no agent reads your inbox. (tell \"CHANNEL\" \"TEXT\") writes to a channel; a message's (switch \"ID\") goes where it was said"
+         "· this channel has no agent. (move \"ID\") brings one here; (domestic) creates a new one"))
     (return-from application-input-controller-submit-primary-prompt
       (values nil ':rejected)))
   (let ((delivery  nil)

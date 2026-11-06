@@ -675,7 +675,8 @@ notice preference is on, so enabling it mid-session takes effect immediately."
                     (namestring current-directory))))
          (current-items nil)
          (other-items   nil))
-    (dolist (pathname (conversation-list configuration))
+    (dolist (pathname (remove-if #'conversation-inbox-pathname-p
+                                 (conversation-list configuration)))
       (let* ((identifier (pathname-name pathname))
              (identifier-display
                (conversation-identifier-display identifier))
