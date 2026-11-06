@@ -3718,8 +3718,8 @@ installed owner the thunk simply runs."
 
 A transcript action that EVENT clicked runs after the presentation lock is
 released, so the action may present notices of its own. A clicked
-(:submit TEXT) instead returns as the submission of TEXT, so a clicked form
-runs exactly as if the person had typed it, and the draft stays as it was."
+(:submit TEXT) instead returns :SUBMIT and TEXT for the caller to submit,
+without replacing the draft."
   (multiple-value-bind (action payload)
       (terminal-ui--process-locked-event ui event
                                          :queue-completion-p queue-completion-p
