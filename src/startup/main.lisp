@@ -1159,10 +1159,8 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
 
 CONVERSATION-ID opens that channel; otherwise the launch directory selects
 or creates one. The second value says whether the server started the channel
-for this terminal. Only a world server that cannot be started or reached
-sends the start direct; one that answers and refuses, as a channel refusing
-a launch option it cannot change, ends the start with its reason, so a
-refused request never runs somewhere else in silence."
+for this terminal. Signal server refusals, including incompatible launch
+options. For other errors, print the reason and return NIL to start directly."
   (handler-case
       (world-client-open configuration
                          :directory          (config :working-directory configuration)
