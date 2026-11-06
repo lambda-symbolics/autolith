@@ -89,7 +89,7 @@
 
 (-> test-cli-detached-dispatch () null)
 (defun test-cli-detached-dispatch ()
-  "Exercise parsed detached starts, live reuse, receipts, and rejected options."
+  "Exercise parsed detached starts in the world server and in a rescue process, live reuse, receipts, and rejected options."
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
     (let* ((identifier  "b6uouHJ")
@@ -97,6 +97,7 @@
                               :session-id identifier :pid 424242))
            (live-p      nil)
            (spawned     nil)
+           (opened      nil)
            (attached    nil)
            (operations  nil)
            (spawn-error nil)
@@ -126,7 +127,13 @@
             (list 'localgroup-endpoint-records
                   (lambda (configuration)
                     (declare (ignore configuration))
-                    (when (or live-p spawned) (list record))))
+                    (when (or live-p spawned opened) (list record))))
+            (list 'world-client-open
+                  (lambda (configuration &rest arguments)
+                    (declare (ignore configuration))
+                    (when spawn-error (error spawn-error))
+                    (push arguments opened)
+                    (values identifier t)))
             (list 'localgroup-handoff-spawn-fresh
                   (lambda (configuration &rest arguments)
                     (declare (ignore configuration))
@@ -162,7 +169,16 @@
                      (getf (first spawned) :immutable-p)
                      (eq (getf (first spawned) :permission-mode) ':full-access)
                      (null attached))
-                "noninteractive explicit detach forwards pristine and permissions without attaching")
+                "a pristine detach is a rescue process that gets pristine and permissions without attaching")
+               (main-dispatch '("--detached" "--permissions" "full"))
+               (test-assert
+                (and (= (length spawned) 1)
+                     (= (length opened) 1)
+                     (getf (first opened) :new-p)
+                     (null (getf (first opened) :channel))
+                     (eq (getf (getf (first opened) :launch) :permission-mode) ':full-access)
+                     (null attached))
+                "a detach opens a new channel in the world server with its launch options, without attaching")
                (let ((output (get-output-stream-string *standard-output*)))
                  (test-assert
                   (and (search "b-6uouHJ" output) (search "424242" output))
@@ -190,15 +206,18 @@
                                     ("resume" "b" "--model" "model")
                                     ("resume" "b" "--permissions" "full")))
                  (reject arguments 'configuration-error))
-               (test-assert (= (length spawned) 1) "invalid options do not launch sessions")
+               (test-assert (and (= (length spawned) 1) (= (length opened) 1))
+                            "invalid options do not launch sessions")
                (setf live-p nil
                      spawned nil
+                     opened nil
                      spawn-error (make-condition 'platform-capability-unavailable
                                                  :capability ':detached-sessions
                                                  :message    "Unavailable for test."))
-               (reject '("--detached") 'platform-capability-unavailable)
+               (reject '("--detached" "--pristine") 'platform-capability-unavailable)
                (setf spawn-error (make-condition 'localgroup-error
                                                  :operation ':spawn :message "Launch failed."))
+               (reject '("--detached" "--pristine") 'localgroup-error)
                (reject '("--detached") 'localgroup-error)
                (setf spawn-error nil
                      invalid-p t)
@@ -207,7 +226,7 @@
 
 (-> test-cli-detached-receipt-cleanup () null)
 (defun test-cli-detached-receipt-cleanup ()
-  "Cancel a ready launch if endpoint discovery or receipt authentication fails."
+  "Cancel a ready rescue launch if endpoint discovery or receipt authentication fails."
   (dolist (failure '(:lookup :status))
     (with-test-configuration (configuration)
       (configuration-ensure-directories configuration)
@@ -254,7 +273,7 @@
            (lambda ()
              (test-assert
               (handler-case
-                  (progn (main--start-detached configuration :permission-mode ':ask) nil)
+                  (progn (main--start-detached configuration :permission-mode ':ask :pristine-p t) nil)
                 (localgroup-error (condition) (eq condition failure-condition)))
               (format nil "~A receipt failure propagates its original condition" failure))
              (test-assert (and ready-p stopped-p (not released-p)
@@ -285,7 +304,7 @@
 
 (-> test-cli-detached-process () null)
 (defun test-cli-detached-process ()
-  "Launch a real saved-core session and verify readiness, PID, persistence, and reuse."
+  "Launch real detached channels in a saved-core world server and verify readiness, PID, persistence, and reuse."
   (with-platform-capability (':detached-sessions "explicit detached CLI process lifecycle")
     (with-test-configuration (unused root)
       (declare (ignore unused))
@@ -353,9 +372,12 @@
                                    (search (princ-to-string pid) resumed))
                               (format nil "saved detached resume publishes its original ID and actual PID: ~A ~A"
                                       resumed errors))))))))
+               ;; The channels live in the world server the first start launched.
+               (let ((world (world-client-entry configuration)))
+                 (when world
+                   ; mallet:suppress no-ignore-errors -- cleanup a server which may have exited already
+                   (ignore-errors (localgroup-query-record world ':stop))))
                (dolist (record (or records (localgroup-endpoint-records configuration)))
-                 ; mallet:suppress no-ignore-errors -- cleanup an endpoint which may have exited already
-                 (ignore-errors (localgroup-query-record record ':kill))
                  (let ((pid (getf (rest (rest record)) :pid)))
                    (unless (task-tests--wait-until
                             (lambda () (not (platform-process-alive-p *platform* pid))) 5)

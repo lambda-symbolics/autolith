@@ -139,19 +139,34 @@ metadata."
 
 (-> main--start-detached
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
-                        (:pristine-p boolean) (:conversation-id (option string)))
+                        (:pristine-p boolean) (:conversation-id (option string))
+                        (:launch list))
     null)
 (defun main--start-detached
-    (configuration &key permission-mode immutable-p pristine-p conversation-id)
-  "Start an unattended session, retaining startup ownership until its receipt is printed."
-  (localgroup-handoff-spawn-fresh
-   configuration
-   :permission-mode   permission-mode
-   :immutable-p       immutable-p
-   :pristine-p        pristine-p
-   :conversation-id   conversation-id
-   :attach-expected-p nil
-   :ready-function
-   (lambda (identifier)
-     (main--print-detached-receipt (localgroup--find-record configuration identifier))))
+    (configuration &key permission-mode immutable-p pristine-p conversation-id launch)
+  "Start an unattended session and print its receipt.
+
+The world server opens the channel, CONVERSATION-ID or a new one for the
+launch directory, with the launch options LAUNCH states, and keeps it running
+with no terminal attached. A pristine start is a rescue session, which runs
+apart from the world server in a process of its own and keeps startup
+ownership until its receipt is printed."
+  (if pristine-p
+      (localgroup-handoff-spawn-fresh
+       configuration
+       :permission-mode   permission-mode
+       :immutable-p       immutable-p
+       :pristine-p        t
+       :conversation-id   conversation-id
+       :attach-expected-p nil
+       :ready-function
+       (lambda (identifier)
+         (main--print-detached-receipt (localgroup--find-record configuration identifier))))
+      (let ((identifier (main--open-world-channel configuration
+                                                  :conversation-id conversation-id
+                                                  :new-p           (null conversation-id)
+                                                  :permission-mode permission-mode
+                                                  :immutable-p     immutable-p
+                                                  :launch          launch)))
+        (main--print-detached-receipt (localgroup--find-record configuration identifier))))
   nil)
