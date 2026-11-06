@@ -1339,6 +1339,7 @@
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
     (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
       (declare (ignore first-agent))
+      (world-participant-subscribe configuration (participant-identifier human) "bsecnd2")
       (let* ((inbox       (world-tests--inbox configuration))
              (terminal    (make-instance 'waiting-recording-terminal :columns 80))
              (ui          (terminal-ui-create :terminal terminal))
@@ -1359,11 +1360,13 @@
                                      :text     (format nil "@~A the build is green"
                                                        (participant-name human))
                                      :notify-p nil)
-                 (test-assert (and (null (world-inbox-deliveries configuration "bfirst1"))
-                                   (eq (world-delivery-kind
-                                        (first (world-inbox-deliveries configuration inbox)))
-                                       ':notice))
-                              "a message for the person lands in the inbox as a notice")
+                 (let ((deliveries (world-inbox-deliveries configuration inbox)))
+                   (test-assert (and (null (world-inbox-deliveries configuration "bfirst1"))
+                                     (= (length deliveries) 1)
+                                     (eq (world-delivery-kind (first deliveries)) ':notice)
+                                     (search "the build is green"
+                                             (world-delivery-text (first deliveries))))
+                                "a message for the person lands in the inbox as one notice, even from a channel the person subscribes to"))
                  (test-assert (null (application-world-steering-take application))
                               "no agent takes a notice as a steer")
                  (setf (terminal-interactive-p terminal) nil)
