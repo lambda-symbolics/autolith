@@ -41,9 +41,9 @@ screen around them."))
 (defun localgroup-terminal-create (&key direct-terminal rows columns styled-p)
   "Create a relay terminal initially owned by DIRECT-TERMINAL when supplied.
 
-Without one, the relay waits for a client at ROWS by COLUMNS with STYLED-P
-styling, defaulting to the geometry of the client this process was started
-for, or to the terminal defaults."
+Without one, use ROWS and COLUMNS, falling back to the startup client's
+geometry and then terminal defaults. Enable styling if STYLED-P or the
+startup record's :STYLED-P is non-NIL."
   (let ((startup-values
          (and *localgroup-startup-record* (rest *localgroup-startup-record*))))
     (make-instance 'localgroup-terminal :direct-terminal direct-terminal :rows
