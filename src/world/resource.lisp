@@ -32,7 +32,7 @@
     :initform      nil
     :reader        channel-resource-conversation
     :type          (option conversation)
-    :documentation "The channel's history, or NIL before it has any."))
+    :documentation "The channel's history, or NIL if unavailable."))
   (:documentation "The read-only state and history of one channel."))
 
 (defclass channel-list-resource (resource)
@@ -67,7 +67,7 @@
 
 (-> channel-resource--history (tool-context channel) (option conversation))
 (defun channel-resource--history (context channel)
-  "Return the conversation holding CHANNEL's history, or NIL without one.
+  "Return the conversation holding CHANNEL's history, or NIL if it is unavailable.
 
 A child task's history lives in its root conversation's task directory,
 which the channel's parent names."
@@ -180,7 +180,7 @@ which the channel's parent names."
 
 (-> channel-resource--owner-text (world channel) string)
 (defun channel-resource--owner-text (world channel)
-  "Return CHANNEL's owner as a name and identifier."
+  "Return CHANNEL's owner as a name and identifier, falling back to its identifier alone."
   (let ((owner (world-participant-find world (channel-owner channel))))
     (if owner
         (format nil "~A (~A)" (participant-name owner)
@@ -258,4 +258,4 @@ which the channel's parent names."
                                        :conversation conversation)
                         tool context arguments)))
           (tool-success (format nil "~A~A" state (tool-result-content history))))
-        (tool-success (format nil "~ANo history yet.~%" state)))))
+        (tool-success (format nil "~AChannel history is unavailable.~%" state)))))
