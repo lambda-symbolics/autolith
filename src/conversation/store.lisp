@@ -168,6 +168,12 @@
     :reader        conversation-agent-name
     :type          (option non-empty-string)
     :documentation "The readable name the parent gave this child agent, or NIL for a top-level one.")
+   (inbox-p
+    :initarg       :inbox-p
+    :initform      nil
+    :reader        conversation-inbox-p
+    :type          boolean
+    :documentation "Whether this is the history of the person's inbox channel, which no agent ever reads.")
    (pathname
     :initarg       :pathname
     :reader        conversation-pathname
@@ -1068,7 +1074,8 @@ mentions."
     (conversation &key (chunk-start-sequence 1))
   "Return a self-contained portable chunk header for CONVERSATION.
 
-Only a child agent's conversation names its parent and itself."
+Only a child agent's conversation names its parent and itself, and only the
+person's inbox says it is one."
   (list* :conversation
         :version 2
         :id                   (conversation-identifier conversation)
@@ -1106,9 +1113,11 @@ Only a child agent's conversation names its parent and itself."
                     (conversation-pending-async-lisp-events conversation)))
         :latest-goal-record
         (copy-tree (conversation-latest-goal-record conversation))
-        (and (conversation-parent-identifier conversation)
-             (list :parent     (conversation-parent-identifier conversation)
-                   :agent-name (conversation-agent-name conversation)))))
+        (append (and (conversation-parent-identifier conversation)
+                     (list :parent     (conversation-parent-identifier conversation)
+                           :agent-name (conversation-agent-name conversation)))
+                (and (conversation-inbox-p conversation)
+                     (list :inbox-p t)))))
 
 (-> conversation--initial-publication-lock-pathname (conversation) pathname)
 (defun conversation--initial-publication-lock-pathname (conversation)
@@ -1445,15 +1454,19 @@ The revision is durable source coordination, not a regenerable search payload."
                         (:storage-root (option pathname))
                         (:created-at (option timestamp))
                         (:parent-identifier (option string))
-                        (:agent-name (option string)))
+                        (:agent-name (option string))
+                        (:inbox-p boolean)
+                        (:origin-directory (option string)))
     conversation)
 (defun conversation-create
     (configuration &key identifier prompt-cache-key storage-root created-at
-                        parent-identifier agent-name)
+                        parent-identifier agent-name inbox-p origin-directory)
   "Create an in-memory conversation that persists under optional STORAGE-ROOT.
 
 A child agent's conversation records PARENT-IDENTIFIER, the conversation of
-the agent that created it, and AGENT-NAME, the name it was given."
+the agent that created it, and AGENT-NAME, the name it was given. INBOX-P
+marks the history of the person's inbox channel. ORIGIN-DIRECTORY replaces
+the configured working directory as the directory it began in."
   (let* ((created-at       (or created-at (get-universal-time)))
          (root             (conversation-cache-register-root
                             (uiop:ensure-directory-pathname
@@ -1464,8 +1477,8 @@ the agent that created it, and AGENT-NAME, the name it was given."
            (conversation-identifier-validate-path-component
             (or identifier
                 (conversation-identifier-generate root :timestamp created-at))))
-         (origin-directory (namestring
-                            (config :working-directory configuration)))
+         (origin-directory (or origin-directory
+                               (namestring (config :working-directory configuration))))
          (identity         (merge-pathnames
                             (make-pathname :name conversation-id :type "sexp")
                             root))
@@ -1480,6 +1493,7 @@ the agent that created it, and AGENT-NAME, the name it was given."
                    :prompt-cache-key  prompt-cache-key
                    :parent-identifier parent-identifier
                    :agent-name        agent-name
+                   :inbox-p           inbox-p
                    :pathname          identity
                    :log-pathname      log-pathname
                    :persisted-p       nil
@@ -3302,6 +3316,11 @@ later picker searches read it without scanning the log."
   (conversation--peek-segment-header
    (conversation--record-source-pathname pathname)))
 
+(-> conversation-inbox-pathname-p (pathname) boolean)
+(defun conversation-inbox-pathname-p (pathname)
+  "Return true when the conversation at PATHNAME is the person's inbox, which lists of resumable conversations leave out."
+  (eq (getf (rest (conversation-peek-header pathname)) :inbox-p) t))
+
 (-> conversation--header-string-list-p (t) boolean)
 (defun conversation--header-string-list-p (value)
   "Return true when VALUE is a finite proper list of unique nonempty strings."
@@ -3455,6 +3474,7 @@ later picker searches read it without scanning the log."
                                                   (and (non-empty-string-p parent) parent))
                              :agent-name        (let ((name (getf properties :agent-name)))
                                                   (and (non-empty-string-p name) name))
+                             :inbox-p           (eq (getf properties :inbox-p) t)
                              :pathname          identity
                              :log-pathname      log-pathname
                              :persisted-p       t

@@ -84,12 +84,14 @@
     (let* ((requested-cwd (and cwd (acp-extension--conversation-cwd cwd)))
            (paths         (remove-if-not
                            (lambda (pathname)
-                             (or (null requested-cwd)
-                                 (let* ((conversation (conversation-load pathname))
-                                        (origin       (conversation-origin-directory conversation)))
-                                   (and origin
-                                        (string= requested-cwd
-                                                 (acp-extension--conversation-cwd origin))))))
+                             (and (not (conversation-inbox-pathname-p pathname))
+                                  (or (null requested-cwd)
+                                      (let* ((conversation (conversation-load pathname))
+                                             (origin       (conversation-origin-directory
+                                                            conversation)))
+                                        (and origin
+                                             (string= requested-cwd
+                                                      (acp-extension--conversation-cwd origin)))))))
                            (conversation-list configuration)))
            (page          (subseq paths (min offset (length paths))
                                   (min (+ offset limit) (length paths))))
