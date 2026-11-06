@@ -648,7 +648,8 @@ hosts, two leases or two threads."
 For a named channel, reuse its host or start one. For a directory, try its
 top-level channels by latest activity. Reuse an unattached compatible host,
 or start an unhosted channel whose conversation is free. Create a channel
-if none qualifies. The caller waits for the host to publish its endpoint."
+if none qualifies, or at once when ARGUMENTS ask for a new one with :new-p.
+The caller waits for the host to publish its endpoint."
   (let ((channel   (getf arguments :channel))
         (directory (getf arguments :directory)))
     (cond
@@ -673,7 +674,9 @@ if none qualifies. The caller waits for the host to publish its endpoint."
                 :operation ':open))
        (let ((workspace (world-workspace-name directory)))
          (multiple-value-bind (host started-p)
-             (world-server--latest-host server workspace arguments)
+             (if (getf arguments :new-p)
+                 (values nil nil)
+                 (world-server--latest-host server workspace arguments))
            (if host
                (values host started-p)
                (values (world-server--start-host server
