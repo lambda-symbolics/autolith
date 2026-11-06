@@ -303,9 +303,11 @@ unless READ-ONLY-P, owner-writable. Signal PLATFORM-ERROR with operation
 
 (defgeneric platform-make-read-only (platform pathname)
   (:documentation
-   "Make PATHNAME readable by everyone who can reach it and writable by nobody.
+   "Apply the host's read-only file permissions to PATHNAME.
 
-Signal PLATFORM-ERROR with operation :PROTECT when the change cannot be applied."))
+POSIX uses mode 0444; Windows withholds owner write access and keeps the file
+private. Signal PLATFORM-ERROR with operation :PROTECT when the change cannot
+be applied."))
 
 (defgeneric platform-file-uri-pathname (platform decoded-path)
   (:documentation "Parse a decoded local file-URI path using the host's pathname syntax."))
