@@ -559,8 +559,9 @@ SENDER, @parent mentions the participant its message to its parent reaches."
 
 The channel itself gets a post for its residents. Each subscriber and each
 mentioned participant residing elsewhere gets a copy in its residence channel,
-one per channel, subscriptions before mentions; a parked agent resides
-nowhere and gets none. Without POST-P the channel
+one per channel, subscriptions before mentions, except that a notice for the
+person replaces a subscription copy, so the person always sees the message
+in full; a parked agent resides nowhere and gets none. Without POST-P the channel
 gets nothing: the message was said there already. SUBSCRIBERS-P, which
 follows POST-P unless given, says whether its subscribers still hear of it,
 as they do of every ordinary message said in the channel. SOURCE is the
@@ -569,23 +570,33 @@ person resides in the inbox but speaks in the channel on screen."
   (let ((target  (channel-identifier channel))
         (pairs   nil)
         (covered (if post-p nil (list (channel-identifier channel)))))
-    (flet ((deliver (channel-identifier kind)
-             "Plan one copy of KIND for CHANNEL-IDENTIFIER unless it has one already."
-             (unless (member channel-identifier covered :test #'string=)
-               (push channel-identifier covered)
-               (push (cons channel-identifier
-                           (make-instance 'world-delivery
-                                          :identifier  identifier
-                                          :time        now
-                                          :sender      (participant-identifier sender)
-                                          :sender-name (participant-name sender)
-                                          :sender-kind (participant-kind sender)
-                                          :source      (or source (participant-residence sender))
-                                          :target      target
-                                          :text        text
-                                          :mentions    mentions
-                                          :kind        kind))
-                     pairs))))
+    (labels ((delivery (kind)
+               "Return one copy of the message of KIND."
+               (make-instance 'world-delivery
+                              :identifier  identifier
+                              :time        now
+                              :sender      (participant-identifier sender)
+                              :sender-name (participant-name sender)
+                              :sender-kind (participant-kind sender)
+                              :source      (or source (participant-residence sender))
+                              :target      target
+                              :text        text
+                              :mentions    mentions
+                              :kind        kind))
+
+             (deliver (channel-identifier kind)
+               "Plan one copy of KIND for CHANNEL-IDENTIFIER unless it has one already."
+               (let ((planned (assoc channel-identifier pairs :test #'string=)))
+                 (cond
+                   ((not (member channel-identifier covered :test #'string=))
+                    (push channel-identifier covered)
+                    (push (cons channel-identifier (delivery kind)) pairs))
+                   ((and planned
+                         (eq kind ':notice)
+                         (eq (world-delivery-kind (rest planned)) ':subscription))
+                    (setf (rest planned) (delivery kind)))
+                   (t
+                    nil)))))
       (when post-p
         (deliver target ':post))
       (when subscribers-p
