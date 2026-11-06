@@ -979,7 +979,7 @@
 
 (-> test-world-server-move-goal () null)
 (defun test-world-server-move-goal ()
-  "Test an agent's goal goes where the agent goes, a mission arrives paused, and the channel left keeps none."
+  "Test an agent's goal goes where the agent goes, a mission arrives paused, the channel left keeps none, and a channel without an agent runs no turn."
   (world-server-tests--call
    (lambda (server configuration root)
      (let* ((entry (world-client-entry configuration))
@@ -1020,6 +1020,12 @@
            (test-assert (and (null (application-goal app-a))
                              (null (recorded-goal app-a)))
                         "the channel it left keeps no goal of its own")
+           (test-assert (handler-case
+                            (progn (application-world-before-turn app-a ':operation-request) nil)
+                          (world-error ()
+                            t))
+                        "a channel without an agent runs no agent turn")
+           (application-world-before-turn app-a ':idle-compaction)
            (let ((domestic (application-world-domestic-agent app-a)))
              (test-assert (null (application-goal app-a))
                           "a new agent starts without a goal")
