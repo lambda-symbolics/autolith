@@ -683,6 +683,7 @@
   test-world-server-launch-options
   test-world-server-close-unattached
   test-world-server-attachment-moves-nobody
+  test-world-server-person-unread
   test-world-server-open-before-checkpoint
   test-world-server-move
   test-world-client-joins-winner

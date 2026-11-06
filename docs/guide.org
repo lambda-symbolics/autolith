@@ -1796,7 +1796,8 @@ sender's name and the channel. A message for you, one that mentions you or
 reaches you through =@parent=, is a notice: it goes to your inbox and no
 agent takes it as a turn. Once a terminal shows the inbox, the notice is
 recorded in the inbox's history and shown in full; until then it waits,
-unread, and the sidebar counts it. Each notice ends with the form that goes
+unread. The sidebar counts it, and so does the modeline of every channel,
+as in =✉ 2 unread=, in plain mode too. Each notice ends with the form that goes
 where it was said, such as =(switch "b-6uouHJ")=; in fullscreen, clicking it
 runs it as if you had typed it. =(switch "inbox")= opens the inbox, which
 =(resume)= and the conversation picker never offer. Typing in the inbox
