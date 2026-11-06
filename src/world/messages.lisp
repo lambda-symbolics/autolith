@@ -57,7 +57,7 @@
     :initarg       :source
     :reader        world-delivery-source
     :type          non-empty-string
-    :documentation "The channel the message was sent from, the sender's residence.")
+    :documentation "The channel the message was sent from, by default the sender's residence.")
    (target
     :initarg       :target
     :reader        world-delivery-target
@@ -211,7 +211,7 @@ whether to write."
 
 (-> world-inbox-append (configuration string list) null)
 (defun world-inbox-append (configuration channel-identifier deliveries)
-  "Add DELIVERIES to channel CHANNEL-IDENTIFIER's inbox, ignoring repeated identifiers."
+  "Add DELIVERIES to channel CHANNEL-IDENTIFIER's inbox, ignoring identifiers already present in that inbox."
   (world-inbox--transact
    configuration channel-identifier
    (lambda (current)
@@ -221,7 +221,7 @@ whether to write."
                              deliveries)))
        (when (> (+ (length current) (length added)) *world-inbox-limit*)
          (error 'world-error
-                :message    (format nil "Channel ~A's inbox holds ~D undelivered messages; nobody is reading it."
+                :message    (format nil "Channel ~A's inbox holds ~D undelivered messages; the new deliveries would exceed its limit."
                                     (conversation-identifier-display channel-identifier)
                                     (length current))
                 :pathname   (world-inbox-pathname configuration channel-identifier)
@@ -272,7 +272,7 @@ whether to write."
 ;;; before any inbox is written. Each copy leaves the record once it is in
 ;;; its inbox, and the record goes once every copy is. A copy an inbox
 ;;; refused, or a crash between two inboxes, leaves the record to be resumed
-;;; under the same identifier, which the inboxes deduplicate.
+;;; under the same identifier, which inboxes use to reject copies they still hold.
 
 (-> world-outbox-pathname (configuration string) pathname)
 (defun world-outbox-pathname (configuration identifier)
@@ -353,7 +353,7 @@ whether to write."
 
 (-> world-outbox-identifiers (configuration) list)
 (defun world-outbox-identifiers (configuration)
-  "Return the identifiers of the sends with copies still to deliver."
+  "Return the send identifiers with outbox snapshot files."
   (let ((directory (merge-pathnames "world/outbox/" (config :data-root configuration))))
     (if (uiop:directory-exists-p directory)
         (mapcar #'pathname-name (uiop:directory-files directory "*.sexp"))
@@ -376,9 +376,9 @@ whether to write."
 (defun world-message--deliver (configuration identifier pairs)
   "Put each copy of send IDENTIFIER in PAIRS into its inbox, leaving refused ones in the outbox.
 
-Return the channels that received their copy and (CHANNEL-ID . CONDITION)
-pairs for the inboxes that refused one. An inbox that holds the copy
-already keeps the one it has."
+Return the channels whose inbox append and outbox update completed, and
+(CHANNEL-ID . CONDITION) pairs for attempts that raised WORLD-ERROR.
+An inbox that holds the copy already keeps the one it has."
   (let ((delivered nil)
         (refused   nil))
     (dolist (pair pairs)
@@ -494,9 +494,9 @@ when no such agent is left."
 (defun world-mention-boundary-p (text at)
   "Return true when the @ at index AT of TEXT begins a mention rather than continuing a word.
 
-A mention starts the text or follows a character that no word, address or
-path continues into. Letters, digits and the characters of an email address
-or a path before the @ make it part of that token, as in alice@bob.com."
+A mention starts the text or follows a character other than a letter,
+digit, period, hyphen, underscore, plus sign, slash or backslash.
+For example, alice@bob.com is not a mention."
   (or (zerop at)
       (let ((before (char text (1- at))))
         (not (or (alphanumericp before)
@@ -515,8 +515,9 @@ or a path before the @ make it part of that token, as in alice@bob.com."
 (defun world-message-mentions (world text &key sender)
   "Return the identifiers of the participants TEXT mentions as @name or @identifier.
 
-An @ inside a word or an address, as in alice@bob.com, mentions nobody. With
-SENDER, @parent mentions the participant its message to its parent reaches."
+An @ immediately after a letter or digit, as in alice@bob.com, mentions
+nobody. With SENDER, @parent mentions the participant its message to its
+parent reaches."
   (let ((mentions nil) (start 0))
     (loop
       (let ((at (position #\@ text :start start)))
@@ -557,16 +558,16 @@ SENDER, @parent mentions the participant its message to its parent reaches."
                                       (subscribers-p post-p) source)
   "Return the deliveries one message from SENDER to CHANNEL produces, as (CHANNEL-ID . DELIVERY) pairs.
 
-The channel itself gets a post for its residents. Each subscriber and each
-mentioned participant residing elsewhere gets a copy in its residence channel,
-one per channel, subscriptions before mentions, except that a notice for the
-person replaces a subscription copy, so the person always sees the message
-in full; a parked agent resides nowhere and gets none. Without POST-P the channel
-gets nothing: the message was said there already. SUBSCRIBERS-P, which
-follows POST-P unless given, says whether its subscribers still hear of it,
-as they do of every ordinary message said in the channel. SOURCE is the
-channel the message was said from, the sender's residence unless given: the
-person resides in the inbox but speaks in the channel on screen."
+The channel itself gets a post for its residents. Except for the sender, each
+subscriber and each mentioned participant residing elsewhere gets a copy in its
+residence channel, one per channel, subscriptions before mentions, except that a
+notice for the person replaces a subscription copy, so the person always sees the
+message in full; a parked agent resides nowhere and gets none. Without POST-P the
+channel gets nothing: the message was said there already. SUBSCRIBERS-P, which
+follows POST-P unless given, says whether its subscribers still hear of it, as they
+do of every ordinary message said in the channel. SOURCE is the channel the message
+was said from, the sender's residence unless given: the person resides in the inbox
+but speaks in the channel on screen."
   (let ((target  (channel-identifier channel))
         (pairs   nil)
         (covered (if post-p nil (list (channel-identifier channel)))))
@@ -669,13 +670,14 @@ count."
   "Send TEXT from participant SENDER to channel CHANNEL and return what happened.
 
 MENTIONS are explicit participant designators added to the @mentions found in
-TEXT. Without POST-P only the mentioned participants residing elsewhere are
-told. SOURCE names the channel it was said from, as in `world-message-plan'. The send is recorded before any inbox is written, so a copy an inbox
-refuses, or one a crash skips, is delivered later under the same identifier.
-The result is a plist of :id, :channels (every inbox written), :pending (the
-channels whose inbox refused its copy for now), :parked (the names of the
-mentioned agents that are parked and so got no copy) and :notified (the
-channels whose serving process was reached)."
+TEXT. Without POST-P the channel itself gets no copy; SUBSCRIBERS-P, which defaults
+to POST-P, controls subscriber copies. SOURCE names the channel it was said from, as
+in `world-message-plan'. The send is recorded before any inbox is written, so a copy
+an inbox refuses, or one a crash skips, is delivered later under the same identifier.
+The result is a plist of :id, :channels (channels whose delivery attempt completed),
+:pending (channels whose attempt raised WORLD-ERROR), :parked (the names of the
+mentioned agents that are parked and so got no copy) and :notified (the channels
+whose serving process was reached)."
   (world-message-resume configuration :notify-p notify-p)
   (let* ((world       (world-load configuration))
          (participant (or (world-participant-find world sender)
@@ -729,7 +731,7 @@ channels whose serving process was reached)."
     (configuration &key (:channel string) (:conversation conversation) (:taken hash-table))
     list)
 (defun world-inbox-steering-take (configuration &key channel conversation taken)
-  "Return CHANNEL's unread messages for CONVERSATION as labeled steering input.
+  "Return CHANNEL's unread messages, except :NOTICE deliveries, for CONVERSATION as labeled steering input.
 
 TAKEN remembers what this process took, so each message is taken once.
 Deliveries CONVERSATION already recorded are settled on the way."
