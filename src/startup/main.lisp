@@ -1031,7 +1031,9 @@ state, including an empty list after successful or pristine startup."
                             :permission-mode permission-mode
                             :immutable-p     immutable-p
                             :pristine-p      pristine-p
-                            :conversation-id effective-resume-id)
+                            :conversation-id effective-resume-id
+                            :launch          (main--launch-options
+                                              command :permission-mode permission-mode))
       (return-from main--start-session nil))
     (when (and (string-equal (software-type) "Linux")
                (not (application--command-sandbox-available-p)))
@@ -1150,15 +1152,16 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
                         (:conversation-id (option string))
                         (:resume-command-p boolean)
                         (:recovery-diagnosis (option string))
-                        (:launch list))
-    (values (option string) boolean))
+                        (:launch list)
+                        (:new-p boolean))
+    (values string boolean))
 (defun main--open-world-channel
     (configuration &key (permission-mode ':ask) immutable-p pristine-p conversation-id
-                        resume-command-p recovery-diagnosis launch)
+                        resume-command-p recovery-diagnosis launch new-p)
   "Open this terminal's channel in the world server and return its session identifier.
 
 CONVERSATION-ID opens that channel; otherwise the launch directory selects
-or creates one. The second value says whether the server started the channel
+or creates one, and NEW-P creates one. The second value says whether the server started the channel
 for this terminal. Only the world server runs a channel's agent, so a server
 that refuses the open, or cannot be started or reached, ends the start with
 the reason; no session runs in this terminal's own process instead."
@@ -1171,7 +1174,8 @@ the reason; no session runs in this terminal's own process instead."
                          :pristine-p         pristine-p
                          :resume-command-p   resume-command-p
                          :recovery-diagnosis recovery-diagnosis
-                         :launch             launch)
+                         :launch             launch
+                         :new-p              new-p)
     (error (condition)
       (when (main--world-refusal-p condition)
         (error condition))
