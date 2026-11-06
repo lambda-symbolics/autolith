@@ -78,16 +78,15 @@
                    (format nil "~A ~A" (application-command-name command) input)))))
         (application-operation--command-invocation command invocation)))))
 
-(-> acp-extension-operations (acp-session hash-table) hash-table)
-(defun acp-extension-operations (session params)
+(-> acp-extension-operations (application hash-table) hash-table)
+(defun acp-extension-operations (application params)
   "Return the registered operation catalog as a JSON vector."
   (declare (ignore params))
-  (let* ((service (acp-session-service session))
-         (owner   (with-lock-held ((acp-service-lock service))
-                    (acp-service-busy-owner service)))
-         (rows    (mapcar (lambda (operation)
-                            (acp-catalog--operation-row operation (null owner) (eq owner session)))
-                          (application-operation-list (acp-session-application session)))))
+  (let* ((controller (application-input-controller application))
+         (busy-p     (and controller (application-input-controller-busy-p controller)))
+         (rows       (mapcar (lambda (operation)
+                               (acp-catalog--operation-row operation (not busy-p) busy-p))
+                             (application-operation-list application))))
     (agentcomms:json-object "items" (coerce rows 'vector))))
 
 (-> acp-catalog--invoke-presented
@@ -101,90 +100,49 @@
         (format nil "~{~A~^~%~}" (nreverse *application-command-presentation-text*))
         result)))
 
-(-> acp-catalog--invoke-idle (acp-session application-operation t) hash-table)
-(defun acp-catalog--invoke-idle (session operation arguments)
-  "Invoke OPERATION while this request owns ACP primary admission."
-  (let* ((application                  (acp-session-application session))
-         (*acp-extension-invocation-p* t)
-         (context                      (and (typep operation 'application-tool-operation)
-                                            (acp-extension-tool-context session)))
-         (outcome                      ':condition)
-         (claimed-p                    nil))
-    (unwind-protect
-         (handler-case
-             (progn
-               (with-lock-held ((acp-session-lock session))
-                 (incf (acp-session-epoch session))
-                 (setf (acp-session-cancelled-p session) nil
-                       (acp-session-prompt-thread session) (current-thread)
-                       (acp-session-prompt-interruptible-p session) t
-                       (gethash (current-thread) (acp-session-tool-threads session))
-                       (acp-session-epoch session)
-                       claimed-p t))
-               (acp-extension-turn-notify session "running" :source "invoke")
-               (acp-session-check-cancelled session)
-               (let ((text (acp-catalog--invoke-presented
-                            operation application arguments :context context)))
-                (when context
-                  (acp-session--call-with-finalization
-                   session
-                   (lambda ()
-                     (acp-session-check-cancelled session)
-                     (acp-observer-flush (tool-context-observer context)))))
-                (setf outcome ':end-turn)
-                (agentcomms:json-object "text" text)))
-           (application-turn-cancelled (condition)
-             (setf outcome ':cancelled)
-             (error condition)))
-      (when claimed-p
-        (when context
-          (acp-session--call-with-finalization
-           session
-           (lambda ()
-             (unless (eq outcome ':end-turn)
-               (handler-case (acp-observer-flush (tool-context-observer context))
-                 (serious-condition () nil))))))
-        (with-lock-held ((acp-session-lock session))
-          (setf (acp-session-prompt-thread session) nil
-                (acp-session-prompt-interruptible-p session) nil))
-        (acp-extension-turn-notify session "idle" :source "invoke" :outcome outcome)
-        (acp-extension-notify session "state")
-        (acp-completion-wake session)))))
+(-> acp-catalog--invoke-idle (application application-operation t) hash-table)
+(defun acp-catalog--invoke-idle (application operation arguments)
+  "Invoke OPERATION as one of the channel's work items, so it never overlaps a turn."
+  (application-clients-call-as-work
+   application
+   (lambda ()
+     (agentcomms:json-object
+      "text" (acp-catalog--invoke-presented
+              operation application arguments
+              :context (and (typep operation 'application-tool-operation)
+                            (application-tool-context application)))))))
 
 (-> acp-catalog--invoke-active
-    (acp-session application-command-operation application-command-invocation) hash-table)
-(defun acp-catalog--invoke-active (session operation arguments)
-  "Honor a command's native active-turn policy without claiming another prompt."
-  (let ((application (acp-session-application session)))
-    (case (application-operation-active-turn-action operation arguments)
-      (:execute
+    (application application-command-operation application-command-invocation) hash-table)
+(defun acp-catalog--invoke-active (application operation arguments)
+  "Honor a command's native active-turn policy while the channel works."
+  (case (application-operation-active-turn-action operation arguments)
+    (:execute
+     (agentcomms:json-object
+      "text" (acp-catalog--invoke-presented operation application arguments)))
+    (:apply
+     (let ((controller                                   (application-input-controller application))
+           (invocation                                   (application-operation--command-invocation
+                                                          (application-operation-backend operation) arguments))
+           (*application-command-presentation-capture-p* t)
+           (*application-command-presentation-text*      nil))
+       (unless controller (error 'acp-operation-busy))
+       (application-input-controller--schedule-apply
+        controller (application-command-invocation-input invocation))
        (agentcomms:json-object
-        "text" (acp-catalog--invoke-presented operation application arguments)))
-      (:apply
-       (let ((controller                                   (application-input-controller application))
-             (invocation                                   (application-operation--command-invocation
-                                                            (application-operation-backend operation) arguments))
-             (*application-command-presentation-capture-p* t)
-             (*application-command-presentation-text*      nil))
-         (unless controller (error 'acp-operation-busy))
-         (application-input-controller--schedule-apply
-          controller (application-command-invocation-input invocation))
-         (acp-completion-wake session)
-         (agentcomms:json-object
-          "text" (format nil "~{~A~^~%~}" (nreverse *application-command-presentation-text*))
-          "delivery" "scheduled")))
-      (otherwise
-       (error 'acp-operation-busy)))))
+        "text" (format nil "~{~A~^~%~}" (nreverse *application-command-presentation-text*))
+        "delivery" "scheduled")))
+    (otherwise
+     (error 'acp-operation-busy))))
 
-(-> acp-extension-invoke (acp-session hash-table) hash-table)
-(defun acp-extension-invoke (session params)
+(-> acp-extension-invoke (application hash-table) hash-table)
+(defun acp-extension-invoke (application params)
   "Invoke an ordinary operation with native terminal and active-turn admission."
-  (let* ((application (acp-session-application session))
-         (name        (agentcomms:acp-field params "operation" :type ':string :required-p t))
-         (arguments   (or (agentcomms:acp-field params "arguments" :type ':object)
-                          (agentcomms:json-object)))
-         (operation   (application-operation-find application name))
-         (service     (acp-session-service session)))
+  (let* ((name       (agentcomms:acp-field params "operation" :type ':string :required-p t))
+         (arguments  (or (agentcomms:acp-field params "arguments" :type ':object)
+                         (agentcomms:json-object)))
+         (operation  (application-operation-find application name))
+         (controller (application-input-controller application)))
     (unless (and operation (acp-catalog--operation-admitted-p operation))
       (error 'acp-extension-unavailable
              :reason "This operation requires terminal ownership or has no headless adapter."))
@@ -192,14 +150,14 @@
            (decoded   (if command-p
                           (acp-catalog--command-invocation
                            (application-operation-backend operation) arguments)
-                          arguments))
-           (owner     (with-lock-held ((acp-service-lock service))
-                        (acp-service-busy-owner service))))
+                          arguments)))
       (unless (acp-catalog--operation-admitted-p operation decoded)
         (error 'acp-extension-unavailable
                :reason "This operation requires terminal ownership or has no headless adapter."))
-      (if (and command-p (eq owner session))
-          (acp-catalog--invoke-active session operation decoded)
-          (acp-service--call-with-operation
-           service session
-           (lambda () (acp-catalog--invoke-idle session operation decoded)))))))
+      (cond
+        ((not (and controller (application-input-controller-busy-p controller)))
+         (acp-catalog--invoke-idle application operation decoded))
+        (command-p
+         (acp-catalog--invoke-active application operation decoded))
+        (t
+         (error 'acp-operation-busy))))))

@@ -721,12 +721,7 @@
   test-idle-compaction-controller
   test-idle-compaction-input-races
   test-idle-compaction-failure
-  test-idle-compaction-deadline-wakeup
-  test-acp-idle-compaction-publishes-and-consumes
-  test-acp-idle-compaction-prioritizes-input-and-close
-  test-acp-idle-compaction-failure-cleans-state
-  test-acp-idle-compaction-schedules-before-future-notice
-  test-acp-idle-compaction-cancellation)
+  test-idle-compaction-deadline-wakeup)
 
 (define-test-suite permissions
     test-command-permission-persistence
@@ -1665,8 +1660,7 @@
   test-pending-native-work-finite-and-legacy
   test-pending-native-work-lifecycle
   test-pending-native-work-vault
-  test-pending-native-work-identities
-  test-acp-input-validate-storage-native-work)
+  test-pending-native-work-identities)
 
 (define-test-suite mission-inference
   test-mission-child-bounded-unknown-length-continuation
@@ -1835,27 +1829,17 @@
   test-check-process-lifecycle)
 
 (define-test-suite acp
-  test-acp-observer-streams-one-response
-  test-acp-observer-permission-validates-offered-choice
-  test-acp-observer-forwards-serialized-tool-execution
   test-acp-observer-tool-title-previews
-  test-acp-observer-batches-thoughts-before-permission
-  test-acp-observer-skips-empty-message-text
-  test-acp-external-tool-permission-modes
   test-acp-session-wire-new-prompt-replay-close
-  test-acp-session-busy-admission-is-owner-safe
   test-acp-session-cancel-blocked-provider-and-reuse
   test-acp-session-cwd-mode-and-unsupported-content
   test-acp-session-disconnect-releases-lease
   test-acp-session-live-and-replayed-tool-identities
   test-acp-session-replay-metadata-and-tool-statuses
-  test-acp-session-close-timeout-retains-ownership
-  test-acp-session-delayed-cancel-during-finalization
   test-acp-session-flushes-thoughts-on-prompt-exit
   test-acp-extension-portable-values
   test-acp-extension-wire-state-and-authority
-  test-acp-extension-busy-and-notification-order
-  test-acp-extension-close-active-handler
+  test-acp-extension-notification-order
   test-acp-extension-shutdown-admission
   test-acp-extension-settings-types-and-mutation
   test-acp-extension-model-verification
@@ -1868,17 +1852,6 @@
   test-acp-extension-job-durable-fallback
   test-acp-extension-resource-windows
   test-acp-extension-resource-authorization
-  test-acp-completion-continues-and-closes
-  test-acp-completion-cancel-and-reuse
-  test-acp-completion-start-failure-cleans-session
-  test-acp-completion-failure-pauses
-  test-acp-input-extension-rejects-blank
-  test-acp-input-extension-queue-fifo
-  test-acp-input-extension-steers-active-turn
-  test-acp-input-extension-late-steer-promotes-before-fifo
-  test-acp-input-extension-length-and-shape-validation
-  test-acp-input-failure-and-cold-recovery
-  test-acp-input-wire-cancel-and-resume
   test-acp-mcp-overlay-configuration
   test-acp-mcp-overlay-discovery-call-and-cleanup
   test-acp-mcp-overlay-duplicate-validation)

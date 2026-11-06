@@ -668,6 +668,12 @@ The caller waits for the host to publish its endpoint."
               (host          (world-server--find-host server identifier)))
          (if host
              (progn
+               (when (getf arguments :mcp-servers)
+                 (error 'world-error
+                        :message    (format nil "Channel ~A is already running, so its tools cannot take the editor's MCP servers. Open it without them, or close it elsewhere first."
+                                            (conversation-identifier-display identifier))
+                        :operation  ':open
+                        :identifier identifier))
                (world-server--reconcile-launch server host (getf arguments :launch))
                (values host nil))
              (values (world-server--start-host
@@ -749,15 +755,17 @@ person's inbox is never a candidate: it is opened only by name."
 (defun world-server--latest-host (server workspace arguments)
   "Return the host of WORKSPACE's latest touched free channel, and whether it was started now.
 
-A hosted channel serves when no client controls it and the launch options of
-ARGUMENTS can apply to it; an unhosted one starts when its conversation is
-free. Return NIL when no channel qualifies."
+A hosted channel serves when no client controls it, the launch options of
+ARGUMENTS can apply to it and they bring no MCP servers its tools would need;
+an unhosted one starts when its conversation is free. Return NIL when no
+channel qualifies."
   (let ((launch (getf arguments :launch)))
     (dolist (candidate (world-server--latest-candidates server workspace) (values nil nil))
       (destructuring-bind (identifier . host) candidate
         (cond
           (host
            (unless (or (world-host-attached-p host)
+                       (getf arguments :mcp-servers)
                        (world-server--launch-conflict host launch))
              (world-server--reconcile-launch server host launch)
              (return (values host nil))))
@@ -864,7 +872,8 @@ no turn or job is running. A request for the current mode needs no change."
   "Build the application of CONVERSATION-ID, or a new one, in DIRECTORY and serve it.
 
 ARGUMENTS carry the opening client's choices, among them the :LAUNCH options
-it stated explicitly, which the new channel takes. The host is listed before
+it stated explicitly, which the new channel takes, and an editor's
+:MCP-SERVERS, which its tools include. The host is listed before
 its thread starts, so a second open of the same channel waits for it, and is
 forgotten again when no thread could start."
   (let ((launch (getf arguments :launch)))
@@ -897,7 +906,13 @@ forgotten again when no thread could start."
                          :mutation-replay-failures (world-server-mutation-replay-failures server)
                          :relay-presentation       (list :rows     (getf arguments :rows)
                                                          :columns  (getf arguments :columns)
-                                                         :styled-p (getf arguments :styled-p))))
+                                                         :styled-p (getf arguments :styled-p))
+                         :tool-registry-function   (let ((servers (getf arguments :mcp-servers)))
+                                                     (when servers
+                                                       (lambda (configuration)
+                                                         (acp-mcp-create-tool-registry
+                                                          configuration
+                                                          (coerce (client-json servers) 'list)))))))
          (host          (make-instance 'world-host :application application)))
     (setf (application-world-server application) server)
     (with-lock-held ((world-server-lock server))
@@ -1067,7 +1082,9 @@ another thread with RESUME-P, RECONNECT-ID for its clients and NOTICE."
 
 (-> world-server--release-host (world-server world-host) null)
 (defun world-server--release-host (server host)
-  "Forget HOST after its session ended and wake whoever waits for it."
+  "Forget HOST after its session ended, drop the editor credentials its MCP servers held, and wake whoever waits for it."
+  (acp-mcp-release-credentials
+   (mcp-tool-registry-manager (application-tool-registry (world-host-application host))))
   (with-lock-held ((world-server-lock server))
     (setf (world-server-hosts server) (remove host (world-server-hosts server)))
     (unless (or (world-host-ready-p host) (world-host-failure host))

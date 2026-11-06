@@ -5,34 +5,34 @@
 (defparameter *acp-extension-job-transcript-limit* 65536
   "Maximum characters returned by one job transcript request.")
 
-(-> acp-extension--job-orchestrator (acp-session) task-orchestrator)
-(defun acp-extension--job-orchestrator (session)
+(-> acp-extension--job-orchestrator (application) task-orchestrator)
+(defun acp-extension--job-orchestrator (application)
   "Return SESSION's task orchestrator."
-  (or (application--task-orchestrator (acp-session-application session))
+  (or (application--task-orchestrator application)
       (error 'acp-extension-unavailable :reason "The task runtime is unavailable.")))
 
-(-> acp-extension--job-viewer (acp-session) agent)
-(defun acp-extension--job-viewer (session)
+(-> acp-extension--job-viewer (application) agent)
+(defun acp-extension--job-viewer (application)
   "Return the application agent that owns SESSION's visible job view."
-  (application-agent (acp-session-application session)))
+  (application-agent application))
 
-(-> acp-extension--live-job (acp-session string string) (or session-job list))
-(defun acp-extension--live-job (session identifier tool-name)
+(-> acp-extension--live-job (application string string) (or session-job list))
+(defun acp-extension--live-job (application identifier tool-name)
   "Return owned live IDENTIFIER, or NIL when it has completed durably."
-  (let ((viewer (acp-extension--job-viewer session)))
+  (let ((viewer (acp-extension--job-viewer application)))
     (or (find identifier
               (task-orchestrator-list-visible-jobs
-               (acp-extension--job-orchestrator session) viewer)
+               (acp-extension--job-orchestrator application) viewer)
               :key #'session-job-identifier :test #'string=)
         (multiple-value-bind (record path)
             (task--durable-job-result viewer identifier tool-name)
           (declare (ignore path))
           (and record (list :durable record))))))
 
-(-> acp-extension--find-job (acp-session string string) (or session-job list))
-(defun acp-extension--find-job (session identifier tool-name)
+(-> acp-extension--find-job (application string string) (or session-job list))
+(defun acp-extension--find-job (application identifier tool-name)
   "Find IDENTIFIER only when it is owned by SESSION's application agent."
-  (or (acp-extension--live-job session identifier tool-name)
+  (or (acp-extension--live-job application identifier tool-name)
       (error 'task-error :message (format nil "No visible job named ~A exists." identifier)
              :tool-name tool-name :task-id identifier)))
 
@@ -112,8 +112,8 @@
    "artifacts" (acp-extension--job-artifacts record)
    "activity" ':null))
 
-(-> acp-extension-jobs (acp-session hash-table) hash-table)
-(defun acp-extension-jobs (session params)
+(-> acp-extension-jobs (application hash-table) hash-table)
+(defun acp-extension-jobs (application params)
   "Return owned jobs in stable order with bounded offset paging."
   (let* ((cursor (agentcomms:acp-field params "cursor" :type ':string))
          (offset (if cursor
@@ -126,25 +126,25 @@
     (unless (and (<= 0 offset) (<= 1 limit 200))
       (agentcomms:acp-invalid-params "Invalid jobs page bounds."))
     (let* ((jobs  (sort (copy-list (task-orchestrator-list-visible-jobs
-                                    (acp-extension--job-orchestrator session)
-                                    (acp-extension--job-viewer session))) #'< :key #'session-job-order))
+                                    (acp-extension--job-orchestrator application)
+                                    (acp-extension--job-viewer application))) #'< :key #'session-job-order))
            (start (min offset (length jobs)))
            (end   (min (+ start limit) (length jobs))))
       (agentcomms:json-object
        "items" (map 'vector #'acp-extension--job-row (subseq jobs start end))
        "nextCursor" (if (< end (length jobs)) (princ-to-string end) ':null)))))
 
-(-> acp-extension-job (acp-session hash-table) hash-table)
-(defun acp-extension-job (session params)
+(-> acp-extension-job (application hash-table) hash-table)
+(defun acp-extension-job (application params)
   "Return one owned job row selected by JOB-ID."
   (let* ((identifier (agentcomms:acp-field params "jobId" :type ':string :required-p t))
-         (found      (acp-extension--find-job session identifier "_autolith/job")))
+         (found      (acp-extension--find-job application identifier "_autolith/job")))
     (if (and (consp found) (eq (first found) :durable))
         (acp-extension--durable-row identifier (second found))
         (acp-extension--job-row found))))
 
-(-> acp-extension--job-transcript-path (acp-session t) (option pathname))
-(defun acp-extension--job-transcript-path (session job)
+(-> acp-extension--job-transcript-path (application t) (option pathname))
+(defun acp-extension--job-transcript-path (application job)
   "Return the owned child's durable transcript identity, including during execution."
   (let* ((record (if (consp job) (second job) (getf (session-job-snapshot job) :result)))
          (path   (or (getf record :conversation-file)
@@ -152,7 +152,7 @@
                        (merge-pathnames
                         (make-pathname :name (task-job-execution-identifier job) :type "sexp")
                         (task--artifact-root
-                         (application-configuration (acp-session-application session)) job))))))
+                         (application-configuration application) job))))))
     (when (and path (conversation-storage-occupied-p (pathname path)))
       (pathname path))))
 
@@ -163,10 +163,10 @@
   "Maximum UTF-8 bytes in a structured job transcript's typed response envelope.")
 
 (-> acp-extension--job-structured-window
-    (acp-session t &key (:offset integer) (:limit integer)) hash-table)
-(defun acp-extension--job-structured-window (session job &key offset limit)
+    (application t &key (:offset integer) (:limit integer)) hash-table)
+(defun acp-extension--job-structured-window (application job &key offset limit)
   "Return a bounded page of standard ACP updates from JOB's durable transcript."
-  (let ((path    (acp-extension--job-transcript-path session job))
+  (let ((path    (acp-extension--job-transcript-path application job))
         (updates nil))
     (when path
       (acp-replay-map-updates (conversation-load path)
@@ -207,10 +207,10 @@
          "total" total
          "complete" (if complete t (argo:json-false)))))))
 
-(-> acp-extension--job-window (acp-session t &key (:offset integer) (:limit integer)) hash-table)
-(defun acp-extension--job-window (session job &key offset limit)
+(-> acp-extension--job-window (application t &key (:offset integer) (:limit integer)) hash-table)
+(defun acp-extension--job-window (application job &key offset limit)
   "Render readable records while retaining only the requested character range."
-  (let ((path   (acp-extension--job-transcript-path session job))
+  (let ((path   (acp-extension--job-transcript-path application job))
         (total  0)
         (stream (make-string-output-stream)))
     (labels ((emit (text)
@@ -253,12 +253,12 @@
       (agentcomms:json-object "content" content "offset" start "nextOffset" next
                               "total" total "complete" (if (= next total) t (argo:json-false))))))
 
-(-> acp-extension-job-transcript (acp-session hash-table) hash-table)
-(defun acp-extension-job-transcript (session params)
+(-> acp-extension-job-transcript (application hash-table) hash-table)
+(defun acp-extension-job-transcript (application params)
   "Return a bounded text or structured window from an owned child transcript."
   (let* ((identifier   (agentcomms:acp-field params "jobId" :type ':string :required-p t))
          (output       (or (agentcomms:acp-field params "output" :type ':string) "text"))
-         (job          (acp-extension--find-job session identifier "_autolith/job-transcript"))
+         (job          (acp-extension--find-job application identifier "_autolith/job-transcript"))
          (structured-p (cond ((string= output "text")
                               nil)
                              ((string= output "structured")
@@ -271,30 +271,30 @@
               (limit  (or (agentcomms:acp-field params "limit" :type ':integer) 100)))
           (unless (and (<= 0 offset) (<= 1 limit *acp-extension-job-structured-limit*))
             (agentcomms:acp-invalid-params "Invalid structured transcript window."))
-          (acp-extension--job-structured-window session job :offset offset :limit limit))
+          (acp-extension--job-structured-window application job :offset offset :limit limit))
         (let ((offset (or (agentcomms:acp-field params "offset" :type ':integer) 0))
               (limit  (or (agentcomms:acp-field params "limit" :type ':integer) 4096)))
           (unless (and (<= 0 offset) (<= 1 limit *acp-extension-job-transcript-limit*))
             (agentcomms:acp-invalid-params "Invalid transcript window."))
-          (acp-extension--job-window session job :offset offset :limit limit)))))
+          (acp-extension--job-window application job :offset offset :limit limit)))))
 
-(-> acp-extension-job-send (acp-session hash-table) hash-table)
-(defun acp-extension-job-send (session params)
+(-> acp-extension-job-send (application hash-table) hash-table)
+(defun acp-extension-job-send (application params)
   "Queue owned child steering text and return its admission status."
   (let* ((identifier (agentcomms:acp-field params "jobId" :type ':string :required-p t))
          (text       (agentcomms:acp-field params "text" :type ':string :required-p t))
-         (job        (acp-extension--find-job session identifier "_autolith/job-send")))
+         (job        (acp-extension--find-job application identifier "_autolith/job-send")))
     (unless (typep job 'task-job)
       (error 'acp-extension-unavailable :reason "Only child jobs accept steering."))
     (multiple-value-bind (entry reason) (task-job-enqueue-steering job text)
       (agentcomms:json-object "accepted" (if entry t (argo:json-false))
                               "reason" (string-downcase (symbol-name reason))))))
 
-(-> acp-extension-job-cancel (acp-session hash-table) hash-table)
-(defun acp-extension-job-cancel (session params)
+(-> acp-extension-job-cancel (application hash-table) hash-table)
+(defun acp-extension-job-cancel (application params)
   "Cancel an owned job and its retained descendants."
   (let* ((identifier (agentcomms:acp-field params "jobId" :type ':string :required-p t))
-         (job        (acp-extension--find-job session identifier "_autolith/job-cancel")))
+         (job        (acp-extension--find-job application identifier "_autolith/job-cancel")))
     (unless (typep job 'session-job)
       (error 'acp-extension-unavailable :reason "Only live jobs can be cancelled."))
     (multiple-value-bind (accepted descendants) (session-job-cancel job ':user)
