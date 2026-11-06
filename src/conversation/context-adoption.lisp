@@ -45,8 +45,9 @@ from it. Return the sequenced record."
       (conversation-compaction--check-correlations conversation (rest record) projection)
       (sb-sys:without-interrupts
         (let ((published (conversation-append-record conversation record)))
-          (setf (slot-value conversation 'projection) projection
-                (conversation-last-total-tokens conversation) 0)
+          (setf (slot-value conversation 'projection)      projection
+                (conversation-adopted-participant conversation) participant
+                (conversation-last-total-tokens conversation)   0)
           published)))))
 
 (defmethod conversation--project-record
@@ -62,6 +63,7 @@ from it. Return the sequenced record."
     (conversation-compaction--append-rows conversation properties projection
                                           :rows (getf properties :rows))
     (conversation-compaction--check-correlations conversation properties projection)
-    (setf (slot-value conversation 'projection) projection
-          (conversation-last-total-tokens conversation) 0))
+    (setf (slot-value conversation 'projection)      projection
+          (conversation-adopted-participant conversation) (getf properties :participant)
+          (conversation-last-total-tokens conversation)   0))
   nil)

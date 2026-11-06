@@ -6,14 +6,22 @@
     (application list &key (:ignore-reservations-p boolean)) boolean)
 (defun application-job-completions--notice-admissible-p
     (application notice &key ignore-reservations-p)
-  "Require exact ownership and unspent authority, optionally ignoring temporary reservations."
-  (let* ((goal       (application-goal application))
-         (mission-id (getf notice :mission-id)))
+  "Require the notice's exact conversation and agent, and unspent authority, optionally ignoring temporary reservations.
+
+Only the agent that started a job continues from it, and only while it still
+resides in the channel: a job outliving its agent's move or park leaves its
+outcome in the channel's history without waking anyone."
+  (let* ((goal         (application-goal application))
+         (mission-id   (getf notice :mission-id))
+         (conversation (application-conversation application)))
     (not
      (null
       (and (equal (getf notice :owner-conversation)
-                  (conversation-identifier (application-conversation application)))
+                  (conversation-identifier conversation))
+           (equal (getf notice :owner-participant)
+                  (conversation-adopted-participant conversation))
            (eq (getf notice :completion-policy) ':continue)
+           (application-world-agent-present-p application)
            (cond
              (mission-id
               (and (mission-goal-p goal)
@@ -55,6 +63,7 @@ wakeup, no completion turn is expected."
                (some (lambda (job)
                        (admissible-p
                         (list :owner-conversation (session-job-completion-owner-conversation job)
+                              :owner-participant  (session-job-completion-owner-participant job)
                               :completion-policy  (session-job-completion-policy job)
                               :mission-id         (session-job-completion-mission-id job))))
                      (task-completion-awaited-jobs agent)))
@@ -111,6 +120,7 @@ completion dispatch. Both tool executions and child tasks use this job registry.
            (application-job-completions--notice-admissible-p
             application
             (list :owner-conversation (session-job-completion-owner-conversation job)
+                  :owner-participant  (session-job-completion-owner-participant job)
                   :completion-policy  (session-job-completion-policy job)
                   :mission-id         (session-job-completion-mission-id job))))
          (task-completion-awaited-jobs agent))
