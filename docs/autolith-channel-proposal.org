@@ -107,10 +107,19 @@ Client
     idle until the person writes there (as the channel's only agent, a plain
     message is addressed to it) or someone mentions it from another channel.
     (Decided 2026-11-04.)
+  - Moves and dismissals run one at a time across processes. The agent's
+    context and goal are written to disk, with their destination, before the
+    world records the move. A failure before that point changes nothing. After
+    it, the move stands, and the destination takes the context up exactly once,
+    when it next opens or before the agent's next turn there.
+  - A child agent whose task still runs in its parent's task pool cannot be
+    moved or dismissed until the task ends. An agent whose channel another
+    Autolith process holds open cannot be moved or dismissed either.
   - A channel with no resident agent, because its agent left or was parked,
     keeps its history, the person and its subscribers. Opening it offers two
     things: move an agent in, or create a new domestic agent for it.
-    (Decided 2026-11-04.)
+    (Decided 2026-11-04.) Until one arrives, no agent turn runs there: no
+    message, mission wakeup or job completion starts one.
   - Dismissing an agent parks it: it is stopped the way a move stops it and
     then resides in no channel. A parked, homeless agent keeps its identity,
     its children and the context it carries, and a move brings it into a
@@ -134,13 +143,18 @@ Client
   - These belong to humans and agents alike and follow the participant when moved.
   - Context is private working material, subject to compaction, rather than simply
     the history of the currently displayed channel.
-  - A moved agent keeps its context window until the world server restarts: its
-    requests in the destination continue from its previous channel's history up
-    to the move, then the destination's records from the move on, with a
-    request-local notice of the move. The destination's earlier history is not
-    pushed into its context; it reads it through the channel resource. After a
-    restart the agent starts from the destination's own history. (Decided
-    2026-11-04.)
+  - A moved agent keeps its context window: its requests in the destination
+    continue from the context it brought, then the destination's records from
+    the move on, with a request-local notice of the move. The destination's
+    earlier history is not pushed into its context; it reads it through the
+    channel resource. (Decided 2026-11-04.) The destination records the context
+    it adopts, so the agent keeps it across restarts. A parked agent's context
+    waits on disk until a move brings it into a channel.
+  - An agent's goal or mission goes with it when it moves or is parked. The
+    channel it leaves keeps no goal, and a new resident there starts without
+    one. A running mission arrives paused until =(mission :resume)=. The jobs
+    the mission admitted in the channel left are cancelled, since they worked
+    for the agent's mission and not for the channel.
   - Plans and goals stay separate.
   - A new participant inherits no private state from previous channel residents.
 - Channel: CWD, history, jobs started there.
@@ -173,6 +187,9 @@ Client
   line, "@name mentioned from #channel" (the same for a subscription copy); its
   text goes only to the model's request and stays readable in the inbox and the
   channel resource. (Decided 2026-11-04.)
+- A message that mentions the person in a channel they subscribe to reaches
+  the inbox once, as the mention notice with its text, not as a subscription
+  copy.
 - Deliver human and agent messages through the same participant interface.
   - Agent clients trigger inference; human clients present the messages to the user.
   - Working agent recipient: deliver as a clearly labeled steer with sender and source channel.
@@ -203,10 +220,14 @@ Client
 - Notify the parent of completion using the same channel-bound job routing.
 - Jobs stay in their starting channel when participants move. Jobs cannot be detached
   from that channel.
-- Deliver completion to that channel's current residents, including new arrivals;
-  wake their agent clients and notify their human clients. An empty channel has no
-  resident to wake. Completion does not follow departed participants.
-- Moving or deleting a participant does not cancel channel-owned jobs.
+- Record each completion in its channel, where its residents and the channel
+  resource can read it. A completion wakes only the agent that started the job,
+  and only while that agent still resides there. A new arrival is not woken by
+  its predecessor's jobs, and a channel without an agent runs nothing.
+  Completion does not follow departed participants.
+- Moving or deleting a participant does not cancel channel-owned jobs. Jobs a
+  mission admitted belong to the mission and are cancelled when the mission
+  leaves with its agent.
 - Running jobs block deletion of their channel and state required by the operation,
   not removal of participants merely because they reside there.
 
@@ -263,9 +284,3 @@ Client
 - Channel URI addressing, bounded-history schema, and supported resource edits.
 - Exact migration fields, freshness comparison, reconciliation triggers, and removal
   of existing 1:1 session assumptions.
-- The starts that still run one channel without the world server (the pristine
-  recovery image, authentication, startup images, simulated crashes,
-  non-interactive input, =AUTOLITH_SESSION_STYLE=direct= and handoff
-  replacements): there a moved or parked agent's context survives only into
-  that process's own channel, because no world server holds it for the
-  channels the process does not serve.
