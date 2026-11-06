@@ -112,9 +112,12 @@ Client
     world records the move. A failure before that point changes nothing. After
     it, the move stands, and the destination takes the context up exactly once,
     when it next opens or before the agent's next turn there.
-  - A child agent whose task still runs in its parent's task pool cannot be
-    moved or dismissed until the task ends. An agent whose channel another
-    Autolith process holds open cannot be moved or dismissed either.
+  - Moving or dismissing a child agent whose task still runs in its parent's
+    task pool interrupts it: the task is cancelled, the parent receives that
+    result, and the child goes with the context it had. The tasks of the
+    child's own children go on. (Decided 2026-11-06.)
+  - An agent whose channel another Autolith process holds open cannot be
+    moved or dismissed.
   - A channel with no resident agent, because its agent left or was parked,
     keeps its history, the person and its subscribers. Opening it offers two
     things: move an agent in, or create a new domestic agent for it.
