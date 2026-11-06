@@ -738,10 +738,12 @@ first, then its channel's conversation on disk."
 
 (-> world-move-agent
     (configuration participant string &key (:source-application (option application))
-                                           (:destination-application (option application)))
+                                           (:destination-application (option application))
+                                           (:running-p function))
     list)
 (defun world-move-agent (configuration participant channel &key source-application
-                                                                 destination-application)
+                                                                 destination-application
+                                                                 (running-p (constantly nil)))
   "Move agent PARTICIPANT into CHANNEL, and return a plist of :source, NIL for a parked agent, :channel and :dropped.
 
 SOURCE-APPLICATION, when it serves the channel the agent leaves, stops it at
@@ -751,14 +753,16 @@ file, naming CHANNEL, before the world store moves the agent, and a failure
 before that leaves everything as it was. After it nothing is undone: CHANNEL
 adopts the kept context once, when served now, else when it is next served
 or before the agent's next turn there. Moves and parks run one at a time,
-and the store moves the agent only from where this move found it."
+and the store moves the agent only from where this move found it.
+RUNNING-P says whether a task pool runs the agent as a child; such an agent
+moves once its task ended."
   (world-call-with-transition
    configuration
    (lambda ()
      (let ((identifier (participant-identifier participant))
            (source     (participant-residence participant))
            (world      (world-load configuration)))
-       (world-agent--require-movable world participant ':move)
+       (world-agent--require-movable world participant ':move :running-p running-p)
        (when (equal source channel)
          (error 'world-error
                 :message    (format nil "~A already resides in channel ~A."
@@ -799,8 +803,10 @@ and the store moves the agent only from where this move found it."
                                                       :provider      provider))
            (list :source source :channel channel :dropped dropped)))))))
 
-(-> world-park-agent (configuration participant &key (:application (option application))) list)
-(defun world-park-agent (configuration participant &key application)
+(-> world-park-agent
+    (configuration participant &key (:application (option application)) (:running-p function))
+    list)
+(defun world-park-agent (configuration participant &key application (running-p (constantly nil)))
   "Park agent PARTICIPANT, leaving its channel without an agent, and return a plist of :channel and :dropped.
 
 APPLICATION, when it serves the channel, stops the agent at a safe boundary
@@ -809,13 +815,15 @@ and the context it carries, kept in its context file until a move brings it
 into a channel again; its children carry on untouched. The channel keeps its
 history, the person and its subscribers, and offers a move or a domestic
 agent. The context is kept before the world store parks the agent, as a
-move keeps it."
+move keeps it, and RUNNING-P refuses a child whose task runs, as a move
+refuses it."
   (world-call-with-transition
    configuration
    (lambda ()
      (let ((identifier (participant-identifier participant))
            (channel    (participant-residence participant)))
-       (world-agent--require-movable (world-load configuration) participant ':park)
+       (world-agent--require-movable (world-load configuration) participant ':park
+                                     :running-p running-p)
        (world-agent--transition
         configuration participant
         :application application
@@ -829,9 +837,12 @@ move keeps it."
              :dropped (world-agent--settle-source configuration participant channel
                                                   :application application))))))
 
-(-> world-agent--require-movable (world participant keyword) null)
-(defun world-agent--require-movable (world participant operation)
-  "Refuse OPERATION unless PARTICIPANT is an agent that still resides where the caller found it."
+(-> world-agent--require-movable (world participant keyword &key (:running-p function)) null)
+(defun world-agent--require-movable (world participant operation &key running-p)
+  "Refuse OPERATION unless PARTICIPANT is an agent that still resides where the caller found it.
+
+A child agent whose task runs, as RUNNING-P says, is refused too: its
+execution lives in its parent's task pool, which a move cannot carry."
   (let ((current (world-participant-find world (participant-identifier participant))))
     (unless (eq (participant-kind participant) ':agent)
       (error 'world-error
@@ -846,8 +857,27 @@ move keeps it."
              :pathname   nil
              :operation  operation
              :identifier (participant-identifier participant)))
-    (world--require-residence current (participant-residence participant) operation))
+    (world--require-residence current (participant-residence participant) operation)
+    (when (funcall running-p current)
+      (error 'world-error
+             :message    (format nil "Agent ~A is running a task for its parent; it moves or parks once that task ends."
+                                 (participant-name participant))
+             :pathname   nil
+             :operation  operation
+             :identifier (participant-identifier participant))))
   nil)
+
+(-> application-world-running-task-p (application (option string)) boolean)
+(defun application-world-running-task-p (application channel)
+  "Return true while APPLICATION's task pool runs the child agent of CHANNEL, whose conversation is the task's."
+  (let ((runtime (and channel (application--task-orchestrator application))))
+    (and runtime
+         (some (lambda (job)
+                 (and (typep job 'task-job)
+                      (equal (task-job-execution-identifier job) channel)
+                      (not (job-terminal-p job))))
+               (task-orchestrator-list-jobs runtime))
+         t)))
 
 (-> world-agent--transition
     (configuration participant &key (:application (option application))

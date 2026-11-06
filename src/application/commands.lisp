@@ -3171,7 +3171,10 @@ the world knows no such channel."
                (result      (world-move-agent
                              configuration participant destination
                              :source-application      (and source-p application)
-                             :destination-application (and here (string= here destination) application))))
+                             :destination-application (and here (string= here destination) application)
+                             :running-p               (lambda (candidate)
+                                                        (application-world-running-task-p
+                                                         application (participant-residence candidate))))))
           (application-present
            application
            (format nil "Agent ~A moved ~:[out of parking~;from channel ~:*~A~] to ~A~@[; ~D queued message~:P dropped~]."
@@ -3223,7 +3226,10 @@ the world knows no such channel."
                                       configuration participant
                                       :application (and here
                                                         (equal here (participant-residence participant))
-                                                        application)))))))
+                                                        application)
+                                      :running-p   (lambda (candidate)
+                                                     (application-world-running-task-p
+                                                      application (participant-residence candidate)))))))))
     (application-present
      application
      (format nil "Agent ~A parked~:[, already out of every channel~; from channel ~:*~A~]~@[; ~D queued message~:P dropped~]. (move \"~A\") brings it into a channel."
