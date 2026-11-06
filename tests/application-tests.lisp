@@ -919,7 +919,7 @@
                          (lambda (&optional capability)
                            (declare (ignore capability))
                            (= (incf capability-checks) 1)))
-                   (list 'application--interactive-command-approval-p
+                   (list 'application-approval-possible-p
                          (lambda (ignored)
                            (declare (ignore ignored))
                            t))

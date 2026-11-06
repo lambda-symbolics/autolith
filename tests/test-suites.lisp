@@ -657,6 +657,9 @@
   test-world-client-switch-navigates
   test-world-client-refusal-ends-start)
 
+(define-test-suite client-protocol
+  test-client-protocol-channel)
+
 (define-test-suite world-sidebar
   test-world-sidebar-gathers-apart
   test-world-sidebar-rows

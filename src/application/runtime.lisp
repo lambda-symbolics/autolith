@@ -16,6 +16,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-configuration
     :type          configuration
     :documentation "The current paths, model, and provider choices.")
+   (client-hub
+    :initform      (make-instance 'client-hub)
+    :reader        application-client-hub
+    :type          client-hub
+    :documentation "The structured clients following this application's channel.")
    (world-deliveries
     :initform      (make-hash-table :test #'equal :synchronized t)
     :reader        application-world-deliveries
@@ -2798,7 +2803,9 @@ rows."
 
 (-> application-present (application (or string list) &key (:identifier t)) boolean)
 (defun application-present (application entry &key identifier)
-  "Append non-conversation ENTRY once, optionally under a stable IDENTIFIER."
+  "Append non-conversation ENTRY once, optionally under a stable IDENTIFIER.
+
+The channel's structured clients receive its text as a :PRESENT event."
   (let* ((ui (application-ui application))
          (invocation
            (and *application-command-presentation-pending-p*
@@ -2809,17 +2816,20 @@ rows."
            (if invocation
                (application--command-presentation-entry invocation entry)
                entry)))
-    (when (and *application-command-presentation-capture-p*
-               (not (null entry)))
-      (let ((text (if ui
-                      (nth-value 0 (terminal-ui--finalized-content ui entry))
-                      (concatenate
-                       'string
-                       (if (stringp entry)
-                           entry
-                           (terminal--spans-text entry))
-                       (string #\Newline)))))
-        (push text *application-command-presentation-text*)))
+    (flet ((entry-text ()
+             (if ui
+                 (nth-value 0 (terminal-ui--finalized-content ui entry))
+                 (concatenate
+                  'string
+                  (if (stringp entry)
+                      entry
+                      (terminal--spans-text entry))
+                  (string #\Newline)))))
+      (when (and *application-command-presentation-capture-p*
+                 (not (null entry)))
+        (push (entry-text) *application-command-presentation-text*))
+      (when (and entry (application-clients-attached-p application))
+        (application-clients-publish application (list :present :text (entry-text)))))
     (if (null ui)
         (progn
           (when invocation
@@ -3537,9 +3547,11 @@ A fullscreen transcript evicts its oldest output; those records page in again."
   (setf (application-deferred-goal-continuation application) nil))
 
 (defmethod (setf application-conversation) :after (value (application application))
-  "Discard deferred continuation authority when switching conversations."
+  "Discard deferred continuation authority when switching conversations, and let clients follow the new one."
   (declare (ignore value))
-  (setf (application-deferred-goal-continuation application) nil))
+  (setf (application-deferred-goal-continuation application) nil)
+  (when (application-clients-attached-p application)
+    (application-clients--follow-conversation application)))
 
 (-> application--take-deferred-goal-continuation-p (application list) boolean)
 (defun application--take-deferred-goal-continuation-p (application work)
@@ -3905,7 +3917,10 @@ checked."
      &key steering-function steering-persisted-function
           user-message-persisted-function pending-operations-function
           user-message-input (continuation-p nil) operation-request)
-  "Return a terminal observer streaming one APPLICATION turn as stable lines."
+  "Return a terminal observer streaming one APPLICATION turn as stable lines.
+
+The turn's text, reasoning and status also go to the channel's structured
+clients as :TEXT, :REASONING and :STATUS events."
   (let ((ui                       (application-ui application))
         (activity-label           (application-thinking-label))
         (related-memories-shown-p nil)
@@ -4015,9 +4030,13 @@ checked."
                        stream-marker-pending-p nil
                        stream-renderer nil))))
       (callback-agent-observer-create
-       :text-callback               #'stream-text-delta
+       :text-callback
+       (lambda (delta)
+         (application-clients-publish application (list :text :delta delta))
+         (stream-text-delta delta))
        :reasoning-callback
        (lambda (delta)
+         (application-clients-publish application (list :reasoning :delta delta))
          (when (plusp (length delta))
            (terminal-ui-note-status-progress ui))
          (when (and (application-reasoning-traces-p application)
@@ -4029,6 +4048,7 @@ checked."
             (application--reasoning-preview-rows application reasoning-text))))
        :status-callback
        (lambda (status details)
+         (application-clients-publish application (list :status :status status :details details))
          (case status
            (:user-message-persisted
             (setf related-memories-shown-p nil
