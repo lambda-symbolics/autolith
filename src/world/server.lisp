@@ -614,11 +614,13 @@ waits in its context file for the channel a later move brings it into."
 
 (-> world-host-attached-p (world-host) boolean)
 (defun world-host-attached-p (host)
-  "Return true while a client controls HOST's terminal."
-  (let* ((ui       (application-ui (world-host-application host)))
-         (terminal (and ui (terminal-ui-terminal ui))))
-    (and (typep terminal 'localgroup-terminal)
-         (image-daemon:relay-attached-p terminal))))
+  "Return true while a terminal controls HOST's channel or a structured client follows it."
+  (let* ((application (world-host-application host))
+         (ui          (application-ui application))
+         (terminal    (and ui (terminal-ui-terminal ui))))
+    (or (and (typep terminal 'localgroup-terminal)
+             (image-daemon:relay-attached-p terminal))
+        (application-clients-attached-p application))))
 
 (-> world-host-live-p (world-host) boolean)
 (defun world-host-live-p (host)
