@@ -67,7 +67,7 @@
                                                                  (and (consp entry) (stringp (first entry))
                                                                       (telemetry--alias-p (rest entry)))) value))
                                              "Use an association list of local model names and public aliases."))
-  :documentation                         "Trusted local-name to public-alias pairs override exact cached models.dev membership. Unlisted names export after deterministic identifier redaction and sanitization with a false known flag; absent names are omitted.")
+  :documentation                         "Trusted local-name to public-alias pairs override exact cached models.dev membership. Unlisted names export as fixed categories with a false known flag; absent names are omitted.")
 
 (define-setting :telemetry-model-directory (absolute-file-setting)
   :label "Redaction model directory" :group :telemetry :scope :process
