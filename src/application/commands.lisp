@@ -2334,7 +2334,7 @@ other channel the server hosts."
              (application-hosted-p application)
              (platform-supports-p *platform* ':restartable-image-saver))
     (error 'checkpoint-error
-           :message  "An exact-heap checkpoint restarts the whole process, which a world server hosting several channels cannot do. Run this channel directly with AUTOLITH_SESSION_STYLE=direct to checkpoint it."
+           :message  "An exact-heap checkpoint restarts the whole process, which a world server hosting several channels cannot do yet."
            :stage    ':validation
            :pathname nil))
   nil)

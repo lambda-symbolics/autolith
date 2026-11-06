@@ -1133,14 +1133,14 @@ A client-first start keeps this terminal a thin relay whose detach is
 immediate and never interrupts session work, so resumes, crash recovery,
 startup images, the session after authentication and input piped from
 another program take it too. Replacements, crash simulation, hosts without
-detached sessions, and AUTOLITH_SESSION_STYLE=direct keep the direct path."
+detached sessions, and a booted generation's resume, under
+*MAIN-DIRECT-START-P*, keep the direct path."
   (declare (ignore resume-requested-p resume-id
                    recovery-conversation-id recovery-diagnosis))
   (and (null handoff-record)
        (not pristine-p)
        (not simulate-crash-p)
-       (not (string= (or (uiop:getenv "AUTOLITH_SESSION_STYLE") "")
-                     "direct"))
+       (not *main-direct-start-p*)
        (platform-supports-p *platform* ':detached-sessions)
        t))
 
