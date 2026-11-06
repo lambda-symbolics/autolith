@@ -94,7 +94,7 @@ Client
 
 * Channels and participants
 
-- Each participant resides in exactly one channel. A channel has at most one
+- Each participant resides in at most one channel. A channel has at most one
   resident agent, the person when they are there, and any number of
   subscribers. Subscription is independent of residence. (Decided 2026-11-04.)
 - Only the user can move existing participants in the MVP.
