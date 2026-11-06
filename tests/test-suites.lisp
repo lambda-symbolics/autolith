@@ -397,6 +397,7 @@
   test-detached-fullscreen-streaming
   test-fullscreen-authentication-lifecycle
   test-terminal-fullscreen-clicks
+  test-terminal-fullscreen-submit-click
   test-localgroup-click-events
   test-terminal-fullscreen-message-jumps
   test-terminal-fullscreen-repl-message-starts

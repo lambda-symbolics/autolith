@@ -816,6 +816,29 @@
 
 ;;;; -- Transcript Clicks --
 
+(-> test-terminal-fullscreen-submit-click () null)
+(defun test-terminal-fullscreen-submit-click ()
+  "Test clicking a form widget submits the form as typed input and keeps the draft."
+  (let ((terminal (make-instance 'recording-terminal :columns 40 :rows 12))
+        (actions  nil))
+    (with-terminal-ui (ui (fullscreen-test--ui terminal))
+      (setf (terminal-ui-action-function ui)
+            (lambda (action)
+              (push action actions)))
+      (terminal-ui-append-finalized
+       ui ':notice
+       (list (terminal-span ':dim "  ↪ ")
+             (termdown:make-widget ':code "(switch \"b-x\")" '(:submit "(switch \"b-x\")"))))
+      (terminal-ui-insert-input ui "half typed")
+      (multiple-value-bind (action payload) (terminal-ui-process-event ui '(:click 8 1))
+        (test-assert (and (eq action ':submit)
+                          (equal payload "(switch \"b-x\")")
+                          (null actions))
+                     "a clicked form returns as its submission, not as an action"))
+      (test-assert (equal (line-editor-text (terminal-ui-editor ui)) "half typed")
+                   "the draft stays as it was")))
+  nil)
+
 (-> test-terminal-fullscreen-clicks () null)
 (defun test-terminal-fullscreen-clicks ()
   "Test clicks resolve to copy widgets and web URLs across streaming, scrolling, and deferral."

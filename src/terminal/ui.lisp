@@ -3767,21 +3767,34 @@ waits. Without an installed owner the thunk simply runs."
   "Apply EVENT to UI's suggestions or editor and return its action and payload.
 
 A transcript action that EVENT clicked runs after the presentation lock is
-released, so the action may present notices of its own."
-  (multiple-value-prog1
+released, so the action may present notices of its own. A clicked
+(:submit TEXT) instead returns as the submission of TEXT, so a clicked form
+runs exactly as if the person had typed it, and the draft stays as it was."
+  (multiple-value-bind (action payload)
       (terminal-ui--process-locked-event ui event
                                          :queue-completion-p queue-completion-p
                                          :queue-editing-p    queue-editing-p)
-    (terminal-ui--run-pending-action ui)))
+    (let ((submission (terminal-ui--run-pending-action ui)))
+      (if submission
+          (values ':submit submission)
+          (values action payload)))))
 
-(-> terminal-ui--run-pending-action (terminal-ui) null)
+(-> terminal-ui--run-pending-action (terminal-ui) (option string))
 (defun terminal-ui--run-pending-action (ui)
-  "Deliver and clear UI's pending clicked action outside the presentation lock."
+  "Deliver and clear UI's pending clicked action outside the presentation lock.
+
+Returns the text of a clicked (:submit TEXT) for the caller to submit, and
+NIL after delivering any other action."
   (let ((action (with-terminal-ui-locked (ui)
                   (shiftf (terminal-ui-pending-action ui) nil))))
-    (when action
-      (terminal-ui-activate ui action)))
-  nil)
+    (cond
+      ((null action)
+       nil)
+      ((and (eq (first action) ':submit) (stringp (second action)))
+       (second action))
+      (t
+       (terminal-ui-activate ui action)
+       nil))))
 
 (-> terminal-ui--process-locked-event
     (terminal-ui t &key (:queue-completion-p boolean) (:queue-editing-p boolean))
