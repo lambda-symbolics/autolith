@@ -3170,9 +3170,9 @@ the world knows no such channel."
                              configuration participant destination
                              :source-application      (and source-p application)
                              :destination-application (and here (string= here destination) application)
-                             :running-p               (lambda (candidate)
-                                                        (application-world-running-task-p
-                                                         application (participant-residence candidate))))))
+                             :interrupt-task          (lambda (candidate)
+                                                        (application-world-interrupt-task
+                                                         application candidate)))))
           (application-present
            application
            (format nil "Agent ~A moved ~:[out of parking~;from channel ~:*~A~] to ~A~@[; ~D queued message~:P dropped~]."
@@ -3222,12 +3222,12 @@ the world knows no such channel."
                               (list* :name (participant-name participant)
                                      (world-park-agent
                                       configuration participant
-                                      :application (and here
-                                                        (equal here (participant-residence participant))
-                                                        application)
-                                      :running-p   (lambda (candidate)
-                                                     (application-world-running-task-p
-                                                      application (participant-residence candidate)))))))))
+                                      :application    (and here
+                                                           (equal here (participant-residence participant))
+                                                           application)
+                                      :interrupt-task (lambda (candidate)
+                                                        (application-world-interrupt-task
+                                                         application candidate))))))))
     (application-present
      application
      (format nil "Agent ~A parked~:[, already out of every channel~; from channel ~:*~A~]~@[; ~D queued message~:P dropped~]. (move \"~A\") brings it into a channel."
