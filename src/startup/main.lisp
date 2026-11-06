@@ -842,13 +842,7 @@ dependencies."
 (-> main--initial-image-input (list) (option user-message-input))
 (defun main--initial-image-input (image-values)
   "Return a labelled initial composer draft for IMAGE-VALUES' local images."
-  (let ((pathnames (main--image-pathnames image-values)))
-    (when pathnames
-      (user-message-input-create
-       :text            (format nil "~{~A~^ ~}"
-                                (loop for number from 1 to (length pathnames)
-                                      collect (terminal-ui--image-label number)))
-       :image-pathnames pathnames))))
+  (terminal-ui-image-draft (main--image-pathnames image-values)))
 
 (-> main--connect-application
     (&key (:configuration configuration)
@@ -1047,7 +1041,6 @@ state, including an empty list after successful or pristine startup."
                 :resume-id                effective-resume-id
                 :recovery-conversation-id recovery-conversation-id
                 :recovery-diagnosis       recovery-diagnosis
-                :image-values             image-values
                 :pristine-p               pristine-p
                 :simulate-crash-p         (not (null (getopt* command ':simulate-crash))))
                (main--run-world-client
@@ -1060,7 +1053,8 @@ state, including an empty list after successful or pristine startup."
                                          (null effective-resume-id))
                 :recovery-diagnosis recovery-diagnosis
                 :launch             (main--launch-options
-                                     command :permission-mode permission-mode)))
+                                     command :permission-mode permission-mode)
+                :images             (mapcar #'namestring (main--image-pathnames image-values))))
       (return-from main--start-session nil))
     (let ((*localgroup-startup-record* handoff-record))
       (setf *active-application*
@@ -1119,19 +1113,18 @@ state, including an empty list after successful or pristine startup."
           (:resume-id (option string))
           (:recovery-conversation-id (option string))
           (:recovery-diagnosis t)
-          (:image-values t)
           (:pristine-p boolean)
           (:simulate-crash-p boolean))
     boolean)
 (defun main--client-session-p
     (&key handoff-record authenticate-p resume-requested-p resume-id
-          recovery-conversation-id recovery-diagnosis image-values
+          recovery-conversation-id recovery-diagnosis
           pristine-p simulate-crash-p)
   "Return true when this start should open a channel in the world server and attach.
 
 A client-first start keeps this terminal a thin relay whose detach is
-immediate and never interrupts session work, so resumes and crash recovery
-take it too. Replacements, authentication, startup images, crash simulation,
+immediate and never interrupts session work, so resumes, crash recovery and
+startup images take it too. Replacements, authentication, crash simulation,
 non-interactive terminals, hosts without detached sessions, and
 AUTOLITH_SESSION_STYLE=direct keep the direct path."
   (declare (ignore resume-requested-p resume-id
@@ -1139,7 +1132,6 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
   (and (null handoff-record)
        (not pristine-p)
        (not authenticate-p)
-       (null image-values)
        (not simulate-crash-p)
        (not (string= (or (uiop:getenv "AUTOLITH_SESSION_STYLE") "")
                      "direct"))
@@ -1153,15 +1145,17 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
                         (:resume-command-p boolean)
                         (:recovery-diagnosis (option string))
                         (:launch list)
-                        (:new-p boolean))
+                        (:new-p boolean)
+                        (:images list))
     (values string boolean))
 (defun main--open-world-channel
     (configuration &key (permission-mode ':ask) immutable-p pristine-p conversation-id
-                        resume-command-p recovery-diagnosis launch new-p)
+                        resume-command-p recovery-diagnosis launch new-p images)
   "Open this terminal's channel in the world server and return its session identifier.
 
 CONVERSATION-ID opens that channel; otherwise the launch directory selects
-or creates one, and NEW-P creates one. The second value says whether the server started the channel
+or creates one, and NEW-P creates one. IMAGES become the channel's composer
+draft. The second value says whether the server started the channel
 for this terminal. Only the world server runs a channel's agent, so a server
 that refuses the open, or cannot be started or reached, ends the start with
 the reason; no session runs in this terminal's own process instead."
@@ -1175,7 +1169,8 @@ the reason; no session runs in this terminal's own process instead."
                          :resume-command-p   resume-command-p
                          :recovery-diagnosis recovery-diagnosis
                          :launch             launch
-                         :new-p              new-p)
+                         :new-p              new-p
+                         :images             images)
     (error (condition)
       (when (main--world-refusal-p condition)
         (error condition))
@@ -1222,13 +1217,15 @@ request it conflicts with from one that says nothing."
                         (:conversation-id (option string))
                         (:resume-command-p boolean)
                         (:recovery-diagnosis (option string))
-                        (:launch list))
+                        (:launch list)
+                        (:images list))
     boolean)
 (defun main--run-world-client
     (configuration &key (permission-mode ':ask) immutable-p pristine-p conversation-id
-                        resume-command-p recovery-diagnosis launch)
+                        resume-command-p recovery-diagnosis launch images)
   "Serve this terminal as a client of the world server until its channel lets it go.
 
+IMAGES, absolute image namestrings, become the channel's composer draft.
 Return T once the terminal's channel lets it go. A channel that asks the
 terminal to switch is left running, and the terminal attaches to the channel
 it named, opening it in the server first without this start's launch
@@ -1243,7 +1240,8 @@ the terminal from channel to channel."
                                 :conversation-id    conversation-id
                                 :resume-command-p   resume-command-p
                                 :recovery-diagnosis recovery-diagnosis
-                                :launch             launch)
+                                :launch             launch
+                                :images             images)
     (let ((panel (world-sidebar-create configuration)))
       (world-sidebar-start panel)
       (unwind-protect

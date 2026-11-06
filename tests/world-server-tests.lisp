@@ -399,6 +399,39 @@
                              "the next open joins it rather than starting it twice")))))))))
   nil)
 
+(-> test-world-server-open-images-and-new () null)
+(defun test-world-server-open-images-and-new ()
+  "Test an open's images become the channel's composer draft, new or running, and :new-p opens a channel of its own."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry     (world-client-entry configuration))
+            (workspace (world-tests--workspace root "a"))
+            (first     (test-conversation--write-tiny-png (merge-pathnames "images/first.png" root)))
+            (second    (test-conversation--write-tiny-png (merge-pathnames "images/second.png" root))))
+       (flet ((draft (identifier)
+                "Return the image pathnames in channel IDENTIFIER's composer draft."
+                (mapcar (lambda (attachment)
+                          (namestring (rest attachment)))
+                        (terminal-ui-image-attachments
+                         (application-ui (world-host-application
+                                          (world-server--find-host server identifier)))))))
+         (let ((opened (getf (rest (world-server-tests--open entry workspace
+                                                             :images (list (namestring first))))
+                             :session-id)))
+           (test-assert (equal (draft opened) (list (namestring (truename first))))
+                        "a new channel opens with the images as its draft")
+           (test-assert (equal opened
+                               (getf (rest (world-server-tests--open entry workspace
+                                                                     :images (list (namestring second))))
+                                     :session-id))
+                        "a second open of the workspace joins the running channel")
+           (test-assert (equal (draft opened) (list (namestring (truename second))))
+                        "the running channel's draft takes the new images")
+           (let ((fresh (getf (rest (world-server-tests--open entry workspace :new-p t)) :session-id)))
+             (test-assert (and (stringp fresh) (not (equal fresh opened)))
+                          "an open asking for a new channel gets one of its own")))))))
+  nil)
+
 (-> world-server--channels-of (cons) list)
 (defun world-server--channels-of (entry)
   "Return the channel identifiers the world ENTRY reports."

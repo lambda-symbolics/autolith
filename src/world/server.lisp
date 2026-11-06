@@ -450,8 +450,10 @@ Return the launcher status a hosted session asked for, or NIL."
 
 ARGUMENTS name a :CHANNEL or a :DIRECTORY, and carry the client's
 :PERMISSION-MODE, :FULLSCREEN-P, :RESUME-COMMAND-P, :RECOVERY-DIAGNOSIS,
-:ROWS, :COLUMNS and :STYLED-P. The answer arrives once the channel's
-endpoint is published, so the client can attach at once."
+:ROWS, :COLUMNS and :STYLED-P. :IMAGES, absolute namestrings of local
+images, replace the channel's composer draft, whether the channel started
+now or ran already. The answer arrives once the channel's endpoint is
+published, so the client can attach at once."
   (multiple-value-bind (host started-p)
       (with-lock-held ((world-server-open-lock server))
         ;; Admission and host registration happen under one lock, the one a
@@ -467,6 +469,11 @@ endpoint is published, so the client can attach at once."
                  :operation ':checkpointing))
         (world-server--host-for server arguments))
     (world-server--wait-ready server host)
+    (let ((images (getf arguments :images)))
+      (when images
+        (terminal-ui-set-input (application-ui (world-host-application host))
+                               (terminal-ui-image-draft
+                                (mapcar #'image-input-validate-pathname images)))))
     (list :ok
           :session-id (world-host-channel host)
           :started-p  (not (null started-p)))))
