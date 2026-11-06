@@ -1622,8 +1622,10 @@ every matching ID with its available title, workspace, time, and preview
 instead of selecting one. Running conversations,
 including empty new sessions, are selectable. Resuming a running conversation
 attaches to it; detached resume prints its existing PID without disturbing its
-clients. Launch-only overrides such as =--model= and =--permissions= are
-rejected when resuming a running conversation; change its mode inside it with
+clients. Launch-only overrides such as =--model= are rejected when resuming a
+running conversation. For hosted channels, =--permissions= may be used when
+no terminal is attached, as described under Checkpoints and launch options.
+Otherwise, change the permission mode inside the conversation with
 =(permissions ...)=. =--image= and =--simulate-crash= cannot be combined with
 =--detached=.
 
@@ -1707,11 +1709,11 @@ keeps the read-only attribute clear, so it can still be replaced and deleted.
 Autolith is moving from one session per process to one shared world of
 channels and participants. A channel is an addressable conversation and
 execution location with its own working directory and history. A participant
-is a person or an agent with private state; each resides in one channel and
+is a person or an agent with private state; each resides in at most one channel and
 may subscribe to others. You reside in your inbox, a channel of your own
 named =inbox= where no agent ever lives; viewing or controlling another
 channel moves nobody. Every durable conversation is kept in step with a
-channel of the same identifier and an agent participant residing there, all
+channel of the same identifier, initially with an agent participant residing there,
 owned by the one human participant, so =conversation:id/X= and =channel:id/X=
 name the same history. A conversation newer than its channel is migrated
 again onto the same identities, and a deleted conversation retires its channel
@@ -1741,7 +1743,7 @@ case. =(rename "NAME")= renames this channel's agent and
 identifier or a part of it, yourself included. A name another participant
 has is refused, and so is =parent=, which always means the sender's parent.
 
-A channel has one resident agent. =(move "WHO")= moves the agent =WHO=
+A channel has at most one resident agent. =(move "WHO")= moves the agent =WHO=
 names, by handle, identifier or a part of it, into this channel, and
 =(move "WHO" "ID")= into channel =ID=. The move stops the agent where it is
 the way a steer does: the tool call in flight finishes, no new request
