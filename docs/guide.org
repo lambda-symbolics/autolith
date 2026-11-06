@@ -1709,18 +1709,25 @@ the channel it leaves; nothing moves until the turn has stopped. In its new
 channel the agent keeps the context it had, followed by what is said there
 from the move onward, and its own model; the channel's earlier history stays
 readable at =channel:id/ID= but is not part of the agent's context. The
-context is kept on disk, so a restart, or a channel opened only later, finds
-it. The agent then waits: it works again when you write there or someone
-mentions it from another channel. A move into a
-channel that already has an agent is refused, and so is a move into the
-inbox or of yourself: you stay in the inbox while a terminal shows you any
-channel. =(dismiss "WHO")= parks an agent instead,
+context is kept on disk before anything else changes, so a restart, a
+failure partway through, or a channel opened only later, finds it, and the
+agent takes it up before its next turn. Its goal or mission goes with it, and
+the channel it leaves keeps none; a running mission arrives paused, its jobs
+cancelled, until =(mission :resume)=. The agent then waits: it works again
+when you write there or someone mentions it from another channel. Jobs it
+started keep running in the channel it left and leave their results in that
+channel's history, but they wake no agent there. Moves and parks happen one
+at a time. A move into a channel that already has an agent is refused, and
+so is a move into the inbox or of yourself: you stay in the inbox while a
+terminal shows you any channel. A child agent whose task is still running
+for its parent is not moved or parked until the task ends, and neither is an
+agent whose channel another Autolith process has open. =(dismiss "WHO")= parks an agent instead,
 after it stops the same way: a parked agent resides in no channel and keeps
 its identity, its children and its context, and =(move "WHO")= brings it into
 a channel again. Parking never affects its children. A mention of a parked
 agent reaches nobody, and the send says the agent is parked. A channel
 without an agent, because its agent moved or was parked, keeps its history
-and its subscribers, and refuses typed prompts until =(move "WHO")=
+and its subscribers, runs no agent turn, and refuses typed prompts until =(move "WHO")=
 brings an agent or =(domestic)= creates a new one for it, named after the
 workspace and using this session's model and starting with no context but the channel's
 history to read. Messages sent to such a channel
