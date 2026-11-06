@@ -99,7 +99,7 @@
               (json-object "channel" (tool-string-property "The channel identifier."))
               '("channel"))
     (register "unsubscribe"
-              "Stop receiving a channel's messages."
+              "Remove your subscription to a channel."
               (json-object "channel" (tool-string-property "The channel identifier."))
               '("channel")))
   registry)
