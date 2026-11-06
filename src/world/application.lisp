@@ -1072,9 +1072,19 @@ without the agent's context, while an open goes on."
 
 (-> application-world-before-turn (application keyword) null)
 (defun application-world-before-turn (application kind)
-  "Ready APPLICATION's agent for a turn of work KIND: it adopts any context a move brought it first."
+  "Ready APPLICATION's agent for a turn of work KIND, or refuse the turn in a channel without an agent.
+
+The agent adopts any context a move brought it first. Idle compaction
+summarizes the channel's history for whoever speaks there next and needs no
+agent."
   (when (member kind *world-agent-turn-kinds*)
-    (application-world-adopt-pending-context application :strict-p t))
+    (application-world-adopt-pending-context application :strict-p t)
+    (unless (or (eq kind ':idle-compaction)
+                (application-world-agent-present-p application))
+      (error 'world-error
+             :message   "This channel has no agent, so nothing runs here; (move \"WHO\") or (domestic) brings one."
+             :pathname  nil
+             :operation ':turn)))
   nil)
 
 (-> application-world-domestic-agent (application) participant)
