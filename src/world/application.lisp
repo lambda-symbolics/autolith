@@ -635,13 +635,13 @@ refuses the move instead of leaving the agent without a runtime."
                              :reasoning-summaries-p (application-reasoning-traces-p application)))))
 
 (-> application-world-install-agent
-    (application participant &key (:rows list) (:source (option string))
+    (application participant &key (:rows list) (:source (option string)) (:goal list)
                                   (:transition (option string))
                                   (:configuration (option configuration)) (:provider t))
     null)
 (defun application-world-install-agent
-    (application participant &key rows source transition configuration provider)
-  "Make moved agent PARTICIPANT APPLICATION's agent, speaking with ROWS, the context move TRANSITION brings from channel SOURCE.
+    (application participant &key rows source goal transition configuration provider)
+  "Make moved agent PARTICIPANT APPLICATION's agent, speaking with ROWS and pursuing GOAL, the context and goal move TRANSITION brings from channel SOURCE.
 
 CONFIGURATION and PROVIDER come from `application-world-prepare-agent', and
 are prepared here when not given. The conversation records the arrival
@@ -659,6 +659,7 @@ durably before the runtime changes; the tool registry stays."
       (application-world--record-arrival application participant configuration
                                          :rows       rows
                                          :source     source
+                                         :goal       goal
                                          :transition transition
                                          :arrival    ':moved)
       (setf (application-configuration application) configuration
@@ -674,11 +675,11 @@ durably before the runtime changes; the tool registry stays."
 
 (-> application-world--record-arrival
     (application participant configuration &key (:rows list) (:source (option string))
-                                                (:transition (option string))
+                                                (:goal list) (:transition (option string))
                                                 (:arrival keyword))
     null)
 (defun application-world--record-arrival (application participant configuration
-                                          &key rows source transition arrival)
+                                          &key rows source goal transition arrival)
   "Record durably that agent PARTICIPANT now speaks in APPLICATION's channel under CONFIGURATION.
 
 The conversation takes the agent's model selection, its provider context
@@ -709,14 +710,32 @@ names the agent."
              rows
              (conversation-identifier-display channel))
      :automatic-p t)
+    (application-world--install-goal application goal)
     (world-session-remap configuration channel (participant-identifier participant)))
+  nil)
+
+(-> application-world--install-goal (application list) null)
+(defun application-world--install-goal (application goal)
+  "Make GOAL, the one an arriving agent brings, APPLICATION's goal, replacing any the channel kept.
+
+A running mission arrives paused: its admitted jobs stayed behind, so it
+resumes only when asked."
+  (let ((goal (copy-tree goal)))
+    (when (and (mission-goal-p goal) (eq (getf goal :status) ':active))
+      (setf (getf goal :status) ':paused))
+    (when (or goal (application-goal application))
+      (setf (application-goal application) goal)
+      (application--record-goal application)
+      (when (mission-goal-p goal)
+        (mission-restore application)
+        (application-mission-schedules application))))
   nil)
 
 (-> world-agent-context
     (configuration participant &key (:application (option application)))
-    (values list (option string)))
+    (values list (option string) list))
 (defun world-agent-context (configuration participant &key application)
-  "Return the context rows agent PARTICIPANT carries and the channel they come from.
+  "Return the context rows agent PARTICIPANT carries, the channel they come from and the agent's goal.
 
 APPLICATION, serving the agent's channel, has them live once it adopted
 any context waiting for the agent. Otherwise that waiting context comes
@@ -725,16 +744,28 @@ first, then its channel's conversation on disk."
     (cond
       (application
        (application-world-adopt-pending-context application :strict-p t)
-       (values (conversation-context-rows (application-conversation application)) residence))
+       (values (conversation-context-rows (application-conversation application))
+               residence
+               (copy-tree (application-goal application))))
       ((world-context-waiting-p configuration participant)
-       (world-context-read configuration (participant-identifier participant)))
-      ((and residence
-            (conversation-storage-active-pathname
-             (conversation-pathname-for-id configuration residence)))
-       (values (conversation-context-rows (conversation-load-by-id configuration residence))
-               residence))
+       (multiple-value-bind (rows source destination transition goal)
+           (world-context-read configuration (participant-identifier participant))
+         (declare (ignore destination transition))
+         (values rows source goal)))
+      ((world-agent--stored-channel-p configuration residence)
+       (let ((conversation (conversation-load-by-id configuration residence)))
+         (values (conversation-context-rows conversation)
+                 residence
+                 (goal-record->goal (conversation-latest-goal-record conversation)))))
       (t
-       (values nil residence)))))
+       (values nil residence nil)))))
+
+(-> world-agent--stored-channel-p (configuration (option string)) boolean)
+(defun world-agent--stored-channel-p (configuration channel)
+  "Return true when CHANNEL has a conversation on disk."
+  (and channel
+       (conversation-storage-active-pathname (conversation-pathname-for-id configuration channel))
+       t))
 
 (-> world-move-agent
     (configuration participant string &key (:source-application (option application))
@@ -777,7 +808,7 @@ moves once its task ended."
                 :pathname   nil
                 :operation  ':move
                 :identifier channel))
-       (multiple-value-bind (prepared provider)
+       (multiple-value-bind (prepared provider dropped)
            (world-agent--transition
             configuration participant
             :application source-application
@@ -789,19 +820,16 @@ moves once its task ended."
             :commit      (lambda ()
                            (world-participant-move configuration identifier channel
                                                    :expected-residence source)))
-         (let ((dropped (world-agent--settle-source configuration participant source
-                                                    :application source-application
-                                                    :destination channel)))
-           ;; The destination's session names the agent at once; its
-           ;; adoption names it again, should this write fail.
-           (handler-case (world-session-remap configuration channel identifier)
-             (autolith-error ()
-               nil))
-           (when destination-application
-             (application-world-adopt-pending-context destination-application
-                                                      :configuration prepared
-                                                      :provider      provider))
-           (list :source source :channel channel :dropped dropped)))))))
+         ;; The destination's session names the agent at once; its
+         ;; adoption names it again, should this write fail.
+         (handler-case (world-session-remap configuration channel identifier)
+           (autolith-error ()
+             nil))
+         (when destination-application
+           (application-world-adopt-pending-context destination-application
+                                                    :configuration prepared
+                                                    :provider      provider))
+         (list :source source :channel channel :dropped dropped))))))
 
 (-> world-park-agent
     (configuration participant &key (:application (option application)) (:running-p function))
@@ -824,18 +852,17 @@ refuses it."
            (channel    (participant-residence participant)))
        (world-agent--require-movable (world-load configuration) participant ':park
                                      :running-p running-p)
-       (world-agent--transition
-        configuration participant
-        :application application
-        :destination nil
-        :prepare     (lambda ()
-                       (values nil nil))
-        :commit      (lambda ()
-                       (world-participant-park configuration identifier
-                                               :expected-residence channel)))
        (list :channel channel
-             :dropped (world-agent--settle-source configuration participant channel
-                                                  :application application))))))
+             :dropped (nth-value 2 (world-agent--transition
+                                    configuration participant
+                                    :application application
+                                    :destination nil
+                                    :prepare     (lambda ()
+                                                   (values nil nil))
+                                    :commit      (lambda ()
+                                                   (world-participant-park
+                                                    configuration identifier
+                                                    :expected-residence channel)))))))))
 
 (-> world-agent--require-movable (world participant keyword &key (:running-p function)) null)
 (defun world-agent--require-movable (world participant operation &key running-p)
@@ -883,44 +910,74 @@ execution lives in its parent's task pool, which a move cannot carry."
     (configuration participant &key (:application (option application))
                                     (:destination (option string))
                                     (:prepare function) (:commit function))
-    (values t t))
+    (values t t (integer 0)))
 (defun world-agent--transition (configuration participant &key application destination prepare commit)
-  "Stop PARTICIPANT in APPLICATION, keep its context for DESTINATION and call COMMIT, returning what PREPARE returned.
+  "Stop PARTICIPANT, keep its context and goal for DESTINATION, call COMMIT and leave its channel without it.
 
-PREPARE readies the destination before anything durable changes. Until COMMIT
-returns, a failure restores the context file as it was and lets APPLICATION's
-work resume, so nothing has changed."
-  (let* ((identifier  (participant-identifier participant))
-         (previous    (and (probe-file (world-context-pathname configuration identifier))
-                           (multiple-value-list (world-context-read configuration identifier))))
-         (written-p   nil)
-         (committed-p nil))
-    (when application
-      (application-world-stop-agent application))
+Return what PREPARE returned and the queued messages dropped. APPLICATION
+serves the agent's channel; an unserved channel is held by its conversation
+lease meanwhile, and one another process serves refuses the change. PREPARE
+readies the destination before anything durable changes. Until COMMIT
+returns, a failure restores the context file as it was and lets
+APPLICATION's work resume, so nothing has changed."
+  (let* ((identifier (participant-identifier participant))
+         (source     (participant-residence participant))
+         (previous   (and (probe-file (world-context-pathname configuration identifier))
+                          (multiple-value-list (world-context-read configuration identifier))))
+         (lease      (and (null application)
+                          (world-agent--stored-channel-p configuration source)
+                          (world-agent--lease configuration participant))))
     (unwind-protect
-         (multiple-value-bind (rows source) (world-agent-context configuration participant
-                                                                 :application application)
-           (multiple-value-prog1 (funcall prepare)
-             (setf written-p t)
-             (world-context-write configuration identifier
-                                  :source      source
-                                  :rows        rows
-                                  :destination destination
-                                  :transition  (make-identifier))
-             (funcall commit)
-             (setf committed-p t)))
-      (unless committed-p
-        (when written-p
-          (if previous
-              (destructuring-bind (rows source destination transition) previous
-                (world-context-write configuration identifier
-                                     :source      source
-                                     :rows        rows
-                                     :destination destination
-                                     :transition  transition))
-              (world-context-delete configuration identifier)))
-        (when application
-          (application-world-resume-agent application))))))
+         (let ((written-p   nil)
+               (committed-p nil))
+           (when application
+             (application-world-stop-agent application))
+           (multiple-value-bind (prepared provider)
+               (unwind-protect
+                    (multiple-value-bind (rows from goal)
+                        (world-agent-context configuration participant :application application)
+                      (multiple-value-prog1 (funcall prepare)
+                        (setf written-p t)
+                        (world-context-write configuration identifier
+                                             :source      from
+                                             :rows        rows
+                                             :goal        goal
+                                             :destination destination
+                                             :transition  (make-identifier))
+                        (funcall commit)
+                        (setf committed-p t)))
+                 (unless committed-p
+                   (when written-p
+                     (if previous
+                         (destructuring-bind (rows from destination transition goal) previous
+                           (world-context-write configuration identifier
+                                                :source      from
+                                                :rows        rows
+                                                :goal        goal
+                                                :destination destination
+                                                :transition  transition))
+                         (world-context-delete configuration identifier)))
+                   (when application
+                     (application-world-resume-agent application))))
+             (values prepared provider
+                     (world-agent--settle-source configuration participant source
+                                                 :application application
+                                                 :destination destination))))
+      (when lease
+        (conversation-lease-release lease)))))
+
+(-> world-agent--lease (configuration participant) conversation-lease)
+(defun world-agent--lease (configuration participant)
+  "Hold the conversation of agent PARTICIPANT's unserved channel, or refuse while another process serves it."
+  (handler-case (conversation-lease-acquire configuration (participant-residence participant))
+    (conversation-in-use ()
+      (error 'world-error
+             :message    (format nil "Agent ~A's channel ~A is open in another Autolith process; nothing changed."
+                                 (participant-name participant)
+                                 (conversation-identifier-display (participant-residence participant)))
+             :pathname   nil
+             :operation  ':move
+             :identifier (participant-identifier participant)))))
 
 (-> world-agent--settle-source
     (configuration participant (option string) &key (:application (option application))
@@ -931,14 +988,39 @@ work resume, so nothing has changed."
 
 Its session stops naming the agent; a session still naming it would find the
 agent resides elsewhere, so a mapping that cannot be rewritten changes
-nothing. APPLICATION, serving SOURCE, drops the agent's queue and resumes."
+nothing. The goal the agent took along leaves the channel too: no agent
+pursues it there. APPLICATION, serving SOURCE, drops the agent's queue and
+resumes."
   (when source
     (handler-case (world-session-remap configuration source nil)
+      (autolith-error ()
+        nil))
+    (handler-case
+        (if application
+            (application-world-surrender-goal application)
+            (let ((conversation (conversation-load-by-id configuration source)))
+              (when (goal-record->goal (conversation-latest-goal-record conversation))
+                (conversation-append-record conversation (goal->record nil)))))
       (autolith-error ()
         nil)))
   (if application
       (application-world-release-agent application participant :destination destination)
       0))
+
+(-> application-world-surrender-goal (application) null)
+(defun application-world-surrender-goal (application)
+  "Clear the goal of APPLICATION's departed agent, which took it along.
+
+A mission still running stops as blocked first, which cancels the jobs it
+admitted: they worked for the agent, while the channel's other jobs stay."
+  (let ((goal (application-goal application)))
+    (when goal
+      (when (and (mission-goal-p goal)
+                 (member (getf goal :status) '(:active :paused :blocked)))
+        (application-mission-stop application ':blocked "The agent left this channel and took its mission along."))
+      (setf (application-goal application) nil)
+      (application--record-goal application)))
+  nil)
 
 (-> application-world-adopt-pending-context
     (application &key (:strict-p boolean) (:configuration (option configuration)) (:provider t))
@@ -963,7 +1045,7 @@ without the agent's context, while an open goes on."
                                             :key #'participant-kind))
                  (identifier          (and agent (participant-identifier agent))))
             (when (and agent (probe-file (world-context-pathname world-configuration identifier)))
-              (multiple-value-bind (rows source destination transition)
+              (multiple-value-bind (rows source destination transition goal)
                   (world-context-read world-configuration identifier)
                 (when (equal destination channel)
                   (unless (and transition
@@ -972,6 +1054,7 @@ without the agent's context, while an open goes on."
                     (application-world-install-agent application agent
                                                      :rows          rows
                                                      :source        source
+                                                     :goal          goal
                                                      :transition    transition
                                                      :configuration configuration
                                                      :provider      provider))

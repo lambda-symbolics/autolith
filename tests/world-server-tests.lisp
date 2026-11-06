@@ -977,6 +977,69 @@
                           "once its task ended the child moves")))))))
   nil)
 
+(-> test-world-server-move-goal () null)
+(defun test-world-server-move-goal ()
+  "Test an agent's goal goes where the agent goes, a mission arrives paused, and the channel left keeps none."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry (world-client-entry configuration))
+            (id-a  (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
+                         :session-id))
+            (id-b  (getf (rest (world-server-tests--open entry (world-tests--workspace root "b")))
+                         :session-id))
+            (app-a (world-host-application (world-server--find-host server id-a)))
+            (app-b (world-host-application (world-server--find-host server id-b))))
+       (conversation-append-user-message (application-conversation app-a) "first words in a")
+       (conversation-append-user-message (application-conversation app-b) "first words in b")
+       (let* ((world   (values (world-reconcile-sessions configuration)))
+              (agent-a (find ':agent (world-channel-residents world id-a) :key #'participant-kind))
+              (agent-b (find ':agent (world-channel-residents world id-b) :key #'participant-kind)))
+         (labels ((query (operation &rest arguments)
+                    "Send OPERATION with ARGUMENTS to the server and return the answer's plist."
+                    (rest (localgroup-query-record entry operation arguments)))
+
+                  (recorded-goal (application)
+                    "Return the goal APPLICATION's conversation records last."
+                    (goal-record->goal (conversation-latest-goal-record
+                                        (application-conversation application))))
+
+                  (objective (application)
+                    "Return the objective of APPLICATION's goal, or NIL."
+                    (getf (application-goal application) :objective)))
+           (setf (application-goal app-a) (list :objective     "ship the release"
+                                                :status        ':active
+                                                :continuations 0
+                                                :created-at    1))
+           (application--record-goal app-a)
+           (query ':dismiss :participant (participant-identifier agent-b))
+           (query ':move :participant (participant-identifier agent-a) :channel id-b)
+           (test-assert (and (equal (objective app-b) "ship the release")
+                             (eq (getf (application-goal app-b) :status) ':active)
+                             (equal (getf (recorded-goal app-b) :objective) "ship the release"))
+                        "a moved agent keeps pursuing its goal in the channel it moves into")
+           (test-assert (and (null (application-goal app-a))
+                             (null (recorded-goal app-a)))
+                        "the channel it left keeps no goal of its own")
+           (let ((domestic (application-world-domestic-agent app-a)))
+             (test-assert (null (application-goal app-a))
+                          "a new agent starts without a goal")
+             (application-mission-start app-a (mission-test--specification))
+             (query ':dismiss :participant (participant-identifier agent-a))
+             (test-assert (and (null (application-goal app-b))
+                               (null (recorded-goal app-b)))
+                          "a parked agent takes its goal out of the channel it leaves")
+             (query ':move :participant (participant-identifier domestic) :channel id-b)
+             (test-assert (and (mission-goal-p (application-goal app-b))
+                               (eq (getf (application-goal app-b) :status) ':paused)
+                               (mission-context-find (application-conversation app-b)))
+                          "a running mission arrives paused with its mission state")
+             (test-assert (null (recorded-goal app-a))
+                          "the mission leaves no goal behind")
+             (query ':move :participant (participant-identifier agent-a) :channel id-a)
+             (test-assert (equal (objective app-a) "ship the release")
+                          "a parked agent brings its goal back with it")))))))
+  nil)
+
 (-> test-world-server-move () null)
 (defun test-world-server-move ()
   "Test parking and a move through the server stop the agent where it was, keep its context for a channel opened later, and adopt it where it goes."
