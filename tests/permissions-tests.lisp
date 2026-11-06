@@ -202,19 +202,20 @@
             (make-instance 'application-input-controller :application application))
       (test-call-with-function-replacements
        (list
-        (list 'application--interactive-command-approval-p
+        (list 'application-approval-possible-p
               (lambda (application) (declare (ignore application)) t))
         (list 'application-input-controller-call-with-reader-paused
               (lambda (controller function)
                 (declare (ignore controller)) (funcall function)))
         (list 'application-present
               (lambda (&rest arguments) (declare (ignore arguments)) nil))
-        (list 'terminal-ui-select
-              (lambda (ui &key title items resize-callback status-kind)
-                (declare (ignore ui title resize-callback))
+        (list 'application-select-approval
+              (lambda (application &key kind title items entry)
+                (declare (ignore application title))
                 (incf pick-count)
                 (test-assert
-                 (and (eq status-kind ':permission)
+                 (and (eq kind ':external-tool)
+                      (search "External tool call" entry)
                       (equal (mapcar (lambda (item) (getf item :name)) items)
                              '("auto" "once" "always" "full" "deny")))
                  "external calls offer normal permission choices without sandbox")

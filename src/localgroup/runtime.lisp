@@ -692,6 +692,8 @@ last controlling client vanishes."
   (case (localgroup--request-field request :operation)
     (:attach
      (localgroup--serve-attachment session request :socket socket :stream stream))
+    (:client
+     (localgroup--serve-client session request :stream stream))
     (:message
      (image-daemon:daemon-message-handle-request
       session request :stream stream
