@@ -116,8 +116,8 @@ Client
     task pool interrupts it: the task is cancelled, the parent receives that
     result, and the child goes with the context it had. The tasks of the
     child's own children go on. (Decided 2026-11-06.)
-  - An agent whose channel another Autolith process holds open cannot be
-    moved or dismissed.
+  - An agent whose channel a pristine or recovery session holds open cannot be
+    moved or dismissed: such a session runs apart from the server on purpose.
   - A channel with no resident agent, because its agent left or was parked,
     keeps its history, the person and its subscribers. Opening it offers two
     things: move an agent in, or create a new domestic agent for it.
@@ -252,6 +252,19 @@ Client
 * Server and clients
 
 - One server hosts one authoritative world across projects.
+- Only the world server runs the agents of world channels. Terminals, editors
+  over ACP, piped scripts and later web, GUI or phone clients are clients of
+  it. A start that cannot reach the server ends with the reason. Only pristine
+  and recovery sessions, which must work when the server's image is damaged,
+  run apart from it. (Decided 2026-11-06.)
+- Clients other than terminals follow a channel through one structured client
+  protocol of portable plists, never JSON: the channel's records, turn
+  output, approvals and state go out; submissions, cancellation, approval
+  answers, mode changes and operations come back. An approval goes to the
+  terminal and every client at once, and the first answer wins. (Decided
+  2026-11-06.)
+- The server's image runs with a 2 GB heap, since it hosts every channel.
+  (Decided 2026-11-06.)
 - Extend the existing client-server architecture from 1:1 to N:1.
 - Reuse the existing localgroup server lifecycle machinery for shared-world commands.
 - The first client starts the server if needed; later clients connect to the same world.
@@ -271,6 +284,9 @@ Client
 
 * Implementation details left
 
+- A Windows exact-heap checkpoint is to restart the whole world server with
+  every channel, and clients reconnect. (Decided 2026-11-06.) Until that is
+  built and tried on Windows, the server refuses such checkpoints.
 - Message ordering, batching, deduplication, and self-message handling beyond
   the sharing and receipt rules above.
 - The exact mention syntax beyond the word boundary rule: escaping, quoted text
