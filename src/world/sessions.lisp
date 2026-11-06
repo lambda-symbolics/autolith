@@ -643,15 +643,15 @@ its channel's workspace, so every participant can be mentioned by name."
     (values world (integer 0)))
 (defun world-reconcile-sessions (configuration &key (identities nil identities-p) (prune-p t)
                                                     (now (get-universal-time)))
-  "Map every conversation onto its channel and participant, and return the world and the change count.
+  "Reconcile conversation mappings and return the world and change count.
 
 IDENTITIES limits the work to those conversation identity pathnames; otherwise
 every durable conversation is examined, primaries before child tasks. A
-conversation whose source token matches its mapping costs one stat. With
+matching source token usually avoids rereading the conversation header. With
 PRUNE-P, mappings whose conversation no longer exists retire their
 participant and, once empty, their channel. A world that has anything in it
 gets the person's inbox: the first reconciliation without one examines every
-conversation and creates the inbox's when none is found."
+conversation and creates an inbox conversation when none is found."
   (with-recursive-lock-held (*world-sessions-lock*)
     (let* ((mappings   (world-session-mappings configuration))
            ;; A world without an inbox is examined whole, so the inbox is
@@ -750,9 +750,9 @@ and its first record names it."
     :initarg       :cause
     :reader        world-session-warning-cause
     :type          t
-    :documentation "The failure that interrupted reconciliation."))
+    :documentation "The failure encountered while updating world session state."))
   (:report (lambda (condition stream)
-             (format stream "Session reconciliation at ~A was skipped: ~A"
+             (format stream "World session operation at ~A failed: ~A"
                      (world-session-warning-pathname condition)
                      (world-session-warning-cause condition))))
-  (:documentation "Legacy sessions could not be reconciled with the world this time."))
+  (:documentation "An error occurred while updating world session state."))
