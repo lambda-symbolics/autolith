@@ -3202,7 +3202,7 @@ the world knows no such channel."
     (:name              "/dismiss"
      :argument          "AGENT"
      :description       "park an agent, leaving its channel without one"
-     :tip               "stops the agent and parks it in no channel, with its context and its children; (move \"WHO\") brings it back. Its channel then takes a moved agent or a domestic one."
+     :tip               "stops the agent and parks it in no channel, keeping its context and leaving its children unaffected; (move \"WHO\") brings it back. Its channel then takes a moved agent or a domestic one."
      :busy-behavior     :inspect
      :terminal-behavior :shared
      :callable          t)
