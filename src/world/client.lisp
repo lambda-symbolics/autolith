@@ -146,10 +146,10 @@ sharing one it already served."
 
 (-> world-client--print-absent (stream) null)
 (defun world-client--print-absent (stream)
-  "Say on STREAM that no world server runs."
+  "Report on STREAM that no world server is reachable."
   (localgroup--write-styled-line
    stream
-   (list (terminal-span ':notice "No world server is running."))
+   (list (terminal-span ':notice "No world server is reachable."))
    (localgroup--status-output-styled-p stream))
   nil)
 
