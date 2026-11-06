@@ -2695,7 +2695,7 @@ indicator with a completion marker."
      (:initial-value (option string)) (:search-p boolean)
      (:search-key function) (:resize-callback (option function))
      (:on-event (option function)) (:poll-interval (option real))
-     (:status-kind keyword))
+     (:status-kind keyword) (:external-event-function (option function)))
     (option string))
 (defun terminal-ui-select
     (ui &key (title "select") items hint
@@ -2703,13 +2703,17 @@ indicator with a completion marker."
           initial-name initial-value search-p
           (search-key #'terminal-ui--picker-default-search-text)
           resize-callback on-event
-          (poll-interval *terminal-ui-picker-poll-interval*) (status-kind ':question))
+          (poll-interval *terminal-ui-picker-poll-interval*) (status-kind ':question)
+          external-event-function)
   "Select an application entry through Clinedi's filtered modal session.
 
 Entries carry :NAME and optionally a distinct :VALUE. ON-EVENT receives
 (EVENT SELECTOR) and may return NIL, :CONTINUE, (:ACCEPT VALUE), (:CANCEL),
-or (:REPLACE TITLE ITEMS [HINT [VALUE]]). Filtering, stable selection,
-readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
+or (:REPLACE TITLE ITEMS [HINT [VALUE]]). EXTERNAL-EVENT-FUNCTION, polled
+with the terminal, returns an event from outside it, such as a client's
+answer, or NIL; such an event reaches ON-EVENT before terminal input.
+Filtering, stable selection, readiness polling, resize coordination and
+lifecycle cleanup belong to Clinedi."
   (unless (and items (every #'terminal-completion-p items)
                (terminal-interactive-p (terminal-ui-terminal ui)))
     (return-from terminal-ui-select nil))
@@ -2784,8 +2788,14 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
                  (lambda ()
                    (clinedi:run-selection-session
                     session
-                    :read-event     (lambda () (terminal-read-event (terminal-ui-terminal ui)))
-                    :input-ready-p  (lambda () (terminal-input-ready-p (terminal-ui-terminal ui)))
+                    :read-event     (lambda ()
+                                      (or (and external-event-function
+                                               (funcall external-event-function))
+                                          (terminal-read-event (terminal-ui-terminal ui))))
+                    :input-ready-p  (lambda ()
+                                      (or (and external-event-function
+                                               (not (null (funcall external-event-function))))
+                                          (terminal-input-ready-p (terminal-ui-terminal ui))))
                     :poll-interval  poll-interval
                     :call-with-lock (lambda (function)
                                       (with-terminal-ui-locked (ui) (funcall function)))

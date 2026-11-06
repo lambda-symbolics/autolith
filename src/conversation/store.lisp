@@ -277,6 +277,11 @@
     :accessor      conversation-adopted-transition
     :type          (option string)
     :documentation "The move whose context the latest context adoption installed, so a retried adoption happens once.")
+   (record-listener
+    :initform      nil
+    :accessor      conversation-record-listener
+    :type          (option function)
+    :documentation "Called with each record this conversation appends, once it is durable; a channel publishes it to its clients.")
    (ephemeral-input-entries
     :initform nil
     :accessor conversation-ephemeral-input-entries
@@ -1668,6 +1673,9 @@ this append's original EOF, including when publication failed after the write."
           (setf (conversation-latest-goal-record conversation) sequenced)))
       (conversation-input-history--publish conversation sequenced)
       (conversation-picker-metadata-publish conversation)
+      (let ((listener (conversation-record-listener conversation)))
+        (when listener
+          (funcall listener sequenced)))
       sequenced)))
 
 (-> conversation--bounded-turn-abort-text (t string integer) non-empty-string)
