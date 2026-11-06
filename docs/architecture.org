@@ -406,11 +406,11 @@ lost. =src/emacs/tools.lisp= holds the action tools, =emacs.visit= and
 
 * Terminal
 
-Autolith uses the primary screen and leaves finalized output in normal
-scrollback by default. An opt-in fullscreen terminal UI owns the transcript
-viewport in an alternate screen, keeps application scrollback, and pins the
-composer to the bottom. The persistent setting is stored in the global
-preferences record; =--fullscreen= overrides it for one launch.
+By default the fullscreen terminal UI owns the transcript viewport in an
+alternate screen, keeps application scrollback, and pins the composer to the
+bottom. Plain mode uses the primary screen and leaves finalized output in
+normal scrollback. The persistent setting is stored in the global preferences
+record; =--fullscreen= and =--plain= override it for one launch.
 
 - Reasoning previews enter scrollback only once finalized
 - Autolith provides semantic styling, candidate policy, terminal mode, and

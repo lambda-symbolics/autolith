@@ -147,6 +147,7 @@ process-global fixture parent on exit; parallel runs need separate processes."
      :config-root              (merge-pathnames "config/" root)
      :site-config-root         site-config-root
      :onboarding-p             nil
+     :fullscreen-p             nil
      :data-root                (merge-pathnames "data/" root)
      :state-root               (merge-pathnames "state/" root)
      :cache-root               (merge-pathnames "cache/" root)

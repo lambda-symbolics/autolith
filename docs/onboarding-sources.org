@@ -649,13 +649,13 @@ For executable skills, add =EXECUTABLE.sexp= with entrypoints, contracts, and ca
 * Choose your workspace view
 :PROPERTIES:
 :ID: fullscreen
-:VERSION: 3
+:VERSION: 4
 :END:
-In *fullscreen mode*, scroll through the transcript while keeping the prompt in view.
+Autolith starts in *fullscreen mode*: scroll through the transcript while keeping the prompt in view.
 
-=autolith --fullscreen=
+=autolith --plain=
 
-Choose the mode in =(settings)=. In inline mode, use your terminal's ordinary scrollback.
+Plain mode keeps the transcript in your terminal's ordinary scrollback. Choose the mode in =(settings)=.
 
 Scroll long lessons with Page Up/Page Down. On reading pages, use Up/Down too.
 
