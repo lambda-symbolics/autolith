@@ -153,6 +153,164 @@ sharing one it already served."
               (sleep 0.5)))))))
 
 
+;;;; -- Scripted Input --
+
+;;; A start whose standard input is not a terminal reads its input from it:
+;;; each line is one submission, and a line opening a Lisp form continues
+;;; until the form closes. The channel runs each submission to its end before
+;;; the next, and the transcript goes to standard output as plain text.
+
+(-> world-client--form-open-p (string) boolean)
+(defun world-client--form-open-p (text)
+  "Return true when TEXT opens more parentheses than it closes, outside strings and comments."
+  (let ((depth     0)
+        (string-p  nil)
+        (escaped-p nil)
+        (comment-p nil))
+    (loop for character across text
+          do (cond
+               (escaped-p
+                (setf escaped-p nil))
+               (comment-p
+                (when (char= character #\Newline)
+                  (setf comment-p nil)))
+               (string-p
+                (case character
+                  (#\\
+                   (setf escaped-p t))
+                  (#\"
+                   (setf string-p nil))))
+               (t
+                (case character
+                  (#\\
+                   (setf escaped-p t))
+                  (#\"
+                   (setf string-p t))
+                  (#\;
+                   (setf comment-p t))
+                  (#\(
+                   (incf depth))
+                  (#\)
+                   (decf depth))))))
+    (or string-p (plusp depth))))
+
+(-> world-client--next-submission (stream) (option string))
+(defun world-client--next-submission (stream)
+  "Read the next submission from STREAM, or return NIL at its end.
+
+Blank lines submit nothing. A line that opens a Lisp form takes the lines
+after it until the form closes or the input ends."
+  (loop
+    (let ((line (read-line stream nil nil)))
+      (cond
+        ((null line)
+         (return nil))
+        ((zerop (length (string-trim '(#\Space #\Tab #\Return) line)))
+         nil)
+        (t
+         (let ((text line))
+           (loop while (world-client--form-open-p text)
+                 do (let ((next (read-line stream nil nil)))
+                      (unless next
+                        (return))
+                      (setf text (format nil "~A~%~A" text next))))
+           (return (string-right-trim '(#\Return) text))))))))
+
+(-> world-client--script-event (list stream) null)
+(defun world-client--script-event (event output)
+  "Write the part of channel EVENT a plain transcript shows to OUTPUT."
+  (let ((fields (rest event)))
+    (case (first event)
+      (:present
+       (let ((text (getf fields :text)))
+         (when (stringp text)
+           (fresh-line output)
+           (write-string text output)
+           (fresh-line output))))
+      (:text
+       (let ((delta (getf fields :delta)))
+         (when (stringp delta)
+           (write-string delta output))))
+      (:status
+       (case (getf fields :status)
+         (:assistant-response-persisted
+          (fresh-line output))
+         (:tool-call-started
+          (fresh-line output)
+          (format output "● ~A~%" (getf (getf fields :details) :tool))))))
+    (force-output output))
+  nil)
+
+(-> world-client-run-script
+    (configuration &key (:input stream) (:output stream) (:conversation-id (option string))
+                        (:permission-mode keyword) (:immutable-p boolean) (:launch list))
+    null)
+(defun world-client-run-script
+    (configuration &key (input *standard-input*) (output *standard-output*) conversation-id
+                        (permission-mode ':ask) immutable-p launch)
+  "Run INPUT's submissions in a channel of CONFIGURATION's world server and write the transcript to OUTPUT.
+
+The channel is CONVERSATION-ID's, or a new one for the launch directory. Each
+submission is echoed, run to its end, and followed by its output. This client
+answers no approvals, so the channel decides them as it would without a
+terminal. A channel the server started for this run closes once it ends."
+  (multiple-value-bind (channel started-p)
+      (world-client-open configuration
+                         :directory       (config :working-directory configuration)
+                         :channel         conversation-id
+                         :new-p           (null conversation-id)
+                         :permission-mode permission-mode
+                         :immutable-p     immutable-p
+                         :launch          launch)
+    (let* ((lock       (make-lock "Autolith script client"))
+           (condition  (make-condition-variable :name "Autolith script client"))
+           (idle-count 0)
+           (closed-p   nil)
+           (connection nil))
+      (unwind-protect
+           (progn
+             (setf connection
+                   (localgroup-client-connect
+                    (localgroup--find-record configuration channel)
+                    :name           "script"
+                    :approves-p     nil
+                    :event-function (lambda (event)
+                                      (with-lock-held (lock)
+                                        (world-client--script-event event output)
+                                        (case (first event)
+                                          (:work-finished
+                                           (when (getf (rest event) :idle-p)
+                                             (incf idle-count)))
+                                          (:closed
+                                           (setf closed-p t)))
+                                        (sb-thread:condition-broadcast condition)))))
+             (loop for text = (world-client--next-submission input)
+                   while text
+                   do (let ((mark   (with-lock-held (lock)
+                                      (fresh-line output)
+                                      (format output "› ~A~%" text)
+                                      (force-output output)
+                                      idle-count))
+                            (busy-p (getf (localgroup-client-call connection ':submit :text text)
+                                          :busy-p)))
+                        (with-lock-held (lock)
+                          (loop until (or closed-p (not busy-p) (> idle-count mark))
+                                do (condition-wait condition lock)))
+                        (when closed-p
+                          (return)))))
+        (when connection
+          (localgroup-client-close connection))
+        (when started-p
+          (let ((world (world-client-entry configuration)))
+            (when world
+              (handler-case
+                  (localgroup-query-record world ':close
+                                           (list :channel channel :unattached-only-p t))
+                (localgroup-error ()
+                  nil))))))))
+  nil)
+
+
 ;;;; -- Command-Line Entry --
 
 (-> world-client--print-absent (stream) null)
