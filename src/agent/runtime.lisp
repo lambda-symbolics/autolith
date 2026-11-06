@@ -1232,7 +1232,8 @@ worker results become explicit unknown outcomes so provider history stays valid.
        :tool-call-started
        (list :tool-round tool-round
              :call-id    (json-get call "call_id")
-             :tool       (function-call-canonical-name call)))))
+             :tool       (function-call-canonical-name call)
+             :arguments  (json-get call "arguments")))))
   (let* ((count            (length plans))
          (executions
            (map 'vector (lambda (plan) (list :plan plan)) plans))
