@@ -97,8 +97,9 @@ inbox made room."
 (defun application-world-deliver (application)
   "Queue every unread message of APPLICATION's channel as an automatic turn and return the count.
 
-A notice, a message for the person, is shown in the transcript and settled
-there: no agent takes it. A message queued while a turn runs is taken as
+In the person's inbox every message is for the person: no agent takes it,
+and it is recorded in the inbox's history once a terminal shows the inbox;
+until then it waits, unread. A message queued while a turn runs is taken as
 steering first; the queued turn then finds its receipt and is skipped.
 Without an input controller, as in a headless job, or without a resident
 agent to read them, messages wait in the inbox. Settling received messages
@@ -117,11 +118,14 @@ after, rather than waiting for the next send to come by."
                              (world-message-resume configuration)
                              (values (application-world--unsettled application channel)))
                            pending))))
-        (application-world--show-notices
-         application channel
-         (remove-if-not (lambda (delivery) (eq (world-delivery-kind delivery) ':notice)) pending))
-        (when (and controller (application-world-agent-present-p application))
-          (dolist (delivery (remove ':notice pending :key #'world-delivery-kind))
+        (when (and pending
+                   (application-world-inbox-p application)
+                   (application-terminal-attached-p application))
+          (application-world--record-notices application channel pending))
+        (when (and controller
+                   (not (application-world-inbox-p application))
+                   (application-world-agent-present-p application))
+          (dolist (delivery pending)
             (let ((identifier (world-delivery-pending-identifier delivery))
                   (table      (application-world-deliveries application)))
               (unless (gethash identifier table)
@@ -134,15 +138,22 @@ after, rather than waiting for the next send to come by."
                   (incf queued))))))))
     queued))
 
-(-> application-world--show-notices (application string list) null)
-(defun application-world--show-notices (application channel notices)
-  "Show NOTICES, messages in CHANNEL's inbox for the person, in APPLICATION's transcript and settle them."
-  (when notices
+(-> application-world--record-notices (application string list) null)
+(defun application-world--record-notices (application channel notices)
+  "Record NOTICES, messages for the person in CHANNEL's inbox, in the inbox's history, show them and settle them.
+
+Each is a durable automatic message carrying its pending-input identifier,
+so the history is its receipt: a crash after the record and before the
+settlement settles it on the next delivery instead of showing it twice."
+  (let ((conversation (application-conversation application)))
     (dolist (notice notices)
-      (application-present application
-                           (application--channel-message-entry
-                            application (world-delivery-request notice) (world-delivery-time notice))
-                           :identifier (world-delivery-pending-identifier notice)))
+      (let ((record (nth-value 1 (conversation-append-user-message
+                                  conversation (world-delivery-label notice)
+                                  :automatic-p              t
+                                  :pending-input-identifier (world-delivery-pending-identifier notice)
+                                  :operation-request        (world-delivery-request notice)))))
+        (when (application-ui application)
+          (application--present-conversation-record application record))))
     (world-inbox-settle (application-configuration application) channel
                         (mapcar #'world-delivery-identifier notices))
     (world-message-resume (application-configuration application)))
@@ -298,19 +309,22 @@ participant is left in place, only the scan moves past it."
 
 (-> application-world-attached (application) null)
 (defun application-world-attached (application)
-  "Map APPLICATION's conversation onto its channel: a terminal just took control of it.
+  "Map APPLICATION's conversation onto its channel and deliver what waits: a terminal just took control of it.
 
-Taking control moves nobody; the person resides in the inbox. A world that
-cannot be read only warns."
+Taking control moves nobody; the person resides in the inbox. Messages
+waiting in the inbox show now that a terminal shows it. A world that cannot
+be read only warns."
   (when (and (application-world-server application)
              (slot-boundp application 'configuration))
     (let ((channel       (application-world--served-channel application))
           (configuration (application-configuration application)))
       (when channel
         (handler-case
-            (world-reconcile-sessions configuration
-                                      :identities (list (conversation-pathname
-                                                         (application-conversation application))))
+            (progn
+              (world-reconcile-sessions configuration
+                                        :identities (list (conversation-pathname
+                                                           (application-conversation application))))
+              (application-world-deliver application))
           (error (cause)
             (warn 'world-session-warning
                   :pathname (configuration-world-sessions-path

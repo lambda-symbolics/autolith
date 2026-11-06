@@ -200,6 +200,18 @@ conversation transaction can roll back before releasing either lease."
                   (task-orchestrator-active-count orchestrator)))
         (values 0 0))))
 
+(-> application-terminal-attached-p (application) boolean)
+(defun application-terminal-attached-p (application)
+  "Return true while a terminal shows APPLICATION: a relay with an attached client, or an interactive terminal of its own."
+  (let ((terminal (and (slot-boundp application 'ui)
+                       (application-ui application)
+                       (terminal-ui-terminal (application-ui application)))))
+    (and terminal
+         (if (typep terminal 'localgroup-terminal)
+             (image-daemon:relay-attached-p terminal)
+             (terminal-interactive-p terminal))
+         t)))
+
 (-> localgroup-status-snapshot (localgroup-session) list)
 (defun localgroup-status-snapshot (session)
   "Return a portable, internally consistent status snapshot for SESSION."
@@ -285,10 +297,7 @@ conversation transaction can roll back before releasing either lease."
                   (gethash person (conversation-channel-mention-counts conversation) 0)
                   0))
             :terminal-attached-p
-            (let ((terminal (terminal-ui-terminal (application-ui application))))
-              (if (typep terminal 'localgroup-terminal)
-                  (image-daemon:relay-attached-p terminal)
-                  (not (null (terminal-interactive-p terminal)))))
+            (application-terminal-attached-p application)
             :terminal-attachment
             (let ((terminal (terminal-ui-terminal (application-ui application))))
               (if (typep terminal 'localgroup-terminal)
