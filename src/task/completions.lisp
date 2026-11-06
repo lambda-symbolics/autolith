@@ -152,6 +152,7 @@
      (list :job-id             (getf record :job-id)
            :execution-id       (getf record :execution-id)
            :owner-conversation (getf record :completion-owner-conversation)
+           :owner-participant  (getf record :completion-owner-participant)
            :completion-policy  (getf record :completion-policy)
            :mission-id         (getf record :completion-mission-id)
            :state              state
@@ -719,6 +720,7 @@ bound. The supported cancellation accessors do not change native job policy."
                                 :job-id                 (session-job-identifier job)
                                 :execution-id           (session-job-execution-identifier job)
                                 :owner-conversation     (session-job-completion-owner-conversation job)
+                                :owner-participant      (session-job-completion-owner-participant job)
                                 :completion-policy      (session-job-completion-policy job)
                                 :mission-id             (session-job-completion-mission-id job)
                                 :ready-at               (get-universal-time)

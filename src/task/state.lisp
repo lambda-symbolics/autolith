@@ -305,6 +305,12 @@ nesting depth, and lifecycle listeners."))
     :reader        session-job-completion-owner-conversation
     :type          (option non-empty-string)
     :documentation "The exact parent conversation authorized to receive this outcome.")
+   (completion-owner-participant
+    :initarg       :completion-owner-participant
+    :initform      nil
+    :reader        session-job-completion-owner-participant
+    :type          (option string)
+    :documentation "The agent that started the job in that conversation, as `conversation-adopted-participant' named it then; only that agent continues from its outcome.")
    (completion-policy
     :initarg       :completion-policy
     :initform      ':continue

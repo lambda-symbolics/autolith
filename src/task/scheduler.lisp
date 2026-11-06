@@ -567,6 +567,8 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
                        :public-identifier    identifier
                        :completion-owner-conversation
                        (conversation-identifier (agent-conversation parent-agent))
+                       :completion-owner-participant
+                       (conversation-adopted-participant (agent-conversation parent-agent))
                        :completion-policy    completion-policy
                        :completion-mission-id
                        (task-completion-mission-identifier parent-agent)
@@ -755,6 +757,8 @@ guarantee."
                               :parent-call-id        parent-call-id
                               :completion-owner-conversation
                               (conversation-identifier (agent-conversation parent-agent))
+                              :completion-owner-participant
+                              (conversation-adopted-participant (agent-conversation parent-agent))
                               :completion-policy     (or (getf item :completion-policy) ':continue)
                               :completion-mission-id
                               (task-completion-mission-identifier parent-agent)
