@@ -2,10 +2,10 @@
 
 ;;;; -- Memory Status --
 
-;;; A memory's status is derived on demand from the memory log and the files it
-;;; cites, never stored, so a restart or rollback always reproduces it. A
-;;; memory is current when every premise is current and unchanged and, if it
-;;; cites files, at least one of them still supports it.
+;;; A memory's status is recomputed from its recorded evidence, current files,
+;;; and current knowledge claims; it is not persisted. A memory is current
+;;; when each memory premise is current and unchanged, each claim premise is
+;;; supported, and, if it cites files, at least one file still supports it.
 
 (defparameter *memory-premise-depth-limit* 16
   "The deepest premise chain followed when assessing one memory.")
