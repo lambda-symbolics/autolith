@@ -154,7 +154,7 @@
 
 (-> test-precompaction-bounds-repeated-failures () null)
 (defun test-precompaction-bounds-repeated-failures ()
-  "Bound identical failure evidence while retaining distinct failure effects."
+  "Retain every failed attempt, including repeated identical error output."
   (with-test-configuration (configuration)
     (let ((conversation (conversation-create configuration :identifier "precompaction-repeated")))
       (conversation-append-user-message conversation "start")
