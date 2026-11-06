@@ -93,7 +93,7 @@ metadata."
 (defun main--validate-live-options (command)
   "Reject launch-only overrides rather than silently ignoring them on live reuse."
   (dolist (option '(:model :provider :permissions :immutable :pristine
-                    :fullscreen :almighty :images :simulate-crash))
+                    :fullscreen :plain :almighty :images :simulate-crash))
     (when (getopt* command option)
       (error 'configuration-error
              :message (format nil "A running conversation cannot accept the launch option --~A."

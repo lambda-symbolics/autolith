@@ -71,8 +71,9 @@
                           (platform-session-launch-command
                              *platform* (config :source-root configuration))
                           (list "--permissions" "auto")
-                          (when enabled-p
-                            (list "--immutable" "--pristine" "--fullscreen"))
+                          (if enabled-p
+                              (list "--immutable" "--pristine" "--fullscreen")
+                              (list "--plain"))
                           (list "--site-config-root"
                                 (namestring
                                    (config :site-config-root configuration))

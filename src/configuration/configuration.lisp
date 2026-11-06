@@ -542,8 +542,9 @@ Ordinary native defaults remain lazy and follow the current environment."
 (define-setting :fullscreen-p (boolean-setting)
   :label                      "Fullscreen"
   :group                      :terminal
-  :documentation              "Whether interactive sessions use the fullscreen terminal UI."
-  :scope                      :durable)
+  :documentation              "Whether interactive sessions use the fullscreen terminal UI; false keeps the transcript in the terminal's own scrollback."
+  :scope                      :durable
+  :default                    t)
 
 (define-setting :activity-line-p (boolean-setting)
   :label                         "Activity line"

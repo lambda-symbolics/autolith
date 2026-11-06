@@ -60,7 +60,7 @@ Source precedence, source recording, and value rejection belong to setinka."
            (dolist (case '((:reasoning-traces-p nil) (:compact-view-p t)
                            (:turn-timestamps-p nil) (:cache-miss-notices-p nil)
                            (:simple-technical-english-p nil)
-                           (:session-title-generation-p t) (:fullscreen-p nil)
+                           (:session-title-generation-p t) (:fullscreen-p t)
                            (:codex-fast-mode-p nil) (:permission-mode nil)))
              (destructuring-bind (name expected) case
                (test-assert (eq (config name created) expected)
@@ -114,10 +114,11 @@ Source precedence, source recording, and value rejection belong to setinka."
                                (eq (getf plist :turn-timestamps-p) t))
                           "storing one value keeps unknown and unrelated keys"))
            (snapshot-write pathname '(:preferences :version 8 :cache-miss-notices-p t))
-           (setf (config :fullscreen-p created) t)
+           (setf (config :fullscreen-p created) nil)
            (let ((plist (preferences-tests--file-plist configuration)))
              (test-assert (and (eq (getf plist :cache-miss-notices-p) t)
-                               (eq (getf plist :fullscreen-p) t)
+                               (member :fullscreen-p plist)
+                               (null (getf plist :fullscreen-p))
                                (null (member :turn-timestamps-p plist)))
                           "storing merges into the file as another process left it")))
          (snapshot-write pathname
