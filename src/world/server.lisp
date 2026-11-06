@@ -403,6 +403,9 @@ Return the launcher status a hosted session asked for, or NIL."
      (world-server-move server (getf arguments :participant) (getf arguments :channel)))
     (:dismiss
      (world-server-dismiss server (getf arguments :participant)))
+    (:person-unread
+     (world-server-person-unread-changed server)
+     (list :ok :operation ':person-unread))
     (:stop
      (world-server-stop server)
      (list :ok :operation ':stop :session-id *world-server-identifier*))
@@ -429,6 +432,17 @@ Return the launcher status a hosted session asked for, or NIL."
         for session = (application-localgroup-session (world-host-application host))
         when (and session (world-host-ready-p host) (null (world-host-exit-reason host)))
           collect (localgroup-status-snapshot session)))
+
+(-> world-server-person-unread-changed (world-server) null)
+(defun world-server-person-unread-changed (server)
+  "Count the messages waiting in the person's inbox again and show the count in every channel SERVER serves."
+  (let ((unread (handler-case (world-person-unread (world-server-configuration server))
+                  (autolith-error ()
+                    nil))))
+    (when unread
+      (dolist (host (world-server--hosts server))
+        (application-world-show-person-unread (world-host-application host) unread))))
+  nil)
 
 (-> world-server-open (world-server list) list)
 (defun world-server-open (server arguments)

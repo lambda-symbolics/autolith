@@ -201,6 +201,14 @@ whether to write."
     (sexp-store:store-error (cause)
       (world--store-error cause))))
 
+(-> world-person-unread (configuration) (integer 0))
+(defun world-person-unread (configuration)
+  "Return how many messages wait unread in the person's inbox, none before the inbox exists."
+  (let ((inbox (world-inbox-channel (world-load configuration))))
+    (if inbox
+        (length (world-inbox-deliveries configuration (channel-identifier inbox)))
+        0)))
+
 (-> world-inbox-append (configuration string list) null)
 (defun world-inbox-append (configuration channel-identifier deliveries)
   "Add DELIVERIES to channel CHANNEL-IDENTIFIER's inbox, ignoring repeated identifiers."
@@ -601,7 +609,9 @@ person resides in the inbox but speaks in the channel on screen."
   "Tell the live process serving each of CHANNEL-IDENTIFIERS to read its inbox.
 
 Returns the identifiers that were reached. A channel nobody serves keeps its
-inbox until a process installs its conversation."
+inbox until a process installs its conversation. When one of them is the
+person's inbox, every channel the world server serves shows the new unread
+count."
   (let ((records (handler-case (localgroup-endpoint-records configuration)
                    (error ()
                      nil)))
@@ -623,7 +633,19 @@ inbox until a process installs its conversation."
                 (push channel-identifier reached))
             (error ()
               nil)))))
+    (when (world-message--person-inbox-among-p configuration channel-identifiers)
+      (application-world-notify-person configuration))
     (nreverse reached)))
+
+(-> world-message--person-inbox-among-p (configuration list) boolean)
+(defun world-message--person-inbox-among-p (configuration channel-identifiers)
+  "Return true when the person's inbox is one of CHANNEL-IDENTIFIERS, false when the world cannot be read."
+  (let ((inbox (handler-case (world-inbox-channel (world-load configuration))
+                 (autolith-error ()
+                   nil))))
+    (and inbox
+         (member (channel-identifier inbox) channel-identifiers :test #'string=)
+         t)))
 
 (-> world-message-send
     (configuration &key (:sender string) (:channel string) (:text string) (:mentions list)

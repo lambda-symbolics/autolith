@@ -156,7 +156,42 @@ settlement settles it on the next delivery instead of showing it twice."
           (application--present-conversation-record application record))))
     (world-inbox-settle (application-configuration application) channel
                         (mapcar #'world-delivery-identifier notices))
-    (world-message-resume (application-configuration application)))
+    (world-message-resume (application-configuration application))
+    (let ((server (application-world-server application)))
+      (if server
+          (world-server-person-unread-changed server)
+          (application-world-show-person-unread application 0))))
+  nil)
+
+(-> application-world-notify-person (configuration) null)
+(defun application-world-notify-person (configuration)
+  "Tell the world server that the person's inbox changed, so every channel it serves shows the unread count.
+
+Inside the server, where the active application knows it, the change is
+shown directly; elsewhere the server is asked over its endpoint. Without a
+server nothing shows the count, and the next channel a terminal opens counts
+again."
+  (let* ((application *active-application*)
+         (server      (and application (application-world-server application))))
+    (if server
+        (world-server-person-unread-changed server)
+        (handler-case
+            (let ((entry (world-client-entry configuration)))
+              (when entry
+                (localgroup-query-record entry ':person-unread)))
+          (autolith-error ()
+            ;; A checkpointing or stopping server counts again on the next attach.
+            nil))))
+  nil)
+
+(-> application-world-show-person-unread (application (integer 0)) null)
+(defun application-world-show-person-unread (application unread)
+  "Show UNREAD, the messages waiting in the person's inbox, on APPLICATION's modeline."
+  (setf (application-world-inbox-unread application) unread)
+  (let ((ui (and (slot-boundp application 'ui)
+                 (application-ui application))))
+    (when ui
+      (terminal-ui-set-idle-status-details ui (application--status-details application))))
   nil)
 
 (-> application-world-steering-take (application) list)
@@ -312,8 +347,9 @@ participant is left in place, only the scan moves past it."
   "Map APPLICATION's conversation onto its channel and deliver what waits: a terminal just took control of it.
 
 Taking control moves nobody; the person resides in the inbox. Messages
-waiting in the inbox show now that a terminal shows it. A world that cannot
-be read only warns."
+waiting in the inbox show now that a terminal shows it, and any other
+channel shows on its modeline how many wait there. A world that cannot be
+read only warns."
   (when (and (application-world-server application)
              (slot-boundp application 'configuration))
     (let ((channel       (application-world--served-channel application))
@@ -324,7 +360,9 @@ be read only warns."
               (world-reconcile-sessions configuration
                                         :identities (list (conversation-pathname
                                                            (application-conversation application))))
-              (application-world-deliver application))
+              (application-world-deliver application)
+              (application-world-show-person-unread application
+                                                    (world-person-unread configuration)))
           (error (cause)
             (warn 'world-session-warning
                   :pathname (configuration-world-sessions-path
