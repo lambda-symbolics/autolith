@@ -24,7 +24,7 @@
 (defmethod tool-execute ((tool lisp-paren-check-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Check one recognized Lisp-family file or a directory tree beneath the workspace."
+  "Check one recognized Lisp-family file or a directory tree."
   (declare (ignore tool))
   (let ((requested (tool-argument arguments "path" :required t)))
     (unless (non-empty-string-p requested)
