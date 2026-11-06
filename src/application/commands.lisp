@@ -1006,7 +1006,7 @@ the effort with the same model even when the model was never chosen."
        (setf (config :simple-technical-english-p configuration) t)
        (application-present
         application
-        "Simple Technical English is enabled and saved. Future replies will use it."))
+        "Simple Technical English is enabled and saved."))
       ((eq mode ':off)
        (setf (config :simple-technical-english-p configuration) nil)
        (application-present
