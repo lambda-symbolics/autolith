@@ -1697,7 +1697,17 @@
                  (flet ((submit (text)
                           "Submit TEXT as a primary prompt and return its delivery mode."
                           (nth-value 1 (application-input-controller-submit-primary-prompt
-                                        controller text))))
+                                        controller text)))
+
+                        (wakes-p (owner)
+                          "Return whether a finished job OWNER started would start a turn here."
+                          (application-job-completions--notice-admissible-p
+                           application
+                           (list :owner-conversation "bfirst1"
+                                 :owner-participant  owner
+                                 :completion-policy  ':continue))))
+                   (test-assert (wakes-p nil)
+                                "a job the channel's agent started continues it")
                    (test-assert (eq (submit "first words") ':queued)
                                 "a channel with its agent takes a typed prompt")
                    (world-message-send configuration
@@ -1718,6 +1728,8 @@
                                          (some (lambda (row) (search "hello from bfirst1" (getf row :wire-json)))
                                                rows))
                                     "the parked agent keeps the context it built, from the channel it left")))
+                   (test-assert (not (wakes-p nil))
+                                "a job outliving its agent's park starts no turn in the channel it left")
                    (test-assert (and (eq (submit "more words") ':rejected)
                                      (search "this channel has no agent"
                                              (recording-terminal-output terminal)))
@@ -1748,6 +1760,9 @@
                                   "a second domestic agent is refused")
                      (test-assert (eq (submit "again") ':queued)
                                   "the channel takes typed prompts again")
+                     (test-assert (and (not (wakes-p nil))
+                                       (wakes-p (participant-identifier agent)))
+                                  "the new agent continues only from jobs it started itself")
                      (test-assert (= (application-world-deliver application) 2)
                                   "both waiting messages reach the new agent, the one queued for the dismissed agent included")
                      (test-assert (notany (lambda (item) (search "hello from bfirst1" (json-encode item)))

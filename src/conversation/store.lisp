@@ -267,6 +267,11 @@
     :reader        conversation-projection
     :type          clinker-transcript:projection
     :documentation "The ordered provider projection and its item metadata.")
+   (adopted-participant
+    :initform      nil
+    :accessor      conversation-adopted-participant
+    :type          (option string)
+    :documentation "The agent whose context the latest context adoption installed, or NIL while the channel's first agent speaks.")
    (ephemeral-input-entries
     :initform nil
     :accessor conversation-ephemeral-input-entries
