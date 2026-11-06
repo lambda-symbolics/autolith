@@ -1069,5 +1069,71 @@
                                  (not (search "first words in a" text
                                               :start2 (1+ (search "first words in a" text))))
                                  (not (search "first words in b" text)))
-                            "back where it began, the agent's context holds its own history once and nothing of the other channel's earlier agent"))))))))
+                            "back where it began, the agent's context holds its own history once and nothing of the other channel's earlier agent")))
+           (let ((app-b (world-host-application (world-server--find-host server id-b))))
+            (flet ((adoptions ()
+                     "Return how many context adoptions channel B's conversation holds."
+                     (count ':context-adoption (application-tests--conversation-records
+                                                (application-conversation app-b))
+                            :key #'first))
+
+                   (context-file-p ()
+                     "Return whether agent A's context file exists."
+                     (not (null (probe-file (world-context-pathname
+                                             configuration (participant-identifier agent-a)))))))
+              (let ((before (adoptions)))
+                (test-call-with-function-replacements
+                 (list (list 'application-world-install-agent
+                             (lambda (&rest arguments)
+                               (declare (ignore arguments))
+                               (error 'world-error :message   "synthetic adoption failure."
+                                                   :operation ':move))))
+                 (lambda ()
+                   (let ((answer (move (participant-identifier agent-a) id-b)))
+                     (test-assert (and (string= (getf answer :channel) id-b)
+                                       (equal (participant-residence
+                                               (world-participant-find (world-load configuration)
+                                                                       (participant-identifier agent-a)))
+                                              id-b)
+                                       (context-file-p)
+                                       (equal (nth-value 2 (world-context-read
+                                                            configuration (participant-identifier agent-a)))
+                                              id-b)
+                                       (= (adoptions) before))
+                                  "a destination that fails to adopt after the move committed keeps the move and the context waiting for it"))))
+                (application-world-before-turn app-b ':message)
+                (test-assert (and (= (adoptions) (1+ before))
+                                  (not (context-file-p)))
+                             "the agent adopts its waiting context before its next turn")
+                (world-context-write configuration (participant-identifier agent-a)
+                                     :rows        (conversation-context-rows
+                                                   (application-conversation app-b))
+                                     :source      id-a
+                                     :destination id-b
+                                     :transition  (conversation-adopted-transition
+                                                   (application-conversation app-b)))
+                (application-world-before-turn app-b ':message)
+                (test-assert (and (= (adoptions) (1+ before))
+                                  (not (context-file-p)))
+                             "a context file left behind after its adoption is removed without a second adoption"))
+              (test-call-with-function-replacements
+               (list (list 'world-participant-move
+                           (lambda (&rest arguments)
+                             (declare (ignore arguments))
+                             (error 'world-error :message   "synthetic store failure."
+                                                 :operation ':move))))
+               (lambda ()
+                 (test-assert (and (refused-p (participant-identifier agent-a) "bthird3")
+                                   (not (context-file-p))
+                                   (application-world-agent-present-p app-b)
+                                   (not (application-localgroup-paused-p app-b)))
+                              "a move failing at its commit leaves no context file behind and the agent working where it was")))
+              (test-assert (handler-case
+                               (progn
+                                 (world-participant-move configuration (participant-identifier agent-a)
+                                                         "bthird3" :expected-residence id-a)
+                                 nil)
+                             (world-error (condition)
+                               (search "moved while" (autolith-error-message condition))))
+                           "the store moves an agent only from where the move found it"))))))))
   nil)

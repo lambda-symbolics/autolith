@@ -3788,6 +3788,7 @@ again."
             (unless (eq work (fourth (application-deferred-goal-continuation application)))
               (setf (application-deferred-goal-continuation application) nil)))
           (application-input-controller--begin-prompt-work controller work)
+          (application-world-before-turn application (first work))
           (case (first work)
             (:idle-compaction
              (application-input-controller--run-idle-compaction controller (second work)))
