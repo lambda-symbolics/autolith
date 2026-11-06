@@ -5,8 +5,8 @@
 ;;; The side panel a terminal client shows beside its channel: the person's
 ;;; inbox first, with the messages waiting there unread, then every other
 ;;; channel of the world grouped by workspace, with what runs there, who is
-;;; attached, and what arrived since this client last looked. The counts are the
-;;; client's own view and live nowhere else; a fresh client starts caught up.
+;;; attached, and what arrived since this client last looked. Channel unread
+;;; and mention baselines are client-local and start at the current counts.
 ;;; A started sidebar gathers on its own thread, so reading the world, the
 ;;; server and the inboxes never holds up the terminal's keystrokes; the
 ;;; panel only takes what the thread gathered last.
