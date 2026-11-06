@@ -286,9 +286,9 @@ gpt-6.1-terra follows gpt-5.6-terra until upstream publishes its entry.")
 (defparameter *codex-fast-mode-models*
   '("gpt-6.1-sol" "gpt-6.1-terra" "gpt-6-astra" "gpt-6-sol" "gpt-6-luna"
     "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
-  "Codex model identifiers verified to support the Fast service tier.
+  "Codex model identifiers for which Autolith offers the Fast service tier.
 
-gpt-6.1-terra is assumed to, like gpt-5.6-terra, until upstream lists it.")
+gpt-6.1-terra is assumed to support it, like gpt-5.6-terra, until upstream lists it.")
 
 ;; GPT window sizes read from the live Codex model catalog on 2026-07-19 and
 ;; confirmed in Codex reference commit 444da310e108da16aaeb18fd790b0ac464f08aca.
