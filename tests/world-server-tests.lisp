@@ -626,6 +626,41 @@
                       "a control attachment maps the channel and the person stays in the inbox")))))
   nil)
 
+(-> test-world-server-person-unread () null)
+(defun test-world-server-person-unread ()
+  "Test a message for the person shows its unread count on the modeline of every served channel."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (world-tests--persisted-conversation configuration "bfirst1" 1000)
+     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+     (multiple-value-bind (human first-agent second-agent) (world-tests--agents configuration)
+       (declare (ignore first-agent))
+       (let* ((entry  (world-client-entry configuration))
+              (id     (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
+                            :session-id))
+              (hosted (world-host-application (world-server--find-host server id))))
+         (flet ((modeline ()
+                  "Return the hosted channel's idle modeline text."
+                  (format nil "~{~A~}"
+                          (mapcar #'terminal-span-text
+                                  (terminal-ui-idle-status-details (application-ui hosted))))))
+           (test-assert (not (search "unread" (modeline)))
+                        "a channel shows no unread marker while the inbox is empty")
+           (world-message-send configuration
+                               :sender  (participant-identifier second-agent)
+                               :channel "bsecnd2"
+                               :text    (format nil "@~A the build is green" (participant-name human)))
+           (test-assert (task-tests--wait-until (lambda () (search "✉ 1 unread" (modeline))) 10)
+                        "a message for the person shows as unread on the modeline of a served channel")
+           (world-inbox-settle configuration (world-tests--inbox configuration)
+                               (mapcar #'world-delivery-identifier
+                                       (world-inbox-deliveries configuration
+                                                               (world-tests--inbox configuration))))
+           (localgroup-query-record entry ':person-unread)
+           (test-assert (not (search "unread" (modeline)))
+                        "the marker leaves once nothing waits in the inbox"))))))
+  nil)
+
 (-> test-world-server-open-before-checkpoint () null)
 (defun test-world-server-open-before-checkpoint ()
   "Test an open admitted before a checkpoint finishes starting its host before the checkpoint pauses the channels."

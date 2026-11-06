@@ -26,6 +26,11 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-world-pending-share
     :type          list
     :documentation "The messages the person submitted before this conversation persisted, oldest first, shared in that order once it does.")
+   (world-inbox-unread
+    :initform      0
+    :accessor      application-world-inbox-unread
+    :type          (integer 0)
+    :documentation "The messages waiting unread in the person's inbox as last counted, shown on the modeline.")
    (world-human
     :initform      nil
     :accessor      application-world-human
@@ -3703,9 +3708,13 @@ continuation turns, so the notice names what woke the model."
 
 (-> application--status-details (application) terminal-styled-text)
 (defun application--status-details (application)
-  "Return cached-phase session, model, effort, Fast mode, and repository status spans."
+  "Return cached-phase inbox, session, model, effort, Fast mode, and repository status spans.
+
+Unread messages in the person's inbox come first, so a narrow modeline
+clips the session title before it hides them."
   (when (slot-boundp application 'configuration)
     (let* ((configuration (application-configuration application))
+           (unread        (application-world-inbox-unread application))
            (conversation
              (and (slot-boundp application 'conversation)
                   (application-conversation application)))
@@ -3719,6 +3728,9 @@ continuation turns, so the notice names what woke the model."
              (application--git-branch
               (config :working-directory configuration))))
       (append
+       (when (plusp unread)
+         (list (terminal-span ':status-accent (format nil "✉ ~D unread" unread))
+               (terminal-span ':status-dim " · ")))
        (list (terminal-span ':status-model
                             (config :model configuration))
              (terminal-span ':status-dim " · ")
