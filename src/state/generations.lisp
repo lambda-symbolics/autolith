@@ -358,22 +358,22 @@ structured type and message survive the round trip."
   "Leave unrecognized checkpoint STATE unchanged."
   state)
 
+(defvar *main-direct-start-p* nil
+  "Whether a start runs its session in this process instead of a world server's channel.
+
+A booted generation resumes its saved session this way, as recovery does,
+apart from the world server.")
+
 (-> checkpoint-resume-main (list) null)
 (defun checkpoint-resume-main (arguments)
-  "Resume the saved session by its persisted conversation identity."
+  "Resume the saved session by its persisted conversation identity, in this process."
   (let* ((application  (and (boundp '*active-application*)
                             (symbol-value '*active-application*)))
          (conversation (and application (application-conversation application)))
          (identifier   (and conversation (conversation-identifier conversation))))
     (if (non-empty-string-p identifier)
-        (let ((previous (uiop:getenv "AUTOLITH_SESSION_STYLE")))
-          (unwind-protect
-               (progn
-                 (platform-set-environment-variable
-                  *platform* "AUTOLITH_SESSION_STYLE" "direct")
-                 (main (list "resume" identifier)))
-            (platform-set-environment-variable
-             *platform* "AUTOLITH_SESSION_STYLE" previous)))
+        (let ((*main-direct-start-p* t))
+          (main (list "resume" identifier)))
         (main arguments))))
 
 (-> checkpoint--source-snapshot (configuration) string)

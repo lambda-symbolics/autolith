@@ -160,7 +160,7 @@
                     (test-assert nil "explicit detached startup never falls back to direct")
                     (error 'configuration-error :message "Unexpected direct startup."))))
            (lambda ()
-             (with-test-environment (("AUTOLITH_SESSION_STYLE" "direct"))
+             (let ((*main-direct-start-p* t))
                (main-dispatch '("--detached" "--pristine" "--permissions" "full"))
                (test-assert
                 (and (= (length spawned) 1)
@@ -190,7 +190,7 @@
                             "detached live reuse only queries status, without spawning or detaching a client")
                (main-dispatch '("resume" "b6"))
                (test-assert (and (= (length spawned) 1) (= (length attached) 1))
-                            "ordinary live resume attaches even with direct session style")
+                            "ordinary live resume attaches even for a direct start")
                (let ((styled (with-output-to-string (stream)
                                (main--print-detached-receipt record :stream stream :styled-p t))))
                  (test-assert (and (find #\Escape styled) (search "424242" styled))
@@ -286,7 +286,7 @@
 
 (-> session-cli-tests--call-with-roots (pathname function) t)
 (defun session-cli-tests--call-with-roots (root function)
-  "Call FUNCTION with isolated CLI roots, the saved active core, and direct style."
+  "Call FUNCTION with isolated CLI roots and the saved active core."
   (test-call-with-environment
    (append
     (loop for (variable directory) in '(("XDG_CONFIG_HOME" "config/")
@@ -297,7 +297,6 @@
     (list (list "AUTOLITH_ACTIVE_CORE" (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE"))
           (list "AUTOLITH_SOURCE_ROOT" (namestring (asdf:system-source-directory :autolith)))
           (list "AUTOLITH_SBCL" (lisp-worker-sbcl-command))
-          (list "AUTOLITH_SESSION_STYLE" "direct")
           (list "AUTOLITH_SITE_CONFIG_ROOT" nil)
           (list "AUTOLITH_RECOVERED" nil)))
    function))
