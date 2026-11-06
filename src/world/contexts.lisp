@@ -29,7 +29,7 @@
 
 (-> world-context-pathname (configuration string) pathname)
 (defun world-context-pathname (configuration participant)
-  "Return the file holding the context parked agent PARTICIPANT carries."
+  "Return the file holding the context agent PARTICIPANT carries."
   (unless (every (lambda (character)
                    (or (alphanumericp character) (char= character #\-)))
                  participant)
@@ -96,7 +96,7 @@ An agent with no kept context carries none."
           (unless (and (equal (getf properties :participant) participant)
                        (listp (getf properties :rows)))
             (error 'world-error
-                   :message    (format nil "The context of agent ~A belongs to another agent." participant)
+                   :message    (format nil "The context of agent ~A belongs to another agent or has invalid rows." participant)
                    :pathname   pathname
                    :operation  ':context
                    :identifier participant))
