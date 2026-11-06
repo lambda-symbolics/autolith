@@ -1149,6 +1149,22 @@ the conversation already holds it."
          (application-input-controller-condition-variable controller))))
     queued-p))
 
+(-> application-input-controller-enqueue-work (application-input-controller list) boolean)
+(defun application-input-controller-enqueue-work (controller work)
+  "Queue the work item WORK, such as a client's (:CLIENT-WORK WORK), and report acceptance.
+
+Such work is not input: it is never persisted as a follow-up, recorded in
+input history, or kept in the recovery vault."
+  (let ((queued-p nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (unless (or (application-input-controller-stopping-p controller)
+                  (application-input-controller-localgroup-handoff-p controller))
+        (deque-push-back (application-input-controller-work-items controller) work)
+        (setf queued-p t)
+        (sb-thread:condition-broadcast
+         (application-input-controller-condition-variable controller))))
+    queued-p))
+
 (-> application-input-controller--queue-input
     (application-input-controller (or string user-message-input))
     boolean)
@@ -3791,7 +3807,8 @@ submitted a prompt knows its turn is over."
 (defun application-input-controller--run-work (controller work)
   "Run one submitted WORK item on the application main thread.
 
-The channel's structured clients hear when it finished, however it ended."
+The channel's structured clients hear when it started and when it finished,
+however it ended."
   (let ((application (application-input-controller-application controller))
         (pending-input-identifier
           (with-lock-held ((application-input-controller-lock controller))
@@ -3803,12 +3820,16 @@ The channel's structured clients hear when it finished, however it ended."
              (unless (eq work (fourth (application-deferred-goal-continuation application)))
                (setf (application-deferred-goal-continuation application) nil)))
            (application-input-controller--begin-prompt-work controller work)
+           (when (application-clients-attached-p application)
+             (application-clients-publish application (list :work-started :kind (first work))))
            (application-world-before-turn application (first work))
            (case (first work)
              (:idle-compaction
               (application-input-controller--run-idle-compaction controller (second work)))
              (:apply-pending
               (application-input-controller--apply-pending-commands controller))
+             (:client-work
+              (client-work-run (second work)))
              (:job-completion
               (application-input-controller--record-prompt-result
                controller

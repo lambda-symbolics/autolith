@@ -85,10 +85,20 @@
   "Return a deterministic provider result containing TEXT."
   (agent-test-result "acp-test-response" (list (agent-test-message text))))
 
+(defvar *acp-session-test-server* nil
+  "The world server hosting the channels of the ACP test running now.")
+
+(-> acp-session-test--application (acp-session) application)
+(defun acp-session-test--application (session)
+  "Return the application of the channel SESSION follows, as the test's world server hosts it."
+  (world-host-application
+   (or (world-server--find-host *acp-session-test-server* (acp-session-identifier session))
+       (error "Channel ~A is not hosted." (acp-session-identifier session)))))
+
 (-> acp-session-test--call-with-client
     (configuration function &key (:results list) (:provider (option model-provider))) t)
 (defun acp-session-test--call-with-client (configuration function &key results provider)
-  "Run FUNCTION with the actual serving lifetime, a scripted provider, and owned cleanup."
+  "Run FUNCTION with a served ACP endpoint whose channels a world server in this process hosts with a scripted provider."
   (let* ((provider (or provider (make-instance 'scripted-provider
                                                :configuration configuration :results results)))
          (service  (make-instance 'acp-service :configuration configuration))
@@ -98,22 +108,27 @@
      (list (list 'provider-create (lambda (ignored &rest options)
                                     (declare (ignore ignored options)) provider)))
      (lambda ()
-       (multiple-value-bind (server client-channel) (agentcomms:make-acp-channel-pair)
-         (let ((owner (make-thread
-                       (lambda ()
-                         (handler-case (acp-service-serve service server)
-                           (serious-condition (condition) (setf failure condition))))
-                       :name "ACP test service")))
-           (unwind-protect
-                (progn
-                  (agentcomms:acp-client-connect client client-channel)
-                  (agentcomms:client-initialize client)
-                  (funcall function service client))
-             (when (agentcomms:acp-client-connection client)
-               (agentcomms:connection-close (agentcomms:acp-client-connection client)))
-             (agentcomms:channel-close server)
-             (join-thread owner))
-           (when failure (error failure))))))))
+       (world-server-tests--call-with-server
+        configuration
+        (lambda (server)
+          (let ((*acp-session-test-server* server))
+            (multiple-value-bind (endpoint client-channel) (agentcomms:make-acp-channel-pair)
+              (let ((owner (make-thread
+                            (lambda ()
+                              (handler-case (acp-service-serve service endpoint)
+                                (serious-condition (condition) (setf failure condition))))
+                            :name "ACP test service")))
+                (unwind-protect
+                     (progn
+                       (agentcomms:acp-client-connect client client-channel)
+                       (agentcomms:client-initialize client)
+                       (funcall function service client))
+                  (when (agentcomms:acp-client-connection client)
+                    (agentcomms:connection-close (agentcomms:acp-client-connection client)))
+                  (agentcomms:channel-close endpoint)
+                  (join-thread owner))
+                (when failure (error failure))))))
+        :permission-mode ':ask)))))
 
 (defclass acp-session-test-gated-provider (scripted-provider)
   ((lock       :initform      (make-lock "ACP gated provider")
@@ -189,27 +204,16 @@
                         "load returns the durable assistant response"))
          (let ((session (acp-service--session service identifier)))
            (agentcomms:client-close-session client identifier)
-           (test-assert (acp-session-closed-p session) "close completes resource retirement"))
+           (test-assert (acp-session-closed-p session) "close leaves the channel"))
+         (test-assert (task-tests--wait-until
+                       (lambda ()
+                         (notany (lambda (host) (equal (world-host-channel host) identifier))
+                                 (with-lock-held ((world-server-lock *acp-session-test-server*))
+                                   (copy-list (world-server-hosts *acp-session-test-server*)))))
+                       10)
+                      "closing a session closes the channel the server started for it")
          (let ((lease (conversation-lease-acquire configuration identifier)))
            (conversation-lease-release lease))))))
-  nil)
-
-(-> test-acp-session-busy-admission-is-owner-safe () null)
-(defun test-acp-session-busy-admission-is-owner-safe ()
-  "Reject nested operations without releasing an existing claim, including the same owner."
-  (with-test-configuration (configuration)
-    (let ((service (make-instance 'acp-service :configuration configuration)) (owner (gensym)))
-      (acp-service--call-with-operation
-       service owner
-       (lambda ()
-         (dolist (candidate (list owner (gensym)))
-           (test-assert
-            (handler-case (progn (acp-service--call-with-operation service candidate (lambda () nil)) nil)
-              (agentcomms:acp-method-error () t))
-            "overlapping primary operations are rejected")
-           (test-assert (eq owner (acp-service-busy-owner service))
-                        "a rejected operation cannot release the active claim"))))
-      (test-assert (null (acp-service-busy-owner service)) "the successful owner releases its claim")))
   nil)
 
 (-> test-acp-session-cancel-blocked-provider-and-reuse () null)
@@ -272,7 +276,7 @@
               (session           (acp-service--session service identifier))
               (working-directory (config :working-directory
                                          (application-configuration
-                                          (acp-session-application session)))))
+                                          (acp-session-test--application session)))))
          (test-assert (equal (platform-truename *platform* root)
                              (platform-truename *platform* working-directory))
                       "new sessions retain their own working directory")
@@ -370,193 +374,51 @@
           "replayed results reference their original calls")))))
   nil)
 
-(-> test-acp-session-close-timeout-retains-ownership () null)
-(defun test-acp-session-close-timeout-retains-ownership ()
-  "Keep a non-cooperative owner and its lease until cancellation can complete."
-  (with-test-configuration (configuration root)
-    (acp-session-test--call-with-client
-     configuration
-     (lambda (service client)
-       (let* ((identifier (agentcomms:client-new-session client (namestring root)))
-              (session    (acp-service--session service identifier))
-              (lock       (make-lock "ACP non-cooperative owner"))
-              (condition  (make-condition-variable))
-              (entered-p  nil)
-              (released-p nil)
-              (owner
-               (make-thread
-                (lambda ()
-                  (handler-case
-                      (unwind-protect
-                           (sb-sys:without-interrupts
-                               (with-lock-held ((acp-session-lock session))
-                                 (incf (acp-session-epoch session))
-                                 (setf (acp-session-prompt-thread session) (current-thread)
-                                       (acp-session-prompt-interruptible-p session) t))
-                             (with-lock-held (lock)
-                               (setf entered-p t)
-                               (condition-notify condition)
-                               (loop until released-p do (condition-wait condition lock))))
-                        (with-lock-held ((acp-session-lock session))
-                          (setf (acp-session-prompt-thread session) nil
-                                (acp-session-prompt-interruptible-p session) nil)))
-                    (application-turn-cancelled () nil)))
-                :name "ACP non-cooperative prompt")))
-         (unwind-protect
-              (progn
-                (with-lock-held (lock)
-                  (loop until entered-p do (condition-wait condition lock)))
-                (let ((*acp-session-close-seconds* 0.02))
-                  (test-assert (handler-case (progn (acp-session-close session) nil)
-                                 (agentcomms:acp-state-error () t))
-                               "close reports its cooperative deadline"))
-                (test-assert (eq session (acp-service--session service identifier))
-                             "failed close retains service ownership")
-                (test-assert
-                 (handler-case
-                     (let ((lease (conversation-lease-acquire configuration identifier)))
-                       (conversation-lease-release lease)
-                       nil)
-                   (error () t))
-                 "failed close retains the conversation lease"))
-           (with-lock-held (lock)
-             (setf released-p t)
-             (condition-notify condition))
-           (join-thread owner))
-         (agentcomms:client-close-session client identifier)
-         (test-assert (acp-session-closed-p session) "close succeeds after the owner unwinds")
-         (let ((lease (conversation-lease-acquire configuration identifier)))
-           (conversation-lease-release lease))))))
-  nil)
-
-(-> test-acp-session-delayed-cancel-during-finalization () null)
-(defun test-acp-session-delayed-cancel-during-finalization ()
-  "Deliver a queued cancellation during abort repair and then reuse the session."
-  (with-test-configuration (configuration root)
-    (let* ((provider       (make-instance 'acp-session-test-gated-provider
-                                          :configuration configuration
-                                          :results       (list (acp-session-test-text-result "discarded")
-                                                               (acp-session-test-text-result "next"))))
-           (lock           (make-lock "ACP captured interrupt"))
-           (condition      (make-condition-variable))
-           (target         nil)
-           (callback       nil)
-           (deliveries     0)
-           (repairs        0)
-           (interrupt      (symbol-function 'interrupt-thread))
-           (record-aborted (symbol-function 'application--record-turn-aborted)))
-      (test-call-with-function-replacements
-       (list
-        (list 'interrupt-thread
-              (lambda (thread function)
-                (with-lock-held (lock)
-                  (setf target thread callback function)
-                  (condition-notify condition))))
-        (list 'application--record-turn-aborted
-              (lambda (application cause &rest options)
-                (incf repairs)
-                (funcall interrupt target (lambda () (incf deliveries) (funcall callback)))
-                (apply record-aborted application cause options))))
-       (lambda ()
-         (acp-session-test--call-with-client
-          configuration
-          (lambda (service client)
-            (declare (ignore service))
-            (let* ((identifier (agentcomms:client-new-session client (namestring root)))
-                   (result     nil)
-                   (failure    nil)
-                   (owner      (make-thread
-                                (lambda ()
-                                  (handler-case
-                                      (setf result (agentcomms:client-prompt
-                                                    client identifier
-                                                    (list (agentcomms:acp-text-content "cancelled"))))
-                                    (serious-condition (cause) (setf failure cause)))))))
-              (unwind-protect
-                   (progn
-                     (acp-session-test-gated-wait provider)
-                     (agentcomms:client-cancel client identifier)
-                     (with-lock-held (lock)
-                       (loop until callback do (condition-wait condition lock))))
-                (acp-session-test-gated-release provider)
-                (join-thread owner))
-              (when failure (error failure))
-              (test-assert (eq ':cancelled result) "queued cancellation returns the cancelled outcome")
-              (test-assert (and (= 1 repairs) (= 1 deliveries))
-                           "the queued interrupt runs without interrupting durable repair")
-              (test-assert
-               (eq ':end-turn (agentcomms:client-prompt
-                               client identifier (list (agentcomms:acp-text-content "after repair"))))
-               "the repaired session admits another prompt")))
-          :provider provider)))))
-  nil)
-
 (-> test-acp-session-flushes-thoughts-on-prompt-exit () null)
 (defun test-acp-session-flushes-thoughts-on-prompt-exit ()
-  "Deliver pending thoughts before success, cancellation, or error replies."
+  "Deliver pending thoughts before a success or error reply."
   (with-test-configuration (configuration root)
     (acp-session-test--call-with-client
      configuration
      (lambda (service client)
+       (declare (ignore service))
        (let ((identifier (agentcomms:client-new-session client (namestring root)))
-             (original   (make-condition 'simple-error :format-control "Original turn failure")))
-         (dolist (outcome '(:success :cancelled :error :flush-error))
+             (run-turn   (symbol-function 'agent-run-user-turn)))
+         (dolist (outcome '(:success :error))
            (setf (acp-session-test-updates client) nil)
            (test-call-with-function-replacements
-            (append
-             (list
-              (list 'agent-run-user-turn
-                    (lambda (agent text &key observer automatic-p pending-input-identifier)
-                      (declare (ignore agent text automatic-p pending-input-identifier))
-                      (agent-observer-reasoning observer "pending ")
-                      (agent-observer-reasoning observer "thought")
-                      (ecase outcome
-                        (:success
-                         nil)
-                        (:cancelled
-                         (error 'application-turn-cancelled))
-                        ((:error :flush-error)
-                         (error original))))))
-             (when (eq outcome ':flush-error)
-               (list (list 'acp-observer-flush
-                           (lambda (observer)
-                             (declare (ignore observer))
-                             (error "Flush failed"))))))
+            (list
+             (list 'agent-run-user-turn
+                   (lambda (agent text &rest options &key observer &allow-other-keys)
+                     (agent-observer-reasoning observer "pending ")
+                     (agent-observer-reasoning observer "thought")
+                     (if (eq outcome ':error)
+                         (error "Original turn failure")
+                         (apply run-turn agent text options)))))
             (lambda ()
-              (case outcome
-                (:flush-error
-                 (handler-case
-                     (progn
-                       (agentcomms:agent-prompt service identifier
-                                               (list (agentcomms:acp-text-content "turn")))
-                       (test-assert nil "the original turn fails"))
-                   (serious-condition (condition)
-                     (test-assert (eq original condition)
-                                  "cleanup failure does not replace the original condition"))))
-                (:error
-                 (test-assert
-                  (handler-case
-                      (progn
-                        (agentcomms:client-prompt client identifier
-                                                 (list (agentcomms:acp-text-content "turn")))
-                        nil)
-                    (agentcomms:acp-remote-error () t))
-                  "a failed turn returns a protocol error"))
-                (otherwise
-                 (test-assert
-                  (eq (if (eq outcome ':success) ':end-turn ':cancelled)
-                      (agentcomms:client-prompt client identifier
-                                               (list (agentcomms:acp-text-content "turn"))))
-                  "the prompt returns its terminal outcome")))))
-           (unless (eq outcome ':flush-error)
-             (let ((updates (reverse (acp-session-test-updates client))))
-               (test-assert
-                (and (= 1 (length updates))
-                     (eq ':agent-thought-chunk (agentcomms:acp-update-kind (first updates)))
-                     (equal "pending thought"
-                            (agentcomms:acp-content-text
-                             (agentcomms:json-get (first updates) "content"))))
-                "the client handles the final thought batch before the terminal reply"))))))))
+              (if (eq outcome ':error)
+                  (test-assert
+                   (handler-case
+                       (progn
+                         (agentcomms:client-prompt client identifier
+                                                  (list (agentcomms:acp-text-content "turn")))
+                         nil)
+                     (agentcomms:acp-remote-error () t))
+                   "a failed turn returns a protocol error")
+                  (test-assert
+                   (eq ':end-turn
+                       (agentcomms:client-prompt client identifier
+                                                (list (agentcomms:acp-text-content "turn"))))
+                   "the prompt returns its terminal outcome"))))
+           (let ((thoughts (remove ':agent-thought-chunk (reverse (acp-session-test-updates client))
+                                   :key #'agentcomms:acp-update-kind :test-not #'eq)))
+             (test-assert
+              (and (= 1 (length thoughts))
+                   (equal "pending thought"
+                          (agentcomms:acp-content-text
+                           (agentcomms:json-get (first thoughts) "content"))))
+              (format nil "the editor has the final thought batch before the ~(~A~) reply" outcome))))))
+     :results (list (acp-session-test-text-result "done"))))
   nil)
 
 (-> test-acp-session-replay-metadata-and-tool-statuses () null)
@@ -570,7 +432,7 @@
          (setf identifier (agentcomms:client-new-session client (namestring root)))
          (let ((conversation
                  (application-conversation
-                  (acp-session-application (acp-service--session service identifier)))))
+                  (acp-session-test--application (acp-service--session service identifier)))))
            (dolist (record
                      (list
                       (list :message :role ':user
@@ -586,11 +448,11 @@
                       (list :provider-item
                             :wire-json
                             "{\"type\":\"function_call\",\"call_id\":\"bad-call\",\"name\":\"shell.run\",\"arguments\":\"{}\"}")
-                      (list :tool-result :call-id "ok-call" :status ':ok
+                      (list :tool-result :call-id "ok-call" :tool "resource.read" :status ':ok
                             :output "completed output")
-                      (list :tool-result :call-id "legacy-call" :status ':success
+                      (list :tool-result :call-id "legacy-call" :tool "resource.read" :status ':success
                             :output "legacy output")
-                      (list :tool-result :call-id "bad-call" :status ':failure
+                      (list :tool-result :call-id "bad-call" :tool "shell.run" :status ':failure
                             :output "failed output")))
              (conversation-append-record
               conversation

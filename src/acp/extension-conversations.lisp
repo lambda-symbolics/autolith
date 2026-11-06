@@ -54,10 +54,10 @@
                 t
                 (argo:json-false)))))
 
-(-> acp-extension-conversations (acp-session hash-table) hash-table)
-(defun acp-extension-conversations (session params)
+(-> acp-extension-conversations (application hash-table) hash-table)
+(defun acp-extension-conversations (application params)
   "Return durable conversations with bounded stable offset paging."
-  (let* ((application   (acp-session-application session))
+  (let* ((application   application)
          (configuration (application-configuration application))
          (cwd-value     (gethash "cwd" params))
          (cursor-value  (gethash "cursor" params))

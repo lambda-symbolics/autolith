@@ -17,7 +17,7 @@
      (lambda (service client)
        (let* ((identifier  (agentcomms:client-new-session client (namestring root)))
               (session     (acp-service--session service identifier))
-              (application (acp-session-application session)))
+              (application (acp-session-test--application session)))
          (labels ((request (method &rest fields)
                     "Send one exact-session extension request."
                     (agentcomms:client-agent-request
@@ -62,7 +62,7 @@
      (lambda (service client)
        (let* ((identifier (agentcomms:client-new-session client (namestring root)))
               (session    (acp-service--session service identifier))
-              (model      (config :model (application-configuration (acp-session-application session)))))
+              (model      (config :model (application-configuration (acp-session-test--application session)))))
          (test-call-with-function-replacements
           (list (list 'acp-extension--credential-stored-p
                       (lambda (configuration registration)
@@ -79,8 +79,8 @@
                 (test-assert (eq t (gethash "credentialStored" before)) "stored presence is independent")
                 (test-assert (argo:json-false-p (gethash "recentlyVerified" before))
                              "stored credentials alone are not verified"))
-              (agent-observer-status (acp-observer-create session) ':provider-request-completed
-                                     (list :usage '(("input_tokens" 3))))
+              (application-clients-note-usage (acp-session-test--application session)
+                                              '(("input_tokens" 3)))
               (test-assert (eq t (gethash "recentlyVerified" (row)))
                            "successful provider completion marks this model verified"))))))))
   nil)

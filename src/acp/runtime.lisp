@@ -25,83 +25,77 @@
           (agentcomms:acp-session-mode "full-access" "Full access" :description "Allow commands and external tools without approval.")))))
 
 (-> acp-service--open-session
-    (acp-service &key (:cwd string) (:identifier (option string)) (:mcp-servers list)) acp-session)
+    (acp-service &key (:cwd string) (:identifier (option string)) (:mcp-servers t)) acp-session)
 (defun acp-service--open-session (service &key cwd identifier mcp-servers)
-  "Construct a leased headless application, publishing it only after successful setup."
-  (acp-service--call-with-operation
-   service (gensym "SESSION-SETUP")
-   (lambda ()
-     (when (>= (hash-table-count (acp-service-sessions service)) *acp-session-maximum-count*)
-       (error 'agentcomms:acp-state-error :message "The live session limit is reached."))
-     (when (and identifier (gethash identifier (acp-service-sessions service)))
-       (agentcomms:acp-invalid-params "Session ~A is already open." identifier))
-     (agentcomms:acp-validate-absolute-path cwd "cwd")
-     (unless (uiop:directory-exists-p cwd)
-       (agentcomms:acp-invalid-params "The working directory does not exist: ~A." cwd))
-     (let* ((configuration (configuration-copy
-                            (acp-service-configuration service)
-                            :working-directory (platform-truename *platform* (uiop:ensure-directory-pathname cwd))))
-            (conversation nil) (lease nil) (registry nil) (worker nil)
-            (completed-p   nil))
-       (unwind-protect
-            (progn
-              (if identifier
-                  (progn
-                    (setf lease (conversation-lease-acquire configuration identifier)
-                          conversation (conversation-load-by-id configuration identifier))
-                    (unless (equal identifier (conversation-identifier conversation))
-                      (agentcomms:acp-invalid-params "Use the canonical conversation identifier.")))
-                  (setf conversation (conversation-create configuration)
-                        lease (conversation-lease-acquire configuration
-                                                          (conversation-identifier conversation))))
-              (setf configuration (application--configuration-for-conversation configuration conversation))
-              (let ((provider (provider-create configuration
-                                               :reasoning-summaries-p (config :reasoning-traces-p configuration))))
-                (setf registry (acp-mcp-create-tool-registry configuration mcp-servers)
-                      worker (lisp-worker-pool-create configuration))
-                (let* ((application
-                        (make-instance 'application
-                                       :configuration configuration :conversation conversation
-                                       :conversation-lease lease :provider provider
-                                       :tool-registry registry :worker worker
-                                       :agent            (agent-create :configuration configuration :conversation conversation
-                                                                       :provider provider :tool-registry registry :worker worker)
-                                       :ui nil :permission-mode (acp-service-permission-mode service)
-                                       :permission-state (permissions-load configuration)))
-                       (session (make-instance 'acp-session :service service
-                                               :identifier           (conversation-identifier conversation)
-                                               :application          application
-                                               :mode                 (acp-service-permission-mode service))))
-                  (acp-input-initialize session)
-                  (with-lock-held ((acp-service-lock service))
-                    (when (acp-service-closed-p service)
-                      (error 'agentcomms:acp-connection-closed))
-                    (setf (gethash (acp-session-identifier session) (acp-service-sessions service)) session
-                          completed-p t))
-                  session)))
-         (unless completed-p
-           (let ((failures (application--discard-connection-resources nil registry worker)))
-             (unless failures
-               (when registry
-                 (acp-mcp-release-credentials (mcp-tool-registry-manager registry)))))
-           (when lease (conversation-lease-release lease))))))))
+  "Open the channel of IDENTIFIER, or a new one for CWD, in the world server and return its session.
+
+The editor's MCP-SERVERS join the tools of a channel the server starts for
+this session. A loaded session replays its history before it follows the
+channel's live events, so the two never interleave."
+  (when (>= (hash-table-count (acp-service-sessions service)) *acp-session-maximum-count*)
+    (error 'agentcomms:acp-state-error :message "The live session limit is reached."))
+  (when (and identifier (gethash identifier (acp-service-sessions service)))
+    (agentcomms:acp-invalid-params "Session ~A is already open." identifier))
+  (agentcomms:acp-validate-absolute-path cwd "cwd")
+  (unless (uiop:directory-exists-p cwd)
+    (agentcomms:acp-invalid-params "The working directory does not exist: ~A." cwd))
+  (let* ((directory     (platform-truename *platform* (uiop:ensure-directory-pathname cwd)))
+         (configuration (configuration-copy (acp-service-configuration service)
+                                            :working-directory directory))
+         (servers       (and mcp-servers (coerce mcp-servers 'list))))
+    (multiple-value-bind (channel started-p)
+        (handler-case
+            (world-client-open configuration
+                               :directory       directory
+                               :channel         identifier
+                               :new-p           (null identifier)
+                               :permission-mode (acp-service-permission-mode service)
+                               :pristine-p      (acp-service-pristine-p service)
+                               :mcp-servers     (and servers (client-portable servers)))
+          (localgroup-error (condition)
+            (error 'agentcomms:acp-state-error :message (autolith-error-message condition))))
+      (let ((session     (make-instance 'acp-session
+                                        :service       service
+                                        :identifier    channel
+                                        :configuration configuration
+                                        :started-p     started-p
+                                        :mode          (acp-service-permission-mode service)))
+            (completed-p nil))
+        (setf (acp-session-update-buffer session)
+              (agentcomms:make-agent-update-buffer service channel))
+        (unwind-protect
+             (progn
+               (when (and identifier (not (equal identifier channel)))
+                 (agentcomms:acp-invalid-params "Use the canonical conversation identifier."))
+               (when identifier
+                 (acp-session-replay session))
+               (let ((connection (localgroup-client-connect
+                                  (localgroup--find-record configuration channel)
+                                  :name           "acp"
+                                  :event-function (lambda (event)
+                                                    (acp-session-event session event)))))
+                 (setf (acp-session-connection session) connection)
+                 (let ((mode (getf (rest (getf (rest (localgroup-client-connection-attached connection)) :state))
+                                   :permission-mode)))
+                   (when (keywordp mode)
+                     (setf (acp-session-mode session) mode))))
+               (with-lock-held ((acp-service-lock service))
+                 (when (acp-service-closed-p service)
+                   (error 'agentcomms:acp-connection-closed))
+                 (setf (gethash channel (acp-service-sessions service)) session
+                       completed-p                                      t))
+               session)
+          (unless completed-p
+            (acp-session-close session)))))))
 
 (defmethod agentcomms:agent-new-session
     ((service acp-service) &key cwd mcp-servers additional-directories params)
-  "Create a durable session with session-local client MCP servers."
+  "Open a new channel for CWD, with the editor's MCP servers among its tools."
   (declare (ignore params))
   (when additional-directories
     (agentcomms:acp-invalid-params "Additional directories are not supported."))
   (let ((session (acp-service--open-session service :cwd cwd :mcp-servers mcp-servers)))
-    (handler-case
-        (progn
-          (acp-completion-start session)
-          (values (acp-session-identifier session) (acp-service--modes session)))
-      (serious-condition (condition)
-        (acp-session-close session)
-        (with-lock-held ((acp-service-lock service))
-          (remhash (acp-session-identifier session) (acp-service-sessions service)))
-        (error condition)))))
+    (values (acp-session-identifier session) (acp-service--modes session))))
 
 (-> acp-replay--record-update (list integer) (option hash-table))
 (defun acp-replay--record-update (record turn-sequence)
@@ -161,32 +155,24 @@
 
 (-> acp-session-replay (acp-session) null)
 (defun acp-session-replay (session)
-  "Replay chronological durable messages, reasoning, calls, and results before load returns."
-  (let ((observer (acp-observer-create session)))
-    (acp-replay-map-updates
-     (application-conversation (acp-session-application session))
-     (lambda (update) (acp-observer--send observer update)))
-    (acp-observer--plan observer))
+  "Replay the channel's durable messages, reasoning, calls and results, then its plan."
+  (let ((conversation (conversation-replay-load (acp-session-configuration session)
+                                                (acp-session-identifier session))))
+    (with-lock-held ((acp-session-lock session))
+      (acp-replay-map-updates conversation
+                              (lambda (update) (acp-session--send session update)))
+      (acp-session--plan session)))
+  (acp-session-flush session)
   nil)
 
 (defmethod agentcomms:agent-load-session
     ((service acp-service) &key session-id cwd mcp-servers additional-directories params)
-  "Load a leased conversation and replay its history before answering."
+  "Open the channel SESSION-ID and replay its history before answering."
   (declare (ignore params))
   (when additional-directories
     (agentcomms:acp-invalid-params "Additional directories are not supported."))
-  (let ((session (acp-service--open-session service :cwd cwd :identifier session-id
-                                            :mcp-servers mcp-servers)))
-    (handler-case
-        (progn
-          (acp-session-replay session)
-          (acp-completion-start session)
-          (acp-service--modes session))
-      (serious-condition (condition)
-        (acp-session-close session)
-        (with-lock-held ((acp-service-lock service))
-          (remhash session-id (acp-service-sessions service)))
-        (error condition)))))
+  (acp-service--modes
+   (acp-service--open-session service :cwd cwd :identifier session-id :mcp-servers mcp-servers)))
 
 (-> acp-prompt->text (list) string)
 (defun acp-prompt->text (blocks)
@@ -210,171 +196,77 @@
             (otherwise
              (agentcomms:acp-invalid-params "Unsupported prompt content: ~A." type))))))
 
-(defmethod agentcomms:peer-handle-notification :before
-    ((service acp-service) connection method &key params)
-  "Apply cancellation to headless continuations and explicit tool invocations too."
-  (declare (ignore connection))
-  (when (and (string= method "session/cancel") (hash-table-p params))
-    (let* ((identifier (agentcomms:json-get params "sessionId"))
-           (session    (with-lock-held ((acp-service-lock service))
-                         (gethash identifier (acp-service-sessions service))))
-           (epoch      (and session
-                            (with-lock-held ((acp-session-lock session))
-                              (when (acp-session-prompt-thread session)
-                                (acp-session-epoch session))))))
-      (when epoch (acp-session-cancel session :expected-epoch epoch))))
-  nil)
+(-> acp-session-prompt (acp-session string) keyword)
+(defun acp-session-prompt (session text)
+  "Submit the editor's prompt TEXT to the channel and return its stop reason once the channel is idle.
 
-(-> acp-session-run-turn (acp-session string &key (:automatic-p boolean)
-                                                (:queued-p boolean)
-                                                (:prepare (option function))) keyword)
-(defun acp-session-run-turn (session text &key automatic-p queued-p prepare)
-  "Run one admitted turn, preserving cancellation and durable repair for either input source."
-  (let* ((service                      (acp-session-service session))
-         (application                  (acp-session-application session))
-         (conversation                 (application-conversation application))
-         (controller                   (acp-input-controller session))
-         (*acp-extension-invocation-p* (or automatic-p queued-p))
-         (start-sequence               nil)
-         (observer                     nil)
-         (source                       (cond (queued-p
-                                              "queue")
-                                             (automatic-p
-                                              "completion")
-                                             (t
-                                              "prompt")))
-         (outcome                      ':condition)
-         (claimed-p                    nil))
-    (acp-service--call-with-operation
-     service session
-     (lambda ()
-       (unwind-protect
-            (handler-case
-                (progn
-                  (with-lock-held ((acp-session-lock session))
-                    (when (or (acp-session-closed-p session) (acp-session-closing-p session))
-                      (agentcomms:acp-invalid-params "The session is closing or closed."))
-                    (when (and (or automatic-p queued-p) (acp-session-cancelled-p session))
-                      (error 'application-turn-cancelled))
-                    (unless (or automatic-p queued-p)
-                      (setf (acp-session-cancelled-p session) nil
-                            (acp-session-completion-report session) nil))
-                    (incf (acp-session-epoch session))
-                    (setf (acp-session-prompt-thread session) (current-thread)
-                          (acp-session-prompt-interruptible-p session) t
-                          claimed-p t))
-                  (let ((*active-application* application)
-                        (*configuration*      (application-configuration application))
-                        (*default-pathname-defaults*
-                          (config :working-directory (application-configuration application))))
-                    (acp-extension-turn-notify session "running" :source source)
-                    (acp-session-check-cancelled session)
-                    (let ((prepared (if prepare (funcall prepare) t)))
-                      (setf outcome
-                            (if (not prepared)
-                                ':end-turn
-                                (progn
-                                  (when controller
-                                    (application-input-controller-begin-external-work controller))
-                                  (when (and controller (not (or automatic-p queued-p)))
-                                    (with-lock-held ((application-input-controller-lock controller))
-                                      (setf (application-input-controller-queued-work-paused-p controller) nil)))
-                                  (setf start-sequence (conversation-next-sequence conversation)
-                                        observer (acp-observer-create session))
-                                  (acp-extension-notify session "state")
-                                  (handler-case
-                                      (agent-run-user-turn
-                                       (application-agent application) (if queued-p prepared text)
-                                       :observer observer :automatic-p automatic-p
-                                       :pending-input-identifier
-                                       (and queued-p controller
-                                            (application-input-controller-active-work-identifier controller)))
-                                    (provider-context-budget-error (condition)
-                                      (acp-session--call-with-finalization
-                                       session
-                                       (lambda ()
-                                         (acp-session-check-cancelled session)
-                                         (application-present-context-refusal application condition)
-                                         (agent-observer-text observer (format nil "Context admission refused: ~A" condition))
-                                         (acp-observer-flush observer)
-                                         ':refusal)))
-                                    (:no-error (&rest results)
-                                      (declare (ignore results))
-                                      (acp-session--call-with-finalization
-                                       session
-                                       (lambda ()
-                                         (acp-session-check-cancelled session)
-                                         (acp-observer-flush observer)
-                                         ':end-turn))))))))))
-              (application-turn-cancelled (condition)
-                (setf outcome ':cancelled)
-                (acp-session--call-with-finalization
-                 session
-                 (lambda ()
-                   (when start-sequence
-                     (application--record-turn-aborted application condition
-                                                       :turn-start-sequence start-sequence
-                                                       :reason              ':cancelled))
-                   (when observer
-                     (handler-case (acp-observer-flush observer)
-                       (serious-condition () nil)))
-                   ':cancelled)))
-              (serious-condition (condition)
-                (acp-session--call-with-finalization
-                 session
-                 (lambda ()
-                   (when start-sequence
-                     (application--record-turn-aborted application condition
-                                                       :turn-start-sequence start-sequence
-                                                       :reason              ':application-error))
-                   (when observer
-                     (handler-case (acp-observer-flush observer)
-                       (serious-condition () nil)))
-                   (with-lock-held ((acp-session-lock session))
-                     (let ((report (princ-to-string condition)))
-                       (setf (acp-session-completion-report session)
-                             (subseq report 0 (min 2000 (length report))))))
-                   (error condition)))))
-         (when claimed-p
-           (sb-sys:without-interrupts
-             (unwind-protect
-                  (when controller
-                    (application-input-controller-finish-external-work
-                     controller :pause-p (not (eq outcome ':end-turn))))
-               (with-lock-held ((acp-session-lock session))
-                 (setf (acp-session-prompt-interruptible-p session) nil
-                       (acp-session-prompt-thread session) nil))
-               (acp-extension-turn-notify session "idle" :source source :outcome outcome)
-               (acp-extension-notify session "state")
-               (acp-completion-wake session)))))))))
+A turn the editor cancelled stops with :CANCELLED; a turn that failed signals
+the failure to the editor."
+  (let ((mark nil))
+    (with-lock-held ((acp-session-lock session))
+      (when (acp-session-closed-p session)
+        (error 'agentcomms:acp-state-error :message "The session is closed."))
+      (when (acp-session-prompt-active-p session)
+        (error 'agentcomms:acp-state-error :message "A prompt is already running in this session."))
+      (setf (acp-session-prompt-active-p session) t
+            (acp-session-cancelled-p session)     nil
+            (acp-session-last-outcome session)    nil
+            (acp-session-own-prompts session)     (append (acp-session-own-prompts session) (list text))
+            (acp-session-sources session)         (append (acp-session-sources session) (list "prompt"))
+            mark                                  (acp-session-idle-count session)))
+    (unwind-protect
+         (let ((busy-p (getf (acp-session-call session ':submit :text text) :busy-p)))
+           (with-lock-held ((acp-session-lock session))
+             (loop until (or (acp-session-closed-p session)
+                             (not busy-p)
+                             (> (acp-session-idle-count session) mark))
+                   do (condition-wait (acp-session-condition-variable session)
+                                      (acp-session-lock session))))
+           (acp-session-flush session)
+           (let ((outcome (with-lock-held ((acp-session-lock session))
+                            (cond
+                              ((acp-session-cancelled-p session)
+                               ':cancelled)
+                              ((and (acp-session-closed-p session)
+                                    (= (acp-session-idle-count session) mark))
+                               (error 'agentcomms:acp-state-error
+                                      :message "The channel went away before the turn finished."))
+                              (t
+                               (or (acp-session-last-outcome session) ':end-turn))))))
+             (when (eq outcome ':condition)
+               (error 'agentcomms:acp-method-error
+                      :code    -32603
+                      :message "The turn failed; the channel's transcript has its report."))
+             outcome))
+      (with-lock-held ((acp-session-lock session))
+        (setf (acp-session-prompt-active-p session) nil
+              (acp-session-sources session)       (remove "prompt" (acp-session-sources session)
+                                                          :test #'equal :count 1))))))
 
 (defmethod agentcomms:agent-prompt ((service acp-service) session-id prompt &key params)
-  "Run one explicit user prompt through the shared primary turn boundary."
+  "Run one editor prompt in the session's channel."
   (declare (ignore params))
-  (acp-session-run-turn (acp-service--session service session-id) (acp-prompt->text prompt)))
+  (acp-session-prompt (acp-service--session service session-id) (acp-prompt->text prompt)))
 
 (defmethod agentcomms:agent-cancel ((service acp-service) session-id)
-  "Interrupt the prompt and its concurrent tools without waiting on the reader."
+  "Cancel the turn the session's channel runs."
   (acp-session-cancel (acp-service--session service session-id)))
 
 (defmethod agentcomms:agent-set-mode ((service acp-service) session-id mode-id &key params)
-  "Validate and publish a permission mode change between turns."
+  "Set the channel's permission mode and tell the editor."
   (declare (ignore params))
   (let* ((session (acp-service--session service session-id))
          (mode    (find mode-id '(:ask :auto :sandboxed :full-access)
                         :key (lambda (value) (string-downcase (symbol-name value))) :test #'equal)))
     (unless mode (agentcomms:acp-invalid-params "Unknown mode ~A." mode-id))
+    (acp-session-call session ':mode :value mode)
     (with-lock-held ((acp-session-lock session))
-      (when (acp-session-prompt-thread session)
-        (error 'agentcomms:acp-state-error :message "Change mode between prompt turns."))
-      (setf (acp-session-mode session) mode
-            (application-permission-mode (acp-session-application session)) mode)
-      (clrhash (acp-session-permissions session)))
+      (setf (acp-session-mode session) mode))
     (agentcomms:agent-send-update service session-id (agentcomms:acp-update-current-mode mode-id)))
   nil)
 
 (defmethod agentcomms:agent-close-session ((service acp-service) session-id params)
-  "Cancel work and release this session's runtime resources and lease."
+  "Leave the session's channel."
   (declare (ignore params))
   (acp-session-close (acp-service--session service session-id))
   (with-lock-held ((acp-service-lock service))
@@ -382,14 +274,50 @@
   nil)
 
 (defmethod agentcomms:peer-connection-closed :before ((service acp-service) connection reason)
-  "Stop admission and cancel work before the library joins request handlers."
+  "Stop admission and cancel the turns the editor's prompts started."
   (declare (ignore connection reason))
   (let ((sessions nil))
     (with-lock-held ((acp-service-lock service))
       (setf (acp-service-closed-p service) t
             sessions (loop for session being the hash-values of (acp-service-sessions service)
                            collect session)))
-    (mapc #'acp-session-cancel sessions)))
+    (dolist (session sessions)
+      (when (acp-session-prompt-active-p session)
+        (acp-session-cancel session)))))
+
+(defmethod agentcomms:agent-extension-request ((service acp-service) method params)
+  "Run the editor's extension METHOD: in the ACP process, or in the session's channel.
+
+A request for a missing, malformed or foreign session, or one that fails on
+its way, answers with a typed :CONDITION outcome; a closed service refuses."
+  (let ((entry (assoc method *acp-extension-methods* :test #'string=)))
+    (cond
+      ((string= method "_autolith/capabilities")
+       (acp-extension-result ':ok :value (acp-extension-capabilities)))
+      ((null entry)
+       (call-next-method))
+      ((acp-service-closed-p service)
+       (error 'agentcomms:acp-connection-closed))
+      (t
+       (handler-case
+           (let ((session (acp-service--session
+                           service (agentcomms:acp-field params "sessionId" :type ':string :required-p t))))
+             (if (eq (third entry) ':client)
+                 (handler-case (acp-extension-result ':ok :value (funcall (second entry) session params))
+                   (acp-extension-unavailable (condition)
+                     (acp-extension-result ':unsupported :report (acp-extension-unavailable-reason condition))))
+                 (let ((outcome (getf (acp-session-call session ':operation
+                                                        :method method
+                                                        :params (client-portable params))
+                                      :result)))
+                   (acp-extension-result (getf outcome :outcome)
+                                         :value          (client-json (getf outcome :value))
+                                         :report         (getf outcome :report)
+                                         :condition-type (getf outcome :condition-type)))))
+         (error (condition)
+           (acp-extension-result ':condition
+                                 :report         (princ-to-string condition)
+                                 :condition-type (string-downcase (symbol-name (type-of condition))))))))))
 
 (defmethod agentcomms:peer-handle-request :around ((service acp-service) connection method &key params)
   "Keep diagnostics off the protocol stream in every inbound handler thread."
@@ -405,29 +333,19 @@
 
 (-> acp-service-close (acp-service) null)
 (defun acp-service-close (service)
-  "Stop admission and release all sessions, retaining failed ownership for a retry."
-  (let ((sessions nil)
-        (failed-p nil))
+  "Stop admission and leave every session's channel."
+  (let ((sessions nil))
     (with-lock-held ((acp-service-lock service))
       (setf (acp-service-closed-p service) t
             sessions (loop for session being the hash-values of (acp-service-sessions service)
-                           collect session)))
-    (mapc #'acp-session-cancel sessions)
-    (dolist (session sessions)
-      (handler-case
-          (progn
-            (acp-session-close session)
-            (with-lock-held ((acp-service-lock service))
-              (remhash (acp-session-identifier session) (acp-service-sessions service))))
-        (serious-condition ()
-          (setf failed-p t))))
-    (when failed-p
-      (error 'agentcomms:acp-state-error :message "ACP session cleanup failed.")))
+                           collect session))
+      (clrhash (acp-service-sessions service)))
+    (mapc #'acp-session-close sessions))
   nil)
 
 (-> acp-service-serve (acp-service agentcomms:acp-channel) null)
 (defun acp-service-serve (service channel)
-  "Own SERVICE and its channel through disconnect and resource cleanup."
+  "Own SERVICE and its channel through disconnect and session cleanup."
   (unwind-protect
        (agentcomms:acp-agent-serve service channel :name "Autolith ACP"
                                    :log-function         #'agentcomms:acp-standard-error-log)
@@ -439,13 +357,13 @@
                                 (:endpoint (or null acp-endpoint)))
     null)
 (defun acp-run (configuration &key (permission-mode ':ask) pristine-p endpoint)
-  "Serve ACP clients until they disconnect or the user presses Ctrl-C.
+  "Serve editors as clients of the world server until they leave or Ctrl-C.
 
-Without ENDPOINT, communicate with one editor over UTF-8 standard I/O.
-With ENDPOINT, accept remote clients over the network. Each client has a
-separate service; primary operations are serialized across all services."
+Without ENDPOINT, the one editor speaks on UTF-8 standard I/O. With ENDPOINT,
+remote editors connect over the network. Every editor gets its own service,
+and every session is a channel of the world server, which this process
+starts when none runs; PRISTINE-P starts it pristine."
   (let* ((channel           (and (null endpoint) (agentcomms:acp-standard-io-channel)))
-         (gate              (make-instance 'acp-operation-gate))
          (*standard-output* *error-output*)
          (*trace-output*    *error-output*)
          (*standard-input*  (make-string-input-stream ""))
@@ -453,28 +371,19 @@ separate service; primary operations are serialized across all services."
          (*query-io*        *terminal-io*)
          (*debug-io*        *terminal-io*))
     (unwind-protect
-         (call-with-secret-use
-          (lambda ()
-            (configuration-ensure-directories configuration)
-            (conversation-identifier-migrate configuration)
-            (context-runtime-reset)
-            (unless pristine-p (durable-mutations-load configuration))
-            (image-state-load configuration :pristine-p pristine-p)
-            (application--load-extension-configuration configuration :pristine-p pristine-p)
-            (setf configuration (provider-bootstrap-configuration configuration))
-            (flet ((serve (client-channel)
-                     ;; Client declarations can contain credentials for the client's lifetime.
-                     (call-with-secret-use
-                      (lambda ()
-                        (acp-service-serve (make-instance 'acp-service :configuration   configuration
-                                                                       :permission-mode permission-mode
-                                                                       :gate            gate)
-                                           client-channel)))))
-              (with-slynk-endpoint (configuration)
-                (if endpoint
-                    (acp-serve-remote endpoint #'serve)
-                    (serve channel))))))
+         (progn
+           (configuration-ensure-directories configuration)
+           (flet ((serve (client-channel)
+                    ;; Client declarations can contain credentials for the client's lifetime.
+                    (call-with-secret-use
+                     (lambda ()
+                       (acp-service-serve (make-instance 'acp-service :configuration   configuration
+                                                                      :permission-mode permission-mode
+                                                                      :pristine-p      pristine-p)
+                                          client-channel)))))
+             (if endpoint
+                 (acp-serve-remote endpoint #'serve)
+                 (serve channel))))
       (when channel
-        (agentcomms:channel-close channel))
-      (telemetry--call-safely #'telemetry-shutdown)))
+        (agentcomms:channel-close channel))))
   nil)

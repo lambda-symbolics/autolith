@@ -65,7 +65,16 @@
    (approval
     :initform      nil
     :accessor      client-hub-approval
-    :documentation "The approval the channel waits on, or NIL."))
+    :documentation "The approval the channel waits on, or NIL.")
+   (usage
+    :initform      nil
+    :accessor      client-hub-usage
+    :type          list
+    :documentation "The latest provider usage the channel measured, as (NAME COUNT) pairs.")
+   (verified-models
+    :initform      (make-hash-table :test #'equal :synchronized t)
+    :reader        client-hub-verified-models
+    :documentation "The models a request answered recently, mapped to when it did."))
   (:documentation "The structured clients of one application's channel."))
 
 
@@ -136,6 +145,98 @@ the channel's state and history again.")
   nil)
 
 
+;;;; -- Work for Clients --
+
+(defclass client-work ()
+  ((function
+    :initarg       :function
+    :reader        client-work-function
+    :type          function
+    :documentation "What the channel runs for the client, on its main thread.")
+   (lock
+    :initform      (make-lock "Autolith client work")
+    :reader        client-work-lock
+    :documentation "The lock guarding the outcome.")
+   (condition-variable
+    :initform      (make-condition-variable :name "Autolith client work")
+    :reader        client-work-condition-variable
+    :documentation "Signaled once the work has run.")
+   (done-p
+    :initform      nil
+    :accessor      client-work-done-p
+    :type          boolean
+    :documentation "Whether the work has run.")
+   (values
+    :initform      nil
+    :accessor      client-work-values
+    :type          list
+    :documentation "What the function returned.")
+   (failure
+    :initform      nil
+    :accessor      client-work-failure
+    :documentation "The condition the function signaled, or NIL."))
+  (:documentation "A function a client has a channel run as one of its own work items."))
+
+(defparameter *client-work-poll-seconds* 0.25
+  "How often a client waiting for its work checks that the channel still runs.")
+
+(-> application-clients-call-as-work (application function) t)
+(defun application-clients-call-as-work (application function)
+  "Run FUNCTION as a work item on APPLICATION's channel and return what it returns.
+
+The channel runs it between its other work, as it runs typed input, so it
+never overlaps a turn. A condition FUNCTION signals is signaled here; a
+channel that stops before running it refuses it."
+  (let ((controller (application-input-controller application))
+        (work       (make-instance 'client-work :function function)))
+    (unless (and controller (application-input-controller-enqueue-work controller (list :client-work work)))
+      (error 'localgroup-error :message "The channel does not accept work now." :operation ':client))
+    (with-lock-held ((client-work-lock work))
+      (loop until (client-work-done-p work)
+            do (when (application-input-controller-stopping-p controller)
+                 (error 'localgroup-error
+                        :message   "The channel stopped before it ran the work."
+                        :operation ':client))
+               (condition-wait (client-work-condition-variable work) (client-work-lock work)
+                               :timeout *client-work-poll-seconds*)))
+    (let ((failure (client-work-failure work)))
+      (when failure
+        (error failure)))
+    (values-list (client-work-values work))))
+
+(-> client-work-run (client-work) null)
+(defun client-work-run (work)
+  "Run WORK's function and hand its values or its failure to the waiting client."
+  (let ((results nil)
+        (failure nil))
+    (unwind-protect
+         (handler-case (setf results (multiple-value-list (funcall (client-work-function work))))
+           (error (condition)
+             (setf failure condition)))
+      (with-lock-held ((client-work-lock work))
+        (setf (client-work-values work)  results
+              (client-work-failure work) failure
+              (client-work-done-p work)  t)
+        (condition-notify (client-work-condition-variable work)))))
+  nil)
+
+
+;;;; -- Measurements --
+
+(-> application-clients-note-usage (application t) null)
+(defun application-clients-note-usage (application usage)
+  "Keep the provider USAGE a completed request measured, and that the channel's model answered just now."
+  (let ((hub (application-client-hub application)))
+    (with-lock-held ((client-hub-lock hub))
+      (setf (client-hub-usage hub)
+            (loop for name in '("input_tokens" "output_tokens" "cached_input_tokens")
+                  collect (list name (conversation--usage-field usage name)))))
+    (setf (gethash (config :model (application-configuration application))
+                   (client-hub-verified-models hub))
+          (get-universal-time)))
+  nil)
+
+
 ;;;; -- One Client --
 
 (-> channel-client-enqueue (channel-client list) null)
@@ -196,12 +297,15 @@ the client knows something was left out."
   "Return VALUE with everything a client cannot read replaced by its printed form.
 
 Events carry strings, numbers, keywords, T and lists of them. A JSON object
-becomes (:OBJECT KEY VALUE ...) and a JSON array (:ARRAY VALUE ...), other
-symbols their lowercase names, pathnames their namestrings, and other
-objects, such as conditions, their printed text."
+becomes (:OBJECT KEY VALUE ...), a JSON array (:ARRAY VALUE ...) and JSON
+false :FALSE, other symbols their lowercase names, pathnames their
+namestrings, and other objects, such as conditions, their printed text.
+CLIENT-JSON turns the JSON forms back."
   (typecase value
     (null
      nil)
+    ((satisfies json-false-p)
+     ':false)
     ((or string number keyword character (eql t))
      value)
     (hash-table
@@ -224,3 +328,24 @@ objects, such as conditions, their printed text."
      (namestring value))
     (t
      (princ-to-string value))))
+
+(-> client-json (t) t)
+(defun client-json (value)
+  "Return the JSON value whose portable form CLIENT-PORTABLE made VALUE.
+
+(:OBJECT KEY VALUE ...) becomes a JSON object, (:ARRAY VALUE ...) a vector,
+:FALSE JSON false, and :NULL stays the JSON null."
+  (cond
+    ((and (consp value) (eq (first value) ':object))
+     (let ((object (make-hash-table :test #'equal)))
+       (loop for (key item) on (rest value) by (partial #'nthcdr 2)
+             do (setf (gethash key object) (client-json item)))
+       object))
+    ((and (consp value) (eq (first value) ':array))
+     (map 'vector #'client-json (rest value)))
+    ((eq value ':false)
+     (json-false))
+    ((consp value)
+     (mapcar #'client-json value))
+    (t
+     value)))

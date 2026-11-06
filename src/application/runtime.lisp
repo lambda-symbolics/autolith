@@ -1168,11 +1168,13 @@ once per process; APPLICATION--BUILD then constructs each application."
                         (:pristine-p boolean)
                         (:recovery-p boolean)
                         (:mutation-replay-failures list)
-                        (:relay-presentation list))
+                        (:relay-presentation list)
+                        (:tool-registry-function (option function)))
     application)
 (defun application--build
     (configuration &key conversation-id (permission-mode ':ask) pristine-p
-                        recovery-p mutation-replay-failures relay-presentation)
+                        recovery-p mutation-replay-failures relay-presentation
+                        tool-registry-function)
   "Build one connected application on bootstrapped CONFIGURATION.
 
 Load CONVERSATION-ID if supplied; otherwise try automatic recovery when
@@ -1180,7 +1182,9 @@ RECOVERY-P is true, falling back to a fresh conversation.
 MUTATION-REPLAY-FAILURES are the private image replay diagnostics to report.
 RELAY-PRESENTATION is a plist of :ROWS, :COLUMNS and :STYLED-P for a relay
 terminal awaiting a client. Without it, use this process's terminal setup.
-Release acquired resources if construction fails."
+TOOL-REGISTRY-FUNCTION, called with the conversation's configuration, builds
+the tool registry instead of the ordinary one, as for an editor's own MCP
+servers. Release acquired resources if construction fails."
   (let* ((recovery-state
            (if recovery-p
                (multiple-value-list
@@ -1233,7 +1237,9 @@ Release acquired resources if construction fails."
                      configuration
                      :reasoning-summaries-p
                      (config :reasoning-traces-p configuration))))
-             (setf registry (application--create-tool-registry configuration)
+             (setf registry (if tool-registry-function
+                                (funcall tool-registry-function configuration)
+                                (application--create-tool-registry configuration))
                    worker   (lisp-worker-pool-create configuration))
              (let* ((agent
                       (agent-create
@@ -4049,6 +4055,8 @@ clients as :TEXT, :REASONING and :STATUS events."
             (application--reasoning-preview-rows application reasoning-text))))
        :status-callback
        (lambda (status details)
+         (when (eq status ':provider-request-completed)
+           (application-clients-note-usage application (getf details :usage)))
          (application-clients-publish application (list :status :status status :details details))
          (case status
            (:user-message-persisted

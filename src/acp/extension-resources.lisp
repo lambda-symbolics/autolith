@@ -87,11 +87,11 @@
                  "nextByteOffset" (if (< next total) next ':null)
                  "truncated" (if (< next total) t (argo:json-false)))))))
 
-(-> acp-extension-resource (acp-session hash-table) hash-table)
-(defun acp-extension-resource (session params)
+(-> acp-extension-resource (application hash-table) hash-table)
+(defun acp-extension-resource (application params)
   "Return bounded structured content after ordinary resource ownership checks."
   (let ((uri     (gethash "uri" params))
-        (context (acp-extension-tool-context session)))
+        (context (application-tool-context application)))
     (unless (and (stringp uri) (plusp (length uri)))
       (agentcomms:acp-invalid-params "Resource uri must be a nonempty string."))
     (multiple-value-bind (scheme identifier) (resource-uri-parse uri)
