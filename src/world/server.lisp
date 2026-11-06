@@ -574,30 +574,6 @@ waits in its context file for the channel a later move brings it into."
              :operation  operation
              :identifier designator)))
 
-(-> world-server--adopt-waiting-context (application) null)
-(defun world-server--adopt-waiting-context (application)
-  "Let the agent residing in APPLICATION's channel adopt the context waiting for it, when one waits.
-
-The agent is the channel's resident, found in the world store: the channel
-may have been opened before it ever had a durable message, so its session
-mapping cannot be relied on."
-  (let* ((configuration (application-configuration application))
-         (world         (handler-case (world-load configuration)
-                          (autolith-error ()
-                            nil)))
-         (agent         (and world
-                             (find ':agent (world-channel-residents
-                                            world (conversation-identifier
-                                                   (application-conversation application)))
-                                   :key #'participant-kind))))
-    (when (and agent
-               (probe-file (world-context-pathname configuration (participant-identifier agent))))
-      (multiple-value-bind (rows source)
-          (world-context-read configuration (participant-identifier agent))
-        (application-world-install-agent application agent :rows rows :source source)
-        (world-context-delete configuration (participant-identifier agent)))))
-  nil)
-
 
 ;;;; -- Hosting --
 
@@ -899,15 +875,18 @@ forgotten again when no thread could start."
                                                          :styled-p (getf arguments :styled-p))))
          (host          (make-instance 'world-host :application application)))
     (setf (application-world-server application) server)
-    (world-server--adopt-waiting-context application)
     (with-lock-held ((world-server-lock server))
       (push host (world-server-hosts server)))
     (handler-case
-        (world-server--serve-host server host
-                                  :initial-command    (and (getf arguments :resume-command-p)
-                                                           "(resume)")
-                                  :recovery-diagnosis (getf arguments :recovery-diagnosis)
-                                  :resume-offer-p     (not (null (getf arguments :resume-command-p))))
+        (progn
+          ;; A context waiting for the channel's agent is adopted now; one
+          ;; that cannot be is told and tried again before the agent's turn.
+          (application-world-adopt-pending-context application)
+          (world-server--serve-host server host
+                                    :initial-command    (and (getf arguments :resume-command-p)
+                                                             "(resume)")
+                                    :recovery-diagnosis (getf arguments :recovery-diagnosis)
+                                    :resume-offer-p     (not (null (getf arguments :resume-command-p)))))
       (error (condition)
         (application--discard-connection-resources application
                                                    (application-tool-registry application)
