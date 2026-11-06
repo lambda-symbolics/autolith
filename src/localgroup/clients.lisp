@@ -3,7 +3,8 @@
 ;;;; -- Structured Client Protocol --
 
 ;;; A structured client opens a channel's localgroup endpoint with the :client
-;;; operation and keeps the connection. The server answers with
+;;; operation, naming itself with :name and saying with :approves-p whether
+;;; it answers approvals, and keeps the connection. The server answers with
 ;;;
 ;;;   (:attached :client-id ID :session-id CHANNEL :state STATE)
 ;;;
@@ -46,8 +47,9 @@
          (arguments   (localgroup--request-field request :arguments))
          (name        (getf arguments :name))
          (client      (make-instance 'channel-client
-                                     :name   (if (non-empty-string-p name) name "client")
-                                     :stream stream)))
+                                     :name       (if (non-empty-string-p name) name "client")
+                                     :approves-p (getf arguments :approves-p t)
+                                     :stream     stream)))
     (channel-client-enqueue client
                             (client-portable
                              (list :attached
@@ -203,14 +205,16 @@
     :documentation "The thread reading events and replies."))
   (:documentation "A structured client's connection to one channel."))
 
-(-> localgroup-client-connect (cons &key (:name string) (:event-function function))
+(-> localgroup-client-connect
+    (cons &key (:name string) (:event-function function) (:approves-p boolean))
     localgroup-client-connection)
-(defun localgroup-client-connect (entry &key (name "client") event-function)
+(defun localgroup-client-connect (entry &key (name "client") event-function (approves-p t))
   "Connect to the channel of localgroup endpoint ENTRY as a structured client NAME.
 
 EVENT-FUNCTION is called on the reader thread with each event, and with
 (:closed) once the connection ends. Replies go to the command that waits
-for them."
+for them. APPROVES-P says whether this client answers approvals; one that
+does not leaves them to a terminal or another client."
   (let ((record (rest entry))
         (socket nil)
         (stream nil))
@@ -223,7 +227,7 @@ for them."
                                      :version   *daemon-protocol-version*
                                      :token     (localgroup--record-token record)
                                      :operation ':client
-                                     :arguments (list :name name)))
+                                     :arguments (list :name name :approves-p approves-p)))
           (let ((greeting (daemon-read-response stream ':client)))
             (unless (eq (first greeting) ':attached)
               (error 'localgroup-error

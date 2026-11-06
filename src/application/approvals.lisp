@@ -37,12 +37,12 @@
 
 (-> application-approval-possible-p (application) boolean)
 (defun application-approval-possible-p (application)
-  "Return true when someone can answer APPLICATION's approval: a controlling terminal or a structured client."
+  "Return true when someone can answer APPLICATION's approval: a controlling terminal or a structured client that approves."
   (let ((controller (application-input-controller application))
         (ui         (application-ui application)))
     (and controller
          (or (and ui (terminal-interactive-p (terminal-ui-terminal ui)))
-             (application-clients-attached-p application))
+             (application-clients-approving-p application))
          t)))
 
 (-> application-select-approval
@@ -100,7 +100,7 @@ approval is dismissed, the turn is cancelled, or nobody is left to answer."
 
 (-> application--await-approval (application channel-approval) (option string))
 (defun application--await-approval (application approval)
-  "Wait until a client answers APPROVAL and return the answer, or NIL once the turn is cancelled or no client is left."
+  "Wait until a client answers APPROVAL and return the answer, or NIL once the turn is cancelled or no approving client is left."
   (let ((hub        (application-client-hub application))
         (controller (application-input-controller application)))
     (with-lock-held ((client-hub-lock hub))
@@ -109,7 +109,7 @@ approval is dismissed, the turn is cancelled, or nobody is left to answer."
           (cond
             (answer
              (return answer))
-            ((or (null (client-hub-clients hub))
+            ((or (notany #'channel-client-approves-p (client-hub-clients hub))
                  (application-input-controller-turn-cancellation-p controller))
              (return nil))
             (t
