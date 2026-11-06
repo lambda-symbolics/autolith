@@ -495,7 +495,6 @@
   (flet ((client-p (&rest arguments)
            (apply #'main--client-session-p
                   :handoff-record           nil
-                  :authenticate-p           nil
                   :recovery-conversation-id nil
                   :recovery-diagnosis       nil
                   :simulate-crash-p         nil
@@ -510,7 +509,6 @@
   (test-assert
    (eq (main--client-session-p
         :handoff-record           nil
-        :authenticate-p           nil
         :resume-requested-p       nil
         :resume-id                nil
         :recovery-conversation-id "K-8vQ2mp"
@@ -518,7 +516,6 @@
         :simulate-crash-p         nil)
        (main--client-session-p
         :handoff-record           nil
-        :authenticate-p           nil
         :resume-requested-p       nil
         :resume-id                nil
         :recovery-conversation-id nil
@@ -528,7 +525,6 @@
   (test-assert
    (not (main--client-session-p
          :handoff-record           (list :localgroup-handoff :version 1)
-         :authenticate-p           nil
          :resume-requested-p       nil
          :resume-id                nil
          :recovery-conversation-id nil
