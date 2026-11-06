@@ -37,7 +37,7 @@
     :initform      nil
     :accessor      world-host-failure
     :type          (option condition)
-    :documentation "The condition that ended the session before it was ready, or NIL.")
+    :documentation "The condition that ended the session, or NIL.")
    (exit-reason
     :initform      nil
     :accessor      world-host-exit-reason
@@ -118,7 +118,7 @@ the process could fork, and a new thread serves the application again."))
     :initform      (make-lock "Autolith world server opens")
     :reader        world-server-open-lock
     :type          t
-    :documentation "Serializes channel selection, so two opens of one directory share a channel.")
+    :documentation "Serializes channel selection and host registration.")
    (condition-variable
     :initform      (make-condition-variable :name "Autolith world server")
     :reader        world-server-condition-variable
@@ -643,13 +643,12 @@ hosts, two leases or two threads."
 
 (-> world-server--host-for (world-server list) (values world-host boolean))
 (defun world-server--host-for (server arguments)
-  "Return the host holding the channel ARGUMENTS select, and whether it was started now.
+  "Return the host selected by ARGUMENTS and whether it was started now.
 
-A named channel is held by its host, starting or serving, or started. A
-directory is served by the latest touched top-level channel of that workspace
-that no client controls and whose conversation is free, whether or not this
-server already hosts it, else by a new channel there. The caller waits for a
-starting host the same way as for one it started."
+For a named channel, reuse its host or start one. For a directory, try its
+top-level channels by latest activity. Reuse an unattached compatible host,
+or start an unhosted channel whose conversation is free. Create a channel
+if none qualifies. The caller waits for the host to publish its endpoint."
   (let ((channel   (getf arguments :channel))
         (directory (getf arguments :directory)))
     (cond
@@ -796,11 +795,10 @@ running keeps the mode it started under."
 
 (-> world-server--reconcile-launch (world-server world-host list) null)
 (defun world-server--reconcile-launch (server host launch)
-  "Apply what LAUNCH may change on the running channel HOST, refusing what it may not.
+  "Apply compatible LAUNCH options to HOST or signal a conflict.
 
-A permission mode stated explicitly takes effect on a channel no terminal
-controls; one another terminal controls keeps its mode and the open is
-refused, so nothing a client asked for is dropped in silence."
+Change the permission mode only when no terminal controls the channel and
+no turn or job is running. A request for the current mode needs no change."
   (let ((conflict (world-server--launch-conflict host launch))
         (display  (conversation-identifier-display (world-host-channel host))))
     (when conflict
@@ -1071,7 +1069,7 @@ another thread with RESUME-P, RECONNECT-ID for its clients and NOTICE."
 
 (-> world-server--wait-ready (world-server world-host) world-host)
 (defun world-server--wait-ready (server host)
-  "Return HOST once its endpoint is published, or signal why it never was."
+  "Wait for HOST's endpoint, signaling a session failure or timeout."
   (let ((lock     (world-server-lock server))
         (deadline (+ (get-internal-real-time)
                      (* *world-server-open-timeout-seconds*
@@ -1081,7 +1079,7 @@ another thread with RESUME-P, RECONNECT-ID for its clients and NOTICE."
         (cond
           ((world-host-failure host)
            (error 'world-error
-                  :message    (format nil "The channel could not start: ~A"
+                  :message    (format nil "The channel failed: ~A"
                                       (bounded-string (princ-to-string (world-host-failure host)) :limit 400))
                   :operation  ':open
                   :identifier (world-host-channel host)))
@@ -1362,12 +1360,11 @@ the host to restart: their job pools own threads the fork must not see."
     (world-server application string &key (:notice-function (option function)))
     null)
 (defun world-server--resume-channels (server application reconnect-id &key notice-function)
-  "Serve every paused channel of SERVER again, each told its notice, then let opens and held turns through.
+  "Resume SERVER's paused channels, then admit opens and held turns.
 
-A paused channel's closed tool runtimes restart first; one that cannot is
-told so, and serves without them. APPLICATION, the channel that asked, is
-told its notice directly when it never paused, as when the checkpoint failed
-before the pause."
+Restart closed tool runtimes first. Report restart failures to the affected
+channel and serve it without the tools that failed. Send APPLICATION its
+notice directly if it never paused, as when a checkpoint fails early."
   (dolist (host (world-server--hosts server))
     (let ((served (world-host-application host))
           (tools  (shiftf (world-host-quiesced-tools host) nil)))
