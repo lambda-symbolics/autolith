@@ -20,6 +20,12 @@
     :reader        channel-client-name
     :type          string
     :documentation "What the client says it is, such as acp.")
+   (approves-p
+    :initarg       :approves-p
+    :initform      t
+    :reader        channel-client-approves-p
+    :type          boolean
+    :documentation "Whether the client answers approvals, as an editor does and a script does not.")
    (stream
     :initarg       :stream
     :reader        channel-client-stream
@@ -100,6 +106,11 @@ the channel's state and history again.")
 (defun application-clients-attached-p (application)
   "Return true while a structured client follows APPLICATION's channel."
   (not (null (application-clients application))))
+
+(-> application-clients-approving-p (application) boolean)
+(defun application-clients-approving-p (application)
+  "Return true while a structured client that answers approvals follows APPLICATION's channel."
+  (not (null (some #'channel-client-approves-p (application-clients application)))))
 
 (-> application-clients-publish (application list) null)
 (defun application-clients-publish (application event)
