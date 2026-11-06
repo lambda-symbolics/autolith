@@ -6046,6 +6046,10 @@
     (unwind-protect
          (test-call-with-function-replacements
           (list
+           (list 'main--client-session-p
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   nil))
            (list 'main-resolve-conversation
                  (lambda (configuration prefix)
                    (declare (ignore configuration))

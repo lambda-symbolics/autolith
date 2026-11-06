@@ -668,6 +668,8 @@
   test-world-server-resume-order
   test-world-server-open-latest-touched
   test-world-server-open-images-and-new
+  test-world-client-script-submissions
+  test-world-client-script
   test-world-server-starting-host
   test-world-server-launch-options
   test-world-server-close-unattached

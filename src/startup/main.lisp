@@ -1042,18 +1042,27 @@ state, including an empty list after successful or pristine startup."
                 :recovery-diagnosis       recovery-diagnosis
                 :pristine-p               pristine-p
                 :simulate-crash-p         (not (null (getopt* command ':simulate-crash))))
-               (main--run-world-client
-                configuration
-                :permission-mode    permission-mode
-                :immutable-p        immutable-p
-                :pristine-p         pristine-p
-                :conversation-id    (or effective-resume-id recovery-conversation-id)
-                :resume-command-p   (and effective-resume-requested-p
-                                         (null effective-resume-id))
-                :recovery-diagnosis recovery-diagnosis
-                :launch             (main--launch-options
-                                     command :permission-mode permission-mode)
-                :images             (mapcar #'namestring (main--image-pathnames image-values))))
+               (if (main--interactive-input-p)
+                   (main--run-world-client
+                    configuration
+                    :permission-mode    permission-mode
+                    :immutable-p        immutable-p
+                    :pristine-p         pristine-p
+                    :conversation-id    (or effective-resume-id recovery-conversation-id)
+                    :resume-command-p   (and effective-resume-requested-p
+                                             (null effective-resume-id))
+                    :recovery-diagnosis recovery-diagnosis
+                    :launch             (main--launch-options
+                                         command :permission-mode permission-mode)
+                    :images             (mapcar #'namestring (main--image-pathnames image-values)))
+                   (progn
+                     (world-client-run-script
+                      configuration
+                      :conversation-id (or effective-resume-id recovery-conversation-id)
+                      :permission-mode permission-mode
+                      :immutable-p     immutable-p
+                      :launch          (main--launch-options command :permission-mode permission-mode))
+                     t)))
       (return-from main--start-session nil))
     (let ((*localgroup-startup-record* handoff-record))
       (setf *active-application*
@@ -1122,8 +1131,8 @@ state, including an empty list after successful or pristine startup."
 
 A client-first start keeps this terminal a thin relay whose detach is
 immediate and never interrupts session work, so resumes, crash recovery,
-startup images and the session after authentication take it too.
-Replacements, crash simulation, non-interactive terminals, hosts without
+startup images, the session after authentication and input piped from
+another program take it too. Replacements, crash simulation, hosts without
 detached sessions, and AUTOLITH_SESSION_STYLE=direct keep the direct path."
   (declare (ignore resume-requested-p resume-id
                    recovery-conversation-id recovery-diagnosis))
@@ -1133,7 +1142,12 @@ detached sessions, and AUTOLITH_SESSION_STYLE=direct keep the direct path."
        (not (string= (or (uiop:getenv "AUTOLITH_SESSION_STYLE") "")
                      "direct"))
        (platform-supports-p *platform* ':detached-sessions)
-       (not (null (interactive-stream-p *standard-input*)))))
+       t))
+
+(-> main--interactive-input-p () boolean)
+(defun main--interactive-input-p ()
+  "Return true when standard input is a terminal someone types at, not piped input."
+  (not (null (interactive-stream-p *standard-input*))))
 
 (-> main--open-world-channel
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)

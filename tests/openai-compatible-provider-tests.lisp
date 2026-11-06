@@ -203,6 +203,10 @@
                (list 'application-run
                      (lambda (application &rest arguments)
                        (declare (ignore application arguments))
+                       nil))
+               (list 'main--client-session-p
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
                        nil)))
               (lambda ()
                 (main-dispatch nil)))
@@ -311,6 +315,10 @@
                (list 'application-run
                      (lambda (application &rest arguments)
                        (declare (ignore application arguments))
+                       nil))
+               (list 'main--client-session-p
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
                        nil)))
               (lambda ()
                 (let ((*active-application* live-application))
