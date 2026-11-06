@@ -92,7 +92,7 @@ terminal prompt          local Lisp result       finalized scrollback
 
 | Library | Generic implementation | Autolith integration |
 |---------+------------------------+----------------------|
-| agentcomms | ACP v1 schema, symmetric JSON-RPC, owned request handlers and session lifecycle | Headless application ownership, durable replay, observer projection and editor approvals |
+| agentcomms | ACP v1 schema, symmetric JSON-RPC, owned request handlers and session lifecycle | Sessions as world-server channels, durable replay, event projection and editor approvals |
 | cl-llm-provider-api | Wire clients, request execution, context resolution, structured contracts, layered provider registry with model discovery | Builtin registrations, extension sources, the model cache file, subscription adapters, conversation projection, contributors |
 | cl-rfc8628 | Scoped credential use and coordinated refresh | Credential paths, bootstrap ownership, provider exchanges, checkpoint quiescence |
 | mcparen/managed | Connection lifecycle, discovery snapshots and budgets | Configuration, authorization, tool registry and provider schema projection |
@@ -119,24 +119,38 @@ cooperative cancellation policy and poll from the executor so process and captur
 cleanup finish before terminal publication. Portable result details preserve
 references in conversation records; raw output is independent of context storage.
 
+* Channel clients
+
+Only the world server runs the agents of world channels. Clients other than
+terminals follow a channel through the structured client protocol:
+=src/localgroup/clients.lisp= serves the =:client= endpoint operation and
+holds the client side of a connection, =src/application/clients.lisp= the
+per-channel hub, event queues and portable values, and
+=src/application/approvals.lisp= the approval offered to the terminal and
+every approving client at once. The channel's turn observer, presentations,
+record appends and work items publish to the hub. Operations a client asks
+for run on their own thread, since they may wait for the channel while it
+waits for the client.
+
 * ACP service
 
-=src/acp/session.lisp= owns leased headless applications and serializes primary
-operations. =observer.lisp= projects native streaming/tool events and editor
-permissions. =mcp.lisp= builds session-local client declarations through the native
-MCP manager and credential scopes. =runtime.lisp= supplies the agent methods,
-chronological replay, bootstrap, and disconnect cleanup.
-=extensions.lisp= owns typed dispatch, bounded JSON projection, advisory events,
-and session-scoped read/write admission. The =extension-*.lisp= adapters project
-native settings, model/operation catalogs, conversations, owned jobs and structured
-resource windows. =completions.lisp= owns the condition-variable controller for
-receipt-backed automatic turns, sharing prompt admission, observer projection,
-cancellation and shutdown with explicit prompts.
+An ACP session is a client of one world-server channel.
+=src/acp/session.lisp= holds the session's connection and translation state.
+=observer.lisp= turns channel events into ACP updates, turn and state
+notifications, and editor permission requests. =runtime.lisp= supplies the
+agent methods, opens channels in the world server, replays durable history
+from disk before following live events, and waits for a prompt's channel to
+go idle. =extensions.lisp= forwards extension requests: steer and queue run
+in the ACP process as submissions, the rest run in the server against the
+channel's application through =acp-extension-run=. The =extension-*.lisp=
+handlers project native settings, model/operation catalogs, conversations,
+owned jobs and structured resource windows; =invoke= runs as one of the
+channel's work items. =mcp.lisp= builds the registry a channel started for an
+editor uses, with its client MCP declarations and credential scopes.
 
 The source entry and stable launcher route ACP diagnostics to stderr and avoid
 interactive recovery. The serving lifetime holds the secret-use guard while
-client credentials are retained. Cancellation targets registered prompt/tool
-owners; durable turn finalization defers queued interrupts before lease teardown.
+client declarations, which may carry credentials, are retained.
 
 * User state
 
@@ -516,6 +530,7 @@ Here's a rough, probably outdated map of the repository
 | Images and recovery           | =src/startup/active-image.lisp=, =src/state/generations.lisp=, =recovery/=, =bin/=, sbcl-generations |
 | Configuration and transfer    | =src/configuration/=, =src/localgroup/=, =src/state/updates.lisp=, sexp-config                     |
 | Channels and world server     | =src/world/=, image-daemon                                                                     |
+| Channel clients               | =src/localgroup/clients.lisp=, =src/application/{clients,approvals}.lisp=, =src/acp/=            |
 | Client screen and sidebar     | =src/localgroup/screen.lisp=, =src/world/sidebar.lisp=, clinedi                                 |
 
 Read [[file:guide.org][the guide]] for operating Autolith, and =AGENTS.md= for
