@@ -939,7 +939,28 @@ the channel resource."
                                                (format nil " [channel ~A]~@[ ~A~]~%" channel timestamp-text))))
                 (application-world-mention-spans
                  application
-                 (application--markdown-body application (or (getf request :summary) "")))))))
+                 (application--markdown-body application (or (getf request :summary) "")))
+                (when (eq kind ':notice)
+                  (application--channel-link-spans
+                   (or (getf message :source) (getf message :target))))))))
+
+(-> application--channel-link-spans ((option string)) list)
+(defun application--channel-link-spans (channel)
+  "Return a line holding the (switch ...) form that goes to CHANNEL, or NIL without one.
+
+The form is highlighted Lisp, so a plain terminal shows what to type; in
+fullscreen each of its tokens is a widget that submits it when clicked."
+  (when (non-empty-string-p channel)
+    (let* ((form   (format nil "(switch ~S)" (conversation-identifier-display channel)))
+           (action (list ':submit form)))
+      (append (list (terminal-span ':dim "  ↪ "))
+              (mapcar (lambda (token)
+                        (termdown:make-widget (terminal-span-style token)
+                                              (terminal-span-text token)
+                                              action))
+                      (or (syntax--highlight-spans form :language *application-common-lisp-language*)
+                          (list (terminal-span ':code form))))
+              (list (terminal-span ':plain (format nil "~%")))))))
 
 (-> application--mentioned-names (application list) list)
 (defun application--mentioned-names (application identifiers)
