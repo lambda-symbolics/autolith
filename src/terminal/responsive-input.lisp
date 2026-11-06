@@ -4121,9 +4121,9 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           (fatal-agent-loop-errors-p t))
   "Run model INPUT with established expected, cancellation, and fatal handling.
 
-A message the person typed was shared with the participants elsewhere it
-reaches when they submitted it, so a replay of the turn shares nothing
-again."
+Sharing is requested when a primary prompt is accepted and may wait until
+its user message is durable. Replaying the turn does not repeat the
+submission-time sharing request."
   (application--call-with-model-error-handling
    application
    (lambda ()
