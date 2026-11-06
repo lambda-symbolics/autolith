@@ -1760,10 +1760,12 @@ started keep running in the channel it left and leave their results in that
 channel's history, but they wake no agent there. Moves and parks happen one
 at a time. A move into a channel that already has an agent is refused, and
 so is a move into the inbox or of yourself: you stay in the inbox while a
-terminal shows you any channel. A child agent whose task is still running
-for its parent is not moved or parked until the task ends, and neither is an
-agent whose channel another Autolith process has open. =(dismiss "WHO")= parks an agent instead,
-after it stops the same way: a parked agent resides in no channel and keeps
+terminal shows you any channel. A move interrupts a child agent whose task
+is still running for its parent: the task is cancelled, the parent gets that
+result, and the child moves with the context it had. The tasks of the child's
+own children go on. An agent whose channel another Autolith process has open
+is not moved or parked. =(dismiss "WHO")= parks an agent instead, after it
+stops the same way: a parked agent resides in no channel and keeps
 its identity, its children and its context, and =(move "WHO")= brings it into
 a channel again. Parking never affects its children. A mention of a parked
 agent reaches nobody, and the send says the agent is parked. A channel
