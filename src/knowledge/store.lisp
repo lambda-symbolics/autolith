@@ -6,8 +6,8 @@
 ;;; Autolith generations never read it, so a rollback keeps every prose memory
 ;;; readable. Records define schemas, record evidence, assert supports for
 ;;; claims, and retract supports. Reading folds the log into a KNOWLEDGE-BASE
-;;; with indexes; reads are cached by the log file's identity, because every
-;;; publication replaces the file.
+;;; with indexes; appends extend the cached fold when the log keeps its identity.
+;;; Replacing or shortening the log requires a fresh fold.
 ;;;
 ;;; The folded base holds what is operational: every active support, the
 ;;; evidence it cites, and the most recently retracted supports. Older
