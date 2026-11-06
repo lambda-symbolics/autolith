@@ -736,6 +736,18 @@ anything else is resolved as a fragment through WORLD-CHANNEL-RESOLVE."
 
 ;;;; -- Mutation --
 
+(-> world--require-residence (participant (option string) keyword) null)
+(defun world--require-residence (participant expected operation)
+  "Refuse OPERATION unless PARTICIPANT still resides in channel EXPECTED, NIL for parked."
+  (unless (equal (participant-residence participant) expected)
+    (error 'world-error
+           :message    (format nil "~A moved while this change was prepared; nothing changed. Try again."
+                               (participant-name participant))
+           :pathname   nil
+           :operation  operation
+           :identifier (participant-identifier participant)))
+  nil)
+
 (-> world--require-participant (world string keyword) participant)
 (defun world--require-participant (world identifier operation)
   "Return participant IDENTIFIER, or signal WORLD-ERROR for OPERATION."
@@ -996,17 +1008,25 @@ participant owns and resides in, as a plist of :id, :workspace, :title and
                       :updated-at (max now (channel-updated-at channel)))))
        (values (list (world--channel-record updated)) updated)))))
 
-(-> world-participant-move (configuration string string &key (:now timestamp)) participant)
-(defun world-participant-move (configuration identifier channel-identifier &key (now (get-universal-time)))
+(-> world-participant-move
+    (configuration string string &key (:now timestamp) (:expected-residence (option string)))
+    participant)
+(defun world-participant-move (configuration identifier channel-identifier
+                               &key (now (get-universal-time))
+                                    (expected-residence nil expected-residence-p))
   "Move participant IDENTIFIER into channel CHANNEL-IDENTIFIER and return it.
 
 Other residents of either channel stay where they are. A channel has at most
 one resident agent, so an agent is refused a channel where another already
-resides. Once the inbox exists the person resides there and is not moved."
+resides. Once the inbox exists the person resides there and is not moved.
+With EXPECTED-RESIDENCE the move happens only while the participant still
+resides there, NIL for parked."
   (world--transact
    configuration
    (lambda (world)
      (let ((participant (world--require-participant world identifier ':move-participant)))
+       (when expected-residence-p
+         (world--require-residence participant expected-residence ':move-participant))
        (world--require-channel world channel-identifier ':move-participant)
        (when (eq (participant-kind participant) ':agent)
          (let ((resident (find-if (lambda (candidate)
@@ -1030,17 +1050,24 @@ resides. Once the inbox exists the person resides there and is not moved."
                                                                        participant)))))
              (values (list (world--participant-record moved)) moved)))))))
 
-(-> world-participant-park (configuration string &key (:now timestamp)) participant)
-(defun world-participant-park (configuration identifier &key (now (get-universal-time)))
+(-> world-participant-park
+    (configuration string &key (:now timestamp) (:expected-residence (option string)))
+    participant)
+(defun world-participant-park (configuration identifier
+                               &key (now (get-universal-time))
+                                    (expected-residence nil expected-residence-p))
   "Park agent IDENTIFIER, taking it out of every channel, and return it.
 
 A parked agent keeps its identity, its children and its subscriptions, and a
 move brings it into a channel again. Only agents park; the person always
-resides somewhere."
+resides somewhere. With EXPECTED-RESIDENCE the park happens only while the
+agent still resides there."
   (world--transact
    configuration
    (lambda (world)
      (let ((participant (world--require-participant world identifier ':park)))
+       (when expected-residence-p
+         (world--require-residence participant expected-residence ':park))
        (unless (eq (participant-kind participant) ':agent)
          (error 'world-error
                 :message    (format nil "~A is not an agent; only agents are parked."

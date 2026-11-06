@@ -271,6 +271,11 @@
     :accessor      conversation-adopted-participant
     :type          (option string)
     :documentation "The agent whose context the latest context adoption installed, or NIL while the channel's first agent speaks.")
+   (adopted-transition
+    :initform      nil
+    :accessor      conversation-adopted-transition
+    :type          (option string)
+    :documentation "The move whose context the latest context adoption installed, so a retried adoption happens once.")
    (ephemeral-input-entries
     :initform nil
     :accessor conversation-ephemeral-input-entries

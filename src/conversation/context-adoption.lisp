@@ -25,10 +25,11 @@ items are left out."
               collect (conversation-compaction--serialize-item projection item)))))
 
 (-> conversation-append-context-adoption
-    (conversation list &key (:participant string) (:source (option string)))
+    (conversation list &key (:participant string) (:source (option string))
+                            (:transition (option string)))
     list)
-(defun conversation-append-context-adoption (conversation rows &key participant source)
-  "Make ROWS, the context agent PARTICIPANT brings from channel SOURCE, CONVERSATION's provider context.
+(defun conversation-append-context-adoption (conversation rows &key participant source transition)
+  "Make ROWS, the context agent PARTICIPANT brings from channel SOURCE by move TRANSITION, CONVERSATION's provider context.
 
 The record is appended durably before the projection it describes is
 installed, and a conversation reloaded later rebuilds the same projection
@@ -37,7 +38,8 @@ from it. Return the sequenced record."
     (let ((record     (list* :context-adoption
                              :participant participant
                              :rows        rows
-                             (and source (list :source source))))
+                             (append (and source (list :source source))
+                                     (and transition (list :transition transition)))))
           (projection (clinker-transcript:make-projection)))
       ;; Validate the rows into the projection first, so a bad context is
       ;; refused before anything durable changes.
@@ -47,6 +49,7 @@ from it. Return the sequenced record."
         (let ((published (conversation-append-record conversation record)))
           (setf (slot-value conversation 'projection)      projection
                 (conversation-adopted-participant conversation) participant
+                (conversation-adopted-transition conversation)  transition
                 (conversation-last-total-tokens conversation)   0)
           published)))))
 
@@ -56,7 +59,9 @@ from it. Return the sequenced record."
   (unless (and (non-empty-string-p (getf properties :participant))
                (listp (getf properties :rows))
                (or (null (getf properties :source))
-                   (non-empty-string-p (getf properties :source))))
+                   (non-empty-string-p (getf properties :source)))
+               (or (null (getf properties :transition))
+                   (non-empty-string-p (getf properties :transition))))
     (conversation--record-error
      conversation properties "A context adoption record is invalid."))
   (let ((projection (clinker-transcript:make-projection)))
@@ -65,5 +70,6 @@ from it. Return the sequenced record."
     (conversation-compaction--check-correlations conversation properties projection)
     (setf (slot-value conversation 'projection)      projection
           (conversation-adopted-participant conversation) (getf properties :participant)
+          (conversation-adopted-transition conversation)  (getf properties :transition)
           (conversation-last-total-tokens conversation)   0))
   nil)
