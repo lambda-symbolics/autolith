@@ -9,10 +9,6 @@
 (defparameter *application-tool-inspection-lines* 24
   "The maximum introspection lines shown in the terminal transcript.")
 
-(defparameter *application-shell-language*
-  (language-find "bash" :errorp nil)
-  "The ColorLisp language used for shell command previews.")
-
 (-> application--fenced-output-rows (application string integer) (option list))
 (defun application--fenced-output-rows (application text limit)
   "Render explicit Markdown code fences within a bounded tool-output rail."
