@@ -650,6 +650,7 @@
   test-world-server-person-unread
   test-world-server-open-before-checkpoint
   test-world-server-move
+  test-world-server-move-running-child
   test-world-client-joins-winner
   test-world-client-switch-navigates
   test-world-client-refusal-ends-start)

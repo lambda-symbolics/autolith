@@ -539,7 +539,10 @@ destination cannot take it."
                                           :source-application      (and source-host
                                                                         (world-host-application source-host))
                                           :destination-application (and target-host
-                                                                        (world-host-application target-host)))))
+                                                                        (world-host-application target-host))
+                                          :running-p               (lambda (participant)
+                                                                     (world-server--running-task-p
+                                                                      server participant)))))
     (list :ok :operation ':move :participant (participant-identifier agent)
               :source (getf result :source) :channel target :dropped (getf result :dropped))))
 
@@ -559,10 +562,22 @@ waits in its context file for the channel a later move brings it into."
          (residence     (participant-residence agent))
          (host          (and residence (world-server--find-host server residence)))
          (result        (world-park-agent configuration agent
-                                          :application (and host (world-host-application host)))))
+                                          :application (and host (world-host-application host))
+                                          :running-p   (lambda (participant)
+                                                         (world-server--running-task-p
+                                                          server participant)))))
     (list :ok :operation ':park :participant (participant-identifier agent)
               :name (participant-name agent)
               :channel (getf result :channel) :dropped (getf result :dropped))))
+
+(-> world-server--running-task-p (world-server participant) boolean)
+(defun world-server--running-task-p (server participant)
+  "Return true while a channel SERVER hosts runs agent PARTICIPANT as a child task."
+  (and (some (lambda (host)
+               (application-world-running-task-p (world-host-application host)
+                                                 (participant-residence participant)))
+             (world-server--hosts server))
+       t))
 
 (-> world-server--designated-participant (world string keyword) participant)
 (defun world-server--designated-participant (world designator operation)

@@ -919,6 +919,64 @@
                         "shutdown unpublishes the world endpoint"))))))
   nil)
 
+(-> test-world-server-move-running-child () null)
+(defun test-world-server-move-running-child ()
+  "Test a child agent whose task runs in its parent's task pool is neither moved nor parked until the task ends."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry (world-client-entry configuration))
+            (id-a  (getf (rest (world-server-tests--open entry (world-tests--workspace root "a")))
+                         :session-id))
+            (app-a (world-host-application (world-server--find-host server id-a))))
+       (conversation-append-user-message (application-conversation app-a) "first words in a")
+       (let* ((world   (values (world-reconcile-sessions configuration)))
+              (human   (world-human-participant world))
+              (agent-a (find ':agent (world-channel-residents world id-a) :key #'participant-kind))
+              (job     (task-tests--register-job (application--task-orchestrator app-a)
+                                                 (application-agent app-a)
+                                                 (acp-extension-job-tests--definition)
+                                                 :name "child"))
+              (task    (task-job-execution-identifier job)))
+         (world-channel-create configuration
+                               :id        task
+                               :owner     (participant-identifier agent-a)
+                               :workspace (world-tests--workspace root "a")
+                               :parent    id-a)
+         (world-channel-create configuration
+                               :id        "bdest11"
+                               :owner     (participant-identifier human)
+                               :workspace (world-tests--workspace root "b"))
+         (let ((child (world-participant-create configuration
+                                                :kind      ':agent
+                                                :name      "child"
+                                                :residence task
+                                                :parent    (participant-identifier agent-a))))
+           (flet ((refusal (operation arguments)
+                    "Return the message refusing OPERATION with ARGUMENTS, or NIL when it succeeds."
+                    (handler-case (progn (localgroup-query-record entry operation arguments) nil)
+                      (localgroup-error (condition)
+                        (autolith-error-message condition)))))
+             (test-assert (and (search "running a task"
+                                       (refusal ':move (list :participant (participant-identifier child)
+                                                             :channel     "bdest11")))
+                               (search "running a task"
+                                       (refusal ':dismiss (list :participant
+                                                                (participant-identifier child))))
+                               (equal (participant-residence
+                                       (world-participant-find (world-load configuration)
+                                                               (participant-identifier child)))
+                                      task))
+                          "a child whose task runs is neither moved nor parked, and stays where it was")
+             (task-tests--publish-terminal job ':completed (task-tests--terminal-result job))
+             (test-assert (and (null (refusal ':move (list :participant (participant-identifier child)
+                                                           :channel     "bdest11")))
+                               (equal (participant-residence
+                                       (world-participant-find (world-load configuration)
+                                                               (participant-identifier child)))
+                                      "bdest11"))
+                          "once its task ended the child moves")))))))
+  nil)
+
 (-> test-world-server-move () null)
 (defun test-world-server-move ()
   "Test parking and a move through the server stop the agent where it was, keep its context for a channel opened later, and adopt it where it goes."
