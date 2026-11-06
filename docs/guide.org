@@ -353,31 +353,32 @@ autolith acp
 #+END_SRC
 Authenticate the selected provider with =autolith auth= before starting the
 editor session. ACP uses UTF-8 JSON-RPC on stdin/stdout; diagnostics go to stderr.
-A normal launch loads durable mutations and user initialization. For AUI, use
-=autolith --permissions auto acp=. Use =--pristine= when recovering from a
-damaged mutable image.
+For AUI, use =autolith --permissions auto acp=.
 
-New sessions use the editor's absolute working directory and a durable Autolith
-conversation ID. Load that ID to replay messages, visible reasoning, tool calls,
-and results. Text prompts, resource links, and embedded text resources are
-supported. File and process operations use the native Autolith tools.
+Each editor session is a channel of the world server, like a terminal's. The
+ACP process starts the server when none runs, and with =--pristine= starts it
+pristine. A new session opens a new channel in the editor's absolute working
+directory; its ID is the channel's conversation ID. Load that ID to replay
+messages, visible reasoning, tool calls, and results, then follow the
+channel. A terminal can show the same channel at the same time. Text prompts,
+resource links, and embedded text resources are supported. File and process
+operations use the native Autolith tools.
 
-The default =ask= mode requests command and external-tool approval in the editor.
-An approval covers the exact command and working directory, or the external tool
-identity and arguments. Select =auto=, =sandboxed=, or =full-access= through ACP
-session modes; use =--permissions auto|sandbox|full= on the command line. Changing
-modes clears session approvals.
+The channel decides approvals as it does for a terminal. In =ask= mode the
+editor gets a permission request with the channel's choices, and the first
+answer, from the editor or a terminal, wins. Select =auto=, =sandboxed=, or
+=full-access= through ACP session modes; use =--permissions auto|sandbox|full=
+on the command line. A mode set in the editor is the channel's mode.
 
-Client-supplied stdio and HTTP MCP servers are merged with native registrations
-for that session. Literal environment values and headers are ephemeral and
+Client-supplied stdio and HTTP MCP servers join the tools of a channel the
+server starts for the session. A channel that already runs refuses them, and
+the editor sees why. Literal environment values and headers are ephemeral and
 redacted from server output.
 
-Cancel a prompt to stop its provider, tools, and owned jobs. Close the session or
-disconnect to release its resources and lease.
-
-Each ACP process runs one primary prompt, setting mutation, tool invocation, or
-session setup at a time. Catalog reads and owned-job controls can run alongside it.
-Ctrl-C ends an ACP process with status 130 after releasing its sessions.
+Cancel a prompt to stop the channel's turn. A prompt returns once the channel
+finished its work. Closing the session leaves the channel, and closes it when
+the server started it for this session and nothing else follows it. Ctrl-C
+ends an ACP process with status 130 after leaving its channels.
 ** Remote clients
 
 =autolith acp --http= serves remote clients at =/acp= over the transports in the
@@ -393,8 +394,7 @@ autolith acp --http [::1]:8737
 #+END_SRC
 
 Autolith prints the endpoint URL on stderr and serves until Ctrl-C. Each client
-gets its own sessions. All clients share one primary operation in the process, so
-one client's running prompt makes another client's prompt return busy.
+gets its own sessions, each a channel of the world server.
 
 With =--token=, a client must send =Authorization: Bearer TOKEN= or add
 =?token=TOKEN= to the URL. Other users of the machine can read a token on the
@@ -1504,11 +1504,21 @@ in that workspace whose conversation file changed last and that no other
 terminal controls, or creates a channel if none qualifies. Use =autolith resume ID= to open a
 specific channel.
 
+If the server cannot be started or does not answer, the start ends with the
+reason. No session runs in the terminal's own process instead.
+
 Closing the terminal, detaching, or losing the connection leaves the channel
 running. Use =(quit)= to end it. Use =(switch "ID")= to attach to another
 channel; the server opens it if needed and leaves the previous one running.
-In a directly run session, use the same command to resume that conversation
-in place.
+In a pristine or recovery session, which runs apart from the server, use the
+same command to resume that conversation in place.
+
+Input piped from another program runs as a script in a new channel of the
+server, or in =ID='s with =autolith resume ID=. Each line is one submission,
+and a Lisp form spanning lines is read whole. Each submission runs to its end
+before the next, and the transcript goes to standard output as plain text.
+The channel closes once the input ends. A script answers no approvals, so
+the channel decides them as it does with no terminal attached.
 
 The server runs until you stop it, even with no open channel or attached
 terminal:
@@ -1533,16 +1543,17 @@ channel receives the outcome; the requesting channel also receives the
 generation ID. The turns held during the wait then start. A terminal started
 during the pause waits for the server instead of starting another one.
 
-On Windows, run a channel directly to checkpoint it. The world server
-refuses exact-heap checkpoints because they require a process restart.
+On Windows, a checkpoint saves the exact heap and restarts the process. The
+world server refuses such checkpoints, because the restart would end every
+channel.
 
-Use =--detached= for a standalone session outside the server. Set
-=AUTOLITH_SESSION_STYLE=direct= to run a single session in the terminal's
-own process.
+Use =--detached= to open a new channel in the server without attaching a
+terminal. With =--pristine=, =--detached= starts a rescue session in a
+process of its own instead.
 
 For a new channel, specify =--model=, =--permissions=, =--immutable=,
 =--fullscreen=, =--plain=, or =--almighty= at startup. Supply =--provider=
-only together with =--model=, as on a direct start. An existing channel accepts an explicit
+only together with =--model=. An existing channel accepts an explicit
 =--permissions= override only when no terminal controls it. Other launch
 options are rejected, with the option named in the error. When opening a
 workspace, those other options create a new channel instead of reusing a
@@ -1601,8 +1612,8 @@ autolith resume
 #+END_SRC
 
 With =--detached=, Autolith prints the full conversation ID and session PID,
-then exits without attaching. This works with closed stdin and with
-=AUTOLITH_SESSION_STYLE=direct=. Detached resume requires an ID. Without
+then exits without attaching. This works with closed stdin. Detached resume
+requires an ID. Without
 =--detached=, omit the ID to open the conversation picker. An exact canonical
 or displayed ID wins; otherwise any part of an ID selects the one conversation
 containing it, without regard to case, and a part matching several reports
@@ -1753,7 +1764,7 @@ so is a move into the inbox or of yourself: you stay in the inbox while a
 terminal shows you any channel. A move interrupts a child agent whose task
 is still running for its parent: the task is cancelled, the parent gets that
 result, and the child moves with the context it had. The tasks of the child's
-own children go on. An agent whose channel another Autolith process has open
+own children go on. An agent whose channel a pristine or recovery session has open
 is not moved or parked. =(dismiss "WHO")= parks an agent instead, after it
 stops the same way: a parked agent resides in no channel and keeps
 its identity, its children and its context, and =(move "WHO")= brings it into
