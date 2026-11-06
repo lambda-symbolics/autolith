@@ -1036,7 +1036,6 @@ state, including an empty list after successful or pristine startup."
       (force-output *error-output*))
     (when (and (main--client-session-p
                 :handoff-record           handoff-record
-                :authenticate-p           authenticate-p
                 :resume-requested-p       effective-resume-requested-p
                 :resume-id                effective-resume-id
                 :recovery-conversation-id recovery-conversation-id
@@ -1108,7 +1107,6 @@ state, including an empty list after successful or pristine startup."
 
 (-> main--client-session-p
     (&key (:handoff-record (option list))
-          (:authenticate-p boolean)
           (:resume-requested-p boolean)
           (:resume-id (option string))
           (:recovery-conversation-id (option string))
@@ -1117,21 +1115,20 @@ state, including an empty list after successful or pristine startup."
           (:simulate-crash-p boolean))
     boolean)
 (defun main--client-session-p
-    (&key handoff-record authenticate-p resume-requested-p resume-id
+    (&key handoff-record resume-requested-p resume-id
           recovery-conversation-id recovery-diagnosis
           pristine-p simulate-crash-p)
   "Return true when this start should open a channel in the world server and attach.
 
 A client-first start keeps this terminal a thin relay whose detach is
-immediate and never interrupts session work, so resumes, crash recovery and
-startup images take it too. Replacements, authentication, crash simulation,
-non-interactive terminals, hosts without detached sessions, and
-AUTOLITH_SESSION_STYLE=direct keep the direct path."
+immediate and never interrupts session work, so resumes, crash recovery,
+startup images and the session after authentication take it too.
+Replacements, crash simulation, non-interactive terminals, hosts without
+detached sessions, and AUTOLITH_SESSION_STYLE=direct keep the direct path."
   (declare (ignore resume-requested-p resume-id
                    recovery-conversation-id recovery-diagnosis))
   (and (null handoff-record)
        (not pristine-p)
-       (not authenticate-p)
        (not simulate-crash-p)
        (not (string= (or (uiop:getenv "AUTOLITH_SESSION_STYLE") "")
                      "direct"))
