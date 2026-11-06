@@ -2,13 +2,12 @@
 
 ;;;; -- World of Channels and Participants --
 
-;;; The world is the shared model behind sessions. Participants, human or
-;;; agent, each reside in one channel, may subscribe to others and own
-;;; channels. A channel's history is the conversation log of the same
-;;; identifier. Residence and subscriptions are stored once, on the
-;;; participant; residents and subscribers of a channel are derived. The
-;;; records name no application, agent or conversation object, so the model
-;;; can move to a library once it settles.
+;;; The world stores human and agent participants and their channels. Each
+;;; participant may reside in one channel and subscribe to or own others;
+;;; parked agents have no residence. A channel's history is the conversation
+;;; log with the same identifier. Residence and subscriptions are stored on
+;;; the participant; channel residents and subscribers are derived. Records
+;;; contain identifiers and portable data, not runtime objects.
 
 (defparameter *world-format-version* 1
   "The readable world record format version.")
@@ -95,7 +94,7 @@
     :reader        participant-updated-at
     :type          timestamp
     :documentation "The last change time as universal time."))
-  (:documentation "One human or agent identity with private state and one residence."))
+  (:documentation "One human or agent identity with private state and an optional channel residence."))
 
 (defclass channel ()
   ((identifier
@@ -1133,9 +1132,9 @@ agent still resides there."
 (defun world--participant-deletion-records (world participant now &key except deleted pending)
   "Return the records deleting PARTICIPANT and its descendants.
 
-Channels the deleted participants own pass to the nearest surviving ancestor,
-otherwise to the oldest human participant. Deleting the last human participant
-while it owns channels is refused, so channels never leave human control.
+Channels owned by the deleted participants pass to PARTICIPANT's surviving
+parent, or otherwise to the oldest surviving human participant. Refuse the
+deletion if owned channels would have no successor.
 Channel EXCEPT is being deleted itself, participants in DELETED already have
 their records, and those in PENDING get theirs later in the same batch, so
 none of them is reassigned or chosen as the heir."
@@ -1170,7 +1169,7 @@ none of them is reassigned or chosen as the heir."
                                     (world-channels world))))
     (when (and owned (null heir))
       (error 'world-error
-             :message    "The channels this participant owns would be left without a human owner."
+             :message    "The channels this participant owns would be left without an owner."
              :pathname   nil
              :operation  ':delete-participant
              :identifier (participant-identifier participant)))
@@ -1219,12 +1218,10 @@ remove; this store holds only identities and relationships."
 (defun world-channel-delete (configuration identifier &key participants (now (get-universal-time)))
   "Delete channel IDENTIFIER and return the deleted participant identifiers.
 
-Residents are never deleted implicitly: every resident must be listed in
-PARTICIPANTS, which deletes it with the channel, or moved away first, and so
-must every descendant of a listed resident, wherever it lives, since a
-participant's deletion takes its descendants with it. A channel with nested
-channels is refused; delete those first. Running jobs bound to the channel
-are the caller's check."
+Move each resident away first or list it in PARTICIPANTS for deletion with
+the channel. Also list every descendant of a resident being deleted,
+wherever it lives: participant deletion includes all descendants. Delete
+nested channels first. The caller must check for jobs bound to the channel."
   (world--transact
    configuration
    (lambda (world)
@@ -1249,7 +1246,7 @@ are the caller's check."
          (dolist (descendant (world-participant-descendants world (participant-identifier resident)))
            (unless (member (participant-identifier descendant) participants :test #'string=)
              (error 'world-error
-                    :message    (format nil "Deleting ~A would delete its descendant ~A ~:[parked in no channel~;in channel ~:*~A~]; move it or include it in the deletion."
+                    :message    (format nil "Deleting ~A would delete its descendant ~A ~:[parked in no channel~;in channel ~:*~A~]; include it in the deletion."
                                         (participant-identifier resident)
                                         (participant-identifier descendant)
                                         (participant-residence descendant))
