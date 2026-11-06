@@ -503,21 +503,21 @@ KNOWLEDGE-P offers structured knowledge through memory: resources."
           (list
            'fs-view-image-tool
            "fs" "view-image"
-           "View one local PNG, JPEG, GIF, or WebP image when visual inspection is needed; the image is returned directly to the model. It reads only images: read source, text, HTML, PDF, and every other file through resource.read with a workspace: URI instead. The path must lie inside the workspace or the Autolith source root, so save screenshots and renders into the workspace before viewing them."
+           "View one local PNG, JPEG, GIF, or WebP image when visual inspection is needed; the image is returned directly to the model. Read source, text, HTML, PDF, and other files through resource.read instead. Paths outside the workspace and source roots require full-access approval. Save screenshots and renders into the workspace to avoid that approval."
            (tool-object-schema
             (json-object
              "path" (tool-string-property
-                     "The image path, absolute or workspace-relative, inside the workspace or source root."))
+                     "The image path, absolute or workspace-relative. Paths outside the workspace and source roots require full-access approval."))
             '("path")))))
       (default-tools--register registry specification)))
   registry)
 
 (-> default-tools--register-shell (tool-registry) tool-registry)
 (defun default-tools--register-shell (registry)
-  "Register the workspace command tool in REGISTRY."
+  "Register the authorized external-command tool in REGISTRY."
   (tool-registry-describe-namespace
    registry "shell"
-   "External commands run in the workspace.")
+   "Authorized external commands, defaulting to the workspace directory.")
   (default-tools--register
    registry
    (list

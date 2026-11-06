@@ -5,7 +5,7 @@
 (defclass workspace-tool (tool)
   ()
   (:documentation
-   "A tool touching only workspace files and subprocesses, never the active image."))
+   "A file or subprocess tool that does not operate on the active Lisp image."))
 
 (defclass fs-view-image-tool (workspace-tool)
   ()
@@ -13,7 +13,7 @@
 
 (defclass shell-run-tool (workspace-tool)
   ()
-  (:documentation "Run one authorized external command in the workspace."))
+  (:documentation "Run one external command in an authorized directory."))
 
 (defmethod tool-child-safe-p ((tool fs-view-image-tool))
   "Permit native workspace image inspection inside child agents."
@@ -42,10 +42,12 @@
   "The raw-byte head/tail sampling budget for an inline shell.run preview.")
 
 (defparameter *workspace-tool-readable-roots* nil
-  "Pathname roots confining workspace-tool access for the current call.
+  "Pathname roots accessible without extra approval for the current call.
 
 Agent turns bind this to the configured workspace and source roots. Specialized
-resources may extend or replace that boundary dynamically.")
+resources may extend or replace these roots dynamically. WORKSPACE-TOOL-PATH asks
+for full-access approval outside them; WORKSPACE-TOOL-CONFINED-PATH rejects paths
+outside them.")
 
 (defvar *workspace-file-mutation-lock*
   (make-recursive-lock "Autolith workspace file mutations")
@@ -118,7 +120,7 @@ trailing slash, and the separator is a slash whatever the host writes natively."
 
 (-> workspace-tool-readable-roots (tool-context) list)
 (defun workspace-tool-readable-roots (context)
-  "Return the exact path roots allowed for workspace operations under CONTEXT."
+  "Return the roots accessible without extra approval under CONTEXT."
   (or *workspace-tool-readable-roots*
       (list (config :working-directory
              (tool-context-configuration context))
