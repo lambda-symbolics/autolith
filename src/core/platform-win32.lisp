@@ -4,9 +4,9 @@
 
 ;;; This file implements the platform protocol for Windows 10 and 11 on
 ;;; x86-64. It binds the wide kernel32 and advapi32 entry points it needs
-;;; with SB-ALIEN and never touches SBCL's internal SB-WIN32 package, so an
-;;; SBCL upgrade cannot change its behaviour silently. Descriptors are
-;;; HANDLE values, which is also what SBCL's Windows fd-streams report.
+;;; with SB-ALIEN, avoiding dependencies on SBCL's internal SB-WIN32 package.
+;;; Descriptors are HANDLE values, which is also what SBCL's Windows
+;;; fd-streams report.
 
 (defclass win32-platform (platform)
   ()
