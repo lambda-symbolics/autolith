@@ -406,6 +406,8 @@
               (lambda (&rest arguments) (declare (ignore arguments)) configuration))
         (list 'main--client-session-p
               (lambda (&rest arguments) (declare (ignore arguments)) t))
+        (list 'main--interactive-input-p
+              (lambda () t))
         (list 'main-resolve-conversation
               (lambda (resolve-configuration prefix)
                 (declare (ignore resolve-configuration prefix))

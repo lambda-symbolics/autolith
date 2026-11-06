@@ -618,34 +618,18 @@
        :name     "startup-init"
        :endpoint "https://startup.invalid/v1/chat/completions"
        :models   '("startup-init/model")))
-    (defun application-run
-        (application &key initial-command initial-input recovery-diagnosis
-                          resume-offer-p)
-      "Check authentication's continuation without entering the terminal loop."
-      (declare (ignore initial-command initial-input recovery-diagnosis
-                       resume-offer-p))
-      (unwind-protect
-           (progn
-             (assert (= *user-init-tests--replay-count* 1))
-             (assert (equal *user-init-tests--replay-lineage*
-                            *active-image-lineage-identifier*))
-             (let ((failures (application-mutation-replay-failures application)))
-               (assert
-                (if (uiop:getenv "AUTOLITH_TEST_REPLAY_FAILURE")
-                    (and (= (length failures) 1)
-                         (search "startup-replay-sentinel"
-                                 (rest (first failures))))
-                    (null failures))))
-             (format t "PRIVATE-STARTUP-SESSION~%"))
-        (application--discard-connection-resources
-         application (application-tool-registry application)
-         (application-worker application))
-        (application-release-conversation-lease application))
+    (defun world-client-run-script (configuration &rest options)
+      "Check authentication's continuation into the world server without starting one."
+      (declare (ignore configuration options))
+      (assert (= *user-init-tests--replay-count* 1))
+      (assert (equal *user-init-tests--replay-lineage*
+                     *active-image-lineage-identifier*))
+      (format t "PRIVATE-STARTUP-SESSION~%")
       nil)))
 
-(-> user-init-tests--run-startup (configuration list &key (:failure-p boolean))
+(-> user-init-tests--run-startup (configuration list)
     (values integer string))
-(defun user-init-tests--run-startup (configuration arguments &key failure-p)
+(defun user-init-tests--run-startup (configuration arguments)
   "Run a real CLI with isolated user roots and return its status and output."
   (let ((root (test-configuration-root configuration)))
     (test-run-program-with-environment
@@ -664,8 +648,7 @@
             (format nil "AUTOLITH_MODEL=~A" (config :model configuration))
             (format nil "AUTOLITH_REASONING_EFFORT=~A"
                     (config :reasoning-effort configuration))
-            "AUTOLITH_TELEMETRY_ENABLED=false")
-      (when failure-p (list "AUTOLITH_TEST_REPLAY_FAILURE=1"))))))
+            "AUTOLITH_TELEMETRY_ENABLED=false")))))
 
 (-> test-private-startup-replay () null)
 (defun test-private-startup-replay ()
@@ -698,8 +681,7 @@
       (flet ((run (arguments &key pristine-p failure-p)
                "Check CLI output from one fresh process."
                (multiple-value-bind (status output)
-                   (user-init-tests--run-startup configuration arguments
-                                                 :failure-p failure-p)
+                   (user-init-tests--run-startup configuration arguments)
                  (test-assert
                   (= status (if (and pristine-p (member "auth" arguments
                                                         :test #'string=))

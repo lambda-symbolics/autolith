@@ -450,6 +450,49 @@
                         "a running channel refuses an editor's MCP servers its tools would need"))))))
   nil)
 
+(-> test-world-client-script-submissions () null)
+(defun test-world-client-script-submissions ()
+  "Test piped input splits into submissions: a line each, a Lisp form until it closes, blank lines skipped."
+  (loop for (input expected) in
+        '(("/status" ("/status"))
+          ("one~%~%two~%" ("one" "two"))
+          ("(+ 1~%   2)~%next" ("(+ 1
+   2)" "next"))
+          ("(print \")\")~%after" ("(print \")\")" "after"))
+          ("(list ; a comment )~%  3)" ("(list ; a comment )
+  3)"))
+          ("(unfinished~%" ("(unfinished")))
+        do (let ((stream (make-string-input-stream (format nil input)))
+                 (found  nil))
+             (loop for submission = (world-client--next-submission stream)
+                   while submission
+                   do (push submission found))
+             (test-assert (equal (nreverse found) expected)
+                          (format nil "~S splits into ~S" input expected))))
+  nil)
+
+(-> test-world-client-script () null)
+(defun test-world-client-script ()
+  "Test piped input runs in a new channel of the world server, one submission after another, then closes it."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let ((output (make-string-output-stream)))
+       (world-client-run-script
+        (configuration-copy configuration :working-directory (world-tests--workspace root "a"))
+        :input  (make-string-input-stream (format nil "/status~%~%/status~%"))
+        :output output)
+       (let ((text (get-output-stream-string output)))
+         (test-assert (and (= 2 (terminal-tests--substring-count "› /status" text))
+                           (= 2 (terminal-tests--substring-count "conversation" text)))
+                      (format nil "each submission is echoed and followed by its output: ~A" text)))
+       (test-assert (task-tests--wait-until
+                     (lambda ()
+                       (null (with-lock-held ((world-server-lock server))
+                               (copy-list (world-server-hosts server)))))
+                     10)
+                    "the channel started for the script closes after it"))))
+  nil)
+
 (-> world-server--channels-of (cons) list)
 (defun world-server--channels-of (entry)
   "Return the channel identifiers the world ENTRY reports."
