@@ -263,9 +263,10 @@ empty token."
 (defun world--cached (configuration cache)
   "Return CACHE, a (TOKEN . WORLD) pair, while its token is the log's, else a fresh pair.
 
-The token is read before and after the world, and the world is read again
-until both agree, so a write during the read never pairs an old world with a
-new token. A world that cannot be read presents as empty."
+The token is read before and after the world, for up to three attempts.
+On the third attempt, the world is returned with the final token even if
+the before and after tokens differ. A world that cannot be read presents
+as empty."
   (let ((token (world--source-token configuration)))
     (if (and cache (equal (first cache) token))
         cache
@@ -280,7 +281,7 @@ new token. A world that cannot be read presents as empty."
 
 (-> application-world (application) world)
 (defun application-world (application)
-  "Return the world as APPLICATION last read it for presentation, rereading it once it changed."
+  "Return the world as APPLICATION last read it for presentation, rereading it when its log token changes."
   (let ((cache (world--cached (application-configuration application)
                               (application-world-cache application))))
     (setf (application-world-cache application) cache)
@@ -495,10 +496,10 @@ shares nothing. A delivery that fails is reported and never stops the turn."
 
 ;;;; -- Residents --
 
-;;; A channel has one resident agent. Moving it elsewhere stops it at a safe
-;;; boundary, leaves the channel without an agent, and makes it the
+;;; A channel has at most one resident agent. Moving it elsewhere stops it at
+;;; a safe boundary, leaves the channel without an agent, and makes it the
 ;;; destination's agent, idle there until addressed. The agent takes along
-;;; the provider context it built: a served destination adopts it at once,
+;;; the provider context it built: a served destination tries to adopt it
 ;;; durably, and any other keeps it waiting in the agent's context file until
 ;;; the channel is served. The world store moves the identity only once the
 ;;; agent stopped and its destination is ready.
@@ -565,7 +566,7 @@ the channel's work resumes and the stop is refused."
               do (when (>= (get-internal-real-time) deadline)
                    (application-localgroup-resume application)
                    (error 'world-error
-                          :message   "The agent did not finish its turn in time; nothing changed."
+                          :message   "The agent did not finish its turn in time; the move or park was refused."
                           :pathname  nil
                           :operation ':move))
                  (sleep 0.05)))))
@@ -780,13 +781,13 @@ first, then its channel's conversation on disk."
 SOURCE-APPLICATION, when it serves the channel the agent leaves, stops it at
 a safe boundary first; DESTINATION-APPLICATION, when it serves CHANNEL, has
 its runtime prepared. The context the agent carries is kept in its context
-file, naming CHANNEL, before the world store moves the agent, and a failure
-before that leaves everything as it was. After it nothing is undone: CHANNEL
-adopts the kept context once, when served now, else when it is next served
-or before the agent's next turn there. Moves and parks run one at a time,
-and the store moves the agent only from where this move found it.
-INTERRUPT-TASK stops the task a task pool runs the agent in as a child, so
-the agent moves as it stood when interrupted."
+file, naming CHANNEL, before the world store moves the agent, but an earlier
+interruption is not undone if the move fails. After the store move nothing
+is rolled back: CHANNEL adopts the kept context once, when served now, else
+when it is next served or before the agent's next turn there. Moves and parks
+run one at a time, and the store moves the agent only from where this move
+found it. INTERRUPT-TASK stops the task a task pool runs the agent in as a
+child, so the agent moves as it stood when interrupted."
   (world-call-with-transition
    configuration
    (lambda ()
@@ -842,7 +843,7 @@ APPLICATION, when it serves the channel, stops the agent at a safe boundary
 and drops its unstarted prompts. The agent keeps its identity, its children
 and the context it carries, kept in its context file until a move brings it
 into a channel again; its children carry on untouched. The channel keeps its
-history, the person and its subscribers, and offers a move or a domestic
+history and its subscribers, and offers a move or a domestic
 agent. The context is kept before the world store parks the agent, as a
 move keeps it, and INTERRUPT-TASK stops a child's running task, as a move
 stops it."
@@ -927,9 +928,10 @@ A task that does not end in time refuses the move."
 Return what PREPARE returned and the queued messages dropped. APPLICATION
 serves the agent's channel; an unserved channel is held by its conversation
 lease meanwhile, and one another process serves refuses the change. PREPARE
-readies the destination before anything durable changes. Until COMMIT
-returns, a failure restores the context file as it was and lets
-APPLICATION's work resume, so nothing has changed."
+readies the destination before the transition's context write and COMMIT.
+Until COMMIT returns, a failure restores the context file's prior state if a
+write was attempted and lets APPLICATION's work resume; earlier interruptions
+and context adoptions are not undone."
   (let* ((identifier (participant-identifier participant))
          (source     (participant-residence participant))
          (previous   (and (probe-file (world-context-pathname configuration identifier))
@@ -982,7 +984,7 @@ APPLICATION's work resume, so nothing has changed."
   (handler-case (conversation-lease-acquire configuration (participant-residence participant))
     (conversation-in-use ()
       (error 'world-error
-             :message    (format nil "Agent ~A's channel ~A is open in another Autolith process; nothing changed."
+             :message    (format nil "Agent ~A's channel ~A is open in another Autolith process; the move or park was refused."
                                  (participant-name participant)
                                  (conversation-identifier-display (participant-residence participant)))
              :pathname   nil
@@ -1092,7 +1094,7 @@ agent."
     (unless (or (eq kind ':idle-compaction)
                 (application-world-agent-present-p application))
       (error 'world-error
-             :message   "This channel has no agent, so nothing runs here; (move \"WHO\") or (domestic) brings one."
+             :message   "This channel has no agent to take this turn; (move \"WHO\") or (domestic) brings one."
              :pathname  nil
              :operation ':turn)))
   nil)
@@ -1208,9 +1210,9 @@ channel's history is there for it to read."
 
 A message said in this channel, and a notice for the person, show in full.
 A copy that arrived from another channel, because it mentioned a participant
-here or this channel subscribes to that one, shows as one line naming where
-it came from; its text went to the model and stays readable in the inbox and
-the channel resource."
+here or a participant here subscribes to that one, shows as one line naming
+where it came from; its text went to the model and stays readable in the
+inbox and the channel resource."
   (let* ((message        (getf request :message))
          (name           (sanitize-text (or (getf message :sender-name) "participant")
                                         :single-line-p t))
