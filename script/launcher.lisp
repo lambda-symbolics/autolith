@@ -61,6 +61,11 @@
 (defparameter *launcher-terminal-statuses* '(64 76 130 143)
   "Session exit statuses that end the launcher without entering recovery.")
 
+(defparameter *launcher-active-heap-size* "2GB"
+  "The dynamic space of the active image, larger than SBCL's default because the world server hosts every channel.
+
+Pristine recovery keeps the default.")
+
 (defstruct launcher-request
   "The launcher options separated from the application arguments."
   recovery-p from-source-p update-p uninstall-p data-p acp-p localgroup-handoff-p arguments)
@@ -394,6 +399,24 @@ of deleting them, as the Windows update path also hands off to the user."
                 (uiop:native-namestring (launcher-context-source-root context)))
           arguments))
 
+(defun launcher-active-core-command (context core &rest arguments)
+  "Return the command running active CORE, or a saved session core, with the active heap and ARGUMENTS."
+  (append (list (launcher-context-sbcl context)
+                "--noinform" "--dynamic-space-size" *launcher-active-heap-size*
+                "--core" (uiop:native-namestring core)
+                "--end-runtime-options"
+                (uiop:native-namestring (launcher-context-source-root context)))
+          arguments))
+
+(defun launcher-active-source-command (context &rest arguments)
+  "Return the command loading the active system from source with the active heap and ARGUMENTS."
+  (append (list (launcher-context-sbcl context)
+                "--dynamic-space-size" *launcher-active-heap-size*
+                "--script"
+                (uiop:native-namestring
+                 (merge-pathnames "bin/autolith-active" (launcher-context-source-root context))))
+          arguments))
+
 (defun launcher-script-command (context script &rest arguments)
   "Return the command running SCRIPT below the source root with ARGUMENTS."
   (append (list (launcher-context-sbcl context)
@@ -497,12 +520,11 @@ of deleting them, as the Windows update path also hands off to the user."
   (let ((arguments (launcher-request-arguments request)))
     (flet ((run-core ()
              (launcher-refresh-sandbox)
-             (launcher-run (apply #'launcher-core-command context
+             (launcher-run (apply #'launcher-active-core-command context
                                   (launcher-context-active-core context) arguments)))
            (run-source ()
              (launcher-refresh-sandbox)
-             (launcher-run (apply #'launcher-script-command context "bin/autolith-active"
-                                  arguments))))
+             (launcher-run (apply #'launcher-active-source-command context arguments))))
       (cond
         ((launcher-request-from-source-p request)
          (run-source))
@@ -568,7 +590,7 @@ boot therefore leaves the generation identity available to recovery."
         for status =
           (if saved-core
               (launcher-run
-               (apply #'launcher-core-command
+               (apply #'launcher-active-core-command
                       context saved-core
                       (launcher-request-arguments request)))
               (launcher-run-active context request))
