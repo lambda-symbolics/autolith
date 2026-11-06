@@ -396,13 +396,11 @@ between that check and the close."
 (defun localgroup--controller-lost (session)
   "Handle SESSION losing its controlling client and report whether it exits.
 
-A session with no connection left lingers only when its controller left
-through an explicit detach. A closed window, a dropped connection, or a
-client that ended without detaching exits the session instead, so
-abandoned launches never accumulate as idle background processes. The
-exit persists pending input and cancels an active turn the way any
-forced shutdown does; the conversation stays resumable. A lingering
-session, one a world server hosts, stays for its next client instead."
+A session waits for its next client after an explicit detach or when its
+LINGER-P flag is set, as it is for a world-server host. Otherwise, a closed
+window, a dropped connection, or a client that ended without detaching
+exits the session. The exit persists pending input and cancels an active
+turn the way any forced shutdown does; the conversation stays resumable."
   (let ((exit-p
          (with-lock-held ((image-daemon:daemon-runtime-lock session))
            (not (or (localgroup-session-detached-explicitly-p session)
