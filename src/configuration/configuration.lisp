@@ -431,7 +431,7 @@ Ordinary native defaults remain lazy and follow the current environment."
 (define-setting :transcript-style (choice-setting)
   :label                          "Transcript style"
   :group                          :transcript
-  :documentation                  "How messages open: labels puts a ❯ you or ● autolith header above each message, and repl marks its first line with > or <, like a Lisp REPL exchange."
+  :documentation                  "How messages open: labels puts a ❯ you or ● agent-name header above each message, and repl marks its first line with > or <, like a Lisp REPL exchange."
   :type                           'keyword
   :scope                          :durable
   :options                        (lambda (configuration)

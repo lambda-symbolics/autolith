@@ -516,6 +516,24 @@
     (test-assert (tool-result-success-p result) "channel resource reads succeed")
     (tool-result-content result)))
 
+(-> test-world-agent-name-header () null)
+(defun test-world-agent-name-header ()
+  "Test assistant messages carry the name of the channel's agent, and autolith without one."
+  (with-test-configuration (configuration)
+    (let* ((conversation (world-tests--persisted-conversation configuration "bnamed1" 1000))
+           (application  (make-instance 'application
+                                        :configuration configuration
+                                        :conversation  conversation)))
+      (test-assert (string= (application-agent-name application) "autolith")
+                   "a conversation that is no channel yet names its agent autolith")
+      (world-reconcile-sessions configuration :now 2000)
+      (let ((agent (find ':agent (world-channel-residents (world-load configuration) "bnamed1")
+                         :key #'participant-kind)))
+        (world-participant-rename configuration (participant-identifier agent) "frob"))
+      (test-assert (string= (application-agent-name application) "frob")
+                   "a channel's messages are headed with its agent's name")))
+  nil)
+
 (-> test-world-participant-availability () null)
 (defun test-world-participant-availability ()
   "Test an agent is online exactly while a process serves its channel, and parked when it resides nowhere."
