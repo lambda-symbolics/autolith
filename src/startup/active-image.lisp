@@ -26,7 +26,6 @@
                     "script/build-active.lisp"
                     "script/runtime-requirement.lisp"
                     "script/windows-stat.lisp"
-                    "script/restart-publisher.lisp"
                     "autolith.asd"
                     "VERSION"
                     "qlfile"
