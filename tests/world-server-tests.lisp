@@ -1411,3 +1411,195 @@
                (test-assert (not (context-file-p))
                             "the opened channel adopts the context before the agent's first turn")))))))))
   nil)
+
+(-> world-server-tests--adoption-failure (keyword application) list)
+(defun world-server-tests--adoption-failure (stage application)
+  "Return a one-shot failure after adoption STAGE in APPLICATION."
+  (let* ((name     (ecase stage
+                     (:context
+                      'conversation-append-context-adoption)
+                     (:context-record
+                      'conversation-append-record)
+                     (:announcement
+                      'conversation-append-user-message)
+                     (:announcement-record
+                      'conversation-append-record)
+                     (:goal
+                      'application-world--install-goal)
+                     (:goal-record
+                      'conversation-append-record)
+                     (:remap
+                      'world-session-remap)
+                     (:runtime
+                      'application-refresh-context-meter)))
+         (original (symbol-function name))
+         (fired-p  nil))
+    (list name
+          (lambda (&rest arguments)
+            (let* ((conversation (application-conversation application))
+                   (target-p     (case stage
+                                   ((:context :announcement)
+                                    (eq (first arguments) conversation))
+                                   ((:context-record :announcement-record :goal-record)
+                                    (and (eq (first arguments) conversation)
+                                         (eq (first (second arguments))
+                                             (ecase stage
+                                              (:context-record
+                                               ':context-adoption)
+                                              (:announcement-record
+                                               ':message)
+                                              (:goal-record
+                                               ':goal)))))
+                                   (:remap
+                                    (and (conversation-adopted-transition conversation)
+                                         (equal (second arguments) (conversation-identifier conversation))))
+                                   (otherwise
+                                    (eq (first arguments) application))))
+                   (results      nil))
+              (unless (and target-p (eq stage ':goal) (not fired-p))
+                (setf results (multiple-value-list (apply original arguments))))
+              (when (and target-p (not fired-p))
+                (setf fired-p t)
+                (error 'world-error :message "Injected adoption interruption." :operation ':move))
+              (values-list results))))))
+
+(-> world-server-tests--check-adoption
+    (application configuration &key (:identifier string) (:transition string)) null)
+(defun world-server-tests--check-adoption (application configuration &key identifier transition)
+  "Check complete, unique adoption TRANSITION for participant IDENTIFIER in APPLICATION."
+  (let* ((conversation (application-conversation application))
+         (records      (application-tests--conversation-records conversation))
+         (agent        (world-participant-find (world-load configuration) identifier)))
+    (test-assert (and (not (probe-file (world-context-pathname configuration identifier)))
+                      (equal (getf (application-goal application) :objective) "recover the carried goal")
+                      (equal (getf (goal-record->goal (conversation-latest-goal-record conversation)) :objective)
+                             "recover the carried goal"))
+                 "complete adoption removes staged state only with the carried goal installed durably")
+    (test-assert (and (= 1 (count ':context-adoption records :key #'first))
+                      (= 1 (count-if (lambda (record)
+                                       (and (eq (first record) ':message)
+                                            (getf (rest record) :automatic-p)
+                                            (search "were moved into" (getf (rest record) :content))))
+                                     records))
+                      (= 1 (count-if (lambda (record)
+                                       (and (eq (first record) ':goal)
+                                            (equal (getf (rest record) :objective) "recover the carried goal")))
+                                     records)))
+                 "context, arrival announcement and carried goal are each durable once")
+    (test-assert (and (equal transition (conversation-adopted-transition conversation))
+                      (equal (config :reasoning-effort (application-configuration application))
+                             (getf (participant-settings agent) :reasoning-effort))
+                      (eq (application-provider application) (agent-provider (application-agent application)))
+                      (eq conversation (agent-conversation (application-agent application))))
+                 "the recovered runtime uses the resident's configuration, provider and conversation")
+    (let ((text (json-encode (coerce (conversation-input-items-for-request conversation) 'vector))))
+      (test-assert (and (search "carried source context" text)
+                        (search "were moved into" text)
+                        (not (search "obsolete destination context" text)))
+                   "the adopted provider context contains the source, not the previous resident")))
+  nil)
+
+(-> world-server-tests--recover-adoption-child (configuration string) null)
+(defun world-server-tests--recover-adoption-child (configuration channel)
+  "Recover CHANNEL in a fresh process booted from this check run's source-matched active core."
+  (let* ((core      (config :active-image-core configuration))
+         (form
+           `(let* ((configuration
+                     (make-configuration
+                      ,@(loop for key in '(:source-root :working-directory :config-root :data-root :state-root :cache-root
+                                           :codex-auth-path :grok-bootstrap-auth-path :active-image-core)
+                              append (list key (config key configuration)))
+                      :onboarding-p nil :fullscreen-p nil :telemetry-enabled-p nil))
+                   (application (application-create configuration :conversation-id ,channel :pristine-p t)))
+              (application-world-adopt-pending-context application :strict-p t)
+              (assert (equal (getf (application-goal application) :objective) "recover the carried goal"))
+              (assert (equal (config :reasoning-effort (application-configuration application)) "low"))
+              (assert (eq (application-provider application) (agent-provider (application-agent application))))
+              (write-line "ADOPTION-RECOVERED")))
+         (init-root (merge-pathnames "recovery-process-config/" (config :working-directory configuration)))
+         (init-path (merge-pathnames "autolith/init.lisp" init-root)))
+    (test-assert (and core (probe-file core)) "restart recovery uses a saved source-matched active image")
+    (ensure-directories-exist init-path)
+    (with-open-file (stream init-path :direction ':output :if-exists ':supersede)
+      (let ((*package* (find-package '#:cl-user)))
+        (write `(progn ,form (uiop:quit 0)) :stream stream :readably t)))
+    (multiple-value-bind (status output)
+        (test-run-program-with-environment
+         (active-image-process-command configuration '("models"))
+         (list (format nil "XDG_CONFIG_HOME=~A" (namestring init-root))
+               (format nil "XDG_DATA_HOME=~A" (namestring (config :data-root configuration)))
+               (format nil "XDG_STATE_HOME=~A" (namestring (config :state-root configuration)))
+               (format nil "HOME=~A" (namestring (config :working-directory configuration)))
+               "AUTOLITH_SITE_CONFIG_ROOT=" "AUTOLITH_TELEMETRY_ENABLED=false"))
+      (test-assert (and (zerop status) (search "ADOPTION-RECOVERED" output))
+                   (format nil "a fresh process recovers the goal and runtime: ~A" output))))
+  nil)
+
+(-> test-world-server-adoption-recovery () null)
+(defun test-world-server-adoption-recovery ()
+  "Test interruptions at each adoption stage, with live retry and reloaded server recovery."
+  (let* ((record '(:goal :kind :mission :objective "carry mission" :status :paused
+                   :seq 1 :time 1 :adoption-transition "old-transition"))
+         (goal   (goal-record->goal record)))
+    (test-assert (and (mission-goal-p goal)
+                      (not (getf goal :adoption-transition))
+                      (equal (getf (rest (append (goal->record goal)
+                                                '(:adoption-transition "new-transition")))
+                                   :adoption-transition)
+                             "new-transition"))
+                 "mission serialization does not carry an earlier adoption identity into the next move"))
+  (dolist (stage '(:context-record :context :announcement-record :announcement :goal :goal-record :remap :runtime))
+    (dolist (restart-p '(nil t))
+      (with-test-configuration (configuration root)
+        (let ((destination nil)
+              (identifier  nil)
+              (transition  nil))
+          (world-server-tests--call-with-server
+           configuration
+           (lambda (server)
+             (let* ((entry  (world-client-entry configuration))
+                    (source (getf (rest (world-server-tests--open entry (world-tests--workspace root "source")))
+                                  :session-id))
+                    (target (getf (rest (world-server-tests--open entry (world-tests--workspace root "target")))
+                                  :session-id))
+                    (app-a  (world-host-application (world-server--find-host server source)))
+                    (app-b  (world-host-application (world-server--find-host server target))))
+               (setf destination target)
+               (conversation-append-user-message (application-conversation app-a) "carried source context")
+               (conversation-append-user-message (application-conversation app-b) "obsolete destination context")
+               (let* ((world   (values (world-reconcile-sessions configuration)))
+                      (agent-a (find ':agent (world-channel-residents world source) :key #'participant-kind))
+                      (agent-b (find ':agent (world-channel-residents world target) :key #'participant-kind)))
+                 (setf identifier (participant-identifier agent-a))
+                 (let ((settings (copy-list (participant-settings agent-a))))
+                   (setf (getf settings :reasoning-effort) "low")
+                   (world-participant-update configuration identifier :settings settings))
+                 (setf (application-goal app-a)
+                       '(:objective "recover the carried goal" :status :active :continuations 0 :created-at 1))
+                 (application--record-goal app-a)
+                 (localgroup-query-record entry ':dismiss (list :participant (participant-identifier agent-b)))
+                 (test-call-with-function-replacements
+                  (list (world-server-tests--adoption-failure stage app-b))
+                  (lambda ()
+                    (localgroup-query-record entry ':move (list :participant identifier :channel target))))
+                 (setf transition (nth-value 3 (world-context-read configuration identifier)))
+                 (test-assert (and transition (probe-file (world-context-pathname configuration identifier)))
+                              "an interrupted installation retains the staged transition")
+                 (unless restart-p
+                   (application-world-adopt-pending-context app-b :strict-p t)
+                   (world-server-tests--check-adoption app-b configuration :identifier identifier :transition transition))))))
+          (when restart-p
+            (world-server-tests--recover-adoption-child
+             (configuration-copy configuration :working-directory (world-tests--workspace root "target"))
+             destination)
+            (world-server-tests--call-with-server
+             configuration
+             (lambda (server)
+               (let* ((entry  (world-client-entry configuration))
+                      (opened (world-server-tests--open entry (world-tests--workspace root "target")
+                                                        :session-id destination))
+                      (app    (world-host-application
+                               (world-server--find-host server (getf (rest opened) :session-id)))))
+                 (application-world-adopt-pending-context app :strict-p t)
+                 (world-server-tests--check-adoption app configuration :identifier identifier :transition transition)))))))))
+  nil)
