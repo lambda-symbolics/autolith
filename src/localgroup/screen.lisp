@@ -82,6 +82,11 @@ switches. The default methods leave the choice local to each screen."))
     :accessor      localgroup-screen-cursor
     :type          list
     :documentation "The cursor row, column and visibility of the frame.")
+   (whole-screen-p
+    :initform      nil
+    :accessor      localgroup-screen-whole-screen-p
+    :type          boolean
+    :documentation "Whether the session's frame asks for the whole screen, hiding the side panel.")
    (panel
     :initarg       :panel
     :initform      nil
@@ -118,6 +123,7 @@ switches. The default methods leave the choice local to each screen."))
   "Return true when SCREEN's side panel takes part of the terminal."
   (let ((panel (localgroup-screen-panel screen)))
     (and panel
+         (not (localgroup-screen-whole-screen-p screen))
          (localgroup-screen-panel-shown-p screen)
          (>= (terminal-columns (localgroup-screen-terminal screen))
              (screen-panel-minimum-columns panel))
@@ -278,6 +284,7 @@ client it has not synchronized."
       (dolist (row (getf properties :rows))
         (when (< (first row) height)
           (setf (aref frame (first row)) (second row))))
+      (localgroup-screen--take-whole-screen screen (not (null (getf properties :whole-screen-p))))
       (setf (localgroup-screen-frame screen) frame
             (localgroup-screen-cursor screen)
             (list (getf properties :cursor-row)
@@ -286,6 +293,20 @@ client it has not synchronized."
       (unless (localgroup-screen-active-p screen)
         (localgroup-screen--enter screen)))
     (not (null frame))))
+
+(-> localgroup-screen--take-whole-screen (localgroup-screen boolean) null)
+(defun localgroup-screen--take-whole-screen (screen whole-screen-p)
+  "Record whether the session wants the whole screen, as WHOLE-SCREEN-P says.
+
+When that shows or hides the side panel, the session's pane changes size: the
+client tells the session, and the next paint rewrites the whole screen."
+  (let ((visible-p (localgroup-screen-panel-visible-p screen)))
+    (setf (localgroup-screen-whole-screen-p screen) whole-screen-p)
+    (unless (eq visible-p (localgroup-screen-panel-visible-p screen))
+      (setf (localgroup-screen-resize-pending-p screen) t)
+      (terminal-screen-invalidate (localgroup-screen-terminal screen)
+                                  (localgroup-screen-painter screen))))
+  nil)
 
 (-> localgroup-screen--enter (localgroup-screen) null)
 (defun localgroup-screen--enter (screen)

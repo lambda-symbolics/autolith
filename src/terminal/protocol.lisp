@@ -73,12 +73,13 @@ their screens with the first frame."))
   (:documentation "Give TERMINAL's screen back, restoring the native mode TOKEN captured on entry."))
 
 (defgeneric terminal-screen-paint
-    (terminal painter rows &key cursor-row cursor-column cursor-visible-p)
+    (terminal painter rows &key cursor-row cursor-column cursor-visible-p whole-screen-p)
   (:documentation "Show display ROWS as TERMINAL's whole screen with the cursor at CURSOR-ROW and CURSOR-COLUMN.
 
 PAINTER rewrites only the rows that changed on a terminal written directly;
 a relayed terminal sends its clients the rows that changed since the frame
-each of them holds."))
+each of them holds. WHOLE-SCREEN-P asks those clients to hide their side
+panels while such frames show, as during the boot screen."))
 
 (defgeneric terminal-screen-invalidate (terminal painter)
   (:documentation "Forget what TERMINAL's screen shows, so the next paint rewrites it completely."))
@@ -118,8 +119,10 @@ each of them holds."))
   nil)
 
 (defmethod terminal-screen-paint
-    ((terminal terminal) painter rows &key (cursor-row 0) (cursor-column 0) (cursor-visible-p t))
+    ((terminal terminal) painter rows
+     &key (cursor-row 0) (cursor-column 0) (cursor-visible-p t) whole-screen-p)
   "Paint ROWS through PAINTER at TERMINAL's size, rewriting only what changed."
+  (declare (ignore whole-screen-p))
   (clinedi:frame-painter-paint
    painter
    rows
