@@ -217,14 +217,19 @@ journaling or provider conversation projection."
 
 ;;;; -- Local Evaluation Presentation --
 
+(-> application-lisp-code-spans (string) list)
+(defun application-lisp-code-spans (source)
+  "Return Lisp SOURCE as syntax-highlighted spans, or as plain code when it does not highlight."
+  (or (syntax--highlight-spans source
+                               :language *application-common-lisp-language*)
+      (list (terminal-span ':code source))))
+
 (-> application-lisp--source-entry (string) list)
 (defun application-lisp--source-entry (source)
   "Return exact submitted SOURCE as one syntax-highlighted local transcript entry."
   (append
    (list (terminal-span ':lisp-prompt "* "))
-   (or (syntax--highlight-spans source
-                               :language *application-common-lisp-language*)
-       (list (terminal-span ':code source)))))
+   (application-lisp-code-spans source)))
 
 (-> application-lisp--output-spans (string) list)
 (defun application-lisp--output-spans (output)

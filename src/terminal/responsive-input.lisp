@@ -1262,10 +1262,27 @@ not steer the active primary message."
        (deque-push-back work (list ':message copied-input))
        ':queued))))
 
+(-> application-input-controller--agentless-refusal (application) list)
+(defun application-input-controller--agentless-refusal (application)
+  "Return the failure line refusing a prompt in APPLICATION's channel, where no agent resides."
+  (flet ((failure (text)
+           (terminal-span ':failure text)))
+    (if (application-world-inbox-p application)
+        (append (list (failure "· no agent responds to your inbox. try "))
+                (application-lisp-code-spans "(tell \"OTHER-CHANNEL\" \"TEXT\")")
+                (list (failure " or "))
+                (application-lisp-code-spans "(switch \"ID\")")
+                (list (failure ".")))
+        (append (list (failure "· this channel has no agent. try "))
+                (application-lisp-code-spans "(move \"ID\")")
+                (list (failure " or "))
+                (application-lisp-code-spans "(domestic)")
+                (list (failure "."))))))
+
 (-> application-input-controller-submit-primary-prompt
     (application-input-controller (or string user-message-input)
      &key (:prefer-steering-p boolean))
-    (values boolean (member :queued :rejected :steering)))
+    (values boolean (member :queued :rejected :steering :no-agent)))
 (defun application-input-controller-submit-primary-prompt
     (controller input &key (prefer-steering-p t))
   "Submit INPUT to the primary agent and report acceptance and delivery mode.
@@ -1277,14 +1294,11 @@ the ordinary FIFO queue."
   (unless (application-input-controller--prompt-storage-ready-p controller)
     (return-from application-input-controller-submit-primary-prompt
       (values nil ':rejected)))
-  (unless (application-world-agent-present-p (application-input-controller-application controller))
-    (application-present
-     (application-input-controller-application controller)
-     (if (application-world-inbox-p (application-input-controller-application controller))
-         "· no agent reads your inbox. (tell \"CHANNEL\" \"TEXT\") writes to a channel; a message's (switch \"ID\") goes where it was said"
-         "· this channel has no agent. (move \"ID\") brings one here; (domestic) creates a new one"))
-    (return-from application-input-controller-submit-primary-prompt
-      (values nil ':rejected)))
+  (let ((application (application-input-controller-application controller)))
+    (unless (application-world-agent-present-p application)
+      (application-present application (application-input-controller--agentless-refusal application))
+      (return-from application-input-controller-submit-primary-prompt
+        (values nil ':no-agent))))
   (let ((delivery  nil)
         (resumed-p nil))
     (with-lock-held ((application-input-controller-lock controller))
@@ -1456,7 +1470,9 @@ the ordinary FIFO queue."
              controller input :prefer-steering-p prefer-steering-p)
           (unless accepted-p
             (let ((reason
-                    (application-prompt--primary-rejection-reason controller)))
+                    (if (eq delivery ':no-agent)
+                        ':no-agent
+                        (application-prompt--primary-rejection-reason controller))))
               (prompt--error
                reason
                (format nil "Primary Autolith is not accepting prompts (~(~A~))."
@@ -2232,7 +2248,9 @@ may execute immediately; other Lisp waits for the idle boundary."
            :prefer-steering-p prefer-steering-p)
           t)
       (prompt-error (condition)
-        (unless (eq (prompt-error-reason condition) ':storage-unavailable)
+        ;; Storage failures are reported elsewhere, and a channel without an
+        ;; agent has shown its refusal already.
+        (unless (member (prompt-error-reason condition) '(:storage-unavailable :no-agent))
           (let ((message (autolith-error-message condition)))
             (application-present
              application
