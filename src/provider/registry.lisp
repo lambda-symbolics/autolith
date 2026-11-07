@@ -11,13 +11,20 @@
   '(:builtin :site :user :runtime)
   "The provider registration sources ordered from lowest to highest precedence.")
 
+(defparameter *provider-cache-selection-hint-p* nil
+  "Allow the pre-0.68.0 OpenCode selection hint only while loading startup metadata.")
+
+(defvar *provider-cache-selection-hint-model* nil
+  "The transient discovered model to retire after catalog installation, until 0.68.0.")
+
 (defvar *provider-registry*
   (provider-registry-create
    :sources                   *provider-registration-sources*
    :default-context-window    *default-context-window*
    :default-reasoning-efforts *supported-reasoning-efforts*
    :cache-read-function       (lambda (configuration)
-                                (provider--read-model-cache configuration))
+                                 (provider--cache-with-selection-hint
+                                  configuration (provider--read-model-cache configuration)))
    :cache-write-function      (lambda (configuration form)
                                 (provider--write-model-cache configuration form))
    :change-function           (lambda (registry)
@@ -105,6 +112,9 @@ same source and shadow lower-precedence registrations with the same name."
   ;; The catalog structure is defined after this file, so its reader is not inlined.
   (declare (notinline model-catalog-providers))
   (provider-registry-load-model-cache *provider-registry* configuration)
+  (when (eq *provider-cache-selection-hint-p* ':generated)
+    (setf *provider-cache-selection-hint-model*
+          (provider-model-for (config :model configuration))))
   (let ((catalog (provider-catalog-load configuration)))
     (when (model-catalog-providers catalog)
       (dolist (registration (provider-registrations))
@@ -163,7 +173,8 @@ registrations use models.dev when mapped. Failures retain the last successful li
 When REFRESH-P is true, also perform the explicit synchronous discovery operation.
 The default startup path never performs remote model discovery. Launch overrides
 are normalized after executable init and cache loading establish their provider."
-  (provider-load-model-cache configuration)
+  (let ((*provider-cache-selection-hint-p* t))
+    (provider-load-model-cache configuration))
   (when refresh-p
     (provider-refresh-models configuration))
   (when (config :model-selection-override-p configuration)
@@ -198,6 +209,50 @@ are normalized after executable init and cache loading establish their provider.
                         (concatenate 'string saved-provider "/") "")
                     saved-model (config :model configuration))))
     configuration))
+
+(-> provider--cache-with-selection-hint (configuration t) t)
+(defun provider--cache-with-selection-hint (configuration form)
+  "Restore only a durable Go selection from the old mixed-tier cache at startup.
+
+Do not copy metadata or persist the projection. Fresh discovery replaces this
+unspecified-context discovered model. Remove this compatibility path at 0.68.0."
+  (let* ((registration (provider-registration-find "opencode-go"))
+         (model        (config :model configuration))
+         (provider     (config :model-provider configuration)))
+    (if (and *provider-cache-selection-hint-p*
+             (not (config :model-selection-override-p configuration))
+             (eq (configuration-setting-source configuration :model) ':durable)
+             (member (configuration-setting-source configuration :model-provider) '(nil :durable))
+             (or (not (non-empty-string-p provider))
+                 (equal (provider--canonical-name provider) "opencode-go"))
+             (uiop:string-prefix-p "opencode/" model)
+             registration
+             (eq (provider-registration-source registration) ':builtin)
+             (null (provider-registration-models registration))
+             (consp form) (eq (first form) ':provider-model-cache)
+             (eql (getf (rest form) :version) 3)
+             (let* ((entries  (getf (rest form) :providers))
+                    (endpoint (funcall (provider-registration-model-discovery-endpoint-resolver
+                                        registration))))
+               (and (not (find-if (lambda (entry)
+                                    (and (equal (getf entry :provider-name) "opencode-go")
+                                         (equal (getf entry :discovery-endpoint) endpoint)))
+                                  entries))
+                    (some (lambda (entry)
+                            (and (equal (getf entry :provider-name) "opencode")
+                                 (find model (getf entry :models)
+                                       :key (lambda (spec) (getf spec :name)) :test #'equal)))
+                          entries))))
+        (progn
+          (setf *provider-cache-selection-hint-p* ':generated)
+          (list :provider-model-cache :version 3
+                :providers            (cons (list :provider-name "opencode-go"
+                                                  :discovery-endpoint
+                                                  (funcall (provider-registration-model-discovery-endpoint-resolver
+                                                            registration))
+                                                  :models        (list (list :name model)))
+                                            (getf (rest form) :providers))))
+        form)))
 
 (-> provider--model-cache-store (configuration) sexp-store:snapshot-store)
 (defun provider--model-cache-store (configuration)

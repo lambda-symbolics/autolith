@@ -91,25 +91,32 @@ Account-specific Copilot routing and providers absent from models.dev retain dis
   "Replace built-in fallback metadata while preserving its transport and authentication."
   (let ((source (provider-catalog--source registration)))
     (when source
-      (register-provider
-       (provider-registration-name registration)
-       :description              (provider-registration-description registration)
-       :family                   (provider-registration-family registration)
-       :models                   (provider-catalog--models
-                                  catalog source
-                                  :allowed-models
-                                  (when (member (provider-registration-name registration)
-                                                '("chatgpt" "gemini" "grok") :test #'string=)
-                                    (mapcar #'provider-model-name (provider-registration-models registration))))
-       :factory                  (provider-registration-factory registration)
-       :authenticator            (provider-registration-authenticator registration)
-       :protocol                 (provider-registration-protocol registration)
-       :endpoint                 (provider-registration-endpoint registration)
-       :model-discovery          (provider-registration-model-discovery registration)
-       :model-discovery-endpoint (provider-registration-model-discovery-endpoint registration)
-       :model-discovery-endpoint-resolver
-       (provider-registration-model-discovery-endpoint-resolver registration)
-       :source                   ':builtin)))
+      (let ((models (provider-catalog--models
+                     catalog source
+                     :allowed-models
+                     (when (member (provider-registration-name registration)
+                                   '("chatgpt" "gemini" "grok") :test #'string=)
+                       (mapcar #'provider-model-name (provider-registration-models registration))))))
+        ;; Remove the pre-0.68.0 startup hint only after validating its replacement.
+        ;; Ordinary registration replacement would retain that discovered model.
+        (when (member *provider-cache-selection-hint-model*
+                      (provider-registration-discovered-models registration) :test #'eq)
+          (unregister-provider (provider-registration-name registration) :source ':builtin)
+          (setf *provider-cache-selection-hint-model* nil))
+        (register-provider
+         (provider-registration-name registration)
+         :description              (provider-registration-description registration)
+         :family                   (provider-registration-family registration)
+         :models                   models
+         :factory                  (provider-registration-factory registration)
+         :authenticator            (provider-registration-authenticator registration)
+         :protocol                 (provider-registration-protocol registration)
+         :endpoint                 (provider-registration-endpoint registration)
+         :model-discovery          (provider-registration-model-discovery registration)
+         :model-discovery-endpoint (provider-registration-model-discovery-endpoint registration)
+         :model-discovery-endpoint-resolver
+         (provider-registration-model-discovery-endpoint-resolver registration)
+         :source                   ':builtin))))
   nil)
 
 (-> provider-catalog-load (configuration) model-catalog)
