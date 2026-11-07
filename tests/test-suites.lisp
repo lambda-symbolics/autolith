@@ -988,7 +988,9 @@
   opencode-provider-test--request-model
   opencode-provider-test--session-header
   opencode-provider-test--discovery
-  opencode-provider-test--builtin-registration)
+  opencode-provider-test--builtin-registration
+  opencode-provider-test--tiers
+  test-provider-catalog-opencode-tiers)
 
 (define-test-suite openrouter-provider
   test-openrouter-provider

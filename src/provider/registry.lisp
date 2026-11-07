@@ -29,7 +29,8 @@
 
 (defparameter *provider-name-aliases*
   '(("codex" . "chatgpt")
-    ("openai" . "chatgpt"))
+    ("openai" . "chatgpt")
+    ("opencode" . "opencode-go"))
   "Legacy provider names mapped to registered provider names.")
 
 
@@ -64,7 +65,7 @@ supplied, receives the provider and the keyword arguments STREAM and
 OPEN-BROWSER-P. Site, user, and live runtime registrations replace only the
 same source and shadow lower-precedence registrations with the same name."
   (provider-registry-register
-   *provider-registry* name
+   *provider-registry* (provider--canonical-name name)
    :description                       description
    :family                            family
    :models                            models
@@ -80,7 +81,7 @@ same source and shadow lower-precedence registrations with the same name."
 (-> unregister-provider (string &key (:source (option keyword))) boolean)
 (defun unregister-provider (name &key (source (provider--current-registration-source)))
   "Remove NAME from one provider registration SOURCE layer."
-  (provider-registry-unregister *provider-registry* name :source source))
+  (provider-registry-unregister *provider-registry* (provider--canonical-name name) :source source))
 
 (-> provider--current-registration-source () keyword)
 (defun provider--current-registration-source ()
@@ -304,7 +305,7 @@ Failed publication uses legacy metadata offline. Remove the branch at 0.68.0."
 (-> provider-registration-find (string) (option provider-registration))
 (defun provider-registration-find (name)
   "Return the effective provider registration named NAME."
-  (provider-registry-find *provider-registry* name))
+  (provider-registry-find *provider-registry* (provider--canonical-name name)))
 
 (-> provider--selection-error
     (string (option string) &key (:reason keyword) (:message string)) nil)

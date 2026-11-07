@@ -2222,6 +2222,22 @@ OAuth with a local loopback callback.
 Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, OpenAI API, and
 user-registered OpenAI-compatible providers use API keys.
 
+
+OpenCode Go and Zen have separate provider selections and catalogs. Use
+=(auth "opencode-go")= for Go and =(auth "opencode-zen")= for Zen. The old
+=opencode= provider name is an alias for Go; existing =opencode/...= model IDs,
+=OPENCODE_API_KEY=, and saved Go credentials keep their Go routing. Zen models
+use =opencode-zen/...= IDs and =OPENCODE_ZEN_API_KEY= or a separately saved key.
+Refresh with =(models)= to load each tier's context windows and available models.
+
+Go uses =https://opencode.ai/inference/go/openai/v1= and Zen uses
+=https://opencode.ai/inference/openai/v1=. Both use Chat Completions. To override
+Go's endpoints, set =AUTOLITH_OPENCODE_PROVIDER_ENDPOINT= and
+=AUTOLITH_OPENCODE_MODELS_ENDPOINT=. For Zen, set
+=AUTOLITH_OPENCODE_ZEN_PROVIDER_ENDPOINT= and
+=AUTOLITH_OPENCODE_ZEN_MODELS_ENDPOINT=. Chat endpoint overrides include
+=/chat/completions=; discovery endpoint overrides include =/models=.
+
 For the official OpenAI API, choose =openai-api= during onboarding, run
 =autolith auth openai-api=, or use =(auth "openai-api")=. Paste your API key
 at the hidden prompt. Autolith stores it in its private credential store and

@@ -1111,6 +1111,11 @@ selects its own registration, rather than inheriting the previous provider."
   "Return Autolith's private OpenCode API key credential pathname."
   (merge-pathnames "opencode-auth.sexp" (config :state-root configuration)))
 
+(-> configuration-opencode-zen-auth-path (configuration) pathname)
+(defun configuration-opencode-zen-auth-path (configuration)
+  "Return Autolith's private OpenCode Zen API key credential pathname."
+  (merge-pathnames "opencode-zen-auth.sexp" (config :state-root configuration)))
+
 (-> configuration-provider-model-cache-path (configuration) pathname)
 (defun configuration-provider-model-cache-path (configuration)
   "Return the private cache of successful provider model discovery results."

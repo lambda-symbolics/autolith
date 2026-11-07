@@ -195,3 +195,74 @@
                 "User registrations override built-in Codex defaults."))
           (provider--registry-restore snapshot)))))
   nil)
+
+(-> test-provider-catalog-opencode-tiers () null)
+(defun test-provider-catalog-opencode-tiers ()
+  "Keep Go and Zen metadata, picker selections and persisted routes independent."
+  (with-test-configuration (configuration)
+    (let ((snapshot (provider--registry-snapshot))
+          (body     (json-object)))
+      (dolist (tier '(("opencode-go" 1000000) ("opencode" 128000)))
+        (setf (gethash (first tier) body)
+              (json-object
+               "models" (json-object
+                         "deepseek-v4.1-flash"
+                         (json-object "id" "deepseek-v4.1-flash" "tool_call" t "reasoning" t
+                                      "modalities" (json-object "output" #("text"))
+                                      "limit" (json-object "context" (second tier)))))))
+
+      (setf (gethash "deepseek-v4.1-flash-free" (json-get (gethash "opencode" body) "models"))
+            (json-object "id" "deepseek-v4.1-flash-free" "tool_call" t "reasoning" t
+                         "modalities" (json-object "output" #("text"))
+                         "limit" (json-object "context" 32000)))
+      (unwind-protect
+           (let ((*model-catalog-fetch-function*
+                   (lambda (context) (declare (ignore context)) (json-encode body))))
+             (test-assert (eq (provider-registration-find "opencode")
+                              (provider-registration-find "opencode-go"))
+                          "Legacy provider selection resolves to Go, never Zen.")
+             (dolist (name '("opencode" "opencode-zen"))
+               (test-assert (null (provider-refresh-models configuration :provider-name name))
+                            "Each OpenCode tier refreshes its own public catalog."))
+             (flet ((check-selections ()
+
+                      (test-assert
+                       (and (provider-model-for "opencode-zen/deepseek-v4.1-flash-free")
+                            (null (provider-model-for "opencode/deepseek-v4.1-flash-free")))
+                       "Zen's free variant does not enter the Go catalog.")
+                      (dolist (tier '(("opencode/deepseek-v4.1-flash" "opencode-go" 1000000)
+                                      ("opencode-zen/deepseek-v4.1-flash" "opencode-zen" 128000)))
+                        (destructuring-bind (model name window) tier
+                          (let ((selected (configuration-copy configuration :model        model
+                                                                          :model-provider name)))
+                            (test-assert (= (config :context-window selected) window)
+                                         "Tier-specific context reaches selected configuration.")
+                            (test-assert (equal (provider-model-provider-name model) name)
+                                         "The same raw ID belongs to independent registrations."))))))
+               (check-selections)
+               (test-call-with-function-replacements
+                (list (list 'application--credentialed-provider-names
+                            (lambda (application)
+                              (declare (ignore application)) '("opencode-go" "opencode-zen"))))
+                (lambda ()
+                  (let ((items (application--model-items
+                                (make-instance 'application :configuration configuration))))
+                    (dolist (model '("opencode/deepseek-v4.1-flash"
+                                     "opencode-zen/deepseek-v4.1-flash"))
+                      (let ((item (find model items :key (lambda (item) (getf item :model))
+                                                   :test #'equal)))
+                        (test-assert item "Both OpenCode selections appear in the picker.")
+                        (multiple-value-bind (identifier registration)
+                            (provider-resolve-model (getf item :name))
+                          (test-assert (and (equal identifier model)
+                                            (equal (getf item :provider)
+                                                   (provider-registration-name registration)))
+                                       "Picker selection preserves its tier.")))))))
+               (provider--registry-restore snapshot)
+               (provider-load-model-cache configuration)
+               (check-selections)
+               (test-assert (null (provider-refresh-models configuration :provider-name "opencode"))
+                            "Refreshing the legacy Go selection keeps the Go catalog.")
+               (check-selections)))
+        (provider--registry-restore snapshot))))
+  nil)

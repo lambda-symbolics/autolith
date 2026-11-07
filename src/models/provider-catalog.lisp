@@ -8,7 +8,8 @@
     ("grok" "xai" "")
     ("anthropic" "anthropic" "")
     ("fireworks" "fireworks-ai" "")
-    ("opencode" "opencode" "opencode/")
+    ("opencode-go" "opencode-go" "opencode/")
+    ("opencode-zen" "opencode" "opencode-zen/")
     ("openrouter" "openrouter" "openrouter/")
     ("mistral" "mistral" ""))
   "Built-in transport names, public catalog keys and user-visible model prefixes.

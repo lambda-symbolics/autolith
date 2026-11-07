@@ -33,11 +33,18 @@
 ;; real chat request; a rejected key fails on its first provider request with
 ;; the normal static-key authentication error.
 (define-static-api-key-provider opencode
-  :display-name         "OpenCode"
+  :display-name         "OpenCode Go"
   :environment-variable "OPENCODE_API_KEY"
   :source-class         autolith-credential-source
   :source-path          (configuration-opencode-auth-path configuration)
   :login-hint           "run autolith auth opencode")
+
+(define-static-api-key-provider opencode-zen
+  :display-name         "OpenCode Zen"
+  :environment-variable "OPENCODE_ZEN_API_KEY"
+  :source-class         autolith-credential-source
+  :source-path          (configuration-opencode-zen-auth-path configuration)
+  :login-hint           "run autolith auth opencode-zen")
 
 (-> fireworks-validate-api-key (string) null)
 (defun fireworks-validate-api-key (key)

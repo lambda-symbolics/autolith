@@ -2,50 +2,57 @@
 
 ;;;; -- OpenCode Chat Completions Provider --
 
-;;; The OpenCode provider serves the standard streaming OpenAI Chat
-;;; Completions dialect via the opencode.ai/zen/go/v1 endpoint. It
-;;; participates in dynamic model discovery and persists credentials in
-;;; Autolith's private store with an optional OPENCODE_API_KEY environment
-;;; bootstrap. Tool names ride in the Chat Completions Base64 encoding
-;;; inherited from OPENAI-COMPATIBLE-PROVIDER, so conversations persist in
-;;; the same namespaced shape regardless of the serving provider. Every
-;;; request also carries the provider's stable session identifier in the
-;;; x-opencode-session header so the backend can pin caching.
+;;; Go and Zen share the streaming Chat Completions client. Their catalogs,
+;;; model namespaces, credentials and endpoints are independent. The historic
+;;; opencode/ namespace and OPENCODE_API_KEY belong to Go.
 
 (defparameter *opencode-model-prefix* "opencode/"
   "The namespace distinguishing OpenCode models from other provider models.")
 
-(-> opencode--model-name (non-empty-string) non-empty-string)
-(defun opencode--model-name (wire-name)
-  "Return the user-visible OpenCode model name for WIRE-NAME."
-  (format nil "~A~A" *opencode-model-prefix* wire-name))
+(-> opencode--model-name (string &optional keyword) non-empty-string)
+(defun opencode--model-name (wire-name &optional (family ':opencode))
+  "Return the tier-specific user-visible name for WIRE-NAME."
+  (concatenate 'string (ecase family
+                         (:opencode
+                          *opencode-model-prefix*)
+                         (:opencode-zen
+                          "opencode-zen/"))
+               wire-name))
 
-(-> opencode--wire-model-name (non-empty-string) non-empty-string)
-(defun opencode--wire-model-name (model)
-  "Return the OpenCode wire identifier encoded by namespaced MODEL."
-  (unless (and (uiop:string-prefix-p *opencode-model-prefix* model)
-               (< (length *opencode-model-prefix*) (length model)))
-    (error 'configuration-error
-           :message
-           (format nil "OpenCode model identifiers must begin with ~A, not ~S."
-                   *opencode-model-prefix*
-                   model)))
-  (subseq model (length *opencode-model-prefix*)))
+(-> opencode--wire-model-name (non-empty-string &optional keyword) non-empty-string)
+(defun opencode--wire-model-name (model &optional (family ':opencode))
+  "Return the wire identifier encoded by MODEL in FAMILY's namespace."
+  (let ((prefix (opencode--model-name "" family)))
+    (unless (and (uiop:string-prefix-p prefix model)
+                 (< (length prefix) (length model)))
+      (error 'configuration-error
+             :message (format nil "OpenCode model identifiers must begin with ~A, not ~S."
+                              prefix model)))
+    (subseq model (length prefix))))
+
+(-> opencode--discover-models (configuration keyword) list)
+(defun opencode--discover-models (configuration family)
+  "Discover models using FAMILY's endpoint, credentials and namespace."
+  (let ((zen-p (eq family ':opencode-zen)))
+    (mapcar (lambda (spec)
+              (model-spec-rename spec (opencode--model-name (model-spec-name spec) family)))
+            (openai-compatible--fetch-models
+             configuration
+             :provider-name      (if zen-p "opencode-zen" "opencode-go")
+             :endpoint           (if zen-p (opencode-zen-models-endpoint) (opencode-models-endpoint))
+             :credential-manager (if zen-p
+                                     (opencode-zen-credential-manager-create configuration)
+                                     (opencode-credential-manager-create configuration))))))
 
 (-> opencode--fetch-models (configuration) list)
 (defun opencode--fetch-models (configuration)
-  "Discover OpenCode models and namespace their user-visible identifiers."
-  (mapcar (lambda (spec)
-            (model-spec-rename
-             spec
-             (opencode--model-name
-              (model-spec-name spec))))
-          (openai-compatible--fetch-models
-           configuration
-           :provider-name "opencode"
-           :endpoint      (opencode-models-endpoint)
-           :credential-manager
-           (opencode-credential-manager-create configuration))))
+  "Discover OpenCode Go models in the historic opencode/ namespace."
+  (opencode--discover-models configuration ':opencode))
+
+(-> opencode-zen--fetch-models (configuration) list)
+(defun opencode-zen--fetch-models (configuration)
+  "Discover OpenCode Zen models in its independent namespace."
+  (opencode--discover-models configuration ':opencode-zen))
 
 (defclass opencode-chat-completions-provider (openai-compatible-provider)
   ()
@@ -60,21 +67,29 @@
   (declare (ignore reasoning-summaries-p))
   (opencode-provider-create configuration))
 
-(-> opencode-provider-create (configuration) opencode-chat-completions-provider)
-(defun opencode-provider-create (configuration)
-  "Create the OpenCode API key provider for CONFIGURATION.
+(defmethod provider-family-create
+    ((family (eql ':opencode-zen))
+     (configuration configuration)
+     &key reasoning-summaries-p)
+  "Create the OpenCode Zen Chat Completions provider."
+  (declare (ignore reasoning-summaries-p))
+  (opencode-provider-create configuration :family family))
 
-The provider's stable session identifier also rides as the x-opencode-session
-request header so the backend can pin caching to one session."
-  (let ((session-id (make-identifier)))
+(-> opencode-provider-create
+    (configuration &key (:family keyword)) opencode-chat-completions-provider)
+(defun opencode-provider-create (configuration &key (family ':opencode))
+  "Create one OpenCode tier's client with a stable caching session header."
+  (let ((session-id (make-identifier))
+        (zen-p      (eq family ':opencode-zen)))
     (make-instance 'opencode-chat-completions-provider
                    :configuration      configuration
-                   :credential-manager (opencode-credential-manager-create
-                                        configuration)
+                   :credential-manager (if zen-p
+                                           (opencode-zen-credential-manager-create configuration)
+                                           (opencode-credential-manager-create configuration))
                    :session-id         session-id
                    :headers            (list (cons "x-opencode-session" session-id))
-                   :display-name       "OpenCode"
-                   :family             ':opencode)))
+                   :display-name       (if zen-p "OpenCode Zen" "OpenCode Go")
+                   :family             family)))
 
 (defmethod provider-request-object :around
     ((provider opencode-chat-completions-provider)
@@ -87,12 +102,17 @@ request header so the backend can pin caching to one session."
                         :goal-context goal-context
                         :compaction-p compaction-p)
     (setf (gethash "model" request)
-          (opencode--wire-model-name (json-get request "model")))
+          (opencode--wire-model-name (json-get request "model") (provider-family provider)))
     (values request delivery)))
 
 (defmethod provider-authenticate ((provider opencode-chat-completions-provider)
                                   &key stream open-browser-p)
   "Prompt for and save the OpenCode API key."
   (declare (ignore open-browser-p))
-  (opencode-api-key-login (provider-credential-manager provider)
-                          :stream (or stream *standard-output*)))
+  (funcall (ecase (provider-family provider)
+             (:opencode
+              #'opencode-api-key-login)
+             (:opencode-zen
+              #'opencode-zen-api-key-login))
+           (provider-credential-manager provider)
+           :stream (or stream *standard-output*)))

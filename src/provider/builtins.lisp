@@ -76,6 +76,14 @@
   (declare (ignore reasoning-summaries-p))
   (provider-family-create ':opencode configuration))
 
+(-> provider--opencode-zen-registration-factory
+    (configuration &key (:reasoning-summaries-p boolean)) model-provider)
+(defun provider--opencode-zen-registration-factory
+    (configuration &key reasoning-summaries-p)
+  "Create the built-in OpenCode Zen provider from registry metadata."
+  (provider-family-create ':opencode-zen configuration
+                          :reasoning-summaries-p reasoning-summaries-p))
+
 (-> provider--opencode-registration-authenticator
     (model-provider &key (:stream stream) (:open-browser-p boolean))
     string)
@@ -83,8 +91,13 @@
     (provider &key stream open-browser-p)
   "Prompt for and save the built-in OpenCode provider's API key."
   (declare (ignore open-browser-p))
-  (opencode-api-key-login (provider-credential-manager provider)
-                          :stream (or stream *standard-output*)))
+  (funcall (ecase (provider-family provider)
+             (:opencode
+              #'opencode-api-key-login)
+             (:opencode-zen
+              #'opencode-zen-api-key-login))
+           (provider-credential-manager provider)
+           :stream (or stream *standard-output*)))
 
 (-> provider--openrouter-registration-factory
     (configuration &key (:reasoning-summaries-p boolean))
@@ -290,8 +303,8 @@ efforts until upstream publishes its entry.")
  :source        ':builtin)
 
 (register-provider
- "opencode"
- :description                       "OpenCode (zen/go)"
+ "opencode-go"
+ :description                       "OpenCode Go"
  :family                            ':opencode
  :protocol                          ':chat-completions
  :endpoint                          *opencode-chat-completions-endpoint*
@@ -300,6 +313,20 @@ efforts until upstream publishes its entry.")
  :model-discovery                   #'opencode--fetch-models
  :model-discovery-endpoint          *opencode-models-endpoint*
  :model-discovery-endpoint-resolver #'opencode-models-endpoint
+ :source                            ':builtin)
+
+
+(register-provider
+ "opencode-zen"
+ :description                       "OpenCode Zen (pay-per-token)"
+ :family                            ':opencode-zen
+ :protocol                          ':chat-completions
+ :endpoint                          *opencode-zen-chat-completions-endpoint*
+ :factory                           #'provider--opencode-zen-registration-factory
+ :authenticator                     #'provider--opencode-registration-authenticator
+ :model-discovery                   #'opencode-zen--fetch-models
+ :model-discovery-endpoint          *opencode-zen-models-endpoint*
+ :model-discovery-endpoint-resolver #'opencode-zen-models-endpoint
  :source                            ':builtin)
 
 (register-provider

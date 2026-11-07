@@ -181,7 +181,7 @@
                  manager
                  :stream (make-string-output-stream)
                  :input  *standard-input*)
-                "OpenCode authentication was saved by Autolith.")
+                "OpenCode Go authentication was saved by Autolith.")
                "OpenCode login reports successful private persistence"))
             (setf stored
                   (credential-source-load
@@ -193,7 +193,7 @@
           (not (secret-use-active-p)))
      "OpenCode reads and saves the key only inside secret-use scope")
     (test-assert
-     (and (string= observed-provider "OpenCode")
+     (and (string= observed-provider "OpenCode Go")
           (= observed-descriptor 23)
           (search "OPENCODE_API_KEY overrides the stored key" observed-note))
      "OpenCode uses the shared hidden prompt and forwards its input descriptor")
@@ -451,7 +451,7 @@
              (string= (provider-registration-name
                        (provider-registration-for-model
                         "opencode/gpt-5.6-luna"))
-                      "opencode"))
+                      "opencode-go"))
             "OpenCode discovery cannot steal colliding built-in model names")
            (let ((items
                    (application--model-items
@@ -459,19 +459,19 @@
              (dolist (model '("opencode/gpt-5.6-luna" "opencode/grok-4.5"))
                (let ((item (find model items :key (lambda (item) (getf item :model))
                                             :test #'string=)))
-                 (test-assert (and item (equal (getf item :provider) "opencode"))
+                  (test-assert (and item (equal (getf item :provider) "opencode-go"))
                               "/models offers dynamic OpenCode models with their provider identity")
                  (when item
                    (multiple-value-bind (identifier registration)
                        (provider-resolve-model (getf item :name))
                      (test-assert
                       (and (equal identifier model)
-                           (equal (provider-registration-name registration) "opencode"))
+                           (equal (provider-registration-name registration) "opencode-go"))
                       "offered OpenCode selections retain the adapter's namespaced catalog ID"))))))
-           (let* ((entries
-                    (getf (rest (provider--read-model-cache configuration)) :providers))
+           (let* ((cache   (provider--read-model-cache configuration))
+                  (entries (getf (rest cache) :providers))
                   (entry
-                    (find "opencode" entries
+                    (find "opencode-go" entries
                           :key  (lambda (candidate)
                                   (getf candidate :provider-name))
                           :test #'string=))
@@ -483,10 +483,18 @@
                     (lambda (model)
                       (uiop:string-prefix-p *opencode-model-prefix* model))
                     models))
-              "the provider cache persists only namespaced OpenCode models"))
+              "the provider cache persists only namespaced OpenCode models")
+             (setf (getf entry :provider-name) "opencode")
+             (provider--write-model-cache configuration cache)
+             (provider--registry-restore registry-snapshot)
+             (provider-load-model-cache configuration)
+             (test-assert (not (provider-model-for "opencode/gpt-5.6-luna"))
+                          "The old mixed-tier provider cache cannot populate Go.")
+             (setf (getf entry :provider-name) "opencode-go")
+             (provider--write-model-cache configuration cache))
            (register-provider
-            "opencode"
-            :description                       "OpenCode (zen/go)"
+            "opencode-go"
+            :description                       "OpenCode Go"
             :family                            ':opencode
             :protocol                          ':chat-completions
             :endpoint                          *opencode-chat-completions-endpoint*
@@ -599,4 +607,90 @@
                    *opencode-models-endpoint*)
           (functionp (provider-registration-model-discovery registration)))
      "OpenCode registers its family, endpoints, and discovery callback"))
+  nil)
+
+(-> opencode-provider-test--tiers () null)
+(defun opencode-provider-test--tiers ()
+  "Exercise independent credentials, request namespaces and transports for both tiers."
+  (with-test-configuration (configuration)
+    (let* ((snapshot  (provider--registry-snapshot))
+           (variables '("OPENCODE_API_KEY" "OPENCODE_ZEN_API_KEY"
+                        "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT"
+                        "AUTOLITH_OPENCODE_ZEN_PROVIDER_ENDPOINT"))
+           (saved     (mapcar #'uiop:getenv variables)))
+      (unwind-protect
+           (progn
+             (platform-setenv "OPENCODE_API_KEY" "synthetic-go-key")
+             (platform-setenv "OPENCODE_ZEN_API_KEY" "synthetic-zen-key")
+             (platform-setenv "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT" "https://go.invalid/chat/completions")
+             (platform-setenv "AUTOLITH_OPENCODE_ZEN_PROVIDER_ENDPOINT" "https://zen.invalid/chat/completions")
+             (dolist (tier '(("opencode-go" "opencode/" "https://go.invalid/chat/completions"
+                              "synthetic-go-key" :opencode)
+                             ("opencode-zen" "opencode-zen/" "https://zen.invalid/chat/completions"
+                              "synthetic-zen-key" :opencode-zen)))
+               (destructuring-bind (name prefix endpoint key family) tier
+                 (let* ((registration (provider-registration-find name))
+                        (model        (concatenate 'string prefix "deepseek-v4.1-flash")))
+                   (register-provider name :models (list model)
+                                      :family      family
+                                      :endpoint    (provider-registration-endpoint registration)
+                                      :factory     (provider-registration-factory registration)
+                                      :source      ':runtime)
+                   (let* ((selected     (configuration-copy configuration :model model :model-provider name))
+                          (provider     (provider-create selected))
+                          (manager      (provider-credential-manager provider))
+                          (credentials  (credential-manager-load manager))
+                          (conversation (conversation-create selected))
+                          (observed-url nil))
+                     (test-assert (string= (oauth-credentials-access-token credentials) key)
+                                  "Each tier bootstraps only its own environment key.")
+                     (test-assert (equal (config :provider-endpoint selected) endpoint)
+                                  "Tier endpoint overrides are independent.")
+                     (test-call-with-function-replacements
+                      (list (list 'dexador:post
+                                  (lambda (url &rest arguments)
+                                    (declare (ignore arguments))
+                                    (setf observed-url url)
+                                    (values (make-string-input-stream "") 200 nil nil))))
+                      (lambda ()
+                        (multiple-value-bind (request delivery)
+                            (provider-request-object provider conversation #())
+                          (declare (ignore delivery))
+                          (test-assert (string= (json-get request "model") "deepseek-v4.1-flash")
+                                       "The Chat Completions request strips only its tier namespace.")
+                          (provider-open-response-stream provider request
+                                                         :credentials  credentials
+                                                         :conversation conversation))))
+                     (test-assert (string= observed-url endpoint)
+                                  "Each transport sends requests to its selected tier.")
+                     (test-assert
+                      (handler-case
+                          (progn (opencode--wire-model-name
+                                  (concatenate 'string (if (eq family ':opencode)
+                                                           "opencode-zen/" "opencode/")
+                                               "deepseek-v4.1-flash") family)
+                                 nil)
+                        (configuration-error () t))
+                      "A tier rejects the other namespace instead of rerouting it.")))))
+             (let ((go  (opencode-credential-manager-create configuration))
+                   (zen (opencode-zen-credential-manager-create configuration)))
+              (test-call-with-function-replacements
+               (list (list 'api-key-read-hidden
+                           (lambda (label &rest arguments)
+                             (declare (ignore arguments))
+                             (if (string= label "OpenCode Go") "saved-go-key" "saved-zen-key"))))
+               (lambda ()
+                 (opencode-api-key-login go :stream (make-broadcast-stream))
+                 (opencode-zen-api-key-login zen :stream (make-broadcast-stream))))
+              (test-assert
+               (and (string= (oauth-credentials-access-token
+                              (credential-source-load (credential-manager-primary-source go)))
+                             "saved-go-key")
+                    (string= (oauth-credentials-access-token
+                              (credential-source-load (credential-manager-primary-source zen)))
+                             "saved-zen-key"))
+               "Logging into either tier persists its own key without replacing the other.")))
+        (loop for name in variables for value in saved
+              do (opencode-provider-test--restore-environment name value))
+        (provider--registry-restore snapshot))))
   nil)
