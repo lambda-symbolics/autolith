@@ -115,6 +115,39 @@
             (test-assert (null started) "an unknown channel serves nothing")))))))
   nil)
 
+(-> test-world-server-stop-reason () null)
+(defun test-world-server-stop-reason ()
+  "Test stopping the server tells each attached terminal why before it lets go."
+  (with-test-configuration (configuration root)
+    (let ((finished nil))
+      (world-server-tests--call-with-server
+       configuration
+       (lambda (server)
+         (let* ((entry       (world-client-entry configuration))
+                (identifier  (getf (rest (world-server-tests--open entry (world-tests--workspace root "stop")))
+                                   :session-id))
+                (application (world-host-application (world-server--find-host server identifier)))
+                (attachment  (make-instance 'image-daemon:attachment
+                                            :socket nil
+                                            :stream (make-broadcast-stream)
+                                            :mode   ':control)))
+           (image-daemon:relay-attach (terminal-ui-terminal (application-ui application)) attachment
+                                      :rows 24 :columns 80 :styled-p nil :session-id identifier)
+           (test-call-with-function-replacements
+            (list (list 'image-daemon:attachment-finish
+                        (let ((finish (symbol-function 'image-daemon:attachment-finish)))
+                          (lambda (candidate packet)
+                            (push packet finished)
+                            (funcall finish candidate packet)))))
+            (lambda ()
+              (world-server--dispatch server ':stop nil)
+              (test-assert (some (lambda (packet)
+                                   (search "world server stopped by autolith lg stop"
+                                           (princ-to-string packet)))
+                                 finished)
+                           "the attached terminal is told the server was stopped by lg stop")))))))
+    nil))
+
 (-> test-world-server-hosting () null)
 (defun test-world-server-hosting ()
   "Test opening, sharing, closing and resuming channels through a world server."

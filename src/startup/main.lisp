@@ -1338,6 +1338,9 @@ gives the terminal back in between."
                              origin     nil
                              started-p  nil)))))
                 (t
+                 ;; The terminal comes back before the session's last word,
+                 ;; so the word lands on it rather than on the screen it left.
+                 (localgroup-client-screen-release screen)
                  (localgroup-relay-exit configuration exit ':control)
                  (return t)))))
         (localgroup-client-screen-release screen)
