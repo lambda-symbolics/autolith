@@ -1514,9 +1514,10 @@ channel receives the outcome; the requesting channel also receives the
 generation ID. The turns held during the wait then start. A terminal started
 during the pause waits for the server instead of starting another one.
 
-On Windows, a checkpoint saves the exact heap and restarts the process. The
-world server refuses such checkpoints, because the restart would end every
-channel.
+On Windows, which cannot fork, the world server saves its exact heap and
+exits. The launcher publishes the saved heap as the generation and starts it,
+and the server serves every channel again. Terminals reconnect as after any
+checkpoint, and a terminal started during the restart waits for the server.
 
 Use =--detached= to open a new channel in the server without attaching a
 terminal. With =--pristine=, =--detached= starts a rescue session in a
