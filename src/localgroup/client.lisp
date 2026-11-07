@@ -41,7 +41,7 @@ A slow answer means the process is alive, so its record stays."
     (cons keyword &optional list)
     list)
 (defun localgroup-query-record (entry operation &optional arguments)
-  "Perform OPERATION against endpoint ENTRY, pruning a confirmed stale record."
+  "Perform OPERATION against endpoint ENTRY, removing its record when the failure shows it is stale."
   (let* ((pathname   (first entry))
          (record     (rest entry))
          (session-id (localgroup--record-session-id record))

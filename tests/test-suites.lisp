@@ -1522,6 +1522,7 @@
   test-localgroup-remote-detach-never-pauses-reader
   test-localgroup-checkpoint-source-precheck-order
   test-localgroup-checkpoint-reconnect-transition
+  test-localgroup-query-keeps-slow-endpoint
   test-localgroup-checkpoint-reconnect-boundaries
   test-localgroup-detached-terminal-lifecycle
   test-localgroup-session-exit-relay
