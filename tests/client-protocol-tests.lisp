@@ -464,3 +464,106 @@
               (test-assert (equal settled editor-choice)
                            "settlement reports the same winning answer"))))))))
   nil)
+
+(-> test-client-work-movement-cancellation () null)
+(defun test-client-work-movement-cancellation ()
+  "Test moving and dismissing an agent settle queued editor operations without stopping the channel."
+  (dolist (operation '(:move :dismiss))
+    (world-server-tests--call
+     (lambda (server configuration root)
+       (let* ((entry       (world-client-entry configuration))
+              (channel     (getf (rest (world-server-tests--open entry (world-tests--workspace root "source")))
+                                 :session-id))
+              (application (world-host-application (world-server--find-host server channel)))
+              (controller  (application-input-controller application))
+              (completed   (sb-thread:make-semaphore))
+              (failure     nil)
+              (events      nil)
+              (submission  '(:id "removed-prompt" :client "editor" :source "prompt"))
+              (ran-p       nil)
+              (waiter      nil))
+         (conversation-append-user-message (application-conversation application) "source history")
+         (let* ((world       (values (world-reconcile-sessions configuration)))
+                (participant (find ':agent (world-channel-residents world channel) :key #'participant-kind))
+                (destination nil))
+           (when (eq operation ':move)
+             (setf destination
+                   (getf (rest (world-server-tests--open entry (world-tests--workspace root "destination")))
+                         :session-id))
+             (let* ((target (world-host-application (world-server--find-host server destination)))
+                    (other  (progn
+                              (conversation-append-user-message (application-conversation target) "target history")
+                              (find ':agent (world-channel-residents
+                                             (values (world-reconcile-sessions configuration)) destination)
+                                    :key #'participant-kind))))
+               (localgroup-query-record entry ':dismiss (list :participant (participant-name other)))))
+           (application-localgroup-pause application)
+           (unwind-protect
+                (progn
+                  (setf waiter
+                        (make-thread
+                         (lambda ()
+                           (unwind-protect
+                                (handler-case
+                                    (application-clients-call-as-work application (lambda () (setf ran-p t)))
+                                  (localgroup-error (condition)
+                                    (setf failure condition)))
+                             (sb-thread:signal-semaphore completed)))
+                         :name "queued editor operation"))
+                  (test-assert
+                   (task-tests--wait-until
+                    (lambda ()
+                      (with-lock-held ((application-input-controller-lock controller))
+                        (= 1 (deque-count (application-input-controller-work-items controller)))))
+                    10)
+                   "the editor operation is queued behind the paused agent")
+                  (with-lock-held ((application-input-controller-lock controller))
+                   (deque-push-back
+                    (application-input-controller-work-items controller)
+                    (list ':message (user-message-input-create :text "queued prompt" :submission submission)))
+                   (dolist (kind '(:command :lisp))
+                     (deque-push-back
+                      (application-input-controller-work-items controller)
+                      (list kind "queued non-prose" :submission
+                            (list :id (symbol-name kind) :client "editor" :source "prompt")))))
+                 (test-call-with-function-replacements
+                  (list (list 'application-clients-publish
+                              (lambda (candidate event)
+                                (when (eq candidate application) (push event events)))))
+                  (lambda ()
+                    (localgroup-query-record
+                     entry operation
+                     (append (list :participant (participant-name participant))
+                             (when destination (list :channel destination))))))
+                 (test-assert (sb-thread:wait-on-semaphore completed :timeout 3)
+                              "movement wakes the queued editor's waiter")
+                 (test-assert (and (typep failure 'client-work-cancelled) (not ran-p)
+                                   (eq (client-work-cancelled-reason failure)
+                                       (if destination ':moved ':dismissed)))
+                              "the removed operation reports useful cancellation and never runs")
+                 (test-assert
+                  (= 1 (count-if (lambda (event)
+                                   (and (eq (first event) ':work-finished)
+                                        (eq (getf (rest event) :outcome) ':cancelled)
+                                        (equal (getf (rest event) :submission) submission)))
+                                 events))
+                  "the removed prompt receives one cancellation with its exact submission identity")
+                 (dolist (kind '(:command :lisp))
+                   (test-assert
+                    (= 1 (count-if (lambda (event)
+                                     (and (eq (first event) ':work-finished)
+                                          (eq (getf (rest event) :kind) kind)
+                                          (eq (getf (rest event) :outcome) ':cancelled)
+                                          (equal (getf (getf (rest event) :submission) :id)
+                                                 (symbol-name kind))))
+                                   events))
+                    "removed non-prose submissions receive their exact cancelled outcomes"))
+                 (test-assert (and (not (application-input-controller-stopping-p controller))
+                                   (eq ':alive (application-clients-call-as-work application (lambda () ':alive))))
+                              "the channel accepts fresh administrative work after movement"))
+             ;; A failing baseline waiter must not outlive the fixture.
+             (when (and waiter (thread-alive-p waiter))
+               (application-input-controller-stop controller))
+             (when waiter
+               (join-thread waiter))))))))
+  nil)

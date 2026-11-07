@@ -323,6 +323,33 @@ channel that stops before running it refuses it."
         (condition-notify (client-work-condition-variable work)))))
   nil)
 
+(-> client-work-cancel (client-work keyword) null)
+(defun client-work-cancel (work reason)
+  "Cancel unstarted WORK for REASON and wake its waiting client."
+  (with-lock-held ((client-work-lock work))
+    (unless (client-work-done-p work)
+      (setf (client-work-failure work)
+            (make-condition 'client-work-cancelled
+                            :message   (format nil "The queued editor operation was cancelled because the agent ~A."
+                                               (ecase reason
+                                                 (:moved
+                                                  "moved to another channel")
+                                                 (:dismissed
+                                                  "was dismissed")))
+                            :operation ':client
+                            :reason    reason)
+            (client-work-done-p work) t)
+      (condition-notify (client-work-condition-variable work))))
+  nil)
+
+(define-condition client-work-cancelled (localgroup-error)
+  ((reason
+    :initarg       :reason
+    :reader        client-work-cancelled-reason
+    :type          keyword
+    :documentation "Why movement removed the queued operation."))
+  (:documentation "An editor operation was cancelled before the channel ran it."))
+
 
 ;;;; -- Measurements --
 
