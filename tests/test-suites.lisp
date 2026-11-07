@@ -653,6 +653,7 @@
   test-world-agent-keeps-model-choice
   test-world-application-sync
   test-world-channel-resource
+  test-world-participant-availability
   test-world-channel-resolve
   test-world-channels-command
   test-world-message-send

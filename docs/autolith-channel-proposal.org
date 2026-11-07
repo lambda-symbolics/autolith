@@ -206,6 +206,9 @@ Client
 - Idle agents yield until a message or job completion requires work, without polling.
 - Human and agent clients set their own participant presence. Agent clients also expose
   actual working/yielded status and current activity.
+- An agent reads as online while a process serves the channel it resides in, offline
+  while none does, and parked while it resides nowhere; its stored presence does not
+  decide this. (Decided 2026-11-07.)
 - Show sender identities, color-highlight mentions, and expose residents, subscribers,
   channel nesting, participant relationships, presence, and agent execution status.
 

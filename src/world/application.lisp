@@ -36,7 +36,8 @@ projection of the conversations and never blocks a session."
                      (error ()
                        (world-load (application-configuration application)))))
          (channels (world-channels world))
-         (parked   (world-parked-agents world)))
+         (parked   (world-parked-agents world))
+         (served   (channel-resource--served-channels (application-configuration application))))
     (if channels
         (append (list (terminal-span ':brand (format nil "channels~%")))
                 (loop for channel in channels
@@ -47,13 +48,15 @@ projection of the conversations and never blocks a session."
                                                           (channel-title channel)
                                                           (channel-workspace channel)
                                                           (channel-resource--participants-text
-                                                           (world-channel-residents world identifier))
+                                                           (world-channel-residents world identifier)
+                                                           served)
                                                           (channel-resource--participants-text
-                                                           (world-channel-subscribers world identifier))))))
+                                                           (world-channel-subscribers world identifier)
+                                                           served)))))
                 (and parked
                      (list (terminal-span ':dim
                                           (format nil "parked, in no channel: ~A~%"
-                                                  (channel-resource--participants-text parked))))))
+                                                  (channel-resource--participants-text parked served))))))
         (list (terminal-span ':hint "No channels exist yet.")))))
 
 

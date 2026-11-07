@@ -162,20 +162,50 @@ which the channel's parent names."
 
 ;;;; -- Rendering --
 
-(-> channel-resource--participant-text (participant) string)
-(defun channel-resource--participant-text (participant)
-  "Return PARTICIPANT's name, kind, identifier and presence on one line."
-  (format nil "~A (~(~A~) ~A, ~(~A~))"
+(-> channel-resource--served-channels (configuration) list)
+(defun channel-resource--served-channels (configuration)
+  "Return the identifiers of CONFIGURATION's channels a live process serves now."
+  (loop for entry in (handler-case (localgroup-endpoint-records configuration)
+                       (autolith-error ()
+                         nil))
+        for properties = (rest (rest entry))
+        unless (eq (image-daemon:daemon-process-state (getf properties :pid)) ':dead)
+          collect (getf properties :session-id)))
+
+(-> channel-resource--availability (participant list) string)
+(defun channel-resource--availability (participant served)
+  "Return whether PARTICIPANT is online, given the SERVED channel identifiers.
+
+An agent is online while a process serves the channel it resides in, and
+parked while it resides nowhere. The person states their own presence."
+  (let ((residence (participant-residence participant)))
+    (cond
+      ((eq (participant-kind participant) ':human)
+       (string-downcase (symbol-name (participant-presence participant))))
+      ((null residence)
+       "parked")
+      ((member residence served :test #'equal)
+       "online")
+      (t
+       "offline"))))
+
+(-> channel-resource--participant-text (participant list) string)
+(defun channel-resource--participant-text (participant served)
+  "Return PARTICIPANT's name, kind, identifier and availability on one line, given the SERVED channels."
+  (format nil "~A (~(~A~) ~A, ~A)"
           (participant-name participant)
           (participant-kind participant)
           (conversation-identifier-display (participant-identifier participant))
-          (participant-presence participant)))
+          (channel-resource--availability participant served)))
 
-(-> channel-resource--participants-text (list) string)
-(defun channel-resource--participants-text (participants)
-  "Return PARTICIPANTS as one comma-separated line, or \"none\"."
+(-> channel-resource--participants-text (list list) string)
+(defun channel-resource--participants-text (participants served)
+  "Return PARTICIPANTS as one comma-separated line, or \"none\", given the SERVED channels."
   (if participants
-      (format nil "~{~A~^, ~}" (mapcar #'channel-resource--participant-text participants))
+      (format nil "~{~A~^, ~}"
+              (mapcar (lambda (participant)
+                        (channel-resource--participant-text participant served))
+                      participants))
       "none"))
 
 (-> channel-resource--owner-text (world channel) string)
@@ -187,9 +217,9 @@ which the channel's parent names."
                 (conversation-identifier-display (participant-identifier owner)))
         (conversation-identifier-display (channel-owner channel)))))
 
-(-> channel-resource--state-text (world channel) string)
-(defun channel-resource--state-text (world channel)
-  "Return CHANNEL's identity, relationships and participants."
+(-> channel-resource--state-text (world channel list) string)
+(defun channel-resource--state-text (world channel served)
+  "Return CHANNEL's identity, relationships and participants, given the SERVED channels."
   (let ((identifier (channel-identifier channel)))
     (with-output-to-string (stream)
       (format stream "Channel ~A~@[ ~S~], workspace ~A, owner ~A~@[, nested under ~A~], created ~A, changed ~A.~%"
@@ -202,9 +232,11 @@ which the channel's parent names."
               (conversation-replay-timestamp-string (channel-created-at channel))
               (conversation-replay-timestamp-string (channel-updated-at channel)))
       (format stream "Residents: ~A.~%"
-              (channel-resource--participants-text (world-channel-residents world identifier)))
+              (channel-resource--participants-text (world-channel-residents world identifier)
+                                                   served))
       (format stream "Subscribers: ~A.~%"
-              (channel-resource--participants-text (world-channel-subscribers world identifier)))
+              (channel-resource--participants-text (world-channel-subscribers world identifier)
+                                                   served))
       (let ((children (world-channel-children world identifier)))
         (when children
           (format stream "Nested channels: ~{~A~^, ~}.~%"
@@ -212,9 +244,9 @@ which the channel's parent names."
                             (conversation-identifier-display (channel-identifier child)))
                           children)))))))
 
-(-> channel-resource--list-text (world) string)
-(defun channel-resource--list-text (world)
-  "Return every channel of WORLD with its residents, most recently changed first."
+(-> channel-resource--list-text (world list) string)
+(defun channel-resource--list-text (world served)
+  "Return every channel of WORLD with its residents, most recently changed first, given the SERVED channels."
   (let ((channels (world-channels world)))
     (with-output-to-string (stream)
       (if (null channels)
@@ -229,9 +261,9 @@ which the channel's parent names."
                         (channel-title channel)
                         (channel-workspace channel)
                         (channel-resource--participants-text
-                         (world-channel-residents world identifier))
+                         (world-channel-residents world identifier) served)
                         (channel-resource--participants-text
-                         (world-channel-subscribers world identifier))))))))))
+                         (world-channel-subscribers world identifier) served)))))))))
 
 
 ;;;; -- Model-Facing Reads --
@@ -240,8 +272,10 @@ which the channel's parent names."
     ((resource channel-list-resource) (tool resource-read-tool)
      (context tool-context) (arguments hash-table))
   "Return the survey of every channel."
-  (declare (ignore tool context arguments))
-  (tool-success (channel-resource--list-text (channel-list-resource-world resource))))
+  (declare (ignore tool arguments))
+  (tool-success (channel-resource--list-text
+                 (channel-list-resource-world resource)
+                 (channel-resource--served-channels (tool-context-configuration context)))))
 
 (defmethod resource-tool-read
     ((resource channel-resource) (tool resource-read-tool)
@@ -250,7 +284,9 @@ which the channel's parent names."
   (let* ((world        (channel-resource-world resource))
          (channel      (channel-resource-channel resource))
          (conversation (channel-resource-conversation resource))
-         (state        (channel-resource--state-text world channel)))
+         (state        (channel-resource--state-text
+                        world channel
+                        (channel-resource--served-channels (tool-context-configuration context)))))
     (if conversation
         (let ((history (resource-tool-read
                         (make-instance 'conversation-resource
