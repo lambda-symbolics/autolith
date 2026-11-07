@@ -1107,6 +1107,38 @@
                          "mentions of others are accented, of the person styled as the user, unknown ones left alone")))))
     nil))
 
+(-> test-world-compaction () null)
+(defun test-world-compaction ()
+  "Test a grown world log is compacted to the records it needs, and a lean one is left alone."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human agent) (world-tests--agents configuration)
+      (declare (ignore human))
+      (let ((pathname (configuration-world-path configuration)))
+        (flet ((records ()
+                 "Return how many forms the world log holds."
+                 (nth-value 2 (sexp-store:log-map (constantly nil) pathname))))
+          (test-assert (not (world-compact-when-grown configuration))
+                       "a log holding only what it needs is left alone")
+          (dotimes (index 12)
+            (world-participant-rename configuration (participant-identifier agent)
+                                      (format nil "name-~D" index)))
+          (let ((before (world-load configuration)))
+            (test-assert (world-compact-when-grown configuration)
+                         "a log grown past twice its live records is compacted")
+            (let ((after (world-load configuration)))
+              (test-assert (and (<= (records)
+                                    (1+ (+ (length (world-participants after))
+                                           (length (world-channels after)))))
+                                (string= (participant-name
+                                          (world-participant-find after (participant-identifier agent)))
+                                         "name-11")
+                                (= (length (world-participants before))
+                                   (length (world-participants after))))
+                           "the compacted log folds to the same world")))))))
+  nil)
+
 (-> test-world-presentation-cache () null)
 (defun test-world-presentation-cache ()
   "Test presentation follows every change to the log, even within one second, and folds no record twice."

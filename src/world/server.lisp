@@ -206,6 +206,7 @@ the management REPL and Slynk, start with the server."
     (unwind-protect
          (progn
            (setf (world-server-lease server) (world-server--lease-acquire bootstrapped))
+           (world-compact-when-grown bootstrapped)
            (localgroup-handoff-assert-startup-active)
            (world-server--runtime-start server :token token :created-at created-at)
            (localgroup-handoff-finish-startup nil)
