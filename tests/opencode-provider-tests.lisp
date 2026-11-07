@@ -724,6 +724,11 @@
                    (labels ((startup (&rest overrides)
                               "Bootstrap preferences after resetting process-local metadata."
                               (provider--registry-restore registry-snapshot)
+                              (register-provider "upgrade-model-collision"
+                                                 :models  (list model)
+                                                 :factory (provider-registration-factory
+                                                           (provider-registration-find "opencode-go"))
+                                                 :source  ':runtime)
                               (provider-bootstrap-configuration
                                (apply #'preferences-tests--create configuration
                                       :defer-provider-validation-p t overrides))))
@@ -731,90 +736,102 @@
                                      (list :preferences :version 8 :model model
                                            :model-provider "opencode"))
                      (provider--write-model-cache configuration legacy)
-                     (let* ((created  (startup))
-                            (metadata (provider-model-for model)))
-                       (test-assert (equal (config :model created) model)
-                                    "offline startup keeps the exact durable model")
-                       (test-assert
-                        (equal (provider-registration-name
-                                (configuration-model-registration created)) "opencode-go")
-                        "the legacy provider selection routes to Go")
-                       (test-assert
-                        (and metadata (not (provider-model-context-window-specified-p metadata))
-                             (not (equal (provider-model-description metadata)
-                                         "Untrusted Zen metadata")))
-                        "the selection hint carries no old context or description")
-                       (test-assert (not (provider-model-for "opencode/zen-only-free"))
-                                    "the hint does not import other legacy models")
-                       (test-assert
-                        (null (provider-registration-models
-                               (provider-registration-find "opencode-zen")))
-                        "the hint grants no Zen membership")
-                       (let ((*model-catalog-fetch-function*
-                               (lambda (context)
-                                 (declare (ignore context))
-                                 (error 'simple-error :format-control "offline"))))
-                         (test-call-with-function-replacements
-                          (list (list 'dexador:get
-                                      (lambda (&rest arguments)
-                                        (declare (ignore arguments))
-                                        (error 'simple-error :format-control "offline"))))
-                          (lambda ()
-                            (test-assert
-                             (provider-refresh-models created :provider-name "opencode-go")
-                             "offline refresh reports its discovery failure"))))
-                       (test-assert
-                        (and (provider-model-for model) (equal (config :model (startup)) model))
-                        "failed refresh and another startup retain the saved selection")
-                       (test-assert (equal legacy (provider--read-model-cache configuration))
-                                    "startup hints never become successful cache metadata"))
-                     (test-assert
-                      (handler-case (progn (startup :model model :model-provider "opencode") nil)
-                        (setting-invalid () t))
-                      "explicit launch overrides do not acquire legacy hints")
-                     (provider--registry-restore registry-snapshot)
-                     (let ((created (startup)))
-                       (if endpoint
-                           (test-call-with-function-replacements
-                            (list (list 'dexador:get
-                                        (lambda (&rest arguments)
-                                          (declare (ignore arguments))
-                                          (values (format nil "{\"data\":[{\"id\":\"~A\",\"context_window\":1000000}]}" fresh-id)
-                                                  200 nil nil))))
-                            (lambda ()
-                              (test-assert
-                               (null (provider-refresh-models created :provider-name "opencode-go"))
-                               "tier-specific account discovery replaces the hint")))
-                           (let ((*model-catalog-fetch-function*
-                                   (lambda (context)
-                                     (declare (ignore context))
-                                    (format nil "{\"opencode-go\":{\"models\":{\"~A\":{\"id\":\"~A\",\"tool_call\":true,\"modalities\":{\"output\":[\"text\"]},\"limit\":{\"context\":1000000}}}}}" fresh-id fresh-id))))
+                    (let* ((created  (startup))
+                           (metadata (provider-model-for model :provider "opencode-go")))
+                      (test-assert (eq *provider-cache-selection-hint-model* metadata)
+                                   "the upgrade hint belongs to Go despite another provider's exact ID")
+                      (test-assert (equal (config :model created) model)
+                                   "offline startup keeps the exact durable model")
+                      (test-assert
+                       (equal (provider-registration-name
+                               (configuration-model-registration created)) "opencode-go")
+                       "the legacy provider selection routes to Go")
+                      (test-assert
+                       (and metadata (not (provider-model-context-window-specified-p metadata))
+                            (not (equal (provider-model-description metadata)
+                                        "Untrusted Zen metadata")))
+                       "the selection hint carries no old context or description")
+                      (test-assert (not (provider-model-for "opencode/zen-only-free"))
+                                   "the hint does not import other legacy models")
+                      (test-assert
+                       (null (provider-registration-models
+                              (provider-registration-find "opencode-zen")))
+                       "the hint grants no Zen membership")
+                      (let ((*model-catalog-fetch-function*
+                              (lambda (context)
+                                (declare (ignore context))
+                                (error 'simple-error :format-control "offline"))))
+                        (test-call-with-function-replacements
+                         (list (list 'dexador:get
+                                     (lambda (&rest arguments)
+                                       (declare (ignore arguments))
+                                       (error 'simple-error :format-control "offline"))))
+                         (lambda ()
+                           (test-assert
+                            (provider-refresh-models created :provider-name "opencode-go")
+                            "offline refresh reports its discovery failure"))))
+                      (test-assert
+                       (and (provider-model-for model :provider "opencode-go")
+                            (equal (config :model (startup)) model))
+                       "failed refresh and another startup retain the saved selection")
+                      (test-assert (equal legacy (provider--read-model-cache configuration))
+                                   "startup hints never become successful cache metadata"))
+                    (test-assert
+                     (handler-case (progn (startup :model model :model-provider "opencode") nil)
+                       (setting-invalid () t))
+                     "explicit launch overrides do not acquire legacy hints")
+                    (provider--registry-restore registry-snapshot)
+                    (let ((created (startup)))
+                      (if endpoint
+                          (test-call-with-function-replacements
+                           (list (list 'dexador:get
+                                       (lambda (&rest arguments)
+                                         (declare (ignore arguments))
+                                         (values (format nil "{\"data\":[{\"id\":\"~A\",\"context_window\":1000000}]}" fresh-id)
+                                                 200 nil nil))))
+                           (lambda ()
                              (test-assert
                               (null (provider-refresh-models created :provider-name "opencode-go"))
-                              "the Go catalog replaces the hint")))
-                      (test-assert
-                       (= (provider-model-context-window
-                           (provider-model-for (concatenate 'string "opencode/" fresh-id)))
-                          1000000)
-                       "fresh Go metadata replaces the unspecified context")
-                      (test-assert
-                       (eq (not (null (provider-model-for model)))
-                           (equal fresh-id "upgrade-model"))
-                       "authoritative discovery retires unsupported selection hints")
-                      (let ((reloaded (startup)))
-                        (test-assert
-                         (eq (equal (config :model reloaded) model)
-                             (equal fresh-id "upgrade-model"))
-                         "a later startup validates the saved selection against fresh Go metadata")))
+                              "tier-specific account discovery replaces the hint")))
+                          (let ((*model-catalog-fetch-function*
+                                  (lambda (context)
+                                    (declare (ignore context))
+                                   (format nil "{\"opencode-go\":{\"models\":{\"~A\":{\"id\":\"~A\",\"tool_call\":true,\"modalities\":{\"output\":[\"text\"]},\"limit\":{\"context\":1000000}}}}}" fresh-id fresh-id))))
+                            (test-assert
+                             (null (provider-refresh-models created :provider-name "opencode-go"))
+                             "the Go catalog replaces the hint")))
+                     (test-assert
+                      (= (provider-model-context-window
+                          (provider-model-for (concatenate 'string "opencode/" fresh-id)
+                                              :provider "opencode-go"))
+                         1000000)
+                      "fresh Go metadata replaces the unspecified context despite another provider's exact ID")
+                     (test-assert
+                      (eq (not (null (provider-model-for model :provider "opencode-go")))
+                          (equal fresh-id "upgrade-model"))
+                      "authoritative Go metadata retires unsupported hints despite another provider's exact ID")
+                     (let ((reloaded (startup)))
+                       (test-assert
+                        (eq (and (equal (config :model reloaded) model)
+                                 (equal (provider-registration-name
+                                         (configuration-model-registration reloaded))
+                                        "opencode-go"))
+                            (equal fresh-id "upgrade-model"))
+                        "a later startup validates the saved selection against fresh Go metadata")))
                      ;; A valid empty Go discovery result is authoritative too.
-                     (when endpoint
-                       (provider--write-model-cache
-                        configuration
-                        (list :provider-model-cache :version 3
-                              :providers            (cons (list :provider-name "opencode-go"
-                                                                :discovery-endpoint endpoint :models nil)
-                                                          (getf (rest legacy) :providers))))
-                       (test-assert (not (equal (config :model (startup)) model))
-                                    "authoritative unsupported models use normal durable fallback")))))))))
+                    (when endpoint
+                      (provider--write-model-cache
+                       configuration
+                       (list :provider-model-cache :version 3
+                             :providers            (cons (list :provider-name "opencode-go"
+                                                               :discovery-endpoint endpoint :models nil)
+                                                         (getf (rest legacy) :providers))))
+                     (let ((reloaded (startup)))
+                       (test-assert
+                        (not (and (equal (config :model reloaded) model)
+                                  (equal (provider-registration-name
+                                          (configuration-model-registration reloaded))
+                                         "opencode-go")))
+                        "authoritative unsupported models use normal durable fallback"))))))))))
       (provider--registry-restore registry-snapshot)))
   nil)

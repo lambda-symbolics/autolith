@@ -114,7 +114,7 @@ same source and shadow lower-precedence registrations with the same name."
   (provider-registry-load-model-cache *provider-registry* configuration)
   (when (eq *provider-cache-selection-hint-p* ':generated)
     (setf *provider-cache-selection-hint-model*
-          (provider-model-for (config :model configuration))))
+          (provider-model-for (config :model configuration) :provider "opencode-go")))
   (let ((catalog (provider-catalog-load configuration)))
     (when (model-catalog-providers catalog)
       (dolist (registration (provider-registrations))
