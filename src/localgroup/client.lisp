@@ -546,14 +546,17 @@ instead; this attachment has ended by then."
      (sleep 0.05))))
 
 (-> localgroup--wait-for-checkpoint-entry
-    (cons string &key (:configuration (option configuration)))
+    (cons string &key (:configuration (option configuration)) (:cancelled-p (option function))
+          (:allow-later-p boolean))
     cons)
-(defun localgroup--wait-for-checkpoint-entry (entry reconnect-id &key configuration)
+(defun localgroup--wait-for-checkpoint-entry (entry reconnect-id &key configuration cancelled-p allow-later-p)
   "Wait boundedly for ENTRY's authenticated endpoint for RECONNECT-ID.
 
 While CONFIGURATION's world server restarts from its saved heap, the wait
 starts over instead of ending, since the endpoint returns only once the
-saved core boots."
+saved core boots. ALLOW-LATER-P accepts a later transition with the same
+channel, authentication token and creation time after a verified endpoint
+loses a subscription race to another checkpoint."
   (let* ((pathname   (first entry))
          (old-record (rest entry))
          (session-id (localgroup--record-session-id old-record))
@@ -562,9 +565,15 @@ saved core boots."
                         internal-time-units-per-second))
          (deadline   (+ (get-internal-real-time) timeout)))
     (loop
+      (when (and cancelled-p (funcall cancelled-p))
+        (error 'localgroup-error :message "Checkpoint reconnection was cancelled."
+                                :operation ':attach :session-id session-id))
       (let ((record (image-daemon:daemon-registry-read pathname)))
         (when (and record
-                   (equal (getf (rest record) :checkpoint-reconnect-id) reconnect-id)
+                   (or (equal (getf (rest record) :checkpoint-reconnect-id) reconnect-id)
+                       (and allow-later-p
+                            (let ((identifier (getf (rest record) :checkpoint-reconnect-id)))
+                              (and (stringp identifier) (plusp (length identifier))))))
                    (string= (localgroup--record-session-id record) session-id)
                    (string= (localgroup--record-token record) token)
                    (= (getf (rest record) :created-at) (getf (rest old-record) :created-at))

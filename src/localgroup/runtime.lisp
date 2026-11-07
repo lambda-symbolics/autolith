@@ -670,6 +670,9 @@ last controlling client vanishes."
                     (sb-thread:condition-broadcast
                      (application-input-controller-condition-variable controller)))))))
            (unless restart-p (localgroup-handoff-assert-startup-active))
+           (let ((hub (application-client-hub application)))
+             (with-lock-held ((client-hub-lock hub))
+               (setf (client-hub-admitting-p hub) t)))
            (image-daemon:daemon-runtime-start session)
            (localgroup--publish-registry session)
            (application-mission-schedules-host application session)
