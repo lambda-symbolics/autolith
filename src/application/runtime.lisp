@@ -472,7 +472,7 @@ truthful source of dimensions."
   "The styled input prompt shown on the live editor row.")
 
 (defparameter *application-message-header-prefixes*
-  '("❯ you" "● autolith" "> " "< " "◆ status")
+  '("❯ you" "● " "> " "< " "◆ status")
   "The transcript prefixes opening user and assistant messages in either style.
 
 The fullscreen viewport jumps between these lines, so a reader can follow the
@@ -2301,7 +2301,9 @@ line above."
       (append (application--transcript-entry
                application
                :style     (if (eq role ':user) ':user ':brand)
-               :header    (if (eq role ':user) "❯ you" "● autolith")
+               :header    (if (eq role ':user)
+                              "❯ you"
+                              (format nil "● ~A" (application-agent-name application)))
                :timestamp timestamp)
               (list (terminal-span ':plain (string #\Newline)))
               body)))
@@ -2756,7 +2758,7 @@ A channel message shows its sender and channel instead of an operation."
          (application--transcript-entry
           application
           :style     ':brand
-          :header    "● autolith"
+          :header    (format nil "● ~A" (application-agent-name application))
           :detail    (format nil "yielded (~D jobs will wake AL soon)" count)
           :timestamp (getf (rest record) :time)))))
     (:tool-result
@@ -4003,7 +4005,7 @@ clients as :TEXT, :REASONING and :STATUS events."
                           (application--transcript-entry
                            application
                            :style     ':brand
-                           :header    "● autolith"
+                           :header    (format nil "● ~A" (application-agent-name application))
                            :timestamp stream-started-at)
                           rows)))
                    (loop for newline = (position #\Newline stream-pending)

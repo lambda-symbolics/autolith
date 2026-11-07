@@ -290,6 +290,22 @@ as empty."
     (setf (application-world-cache application) cache)
     (rest cache)))
 
+(-> application-agent-name (application) string)
+(defun application-agent-name (application)
+  "Return the name of the agent residing in APPLICATION's channel, for the transcript's headers.
+
+Outside a channel, without a resident agent, or when the world cannot be read,
+the name is autolith."
+  (let ((channel (application-world--served-channel application)))
+    (or (and channel
+             (handler-case
+                 (let ((agent (find ':agent (world-channel-residents (application-world application) channel)
+                                    :key #'participant-kind)))
+                   (and agent (participant-name agent)))
+               (autolith-error ()
+                 nil)))
+        *world-agent-name*)))
+
 (-> application-world-mention-spans (application list) list)
 (defun application-world-mention-spans (application spans)
   "Return SPANS with every @mention of a participant styled: the person's own in the user style, others accented.
