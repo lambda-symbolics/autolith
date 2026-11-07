@@ -179,7 +179,11 @@
    (lock
     :initform      (make-lock "Autolith client connection")
     :reader        localgroup-client-connection-lock
-    :documentation "The lock guarding writes, the next command identifier and the replies.")
+    :documentation "The lock guarding closure, command identifiers and pending replies.")
+   (write-lock
+    :initform      (make-lock "Autolith client writes")
+    :reader        localgroup-client-connection-write-lock
+    :documentation "The lock serializing socket writes without blocking reply delivery or closure.")
    (condition-variable
     :initform      (make-condition-variable :name "Autolith client connection")
     :reader        localgroup-client-connection-condition-variable
@@ -253,56 +257,52 @@ does not leaves them to a terminal or another client."
         (ignore-errors (sb-bsd-sockets:socket-close socket))
         (error condition)))))
 
-(-> localgroup-client-send (localgroup-client-connection keyword &rest t) integer)
-(defun localgroup-client-send (connection command &rest arguments)
-  "Write client COMMAND with ARGUMENTS on CONNECTION and return the identifier its reply carries."
-  (with-lock-held ((localgroup-client-connection-lock connection))
-    (when (localgroup-client-connection-closed-p connection)
-      (error 'localgroup-error
-             :message   "The client connection is closed."
-             :operation ':client))
-    (let ((identifier (incf (localgroup-client-connection-next-identifier connection))))
-      (daemon-write-packet (localgroup-client-connection-stream connection)
-                           (list* command :id identifier arguments))
-      identifier)))
-
 (-> localgroup-client-call (localgroup-client-connection keyword &rest t) list)
 (defun localgroup-client-call (connection command &rest arguments)
-  "Send client COMMAND with ARGUMENTS on CONNECTION and return the reply's fields.
+  "Send COMMAND with ARGUMENTS and return its reply's fields, or signal its error.
 
-A reply carrying an error signals it as a localgroup error."
-  (let ((identifier (apply #'localgroup-client-send connection command arguments)))
-    (with-lock-held ((localgroup-client-connection-lock connection))
-      (loop
-        (let ((reply (gethash identifier (localgroup-client-connection-replies connection))))
-          (cond
-            (reply
-             (remhash identifier (localgroup-client-connection-replies connection))
-             (when (getf (rest reply) :error)
-               (error 'localgroup-error
-                      :message   (getf (rest reply) :error)
-                      :operation ':client))
-             (return (rest reply)))
-            ((localgroup-client-connection-closed-p connection)
-             (error 'localgroup-error
-                    :message   "The client connection closed before the reply arrived."
-                    :operation ':client))
-            (t
-             (condition-wait (localgroup-client-connection-condition-variable connection)
-                             (localgroup-client-connection-lock connection)))))))))
+Each call owns one pending reply entry, removed on every exit. Socket
+writes are serialized separately so blocked I/O cannot prevent teardown."
+  (let ((identifier (with-lock-held ((localgroup-client-connection-lock connection))
+                      (when (localgroup-client-connection-closed-p connection)
+                        (error 'localgroup-error
+                               :message   "The client connection is closed."
+                               :operation ':client))
+                      (let ((identifier (incf (localgroup-client-connection-next-identifier connection))))
+                        (setf (gethash identifier (localgroup-client-connection-replies connection)) nil)
+                        identifier))))
+    (unwind-protect
+         (progn
+           (let ((frame (image-daemon:daemon-packet-string (list* command :id identifier arguments))))
+             (handler-case
+                 (with-lock-held ((localgroup-client-connection-write-lock connection))
+                   (write-string frame (localgroup-client-connection-stream connection))
+                   (finish-output (localgroup-client-connection-stream connection)))
+               (error (condition)
+                 (localgroup-client--disconnect connection)
+                 (error condition))))
+           (with-lock-held ((localgroup-client-connection-lock connection))
+             (loop
+               (let ((reply (gethash identifier (localgroup-client-connection-replies connection))))
+                 (cond
+                   (reply
+                    (when (getf (rest reply) :error)
+                      (error 'localgroup-error :message (getf (rest reply) :error) :operation ':client))
+                    (return (rest reply)))
+                   ((localgroup-client-connection-closed-p connection)
+                    (error 'localgroup-error
+                           :message   "The client connection closed before the reply arrived."
+                           :operation ':client))
+                   (t
+                    (condition-wait (localgroup-client-connection-condition-variable connection)
+                                    (localgroup-client-connection-lock connection))))))))
+      (with-lock-held ((localgroup-client-connection-lock connection))
+        (remhash identifier (localgroup-client-connection-replies connection))))))
 
 (-> localgroup-client-close (localgroup-client-connection) null)
 (defun localgroup-client-close (connection)
-  "Close CONNECTION and wait for its reader to end.
-
-Closing a socket does not wake a thread blocked reading it, and a close
-right after a shutdown races that wakeup, so this only shuts the socket down;
-the reader closes it once it stops."
-  (with-lock-held ((localgroup-client-connection-lock connection))
-    (setf (localgroup-client-connection-closed-p connection) t))
-  ; mallet:suppress no-ignore-errors -- the server may have closed the connection already
-  (ignore-errors (sb-bsd-sockets:socket-shutdown (localgroup-client-connection-socket connection)
-                                                 :direction ':io))
+  "Shut down CONNECTION and wait for its reader to close the socket."
+  (localgroup-client--disconnect connection)
   (let ((thread (localgroup-client-connection-reader-thread connection)))
     (when (and thread (not (eq thread (current-thread))))
       (join-thread thread)))
@@ -310,7 +310,7 @@ the reader closes it once it stops."
 
 (-> localgroup-client--read (localgroup-client-connection (option function)) null)
 (defun localgroup-client--read (connection event-function)
-  "Read CONNECTION's events and replies until it ends, close its socket, then report (:closed)."
+  "Read events and pending replies, then close the socket and report (:closed)."
   (unwind-protect
        (loop for packet = (handler-case (daemon-read-packet (localgroup-client-connection-stream connection))
                             (error ()
@@ -318,17 +318,32 @@ the reader closes it once it stops."
              while packet
              do (if (eq (first packet) ':reply)
                     (with-lock-held ((localgroup-client-connection-lock connection))
-                      (setf (gethash (getf (rest packet) :id)
-                                     (localgroup-client-connection-replies connection))
-                            packet)
-                      (sb-thread:condition-broadcast (localgroup-client-connection-condition-variable connection)))
+                      (let ((identifier (getf (rest packet) :id))
+                            (replies    (localgroup-client-connection-replies connection)))
+                        (when (nth-value 1 (gethash identifier replies))
+                          (setf (gethash identifier replies) packet)
+                          (sb-thread:condition-broadcast
+                           (localgroup-client-connection-condition-variable connection)))))
                     (when event-function
                       (funcall event-function packet))))
-    (with-lock-held ((localgroup-client-connection-lock connection))
-      (setf (localgroup-client-connection-closed-p connection) t)
-      (sb-thread:condition-broadcast (localgroup-client-connection-condition-variable connection)))
+    (localgroup-client--disconnect connection)
     ; mallet:suppress no-ignore-errors -- the server may have closed the connection already
     (ignore-errors (sb-bsd-sockets:socket-close (localgroup-client-connection-socket connection)))
     (when event-function
       (funcall event-function (list :closed))))
+  nil)
+
+(-> localgroup-client--disconnect (localgroup-client-connection) null)
+(defun localgroup-client--disconnect (connection)
+  "Mark CONNECTION closed, wake callers and shut down I/O once.
+
+The reader owns final socket closure. Hold the state lock through shutdown
+so it cannot race that closure; never close a stream under this lock."
+  (with-lock-held ((localgroup-client-connection-lock connection))
+    (unless (localgroup-client-connection-closed-p connection)
+      (setf (localgroup-client-connection-closed-p connection) t)
+      ; mallet:suppress no-ignore-errors -- the peer may have closed already
+      (ignore-errors (sb-bsd-sockets:socket-shutdown (localgroup-client-connection-socket connection)
+                                                    :direction ':io)))
+    (sb-thread:condition-broadcast (localgroup-client-connection-condition-variable connection)))
   nil)

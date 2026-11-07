@@ -698,7 +698,8 @@
 (define-test-suite client-protocol
   test-client-protocol-channel
   test-client-protocol-disconnect
-  test-client-protocol-packet-limit)
+  test-client-protocol-packet-limit
+  test-client-protocol-write-failure)
 
 (define-test-suite world-sidebar
   test-world-sidebar-gathers-apart

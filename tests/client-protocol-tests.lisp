@@ -261,6 +261,14 @@
                             "an oversized reply settles its correlated request")
                (test-assert (and failure (< (length (autolith-error-message failure)) 1000))
                             "the caller receives a bounded localgroup error")
+               (test-assert
+                (handler-case
+                    (progn
+                      (localgroup-client-call connection ':oversized :data (make-string 32768))
+                      nil)
+                  (image-daemon:daemon-error ()
+                    t))
+                "an oversized request fails before writing to the transport")
                (test-assert (getf (localgroup-client-call connection ':state) :state)
                             "the next request succeeds on the same connection")
                (application-clients-publish
@@ -271,6 +279,68 @@
                             "the omission names the event kind")
                (test-assert (zerop (hash-table-count (localgroup-client-connection-replies connection)))
                             "settled calls leave no retained replies")))
+         (localgroup-client-close connection)
+         (when caller
+           (join-thread caller))))))
+  nil)
+
+(-> test-client-protocol-write-failure () null)
+(defun test-client-protocol-write-failure ()
+  "Test a failed command write wakes another pending call and releases reply entries."
+  (client-protocol-tests--call
+   (lambda (application entry)
+     (declare (ignore application))
+     (let* ((received   (sb-thread:make-semaphore))
+            (release    (sb-thread:make-semaphore))
+            (completed  (sb-thread:make-semaphore))
+            (connection (localgroup-client-connect entry :approves-p nil))
+            (broken     (make-string-output-stream))
+            (command    #'localgroup--client-command)
+            (stream     #'localgroup-client-connection-stream)
+            (writer     (current-thread))
+            (failure    nil)
+            (caller     nil))
+       (close broken)
+       (unwind-protect
+            (test-call-with-function-replacements
+             (list
+              (list 'localgroup--client-command
+                    (lambda (session operation arguments)
+                      (if (and (eq operation ':operation)
+                               (equal (getf arguments :method) "blocked"))
+                          (progn
+                            (sb-thread:signal-semaphore received)
+                            (sb-thread:wait-on-semaphore release :timeout 10)
+                            nil)
+                          (funcall command session operation arguments))))
+              (list 'localgroup-client-connection-stream
+                    (lambda (candidate)
+                      (if (and (eq candidate connection) (eq (current-thread) writer))
+                          broken
+                          (funcall stream candidate)))))
+             (lambda ()
+               (setf caller
+                     (make-thread
+                      (lambda ()
+                        (unwind-protect
+                             (handler-case
+                                 (localgroup-client-call connection ':operation :method "blocked")
+                               (localgroup-error (condition)
+                                 (setf failure condition)))
+                          (sb-thread:signal-semaphore completed)))
+                      :name "pending client call"))
+               (test-assert (sb-thread:wait-on-semaphore received :timeout 10)
+                            "one call remains pending while another reaches a failed write")
+               (test-assert (handler-case (progn (localgroup-client-call connection ':state) nil)
+                              (stream-error ()
+                                t))
+                            "a real write error propagates to its caller")
+               (test-assert (sb-thread:wait-on-semaphore completed :timeout 10)
+                            "transport failure wakes every pending call")
+               (test-assert (and failure (localgroup-client-connection-closed-p connection)
+                                 (zerop (hash-table-count (localgroup-client-connection-replies connection))))
+                            "failed calls release their reply entries on the closed connection")))
+         (sb-thread:signal-semaphore release)
          (localgroup-client-close connection)
          (when caller
            (join-thread caller))))))
