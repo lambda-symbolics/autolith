@@ -314,6 +314,35 @@ structured type and message survive the round trip."
                                         generation
                                         :probe-runner probe-runner)))
 
+(-> generation-restart-publish (configuration pathname) null)
+(defun generation-restart-publish (configuration envelope)
+  "Publish the exact-heap restart core that the launcher's restart ENVELOPE describes.
+
+The process that saved its heap wrote ENVELOPE just before the save, naming
+the reserved generation and its final metadata. The launcher runs this
+between that process's exit and the boot of the saved core."
+  (let* ((record (handler-case (snapshot-read envelope)
+                   (error ()
+                     nil)))
+         (fields (and (consp record) (eq (first record) ':autolith-restart) (rest record))))
+    (unless (and fields
+                 (eql (getf fields :version) 1)
+                 (non-empty-string-p (getf fields :identifier))
+                 (integerp (getf fields :created-at))
+                 (listp (getf fields :metadata)))
+      (error 'checkpoint-error
+             :message  "The restart envelope is missing or invalid."
+             :stage    ':publish
+             :pathname envelope))
+    (generation-publish configuration
+                        (with-generation-errors
+                          (sbcl-generations:generation-recreate-pending
+                           (generation-store-for configuration)
+                           :identifier (getf fields :identifier)
+                           :created-at (getf fields :created-at)
+                           :metadata   (getf fields :metadata)))))
+  nil)
+
 (-> generation-request-rollback (configuration string) null)
 (defun generation-request-rollback (configuration identifier)
   "Select retained generation IDENTIFIER and request an immediate rollback."
