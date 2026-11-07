@@ -3388,6 +3388,9 @@ Without the events option, use the existing artifact-only interface.
 * Generations and recovery
 
 =(checkpoint)= requires a clean Git worktree and a passing =./script/check=.
+=(checkpoint :allow-dirty t)= accepts uncommitted changes and marks the
+generation dirty, since its recorded revision then does not fully describe its
+source; =(generations)= shows such a generation's source as dirty.
 On POSIX it saves a retained image without stopping the active session. On
 Windows it saves the exact live heap, restarts through the stable launcher, and
 resumes the active conversation after the saved image passes its probe.

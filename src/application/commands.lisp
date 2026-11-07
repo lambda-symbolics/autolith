@@ -2321,16 +2321,19 @@ INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT to TERMINAL-UI-SELECT."
                   (application-configuration application)) model)))))
   nil)
 
-(-> application-checkpoint (application) null)
-(defun application-checkpoint (application)
-  "Begin a retained generation for APPLICATION."
+(-> application-checkpoint (application &key (:allow-dirty-p boolean)) null)
+(defun application-checkpoint (application &key allow-dirty-p)
+  "Begin a retained generation for APPLICATION.
+
+ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty."
   (application-set-activity application "checking source before checkpoint")
   (unwind-protect
        (let* ((configuration (application-configuration application))
               (backend
                 (checkpoint-backend-create
                  configuration (application-worker application)
-                 :tool-registry (application-tool-registry application)))
+                 :tool-registry (application-tool-registry application)
+                 :allow-dirty-p allow-dirty-p))
               (generation    (if (application-hosted-p application)
                                  nil
                                  (checkpoint-create backend))))
@@ -3652,7 +3655,9 @@ the world knows no such channel."
                                     (format nil "  ~A~%"
                                             (if compatible-p "compatible" "incompatible"))))
                (application--entry-fields
-                (list (list "source" ':code (generation-git-commit generation))
+                (list (list "source" ':code (format nil "~A~:[~; (dirty)~]"
+                                                     (generation-git-commit generation)
+                                                     (generation-dirty-p generation)))
                       (list "image" ':code (or (generation-image-commit-identifier generation) "base"))
                       (list "history" (if history ':code ':notice) (or history "unavailable"))
                       (list "replay" (if replay ':code ':notice)
@@ -3700,14 +3705,14 @@ the world knows no such channel."
 
 (define-application-command application--builtin-checkpoint-command
     (:name              "/checkpoint"
-     :argument          nil
+     :argument          "[:allow-dirty t]"
      :description       "save a retained live generation"
-     :tip               "saves the current live state as a retained generation."
+     :tip               "saves the current live state as a retained generation; (checkpoint :allow-dirty t) accepts uncommitted source changes and marks the generation dirty."
      :busy-behavior     :hold
      :terminal-behavior :shared
      :callable          t)
-    (application)
-  (application-checkpoint application)
+    (application &key allow-dirty)
+  (application-checkpoint application :allow-dirty-p (not (null allow-dirty)))
   ':continue)
 
 (define-application-command application--builtin-generations-command

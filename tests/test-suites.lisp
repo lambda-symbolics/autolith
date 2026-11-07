@@ -1202,6 +1202,7 @@
 (define-test-suite generation
   test-checkpoint-backend-selection
   test-checkpoint-source-check-diagnostics
+  test-checkpoint-dirty-source
   test-checkpoint-source-precheck-order
   test-generation-health
   test-generation-manifest

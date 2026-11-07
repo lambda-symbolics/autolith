@@ -1132,8 +1132,8 @@
                      (list
                       (list
                        'checkpoint--source-snapshot
-                       (lambda (active-configuration)
-                         (declare (ignore active-configuration))
+                       (lambda (active-configuration &key allow-dirty-p)
+                         (declare (ignore active-configuration allow-dirty-p))
                          (error 'checkpoint-error
                                 :message  "Synthetic source check failure."
                                 :stage    ':validation

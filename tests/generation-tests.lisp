@@ -123,6 +123,45 @@
                     "a failed check reports the bounded tail containing its diagnostics")))))))))
   nil)
 
+(-> test-checkpoint-dirty-source () null)
+(defun test-checkpoint-dirty-source ()
+  "Test a dirty source tree refuses a checkpoint unless it is allowed."
+  (with-test-configuration (configuration)
+    (test-call-with-function-replacements
+     (list (list 'source-clean-p
+                 (lambda (source &key paths)
+                   (declare (ignore source paths))
+                   nil))
+           (list 'source-revision
+                 (lambda (source)
+                   (declare (ignore source))
+                   "fixture-commit"))
+           (list 'uiop:run-program
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   (values "" nil 0))))
+     (lambda ()
+       (dolist (case '((nil :refused) (t "fixture-commit")))
+         (destructuring-bind (allow-dirty-p expected) case
+           (test-assert
+            (equal (handler-case
+                       (checkpoint--source-snapshot configuration :allow-dirty-p allow-dirty-p)
+                     (checkpoint-error ()
+                       ':refused))
+                   expected)
+            "a dirty tree is refused unless allowed, and then gives its revision")
+           (test-assert
+            (equal (handler-case
+                       (progn
+                         (checkpoint--revalidate-source configuration "fixture-commit"
+                                                        :allow-dirty-p allow-dirty-p)
+                         "fixture-commit")
+                     (checkpoint-error ()
+                       ':refused))
+                   expected)
+            "revalidation before the save applies the same rule"))))))
+  nil)
+
 (-> test-checkpoint-source-precheck-order () null)
 (defun test-checkpoint-source-precheck-order ()
   "Test source validation precedes quiescence and fork preparation uses it."
@@ -143,14 +182,14 @@
           (test-call-with-function-replacements
            (list
             (list 'checkpoint--source-snapshot
-                  (lambda (active-configuration)
-                    (declare (ignore active-configuration))
+                  (lambda (active-configuration &key allow-dirty-p)
+                    (declare (ignore active-configuration allow-dirty-p))
                     (setf prechecked-p t
                           precheck-quiesced-p quiesced-p)
                     "test-source-commit"))
             (list 'checkpoint--revalidate-source
-                  (lambda (active-configuration source-commit)
-                    (declare (ignore active-configuration source-commit))
+                  (lambda (active-configuration source-commit &key allow-dirty-p)
+                    (declare (ignore active-configuration source-commit allow-dirty-p))
                     (setf validate-quiesced-p quiesced-p)))
             (list 'checkpoint-single-threaded-p (lambda () t))
             (list 'checkpoint--call-with-fork-guard
@@ -163,8 +202,9 @@
                     (setf fork-quiesced-p quiesced-p)
                     (values nil nil)))
             (list 'generation--metadata
-                  (lambda (active-configuration identifier &key git-commit mutation-checker)
-                    (declare (ignore active-configuration identifier git-commit mutation-checker))
+                  (lambda (active-configuration identifier &key git-commit mutation-checker dirty-p)
+                    (declare (ignore active-configuration identifier git-commit mutation-checker
+                                     dirty-p))
                     nil)))
            (lambda ()
              (test-assert
@@ -240,14 +280,14 @@
                (list
                 (list
                  'checkpoint--source-snapshot
-                 (lambda (active-configuration)
-                   (declare (ignore active-configuration))
+                 (lambda (active-configuration &key allow-dirty-p)
+                   (declare (ignore active-configuration allow-dirty-p))
                    "test-source-commit"))
                 (list
                  'checkpoint--revalidate-source
-                 (lambda (active-configuration source-commit)
+                 (lambda (active-configuration source-commit &key allow-dirty-p)
                    (declare
-                    (ignore active-configuration source-commit))
+                    (ignore active-configuration source-commit allow-dirty-p))
                    nil))
                 (list
                  'checkpoint-single-threaded-p
@@ -344,14 +384,14 @@
                      (list
                       (list
                        'checkpoint--source-snapshot
-                       (lambda (active-configuration)
-                         (declare (ignore active-configuration))
+                       (lambda (active-configuration &key allow-dirty-p)
+                         (declare (ignore active-configuration allow-dirty-p))
                          "test-source-commit"))
                       (list
                        'checkpoint--revalidate-source
-                       (lambda (active-configuration source-commit)
+                       (lambda (active-configuration source-commit &key allow-dirty-p)
                          (declare
-                          (ignore active-configuration source-commit))
+                          (ignore active-configuration source-commit allow-dirty-p))
                          nil)))
                      (lambda ()
                        (checkpoint-create backend)))
@@ -405,14 +445,14 @@
                (list
                 (list
                  'checkpoint--source-snapshot
-                 (lambda (active-configuration)
-                   (declare (ignore active-configuration))
+                 (lambda (active-configuration &key allow-dirty-p)
+                   (declare (ignore active-configuration allow-dirty-p))
                    "test-source-commit"))
                 (list
                  'checkpoint--revalidate-source
-                 (lambda (active-configuration source-commit)
+                 (lambda (active-configuration source-commit &key allow-dirty-p)
                    (declare
-                    (ignore active-configuration source-commit))
+                    (ignore active-configuration source-commit allow-dirty-p))
                    nil)))
                (lambda ()
                  (handler-case
