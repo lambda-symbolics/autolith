@@ -684,7 +684,7 @@ last controlling client vanishes."
     (:attach
      (localgroup--serve-attachment session request :socket socket :stream stream))
     (:client
-     (localgroup--serve-client session request :stream stream))
+     (localgroup--serve-client session request :socket socket :stream stream))
     (:message
      (image-daemon:daemon-message-handle-request
       session request :stream stream
