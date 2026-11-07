@@ -36,6 +36,18 @@ agent working in frob; a second agent there is frob-2.")
 (defvar *world-sessions-lock* (make-recursive-lock "Autolith world sessions")
   "Serializes in-process reconciliation.")
 
+(defvar *world-session-cache* (make-hash-table :test #'equal)
+  "This process's last read of each mapping file, keyed by its namestring, as (STAMP . MAPPINGS).
+
+The file is read again only once its stamp changed.")
+
+(defvar *world-session-tokens* (make-hash-table :test #'equal)
+  "The newest source token this process synchronized for each conversation, keyed by mapping file.
+
+A token changes with every message, while the mapping file is written only
+when a mapping does; a token older on disk costs the next process one header
+read.")
+
 (defclass world-session-mapping ()
   ((conversation
     :initarg       :conversation
@@ -141,15 +153,64 @@ agent working in frob; a second agent there is frob-2.")
        (warn 'world-session-warning :pathname pathname :cause cause)
        nil))))
 
+(-> world-session--stamp (pathname) list)
+(defun world-session--stamp (pathname)
+  "Return what changes whenever PATHNAME is written or replaced, or NIL while it does not exist."
+  (let ((status (platform-path-status *platform* pathname)))
+    (and status
+         (list (platform-file-status-identity status)
+               (platform-file-status-size status)
+               (platform-file-status-modification-time status)))))
+
 (-> world-session-mappings (configuration) list)
 (defun world-session-mappings (configuration)
-  "Return every conversation mapping, ordered by conversation identifier."
+  "Return every conversation mapping, ordered by conversation identifier.
+
+The file is read again only once it changed since this process last read it."
   (with-recursive-lock-held (*world-sessions-lock*)
-    (handler-case
-        (sort (copy-list (sexp-store:store-read (world-session--store configuration)))
-              #'string< :key #'world-session-mapping-conversation)
-      (sexp-store:store-error (cause)
-        (world--store-error cause)))))
+    (let* ((pathname (configuration-world-sessions-path configuration))
+           (key      (namestring pathname))
+           (stamp    (world-session--stamp pathname))
+           (cached   (gethash key *world-session-cache*)))
+      (if (and cached stamp (equal (first cached) stamp))
+          (rest cached)
+          (handler-case
+              (let ((mappings (sort (copy-list (sexp-store:store-read
+                                                (world-session--store configuration)))
+                                    #'string< :key #'world-session-mapping-conversation)))
+                (setf (gethash key *world-session-cache*) (cons stamp mappings))
+                mappings)
+            (sexp-store:store-error (cause)
+              (world--store-error cause)))))))
+
+(-> world-session--tokens (configuration) hash-table)
+(defun world-session--tokens (configuration)
+  "Return the tokens this process synchronized for CONFIGURATION's conversations, by conversation."
+  (let ((key (namestring (configuration-world-sessions-path configuration))))
+    (or (gethash key *world-session-tokens*)
+        (setf (gethash key *world-session-tokens*) (make-hash-table :test #'equal)))))
+
+(-> world-session--current-mappings (configuration) list)
+(defun world-session--current-mappings (configuration)
+  "Return the mappings with the newest token this process synchronized for each."
+  (let ((tokens (world-session--tokens configuration)))
+    (mapcar (lambda (mapping)
+              (let ((token (gethash (world-session-mapping-conversation mapping) tokens)))
+                (if token
+                    (make-instance 'world-session-mapping
+                                   :conversation (world-session-mapping-conversation mapping)
+                                   :participant  (world-session-mapping-participant mapping)
+                                   :token        token)
+                    mapping)))
+            (world-session-mappings configuration))))
+
+(-> world-session--placement (list) list)
+(defun world-session--placement (mappings)
+  "Return MAPPINGS as (CONVERSATION . PARTICIPANT) pairs, the part of a mapping worth writing down."
+  (mapcar (lambda (mapping)
+            (cons (world-session-mapping-conversation mapping)
+                  (world-session-mapping-participant mapping)))
+          mappings))
 
 (-> world-session--transact (configuration function) t)
 (defun world-session--transact (configuration update)
@@ -282,13 +343,15 @@ storage, or, with ALL-P, when IDENTITIES is every conversation and does not
 name it."
   (let ((changes   nil)
         (vanished  nil)
-        (requested (make-hash-table :test #'equal)))
+        (requested (make-hash-table :test #'equal))
+        (mapped    (make-hash-table :test #'equal)))
+    (dolist (mapping mappings)
+      (setf (gethash (world-session-mapping-conversation mapping) mapped) mapping))
     (dolist (entry identities)
       (let* ((identity   (if (consp entry) (first entry) entry))
              (root       (and (consp entry) (second entry)))
              (identifier (pathname-name identity))
-             (mapping    (find identifier mappings
-                               :key #'world-session-mapping-conversation :test #'string=))
+             (mapping    (gethash identifier mapped))
              (token      (and (conversation-storage-active-pathname identity)
                               (handler-case (world-session--token identity)
                                 (error () nil)))))
@@ -602,7 +665,7 @@ gets the person's inbox: the first reconciliation without one examines every
 conversation and creates an inbox conversation when none is found."
   (with-recursive-lock-held (*world-sessions-lock*)
     (let* ((discovery  (world-load configuration))
-           (mappings   (world-session-mappings configuration))
+           (mappings   (world-session--current-mappings configuration))
            ;; Discover against one snapshot; WORLD--TRANSACT reloads under
            ;; the store lock before planning any records.
            (all-p      (or (not identities-p)
@@ -652,18 +715,28 @@ conversation and creates an inbox conversation when none is found."
                                                              :now      now)
                                       (setf updated planned ended retired)
                                       (values records nil)))))))
+                (let ((tokens (world-session--tokens configuration)))
+                  (dolist (mapping updated)
+                    (setf (gethash (world-session-mapping-conversation mapping) tokens)
+                          (world-session-mapping-token mapping)))
+                  (dolist (identifier ended)
+                    (remhash identifier tokens)))
+                ;; Tokens change with every message; the file is written only
+                ;; when a conversation's place in the world changed.
                 (world-session--transact
                  configuration
                  (lambda (current)
-                   (values (append updated
-                                   (remove-if (lambda (mapping)
-                                                (let ((identifier (world-session-mapping-conversation mapping)))
-                                                  (or (member identifier ended :test #'string=)
-                                                      (member identifier updated
-                                                              :key  #'world-session-mapping-conversation
-                                                              :test #'string=))))
-                                              current))
-                           nil t)))
+                   (let ((next (append updated
+                                       (remove-if (lambda (mapping)
+                                                    (let ((identifier (world-session-mapping-conversation mapping)))
+                                                      (or (member identifier ended :test #'string=)
+                                                          (member identifier updated
+                                                                  :key  #'world-session-mapping-conversation
+                                                                  :test #'string=))))
+                                                  current))))
+                     (values next nil
+                             (not (equal (sort (world-session--placement next) #'string< :key #'first)
+                                         (sort (world-session--placement current) #'string< :key #'first)))))))
                 (values committed (+ (length changes) (length vanished))))))))))
 
 (-> world-session--inbox-header-p (list) boolean)

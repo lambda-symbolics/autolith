@@ -20,9 +20,6 @@
 (defparameter *world-sidebar-refresh-seconds* 1
   "How often the sidebar asks the world and the server what changed.")
 
-(defparameter *world-sidebar-reconcile-seconds* 10
-  "How often the sidebar reconciles conversations into channels itself.")
-
 (defclass world-sidebar ()
   ((configuration
     :initarg       :configuration
@@ -59,11 +56,6 @@
     :accessor      world-sidebar-refreshed-at
     :type          (option real)
     :documentation "The internal real time of the last refresh, or NIL before the first.")
-   (reconciled-at
-    :initform      nil
-    :accessor      world-sidebar-reconciled-at
-    :type          (option real)
-    :documentation "The internal real time of the last reconciliation, or NIL before the first.")
    (server-entry
     :initform      nil
     :accessor      world-sidebar-server-entry
@@ -143,7 +135,7 @@ a refresh is due."
             nil
             (progn
               (setf (world-sidebar-refreshed-at panel) now)
-              (world-sidebar--take panel (world-sidebar--gather panel now)))))))
+              (world-sidebar--take panel (world-sidebar--gather panel)))))))
 
 (defmethod screen-panel-rows ((panel world-sidebar) terminal height)
   "Render the sidebar's entries as HEIGHT rows for TERMINAL."
@@ -183,7 +175,7 @@ a refresh is due."
 A failed gather keeps the entries shown before; the next one tries again."
   (loop
     (let ((entries (handler-case
-                       (world-sidebar--gather sidebar (funcall (world-sidebar-clock-function sidebar)))
+                       (world-sidebar--gather sidebar)
                      (error ()
                        nil))))
       (with-lock-held ((world-sidebar-lock sidebar))
@@ -204,12 +196,12 @@ A failed gather keeps the entries shown before; the next one tries again."
   (prog1 (not (equal entries (world-sidebar-entries sidebar)))
     (setf (world-sidebar-entries sidebar) entries)))
 
-(-> world-sidebar--gather (world-sidebar real) list)
-(defun world-sidebar--gather (sidebar now)
-  "Return the sidebar's entries for the world as it is at internal time NOW."
+(-> world-sidebar--gather (world-sidebar) list)
+(defun world-sidebar--gather (sidebar)
+  "Return the sidebar's entries for the world as it is now."
   (let* ((configuration (world-sidebar-configuration sidebar))
          (statuses      (world-sidebar--statuses sidebar))
-         (world         (world-sidebar--world sidebar now)))
+         (world         (world-presented configuration)))
     (world-sidebar--entries sidebar
                             :inbox    (world-inbox-channel world)
                             :channels (world-sidebar--channels configuration world statuses)
@@ -250,24 +242,6 @@ first, and belongs to the workspace its status names."
                                      channel))
                              (remove-if #'channel-inbox-p (world-channels world))))
              #'> :key #'first))))
-
-(-> world-sidebar--world (world-sidebar real) world)
-(defun world-sidebar--world (sidebar now)
-  "Return the world, reconciling conversations into it when that is due.
-
-A world that cannot be read shows as empty rather than ending the client."
-  (let ((configuration (world-sidebar-configuration sidebar))
-        (last          (world-sidebar-reconciled-at sidebar)))
-    (handler-case
-        (if (or (null last)
-                (>= (- now last)
-                    (* *world-sidebar-reconcile-seconds* internal-time-units-per-second)))
-            (progn
-              (setf (world-sidebar-reconciled-at sidebar) now)
-              (values (world-reconcile-sessions configuration)))
-            (world-load configuration))
-      (autolith-error ()
-        (make-instance 'world)))))
 
 (-> world-sidebar--statuses (world-sidebar) list)
 (defun world-sidebar--statuses (sidebar)

@@ -6,35 +6,54 @@
 ;;; The reconciliation hook is release machinery that leaves with
 ;;; src/world/sessions.lisp.
 
-(-> application-world-sync (application &key (:all-p boolean)) null)
-(defun application-world-sync (application &key all-p)
-  "Reconcile the active conversation, or every conversation with ALL-P.
+(-> application-world-sync (application) null)
+(defun application-world-sync (application)
+  "Bring APPLICATION's own conversation into the world, once it is durable.
 
-Viewing a channel moves nobody: the person resides in the inbox wherever
-the terminal is. Failures are reported as warnings: the world is a
-projection of the conversations and never blocks a session."
+The world server brings every conversation in as it starts; each channel
+then keeps its own in step. Viewing a channel moves nobody: the person
+resides in the inbox wherever the terminal is. Failures are reported as
+warnings: the world is a projection of the conversations and never blocks a
+session."
   (let* ((configuration (application-configuration application))
          (conversation  (and (slot-boundp application 'conversation)
                              (application-conversation application))))
     (handler-case
-        (if all-p
-            (world-reconcile-sessions configuration)
-            (when (and conversation (conversation-persisted-p conversation))
-              (world-reconcile-sessions configuration
-                                        :identities (list (conversation-pathname conversation)))))
+        (when (and conversation (conversation-persisted-p conversation))
+          (world-reconcile-sessions configuration
+                                    :identities (list (conversation-pathname conversation))))
       (error (cause)
         (warn 'world-session-warning
               :pathname (configuration-world-sessions-path configuration)
               :cause    cause))))
   nil)
 
+(-> application-world-sync-child (application list) null)
+(defun application-world-sync-child (application event)
+  "Bring the child conversation a task lifecycle EVENT names into the world.
+
+A child's channel appears once its job starts and its conversation is
+durable, and follows it until the job ends. Failures only warn, as for
+APPLICATION-WORLD-SYNC."
+  (let ((configuration (application-configuration application))
+        (root          (getf event :root))
+        (execution     (getf event :execution)))
+    (when (and (stringp root) (stringp execution))
+      (handler-case
+          (world-reconcile-sessions
+           configuration
+           :identities (list (list (conversation-task-identity-pathname configuration root execution)
+                                   root)))
+        (error (cause)
+          (warn 'world-session-warning
+                :pathname (configuration-world-sessions-path configuration)
+                :cause    cause)))))
+  nil)
+
 (-> application-channels-entry (application) list)
 (defun application-channels-entry (application)
   "Return every channel with its residents and subscribers as semantic terminal spans."
-  (let* ((world    (handler-case
-                       (values (world-reconcile-sessions (application-configuration application)))
-                     (error ()
-                       (world-load (application-configuration application)))))
+  (let* ((world    (world-load (application-configuration application)))
          (channels (world-channels world))
          (parked   (world-parked-agents world))
          (served   (channel-resource--served-channels (application-configuration application))))
@@ -418,7 +437,7 @@ stops the turn."
       (handler-case
           (let* ((configuration (application-configuration application))
                  (channel       (application-world--served-channel application))
-                 (world         (and channel (values (world-reconcile-sessions configuration))))
+                 (world         (and channel (world-load configuration)))
                  (person        (and world (world-human-participant world))))
             (when person
               (application-world--share-elsewhere configuration world
@@ -434,10 +453,13 @@ stops the turn."
 (defun application-world-share-pending (application)
   "Share the messages the person submitted before the conversation persisted, in order, now that it has.
 
-Returns the channels told, or NIL when nothing waited or the conversation
-is still not durable. Each pending message is taken once, so a replay of a
-turn shares nothing again."
+The conversation's first durable message is what gives its channel a place
+in the world, so it is brought in first. Returns the channels told, or NIL
+when nothing waited or the conversation is still not durable. Each pending
+message is taken once, so a replay of a turn shares nothing again."
   (let ((texts (application-world-pending-share application)))
+    (when texts
+      (application-world-sync application))
     (when (and texts (application-world--served-channel application))
       (setf (application-world-pending-share application) nil)
       (remove-duplicates (loop for text in texts
@@ -457,7 +479,7 @@ shares nothing. A delivery that fails is reported and never stops the turn."
     (handler-case
         (let* ((configuration (application-configuration application))
                (channel       (application-world--served-channel application))
-               (world         (and channel (values (world-reconcile-sessions configuration))))
+               (world         (and channel (world-load configuration)))
                (agent         (and world
                                    (find ':agent (world-channel-residents world channel)
                                          :key #'participant-kind))))
@@ -1117,7 +1139,7 @@ channel's history is there for it to read."
                                    :message   "This conversation is not a channel yet; it becomes one with its first durable message."
                                    :pathname  nil
                                    :operation ':domestic)))
-         (world         (values (world-reconcile-sessions configuration)))
+         (world         (world-load configuration))
          (person        (world-human-participant world)))
     (world-inbox-refuse-agent world channel ':domestic)
     (when (find ':agent (world-channel-residents world channel) :key #'participant-kind)
@@ -1179,7 +1201,7 @@ channel's history is there for it to read."
   "Return the identifier of the channel DESIGNATOR names in full, by legacy alias or in part."
   (let ((configuration (application-configuration application)))
     (channel-identifier
-     (world-channel-designated (values (world-reconcile-sessions configuration))
+     (world-channel-designated (world-load configuration)
                                configuration
                                designator))))
 
@@ -1190,7 +1212,7 @@ channel's history is there for it to read."
   "Send TEXT to CHANNEL as the human participant and deliver it locally when this process serves it."
   (let* ((configuration (application-configuration application))
          (person        (world-human-participant
-                         (values (world-reconcile-sessions configuration))))
+                         (world-load configuration)))
          (served        (application-world--served-channel application))
          (result        (progn
                           (unless person

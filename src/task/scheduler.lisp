@@ -137,6 +137,8 @@
 (defun task-job--lifecycle-event (job state result)
   "Return JOB's portable terminal lifecycle event."
   (list :id                  (job-identifier job)
+        :root                (task-job-root-conversation-identifier job)
+        :execution           (task-job-execution-identifier job)
         :agent               (task-job-agent-name job)
         :agent-source        (task-job-agent-source job)
         :status              state

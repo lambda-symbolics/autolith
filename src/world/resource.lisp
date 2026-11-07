@@ -62,8 +62,8 @@
 
 (-> channel-resource--world (tool-context) world)
 (defun channel-resource--world (context)
-  "Return CONTEXT's world after bringing it in step with the conversations."
-  (values (world-reconcile-sessions (tool-context-configuration context))))
+  "Return CONTEXT's world."
+  (world-load (tool-context-configuration context)))
 
 (-> channel-resource--history (tool-context channel) (option conversation))
 (defun channel-resource--history (context channel)

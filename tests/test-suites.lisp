@@ -662,6 +662,7 @@
   test-world-channel-tools
   test-world-message-presentation
   test-world-child-participants
+  test-world-child-sync
   test-world-agent-hierarchy
   test-world-parent-mention
   test-world-person-notice
