@@ -709,36 +709,51 @@ names the agent."
      (config :reasoning-effort configuration)
      :provider (let ((name (config :model-provider configuration)))
                  (and (non-empty-string-p name) name)))
-    (conversation-append-context-adoption conversation rows
-                                          :participant (participant-identifier participant)
-                                          :source      source
-                                          :transition  transition)
-    (conversation-append-user-message
-     conversation
-     (format nil "[You, ~A, ~:[now live in~;were moved into~] channel ~A~@[ from channel ~A~]. ~:[~;Your context continues from where you were. ~]This channel's earlier history is at channel:id/~A. Nothing is expected of you until someone writes here or mentions you.]"
-             (participant-name participant)
-             (eq arrival ':moved)
-             (conversation-identifier-display channel)
-             (and source (conversation-identifier-display source))
-             rows
-             (conversation-identifier-display channel))
-     :automatic-p t)
-    (application-world--install-goal application goal)
+    (unless (and transition
+                 (equal transition (conversation-adopted-transition conversation)))
+      (conversation-append-context-adoption conversation rows
+                                            :participant (participant-identifier participant)
+                                            :source      source
+                                            :transition  transition))
+    (if (conversation-adoption-stage-record conversation transition ':message)
+        ;; Repair a synchronous failure between the durable announcement and
+        ;; its projection without appending the announcement a second time.
+        (setf (slot-value conversation 'projection)
+              (conversation-projection (conversation-load (conversation-pathname conversation))))
+        (conversation-append-user-message
+         conversation
+         (format nil "[You, ~A, ~:[now live in~;were moved into~] channel ~A~@[ from channel ~A~]. ~:[~;Your context continues from where you were. ~]This channel's earlier history is at channel:id/~A. Nothing is expected of you until someone writes here or mentions you.]"
+                 (participant-name participant)
+                 (eq arrival ':moved)
+                 (conversation-identifier-display channel)
+                 (and source (conversation-identifier-display source))
+                 rows
+                 (conversation-identifier-display channel))
+         :automatic-p         t
+         :adoption-transition transition))
+    (application-world--install-goal application goal :transition transition)
     (world-session-remap configuration channel (participant-identifier participant)))
   nil)
 
-(-> application-world--install-goal (application list) null)
-(defun application-world--install-goal (application goal)
-  "Make GOAL, the one an arriving agent brings, APPLICATION's goal, replacing any the channel kept.
+(-> application-world--install-goal (application list &key (:transition (option string))) null)
+(defun application-world--install-goal (application goal &key transition)
+  "Install an arriving agent's GOAL and durably record adoption TRANSITION once.
 
-A running mission arrives paused: its admitted jobs stayed behind, so it
-resumes only when asked."
-  (let ((goal (copy-tree goal)))
+A running mission arrives paused because its admitted jobs stayed behind.
+Retry mission restoration even when the goal record already reached disk."
+  (let* ((conversation (application-conversation application))
+         (record       (conversation-adoption-stage-record conversation transition ':goal))
+         (goal         (if record (goal-record->goal record) (copy-tree goal))))
     (when (and (mission-goal-p goal) (eq (getf goal :status) ':active))
       (setf (getf goal :status) ':paused))
-    (when (or goal (application-goal application))
-      (setf (application-goal application) goal)
-      (application--record-goal application)
+    (when (or record goal (application-goal application))
+      (setf (application-goal application) goal
+            (application-deferred-goal-continuation application) nil)
+      (unless record
+        (conversation-append-record
+         conversation
+         (append (goal->record goal)
+                 (when transition (list :adoption-transition transition)))))
       (when (mission-goal-p goal)
         (mission-restore application)
         (application-mission-schedules application))))
@@ -1047,11 +1062,11 @@ admitted: they worked for the agent, while the channel's other jobs stay."
 The agent is the channel's resident in the world store: the channel may
 have been opened before it ever had a durable message, so its session
 mapping cannot be relied on. CONFIGURATION and PROVIDER come from
-`application-world-prepare-agent' when the move prepared them. A context
-this conversation adopted already, before a crash kept its file, is only
-removed. A failure leaves the context waiting for the next try and is
-signalled with STRICT-P, else told in the channel: a turn must not start
-without the agent's context, while an open goes on."
+`application-world-prepare-agent' when the move prepared them. Durable
+context, announcement and goal stages are reused on retry, but the runtime
+is installed again, including after restart. Delete the staged file only
+once every stage succeeds. A failure waits for the next try and is signalled
+with STRICT-P, else told in the channel; a turn must not start without it."
   (let ((channel (application-world--served-channel application)))
     (when channel
       (handler-case
@@ -1064,16 +1079,13 @@ without the agent's context, while an open goes on."
               (multiple-value-bind (rows source destination transition goal)
                   (world-context-read world-configuration identifier)
                 (when (equal destination channel)
-                  (unless (and transition
-                               (equal transition (conversation-adopted-transition
-                                                  (application-conversation application))))
-                    (application-world-install-agent application agent
-                                                     :rows          rows
-                                                     :source        source
-                                                     :goal          goal
-                                                     :transition    transition
-                                                     :configuration configuration
-                                                     :provider      provider))
+                  (application-world-install-agent application agent
+                                                   :rows          rows
+                                                   :source        source
+                                                   :goal          goal
+                                                   :transition    transition
+                                                   :configuration configuration
+                                                   :provider      provider)
                   (world-context-delete world-configuration identifier)
                   t))))
         (autolith-error (condition)

@@ -2210,12 +2210,13 @@ copied."
     (conversation (or string user-message-input)
      &key (:pending-input-identifier (option non-empty-string))
           (:automatic-p boolean)
+          (:adoption-transition (option string))
           (:job-completion (option list))
           (:operation-request (option list)))
     (values json-object list))
 (defun conversation-append-user-message
     (conversation input
-     &key pending-input-identifier automatic-p job-completion operation-request)
+     &key pending-input-identifier automatic-p adoption-transition job-completion operation-request)
   "Persist user INPUT and return its provider item and sequenced record.
 
 JOB-COMPLETION and OPERATION-REQUEST are portable metadata that let the
@@ -2259,6 +2260,8 @@ transcript show automatic INPUT as a short notice."
                          (list :submission (copy-tree (user-message-input-submission input))))
                        (when automatic-p
                          (list :automatic-p t))
+                       (when adoption-transition
+                         (list :adoption-transition adoption-transition))
                        (when pending-input-identifier
                          (list :pending-input-identifier
                                (copy-seq pending-input-identifier)))

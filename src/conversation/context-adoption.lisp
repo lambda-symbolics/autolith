@@ -34,24 +34,51 @@ items are left out."
 The record is appended durably before the projection it describes is
 installed, and a conversation reloaded later rebuilds the same projection
 from it. Return the sequenced record."
-  (with-recursive-lock-held ((conversation-append-lock conversation))
-    (let ((record     (list* :context-adoption
-                             :participant participant
-                             :rows        rows
-                             (append (and source (list :source source))
-                                     (and transition (list :transition transition)))))
-          (projection (clinker-transcript:make-projection)))
-      ;; Validate the rows into the projection first, so a bad context is
-      ;; refused before anything durable changes.
-      (conversation-compaction--append-rows conversation (rest record) projection :rows rows)
-      (conversation-compaction--check-correlations conversation (rest record) projection)
-      (sb-sys:without-interrupts
-        (let ((published (conversation-append-record conversation record)))
-          (setf (slot-value conversation 'projection)      projection
-                (conversation-adopted-participant conversation) participant
-                (conversation-adopted-transition conversation)  transition
-                (conversation-last-total-tokens conversation)   0)
-          published)))))
+  (block nil
+    (with-recursive-lock-held ((conversation-append-lock conversation))
+      (let ((existing (conversation-adoption-stage-record conversation transition ':context-adoption)))
+        (when existing
+          ;; A synchronous failure may follow append but precede projection.
+          (unless (equal transition (conversation-adopted-transition conversation))
+            (conversation--project-record ':context-adoption conversation (rest existing)))
+          (return existing)))
+      (let ((record     (list* :context-adoption
+                              :participant participant
+                              :rows        rows
+                              (append (and source (list :source source))
+                                      (and transition (list :transition transition)))))
+            (projection (clinker-transcript:make-projection)))
+        ;; Refuse invalid rows before anything durable changes.
+        (conversation-compaction--append-rows conversation (rest record) projection :rows rows)
+        (conversation-compaction--check-correlations conversation (rest record) projection)
+        (sb-sys:without-interrupts
+          (let ((published (conversation-append-record conversation record)))
+            (setf (slot-value conversation 'projection)      projection
+                  (conversation-adopted-participant conversation) participant
+                  (conversation-adopted-transition conversation)  transition
+                  (conversation-last-total-tokens conversation)   0)
+            published))))))
+
+(-> conversation-adoption-stage-record (conversation (option string) keyword) (option list))
+(defun conversation-adoption-stage-record (conversation transition kind)
+  "Return the durable record of KIND for adoption TRANSITION, or NIL.
+
+An adoption record proves only the context stage. Its announcement and goal
+carry their own transition identifiers so a retry can finish either stage
+without duplicating the stages that reached disk before an interruption."
+  (when transition
+    (with-recursive-lock-held ((conversation-append-lock conversation))
+      (let ((found nil))
+        (conversation-map-records
+         conversation
+         (lambda (record)
+           (when (and (eq (first record) kind)
+                      (equal (getf (rest record) (if (eq kind ':context-adoption)
+                                                    ':transition
+                                                    ':adoption-transition))
+                             transition))
+             (setf found record))))
+        found))))
 
 (defmethod conversation--project-record
     ((kind (eql :context-adoption)) conversation properties)

@@ -3607,6 +3607,7 @@ A fullscreen transcript evicts its oldest output; those records page in again."
              (let ((goal (copy-tree (rest record))))
                (loop while (remf goal :seq))
                (loop while (remf goal :time))
+               (loop while (remf goal :adoption-transition))
                goal)
              (list :objective objective
                    :status    status
