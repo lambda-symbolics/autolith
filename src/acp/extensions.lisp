@@ -10,41 +10,26 @@
   (:documentation "An extension operation has no admitted headless implementation."))
 
 (defparameter *acp-extension-methods*
-  '(("_autolith/state" acp-extension-state :read)
-    ("_autolith/settings" acp-extension-settings :read)
-    ("_autolith/models" acp-extension-models :read)
-    ("_autolith/set-setting" acp-extension-set-setting :write)
-    ("_autolith/operations" acp-extension-operations :read)
-    ("_autolith/invoke" acp-extension-invoke :read)
-    ("_autolith/steer" acp-extension-steer :read)
-    ("_autolith/queue" acp-extension-queue :read)
-    ("_autolith/conversations" acp-extension-conversations :read)
-    ("_autolith/jobs" acp-extension-jobs :read)
-    ("_autolith/job" acp-extension-job :read)
-    ("_autolith/job-transcript" acp-extension-job-transcript :read)
-    ("_autolith/job-send" acp-extension-job-send :read)
-    ("_autolith/job-cancel" acp-extension-job-cancel :read)
-    ("_autolith/resource" acp-extension-resource :read))
-  "Implemented session methods, their handlers and primary-operation admission.")
+  '(("_autolith/state" acp-extension-state :server)
+    ("_autolith/settings" acp-extension-settings :server)
+    ("_autolith/models" acp-extension-models :server)
+    ("_autolith/set-setting" acp-extension-set-setting :server)
+    ("_autolith/operations" acp-extension-operations :server)
+    ("_autolith/invoke" acp-extension-invoke :server)
+    ("_autolith/steer" acp-extension-steer :client)
+    ("_autolith/queue" acp-extension-queue :client)
+    ("_autolith/conversations" acp-extension-conversations :server)
+    ("_autolith/jobs" acp-extension-jobs :server)
+    ("_autolith/job" acp-extension-job :server)
+    ("_autolith/job-transcript" acp-extension-job-transcript :server)
+    ("_autolith/job-send" acp-extension-job-send :server)
+    ("_autolith/job-cancel" acp-extension-job-cancel :server)
+    ("_autolith/resource" acp-extension-resource :server))
+  "Implemented session methods, their handlers, and where they run.
 
-(-> acp-extension-tool-context (acp-session) tool-context)
-(defun acp-extension-tool-context (session)
-  "Construct a session-owned context with ACP permission decisions, never terminal prompts."
-  (let* ((application (acp-session-application session))
-         (observer    (acp-observer-create session)))
-    (make-instance 'tool-context
-                   :configuration (application-configuration application)
-                   :worker        (application-worker application)
-                   :conversation  (application-conversation application)
-                   :registry      (application-tool-registry application)
-                   :agent         (application-agent application)
-                   :observer      observer
-                   :command-authorization-function
-                   (lambda (command directory)
-                     (agent-observer-authorize-command observer command directory))
-                   :tool-authorization-function
-                   (lambda (tool arguments)
-                     (agent-observer-authorize-tool observer tool arguments)))))
+A :SERVER handler takes the channel's application and the request's
+parameters and runs in the world server; a :CLIENT handler takes the ACP
+session and runs in the ACP process.")
 
 (-> acp-extension-value (t) t)
 (defun acp-extension-value (value)
@@ -114,48 +99,28 @@
                      'vector)
    "features" (agentcomms:json-object
                 "events" t "sessionScoped" t
-                "turnEvents" (if (fboundp 'acp-session-run-turn) t (argo:json-false))
-               "resourceSchemes" (if (fboundp 'acp-extension-resource)
-                                     (vector "workspace" "shell-log") #())
-               "automaticContinuation" (if (fboundp 'acp-completion-start)
-                                           t (argo:json-false)))))
+                "turnEvents" t
+                "resourceSchemes" (vector "workspace" "shell-log")
+                "automaticContinuation" t)))
 
-(-> acp-extension-notify (acp-session string &optional t) null)
-(defun acp-extension-notify (session kind &optional data)
-  "Send an ordered extension event without failing provider finalization on connection loss."
-  (with-lock-held ((acp-session-extension-lock session))
-    (unless (acp-session-closed-p session)
-      (handler-case
-          (agentcomms:agent-client-notify
-           (acp-session-service session) "_autolith/event"
-           (agentcomms:json-object
-            "sessionId" (acp-session-identifier session)
-            "sequence" (incf (acp-session-extension-sequence session))
-            "kind" kind "data" (or data (agentcomms:json-object))))
-        (agentcomms:acp-error () nil))))
-  nil)
 
-(-> acp-extension-turn-notify
-    (acp-session string &key (:source string) (:outcome (option keyword))) null)
-(defun acp-extension-turn-notify (session state &key source outcome)
-  "Publish an owned turn boundary before callbacks or after their final flush."
-  (acp-extension-notify
-   session "turn"
-   (agentcomms:json-object "state" state "epoch" (acp-session-epoch session)
-                          "source" source
-                          "outcome" (if outcome (string-downcase (symbol-name outcome)) ':null))))
+;;;; -- Server Side --
 
-(-> acp-extension--usage (acp-session) hash-table)
-(defun acp-extension--usage (session)
-  "Project measured request usage, using the durable prompt cache when replaying."
-  (let* ((conversation  (application-conversation (acp-session-application session)))
-         (usage         (with-lock-held ((acp-session-extension-lock session))
-                          (acp-session-extension-usage session)))
+;;; The editor's extension requests run in the world server, in the channel
+;;; that hosts the session, against the channel's application.
+
+(-> acp-extension--usage (application) hash-table)
+(defun acp-extension--usage (application)
+  "Project measured request usage, using the durable prompt cache when nothing was measured yet."
+  (let* ((conversation  (application-conversation application))
+         (hub           (application-client-hub application))
+         (usage         (with-lock-held ((client-hub-lock hub))
+                          (client-hub-usage hub)))
          (cached-usage
            (with-recursive-lock-held ((conversation-append-lock conversation))
              (copy-tree (conversation-prompt-cache-usage conversation))))
          (input         (conversation--usage-field (or usage cached-usage) "input_tokens"))
-         (configuration (application-configuration (acp-session-application session))))
+         (configuration (application-configuration application)))
     (agentcomms:json-object
      "input" (or input ':null)
      "output" (or (conversation--usage-field usage "output_tokens") ':null)
@@ -164,122 +129,72 @@
      "contextLimit" (config :context-window configuration)
      "contextMeasured" (if input t (argo:json-false)))))
 
-(-> acp-extension-live-job-count (acp-session) integer)
-(defun acp-extension-live-job-count (session)
+(-> acp-extension-live-job-count (application) integer)
+(defun acp-extension-live-job-count (application)
   "Count nonterminal owned jobs without copying their potentially large progress."
-  (let* ((application  (acp-session-application session))
-         (orchestrator (application--task-orchestrator application)))
+  (let ((orchestrator (application--task-orchestrator application)))
     (if orchestrator
         (count-if-not #'job-terminal-p
                       (task-orchestrator-list-visible-jobs
                        orchestrator (application-agent application)))
         0)))
 
-(-> acp-extension-state (acp-session hash-table) hash-table)
-(defun acp-extension-state (session params)
-  "Return current headless session state, marking unavailable measurements null."
+(-> acp-extension--turn-state (application) string)
+(defun acp-extension--turn-state (application)
+  "Return whether APPLICATION's channel is running a turn, cancelling one, or idle."
+  (let ((controller (application-input-controller application)))
+    (cond
+      ((null controller)
+       "idle")
+      ((application-input-controller-turn-cancellation-p controller)
+       "cancelling")
+      ((application-input-controller-turn-active-p controller)
+       "running")
+      (t
+       "idle"))))
+
+(-> acp-extension-state (application hash-table) hash-table)
+(defun acp-extension-state (application params)
+  "Return the channel's current state, marking unavailable measurements null."
   (declare (ignore params))
-  (let* ((application   (acp-session-application session))
-         (configuration (application-configuration application))
-         (conversation  (application-conversation application))
-         (turn          (with-lock-held ((acp-session-lock session))
-                          (cond
-                            ((acp-session-closed-p session)
-                             "interrupted")
-                            ((and (acp-session-prompt-thread session) (acp-session-cancelled-p session))
-                             "cancelling")
-                            ((acp-session-prompt-thread session)
-                             "running")
-                            (t
-                             "idle")))))
+  (let ((configuration (application-configuration application))
+        (conversation  (application-conversation application)))
     (agentcomms:json-object
      "workspace" (namestring (config :working-directory configuration))
      "title" (or (conversation-title conversation) ':null)
      "model" (config :model configuration)
      "effort" (config :reasoning-effort configuration)
-     "permissionMode" (string-downcase (symbol-name (acp-session-mode session)))
-     "turnState" turn "usage" (acp-extension--usage session)
-     "liveJobCount" (acp-extension-live-job-count session)
+     "permissionMode" (string-downcase (symbol-name (application-permission-mode application)))
+     "turnState" (acp-extension--turn-state application)
+     "usage" (acp-extension--usage application)
+     "liveJobCount" (acp-extension-live-job-count application)
      "planPresent" (if (plan-load configuration) t (argo:json-false))
-     "health" (cond ((acp-session-closing-p session)
-                     "closing")
-                    ((acp-session-completion-report session)
-                     "condition")
-                    (t
-                     "ready"))
-     "report" (or (acp-session-completion-report session) ':null))))
+     "health" "ready"
+     "report" ':null)))
 
-(-> acp-extension--call (acp-service list hash-table) t)
-(defun acp-extension--call (service entry params)
-  "Validate session authority before invoking ENTRY at its required admission boundary."
-  (let* ((identifier                  (agentcomms:acp-field params "sessionId" :type ':string :required-p t))
-         (session                     (acp-service--session service identifier))
-         (application                 (acp-session-application session))
-         (*active-application*        application)
-         (*configuration*             (application-configuration application))
-         (*default-pathname-defaults* (config :working-directory *configuration*))
-         (handler                     (second entry)))
-    (labels ((invoke ()
-               "Own the handler through cancellation and resource retirement."
-               (let ((thread (current-thread)))
-                 (unwind-protect
-                      (progn
-                        (with-lock-held ((acp-service-lock service))
-                          (when (acp-service-closed-p service)
-                            (error 'agentcomms:acp-connection-closed))
-                          (with-lock-held ((acp-session-lock session))
-                            (when (or (acp-session-closing-p session) (acp-session-closed-p session))
-                              (error 'acp-extension-unavailable :reason "The session is closing."))
-                            (setf (gethash thread (acp-session-tool-threads session))
-                                  (acp-session-epoch session))))
-                        (funcall handler session params))
-                   (with-lock-held ((acp-session-lock session))
-                     (remhash thread (acp-session-tool-threads session)))))))
-      (if (eq (third entry) ':write)
-          (acp-service--call-with-operation
-           service session
-           (lambda ()
-             (prog1 (invoke)
-               (acp-extension-notify session "state"))))
-          (invoke)))))
+(-> acp-extension-run (application string hash-table) list)
+(defun acp-extension-run (application method params)
+  "Run extension METHOD with PARAMS in APPLICATION's channel and return its typed outcome.
 
-(defmethod agentcomms:agent-extension-request ((service acp-service) method params)
-  "Dispatch negotiated session-scoped calls and return portable typed outcomes."
+The outcome is a plist: :OUTCOME, one of :OK, :BUSY, :UNSUPPORTED, :CANCELLED
+or :CONDITION, with the :VALUE of a success, or a :REPORT and :CONDITION-TYPE."
   (let ((entry (assoc method *acp-extension-methods* :test #'string=)))
-    (unless (or entry (string= method "_autolith/capabilities"))
-      (return-from agentcomms:agent-extension-request (call-next-method)))
+    (unless (and entry (not (eq (third entry) ':client)))
+      (return-from acp-extension-run
+        (list :outcome ':unsupported :report (format nil "The world server does not serve ~A." method))))
     (handler-case
-        (acp-extension-result
-         ':ok :value (if entry
-                         (acp-extension--call service entry params)
-                         (acp-extension-capabilities)))
+        (let ((*active-application*        application)
+              (*configuration*             (application-configuration application))
+              (*default-pathname-defaults* (config :working-directory (application-configuration application))))
+          (list :outcome ':ok
+                :value   (acp-extension-value (funcall (second entry) application params))))
       (acp-operation-busy ()
-        (acp-extension-result ':busy :report "Another primary operation is active."))
+        (list :outcome ':busy :report "Another primary operation is active."))
       (acp-extension-unavailable (condition)
-        (acp-extension-result ':unsupported :report (acp-extension-unavailable-reason condition)))
+        (list :outcome ':unsupported :report (acp-extension-unavailable-reason condition)))
       (application-turn-cancelled ()
-        (acp-extension-result ':cancelled))
+        (list :outcome ':cancelled))
       (error (condition)
-        (acp-extension-result ':condition :report (princ-to-string condition)
-                              :condition-type     (string-downcase (symbol-name (type-of condition))))))))
-
-(defmethod agent-observer-status :after ((observer acp-observer) status details)
-  "Publish measured usage and compaction notices after their ordinary ACP projection."
-  (let ((session (acp-observer-session observer)))
-    (case status
-      (:user-message-persisted
-       (acp-input--user-persisted observer details))
-      (:provider-request-completed
-       (with-lock-held ((acp-session-extension-lock session))
-         (setf (acp-session-extension-usage session)
-               (loop for name in '("input_tokens" "output_tokens" "cached_input_tokens")
-                     collect (list name (conversation--usage-field (getf details :usage) name)))
-               (gethash (config :model (application-configuration (acp-session-application session)))
-                        (acp-session-extension-verified-models session))
-               (get-universal-time)))
-       (acp-extension-notify session "state"))
-      (:compaction-completed
-       (acp-extension-notify session "compaction"))
-      (:tool-call-completed
-       (acp-extension-notify session "jobs"))))
-  nil)
+        (list :outcome        ':condition
+              :report         (princ-to-string condition)
+              :condition-type (string-downcase (symbol-name (type-of condition))))))))

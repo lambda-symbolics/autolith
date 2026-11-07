@@ -64,8 +64,7 @@
             "missing, malformed and foreign session identifiers fail before reading state"))
          (let* ((session (acp-service--session service identifier))
                 (usage   (agentcomms:json-object "input_tokens" 0 "output_tokens" 3 "cached_input_tokens" 0)))
-           (agent-observer-status (acp-observer-create session) ':provider-request-completed
-                                  (list :usage usage))
+           (application-clients-note-usage (acp-session-test--application session) usage)
            (let ((measured (agentcomms:json-get
                             (agentcomms:json-get
                              (agentcomms:client-agent-request client "_autolith/state" params) "value")
@@ -75,27 +74,16 @@
              (test-assert (eq t (agentcomms:json-get measured "contextMeasured")) "measured zero is known")))))))
   nil)
 
-(-> test-acp-extension-busy-and-notification-order () null)
-(defun test-acp-extension-busy-and-notification-order ()
-  "Reject overlapping mutations and allocate advisory notification sequences per session."
+(-> test-acp-extension-notification-order () null)
+(defun test-acp-extension-notification-order ()
+  "Allocate advisory notification sequences per session."
   (with-test-configuration (configuration root)
     (acp-session-test--call-with-client
      configuration
      (lambda (service client)
-       (let* ((identifier              (agentcomms:client-new-session client (namestring root)))
-              (session                 (acp-service--session service identifier))
-              (params                  (agentcomms:json-object "sessionId" identifier))
-              (*acp-extension-methods* (cons '("_autolith/test-write" identity :write)
-                                             *acp-extension-methods*))
-              (events                  nil))
-         (acp-service--call-with-operation
-          service session
-          (lambda ()
-            (let ((result (agentcomms:agent-extension-request service "_autolith/test-write" params)))
-              (test-assert (equal "busy" (agentcomms:json-get result "outcome"))
-                           "a rejected writer never reaches its handler")
-              (test-assert (eq session (acp-service-busy-owner service))
-                           "rejected extension writes retain the owner's primary claim"))))
+       (let* ((identifier (agentcomms:client-new-session client (namestring root)))
+              (session    (acp-service--session service identifier))
+              (events     nil))
          (test-call-with-function-replacements
           (list (list 'agentcomms:agent-client-notify
                       (lambda (owner method payload)
@@ -111,74 +99,21 @@
                       "notifications identify their owning session")))))
   nil)
 
-(-> test-acp-extension-close-active-handler () null)
-(defun test-acp-extension-close-active-handler ()
-  "Interrupt admitted readers before retiring resources, including after an earlier cancellation."
-  (with-test-configuration (configuration root)
-    (acp-session-test--call-with-client
-     configuration
-     (lambda (service client)
-       (dolist (cancelled-p '(nil t))
-         (let* ((identifier (agentcomms:client-new-session client (namestring root)))
-                (session    (acp-service--session service identifier))
-                (entered-p nil) (cleaned-p nil) (outcome nil)
-                (worker     nil))
-           (setf (acp-session-cancelled-p session) cancelled-p)
-           (unwind-protect
-                (progn
-                  (setf worker
-                        (make-thread
-                         (lambda ()
-                           (handler-case
-                               (acp-extension--call
-                                service
-                                (list "test-read"
-                                      (lambda (owner params)
-                                        (declare (ignore owner params))
-                                        (unwind-protect
-                                             (progn (setf entered-p t) (sleep 30))
-                                          (setf cleaned-p t))) ':read)
-                                (agentcomms:json-object "sessionId" identifier))
-                             (application-turn-cancelled () (setf outcome ':cancelled))))
-                         :name "ACP extension reader fixture"))
-                  (loop repeat 500 until entered-p do (sleep 0.01))
-                  (test-assert entered-p "the reader entered its owned resource boundary")
-                  (with-lock-held ((acp-session-lock session))
-                    (incf (acp-session-epoch session)))
-                  (acp-session-close session)
-                  (join-thread worker)
-                  (test-assert (eq outcome ':cancelled) "close interrupts an older admitted reader")
-                  (test-assert cleaned-p "the reader unwinds before resource retirement")
-                  (test-assert (null (application-conversation-lease (acp-session-application session)))
-                               "retirement releases the lease after all readers finish"))
-             (when (and worker (thread-alive-p worker))
-               (interrupt-thread worker (lambda () (error 'application-turn-cancelled)))
-               (join-thread worker))))))))
-  nil)
-
 (-> test-acp-extension-shutdown-admission () null)
 (defun test-acp-extension-shutdown-admission ()
-  "Reject new readers after service shutdown starts, before session retirement finishes."
+  "Refuse extension requests once the service's shutdown began."
   (with-test-configuration (configuration root)
     (acp-session-test--call-with-client
      configuration
      (lambda (service client)
-       (let* ((identifier (agentcomms:client-new-session client (namestring root)))
-              (session    (acp-service--session service identifier))
-              (entered-p  nil)
-              (rejected-p nil))
+       (let ((identifier (agentcomms:client-new-session client (namestring root))))
          (with-lock-held ((acp-service-lock service))
            (setf (acp-service-closed-p service) t))
-         (handler-case
-             (acp-extension--call
-              service
-              (list "test-read" (lambda (owner params)
-                                  (declare (ignore owner params))
-                                  (setf entered-p t)) ':read)
-              (agentcomms:json-object "sessionId" identifier))
-           (agentcomms:acp-connection-closed () (setf rejected-p t)))
-         (test-assert (and rejected-p (not entered-p))
-                      "shutdown rejects readers before accessing resources")
-         (test-assert (zerop (hash-table-count (acp-session-tool-threads session)))
-                      "failed admission leaves no handler registration")))))
+         (test-assert (handler-case
+                          (progn (agentcomms:agent-extension-request
+                                  service "_autolith/state" (agentcomms:json-object "sessionId" identifier))
+                                 nil)
+                        (agentcomms:acp-connection-closed ()
+                          t))
+                      "a closing service refuses extension requests")))))
   nil)

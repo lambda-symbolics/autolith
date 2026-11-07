@@ -1,59 +1,22 @@
 (in-package #:autolith)
 
-;;;; -- ACP Presentation --
+;;;; -- ACP Presentation of Channel Events --
 
-(defvar *acp-current-tool-call-id* nil
-  "The provider call identifier bound within one ACP tool execution.")
+;;; The channel's events reach the session on its connection's reader thread.
+;;; Each becomes the ACP update the editor expects, in the order it arrived;
+;;; an approval becomes the editor's permission request on a thread of its
+;;; own, so events keep flowing while the editor decides.
 
 (defparameter *acp-permission-timeout-seconds* 120
   "Maximum wait for an editor permission response.")
 
-(defclass acp-observer (agent-observer)
-  ((session :initarg :session :reader acp-observer-session :type acp-session
-            :documentation "The session receiving this turn's updates.")
-   (turn-sequence :initarg :turn-sequence :accessor acp-observer-turn-sequence
-                  :documentation "The durable user-message sequence qualifying tool identifiers.")
-   (streamed-text :initform (text-buffer-create) :accessor acp-observer-streamed-text :type string
-                  :documentation "Text already emitted for the current provider response.")
-   (update-buffer :reader acp-observer-update-buffer :type agentcomms:acp-update-buffer
-                  :documentation "The ordered buffer coalescing visible thought fragments.")
-   (thought-state :initform nil :accessor acp-observer-thought-state
-                  :type          (member nil :streaming :boundary)
-                  :documentation "Whether contiguous thoughts continue or cross a provider response boundary.")
-   (lock :initform (make-lock "Autolith ACP updates") :reader acp-observer-lock
-         :documentation "The lock serializing short presentation updates, never permission waits."))
-  (:documentation "An incremental ACP presentation sink with editor authorization."))
+(defparameter *acp-turn-work-kinds*
+  '(:message :command :lisp :native-lisp :operation-request :job-completion :recovery-diagnosis
+    :client-work)
+  "The kinds of channel work an editor sees as turns.")
 
-(defmethod initialize-instance :after ((observer acp-observer) &key)
-  "Bind each observer's update buffer to its session's wire envelope."
-  (let ((session (acp-observer-session observer)))
-    (setf (slot-value observer 'update-buffer)
-          (agentcomms:make-agent-update-buffer
-           (acp-session-service session) (acp-session-identifier session)))))
 
-(-> acp-observer-create (acp-session) acp-observer)
-(defun acp-observer-create (session)
-  "Create a fresh presentation sink for SESSION's next user turn."
-  (make-instance 'acp-observer :session session
-                 :turn-sequence         (conversation-next-sequence
-                                         (application-conversation (acp-session-application session)))))
-
-(-> acp-observer--send (acp-observer hash-table) null)
-(defun acp-observer--send (observer update)
-  "Send one update, including terminal tool outcomes during cancellation."
-  (let ((session (acp-observer-session observer)))
-    (unless (acp-service-closed-p (acp-session-service session))
-      (agentcomms:update-buffer-send (acp-observer-update-buffer observer) update)
-      (setf (acp-observer-thought-state observer)
-            (when (eq ':agent-thought-chunk (agentcomms:acp-update-kind update)) ':streaming))))
-  nil)
-
-(-> acp-observer-flush (acp-observer) null)
-(defun acp-observer-flush (observer)
-  "Deliver pending thoughts before a permission request or terminal prompt response."
-  (unless (acp-service-closed-p (acp-session-service (acp-observer-session observer)))
-    (agentcomms:update-buffer-flush (acp-observer-update-buffer observer)))
-  nil)
+;;;; -- Tool Identity --
 
 (-> acp-tool-identifier (integer string) string)
 (defun acp-tool-identifier (turn-sequence identifier)
@@ -80,17 +43,6 @@
      ':think)
     (t
      ':other)))
-
-(-> acp-observer--arguments (acp-observer string) hash-table)
-(defun acp-observer--arguments (observer identifier)
-  "Return the persisted provider arguments of IDENTIFIER as a JSON object."
-  (let* ((application (acp-session-application (acp-observer-session observer)))
-         (call        (find identifier (reverse (conversation-input-items
-                                                 (application-conversation application)))
-                            :key (lambda (item) (json-get item "call_id")) :test #'equal)))
-    (handler-case (json-decode (or (and call (json-get call "arguments")) "{}"))
-      (error ()
-        (json-object)))))
 
 (-> acp-tool--argument-preview (t) string)
 (defun acp-tool--argument-preview (value)
@@ -131,52 +83,48 @@
         (format nil "~A · ~A" name preview)
         name)))
 
-(-> acp-observer--tool-report
-    (acp-observer &key (:identifier string) (:title string) (:status keyword)
-                  (:arguments t) (:output (option string))) hash-table)
-(defun acp-observer--tool-report (observer &key identifier title status arguments output)
-  "Construct a tool report using the same identity for progress and authorization."
-  (agentcomms:acp-tool-call
-   (acp-tool-identifier (acp-observer-turn-sequence observer) identifier)
-   (acp-tool-title title arguments) :name title :kind (acp-tool-kind title) :status status
-   :raw-input arguments :raw-output output
-   :content (when output
-              (list (agentcomms:acp-tool-call-content (agentcomms:acp-text-content output))))))
 
-(defmethod agent-observer-text ((observer acp-observer) text)
-  "Stream assistant text and retain its length for nonstreamed response reconciliation.
+;;;; -- Sending --
 
-Empty text sends nothing: an empty message chunk would split the thought
-fragments that providers interleave with empty content deltas."
-  (acp-session-check-cancelled (acp-observer-session observer))
-  (when (plusp (length text))
-    (with-lock-held ((acp-observer-lock observer))
-      (text-buffer-append (acp-observer-streamed-text observer) text)
-      (acp-observer--send observer
-                          (agentcomms:acp-update-agent-message (agentcomms:acp-text-content text)))))
+(-> acp-session--send (acp-session hash-table) null)
+(defun acp-session--send (session update)
+  "Send one session UPDATE to the editor, coalescing thoughts."
+  (unless (acp-service-closed-p (acp-session-service session))
+    (agentcomms:update-buffer-send (acp-session-update-buffer session) update)
+    (setf (acp-session-thought-state session)
+          (when (eq ':agent-thought-chunk (agentcomms:acp-update-kind update)) ':streaming)))
   nil)
 
-(defmethod agent-observer-reasoning ((observer acp-observer) text)
-  "Stream visible reasoning, separating contiguous summaries from distinct responses."
-  (acp-session-check-cancelled (acp-observer-session observer))
-  (when (plusp (length text))
-    (with-lock-held ((acp-observer-lock observer))
-      (acp-observer--send
-       observer
-       (agentcomms:acp-update-agent-thought
-        (agentcomms:acp-text-content
-         (if (eq ':boundary (acp-observer-thought-state observer))
-             (format nil "~2%~A" text)
-             text))))))
+(-> acp-session-flush (acp-session) null)
+(defun acp-session-flush (session)
+  "Deliver pending thoughts before a permission request or a prompt's answer."
+  (unless (acp-service-closed-p (acp-session-service session))
+    (with-lock-held ((acp-session-lock session))
+      (agentcomms:update-buffer-flush (acp-session-update-buffer session))))
   nil)
 
-(-> acp-observer--plan (acp-observer) null)
-(defun acp-observer--plan (observer)
-  "Project the durable workspace plan after its native publication."
-  (let* ((session (acp-observer-session observer))
-         (plan    (plan-load (application-configuration (acp-session-application session)))))
-    (acp-observer--send
-     observer
+(-> acp-extension-notify (acp-session string &optional t) null)
+(defun acp-extension-notify (session kind &optional data)
+  "Send an ordered extension event, ignoring a connection that is gone."
+  (with-lock-held ((acp-session-extension-lock session))
+    (unless (acp-service-closed-p (acp-session-service session))
+      (handler-case
+          (agentcomms:agent-client-notify
+           (acp-session-service session) "_autolith/event"
+           (agentcomms:json-object
+            "sessionId" (acp-session-identifier session)
+            "sequence" (incf (acp-session-extension-sequence session))
+            "kind" kind "data" (or data (agentcomms:json-object))))
+        (agentcomms:acp-error ()
+          nil))))
+  nil)
+
+(-> acp-session--plan (acp-session) null)
+(defun acp-session--plan (session)
+  "Send the workspace plan as it stands."
+  (let ((plan (plan-load (acp-session-configuration session))))
+    (acp-session--send
+     session
      (agentcomms:acp-update-plan
       (when plan
         (mapcar (lambda (step)
@@ -192,155 +140,323 @@ fragments that providers interleave with empty content deltas."
                 (workspace-plan-steps plan))))))
   nil)
 
-(defmethod agent-observer-status ((observer acp-observer) status details)
-  "Translate provider and durable tool lifecycle events to ACP updates."
-  ;; Completion events must be sent before the cancelled prompt response.
-  (unless (eq status ':tool-call-completed)
-    (acp-session-check-cancelled (acp-observer-session observer)))
-  (with-lock-held ((acp-observer-lock observer))
-    (case status
-      (:user-message-persisted
-       (setf (acp-observer-turn-sequence observer) (getf details :sequence)))
-      (:provider-request-started
-       (application-idle-compaction-note-started
-        (acp-session-application (acp-observer-session observer)))
-       (text-buffer-clear (acp-observer-streamed-text observer))
-       (when (acp-observer-thought-state observer)
-         (setf (acp-observer-thought-state observer) ':boundary)))
-      (:provider-request-completed
-       (application-idle-compaction-note-completed
-        (acp-session-application (acp-observer-session observer))
-        (getf details :usage)))
-      (:assistant-response-persisted
-       (let ((text (getf details :text)) (streamed (acp-observer-streamed-text observer)))
-         (when (and (stringp text) (uiop:string-prefix-p streamed text)
-                    (< (length streamed) (length text)))
-           (acp-observer--send
-            observer (agentcomms:acp-update-agent-message
-                      (agentcomms:acp-text-content (subseq text (length streamed))))))))
-      ((:compaction-started :compaction-completed)
-       (setf (application-idle-compaction-episode
-              (acp-session-application (acp-observer-session observer))) nil))
-      (:tool-call-started
-       (acp-observer--send
-        observer
-        (agentcomms:acp-update-tool-call
-         (acp-observer--tool-report
-          observer :identifier (getf details :call-id) :title (getf details :tool)
-          :status    ':in-progress
-          :arguments (acp-observer--arguments observer (getf details :call-id))))))
-      (:tool-call-completed
-       (let ((identifier (acp-tool-identifier (acp-observer-turn-sequence observer)
-                                              (getf details :call-id)))
-             (output     (getf details :output)))
-         (acp-observer--send
-          observer
-          (agentcomms:acp-update-tool-call-progress
-           (agentcomms:acp-tool-call-update
-            identifier :status (if (getf details :success-p) ':completed ':failed)
-            :raw-output        output
-            :content           (list (agentcomms:acp-tool-call-content
-                                      (agentcomms:acp-text-content output))))))
-         (when (string= (getf details :tool) "plan.update")
-           (acp-observer--plan observer))))))
+
+;;;; -- Events --
+
+(-> acp-session-event (acp-session list) null)
+(defun acp-session-event (session event)
+  "Buffer events during initial replay, otherwise deliver each cursor exactly once."
+  (with-lock-held ((acp-session-event-lock session))
+    (if (acp-session-attaching-p session)
+        (deque-push-back (acp-session-attachment-events session) event)
+        (acp-session--consume-event session event)))
   nil)
 
-(-> acp-observer--permission (acp-observer hash-table list) (option string))
-(defun acp-observer--permission (observer report options)
-  "Request a bounded editor decision and accept only an offered option."
-  (let ((session (acp-observer-session observer)))
-    (acp-session-check-cancelled session)
-    (acp-observer-flush observer)
-    (let ((choice
-           (handler-case
-               (multiple-value-bind (outcome identifier)
-                   (agentcomms:agent-request-permission
-                    (acp-session-service session) (acp-session-identifier session)
-                    report :options options :timeout *acp-permission-timeout-seconds*)
-                 (when (and (eq outcome ':selected)
-                            (find identifier options :test #'equal
-                                  :key                     (lambda (option) (agentcomms:json-get option "optionId"))))
-                   identifier))
-             (agentcomms:acp-error ()
-               nil))))
-      (acp-session-check-cancelled session)
-      choice)))
+(-> acp-session--consume-event (acp-session list) null)
+(defun acp-session--consume-event (session event)
+  "Deliver EVENT under the event lock and advance its cursor only after processing."
+  (let* ((fields   (rest event))
+         (sequence (getf fields :sequence)))
+    (unless (and (not (eq (first event) ':checkpoint-reconnect))
+                 sequence (<= sequence (acp-session-event-sequence session)))
+      (cond
+        ((eq (first event) ':record)
+         (let* ((record          (getf fields :record))
+                (record-sequence (getf (rest record) :seq)))
+           (when (or (null record-sequence)
+                     (> record-sequence (acp-session-replay-boundary session)))
+             (if (acp-session-catch-up-p session)
+                 (acp-session--catch-up-record session record)
+                 (acp-session--dispatch-event session event)))))
+        ((and (acp-session-catch-up-p session)
+              (or (member (first event) '(:text :reasoning))
+                  (and (eq (first event) ':status)
+                       (member (getf fields :status)
+                               '(:assistant-response-persisted :tool-call-started :tool-call-completed)))))
+         nil)
+        (t
+         (when (or (eq (first event) ':work-started)
+                   (and (eq (first event) ':status)
+                        (eq (getf fields :status) ':provider-request-started)))
+           (setf (acp-session-catch-up-p session) nil))
+         (acp-session--dispatch-event session event)))
+      (when (and sequence (not (eq (first event) ':checkpoint-reconnect)))
+        (setf (acp-session-event-sequence session) sequence))))
+  nil)
 
-(-> acp-observer--approval (acp-observer string &key (:arguments hash-table) (:key t)) boolean)
-(defun acp-observer--approval (observer title &key arguments key)
-  "Ask for exact operation approval, retaining allow-always only for this session."
-  (let* ((session (acp-observer-session observer))
-         (saved   (with-lock-held ((acp-session-lock session))
-                    (gethash key (acp-session-permissions session)))))
-    (acp-session-check-cancelled session)
-    (or saved
-        (let ((choice
-               (acp-observer--permission
-                observer
-                (acp-observer--tool-report
-                 observer :identifier (or *acp-current-tool-call-id* (make-identifier))
-                 :title title :status ':pending :arguments arguments)
-                (list (agentcomms:acp-permission-option "once" "Allow once" ':allow-once)
-                      (agentcomms:acp-permission-option "session" "Allow exact operation this session" ':allow-always)
-                      (agentcomms:acp-permission-option "deny" "Reject" ':reject-once)))))
-          (when (equal choice "session")
-            (with-lock-held ((acp-session-lock session))
-              (setf (gethash key (acp-session-permissions session)) t)))
-          (and (member choice '("once" "session") :test #'equal) t)))))
+(-> acp-session--catch-up-record (acp-session list) null)
+(defun acp-session--catch-up-record (session record)
+  "Project durable transcript records for a provider request already running at attachment."
+  (if (and (eq (first record) ':message) (eq (getf (rest record) :role) ':user))
+      (progn
+        (when (integerp (getf (rest record) :seq))
+          (setf (acp-session-turn-sequence session) (getf (rest record) :seq)))
+        (acp-session--record session record))
+      (let ((update (acp-replay--record-update record (acp-session-turn-sequence session))))
+        (when update
+          (with-lock-held ((acp-session-lock session))
+            (acp-session--send session update)))))
+  nil)
 
-(defmethod agent-observer-authorize-command ((observer acp-observer) command directory)
-  "Apply native process policy with editor approval in ask mode."
-  (let* ((session     (acp-observer-session observer))
-         (application (acp-session-application session)))
-    (acp-session-check-cancelled session)
-    (case (acp-session-mode session)
-      (:full-access
-       ':full-access)
-      (:sandboxed
-       (if (application--command-sandbox-available-p) ':sandboxed ':deny))
-      (:auto
-       (application--automatic-command-decision
-        (nth-value 0
-                   (permissions-model-classify-command
-                    command directory :provider (application-provider application)
-                    :configuration              (application-configuration application)
-                    :sandbox-available-p        (application--command-sandbox-available-p)))))
-      (otherwise
-       (if (acp-observer--approval observer "shell.run"
-                                   :arguments (json-object "command" command
-                                                           "directory" (namestring directory))
-                                   :key       (list ':command command (namestring directory)))
-           ':full-access
-           ':deny)))))
+(-> acp-session--dispatch-event (acp-session list) null)
+(defun acp-session--dispatch-event (session event)
+  "Present one admitted channel EVENT to the editor."
+  (let ((fields (rest event)))
+    (case (first event)
+      (:text
+       (acp-session--text session (getf fields :delta)))
+      (:reasoning
+       (acp-session--reasoning session (getf fields :delta)))
+      (:status
+       (acp-session--status session (getf fields :status) (getf fields :details)))
+      (:present
+       (let ((text (getf fields :text)))
+         (when (non-empty-string-p text)
+           (with-lock-held ((acp-session-lock session))
+             (acp-session--send session (agentcomms:acp-update-agent-message
+                                         (agentcomms:acp-text-content text)))))))
+      (:record
+       (acp-session--record session (getf fields :record)))
+      (:approval
+       (make-thread (lambda () (acp-session--approve session fields))
+                    :name "Autolith ACP approval"))
+      (:work-started
+       (acp-session--work-started session fields))
+      (:work-finished
+       (acp-session--work-finished session fields))
+      (:state
+       (acp-session--state session (getf fields :state)))
+      (:checkpoint-reconnect
+       (acp-session--checkpoint-reconnect session fields))
+      (:closed
+       (acp-session--connection-closed session))))
+  nil)
 
-(defmethod agent-observer-authorize-tool ((observer acp-observer) tool arguments)
-  "Apply the editor session's policy without granting local sandboxing to MCP."
-  (let* ((session     (acp-observer-session observer))
-         (application (acp-session-application session)))
-    (acp-session-check-cancelled session)
-    (case (acp-session-mode session)
-      (:full-access
-       ':allow)
-      (:auto
-       (if (eq (nth-value
-                0
-                (application--model-command-permission
-                 application
-                 (application--tool-authorization-request tool arguments)
-                 (config :working-directory (application-configuration application))
-                 :sandbox-available-p nil))
-               ':full-access)
-           ':allow
-           ':deny))
-      (otherwise
-       (if (acp-observer--approval
-            observer (tool-display-name tool)
-            :arguments arguments
-            :key       (list ':tool (application--tool-permission-key tool arguments)))
-           ':allow
-           ':deny)))))
+(-> acp-session--text (acp-session t) null)
+(defun acp-session--text (session text)
+  "Stream assistant TEXT, keeping what was sent to complete a nonstreamed response.
 
-(defmethod agent-observer-call-with-tool-execution ((observer acp-observer) identifier function)
-  "Own tool workers and propagate ACP session bindings and permission identity."
-  (let ((*acp-current-tool-call-id* identifier))
-    (acp-session--call-with-tool (acp-observer-session observer) function)))
+Empty text sends nothing: an empty message chunk would split the thought
+fragments that providers interleave with empty content deltas."
+  (when (and (stringp text) (plusp (length text)))
+    (with-lock-held ((acp-session-lock session))
+      (text-buffer-append (acp-session-streamed-text session) text)
+      (acp-session--send session (agentcomms:acp-update-agent-message (agentcomms:acp-text-content text)))))
+  nil)
+
+(-> acp-session--reasoning (acp-session t) null)
+(defun acp-session--reasoning (session text)
+  "Stream visible reasoning, separating summaries of distinct provider responses."
+  (when (and (stringp text) (plusp (length text)))
+    (with-lock-held ((acp-session-lock session))
+      (acp-session--send
+       session
+       (agentcomms:acp-update-agent-thought
+        (agentcomms:acp-text-content
+         (if (eq ':boundary (acp-session-thought-state session))
+             (format nil "~2%~A" text)
+             text))))))
+  nil)
+
+(-> acp-session--status (acp-session t list) null)
+(defun acp-session--status (session status details)
+  "Translate the channel's provider and tool lifecycle STATUS into ACP updates."
+  (with-lock-held ((acp-session-lock session))
+    (case status
+      (:user-message-persisted
+       (let ((sequence (getf details :sequence)))
+         (when (integerp sequence)
+           (setf (acp-session-turn-sequence session) sequence))))
+      (:provider-request-started
+       (text-buffer-clear (acp-session-streamed-text session))
+       (when (acp-session-thought-state session)
+         (setf (acp-session-thought-state session) ':boundary)))
+      (:assistant-response-persisted
+       (let ((text     (getf details :text))
+             (streamed (acp-session-streamed-text session)))
+         (when (and (stringp text) (uiop:string-prefix-p streamed text)
+                    (< (length streamed) (length text)))
+           (acp-session--send session (agentcomms:acp-update-agent-message
+                                       (agentcomms:acp-text-content (subseq text (length streamed))))))))
+      (:tool-call-started
+       (let ((identifier (getf details :call-id))
+             (name       (getf details :tool))
+             (arguments  (handler-case (json-decode (or (getf details :arguments) "{}"))
+                           (error ()
+                             (json-object)))))
+         (setf (acp-session-tool-call session) identifier)
+         (acp-session--send
+          session
+          (agentcomms:acp-update-tool-call
+           (agentcomms:acp-tool-call
+            (acp-tool-identifier (acp-session-turn-sequence session) identifier)
+            (acp-tool-title name arguments)
+            :name name :kind (acp-tool-kind name) :status ':in-progress :raw-input arguments)))))
+      (:tool-call-completed
+       (let ((output (getf details :output)))
+         (acp-session--send
+          session
+          (agentcomms:acp-update-tool-call-progress
+           (agentcomms:acp-tool-call-update
+            (acp-tool-identifier (acp-session-turn-sequence session) (getf details :call-id))
+            :status     (if (getf details :success-p) ':completed ':failed)
+            :raw-output output
+            :content    (list (agentcomms:acp-tool-call-content
+                               (agentcomms:acp-text-content (or output "")))))))
+         (when (equal (getf details :tool) "plan.update")
+           (acp-session--plan session))))))
+  (case status
+    (:provider-request-completed
+     (acp-extension-notify session "state"))
+    (:compaction-completed
+     (acp-extension-notify session "compaction"))
+    (:tool-call-completed
+     (acp-extension-notify session "jobs")))
+  nil)
+
+(-> acp-session--record (acp-session t) null)
+(defun acp-session--record (session record)
+  "Show user messages except live prompts already displayed by this editor."
+  (when (and (consp record)
+             (eq (first record) ':message)
+             (eq (getf (rest record) :role) ':user)
+             (not (getf (rest record) :automatic-p)))
+    (let* ((fields     (rest record))
+           (submission (getf fields :submission))
+           (content    (getf fields :content)))
+      (unless (and (equal (getf submission :client) (acp-session-client-identifier session))
+                   (equal (getf submission :source) "prompt"))
+        (when (stringp content)
+          (with-lock-held ((acp-session-lock session))
+            (acp-session--send session (agentcomms:acp-update-user-message
+                                        (agentcomms:acp-text-content content))))))))
+  nil)
+
+(-> acp-session--work-started (acp-session list) null)
+(defun acp-session--work-started (session fields)
+  "Open the editor's turn using the channel's admitted work metadata."
+  (let ((kind (getf fields :kind)))
+    (when (member kind *acp-turn-work-kinds*)
+      (let ((turn nil))
+        (with-lock-held ((acp-session-lock session))
+          (setf turn (cons (incf (acp-session-epoch session))
+                           (case kind
+                             (:message
+                              (or (getf (getf fields :submission) :source) "prompt"))
+                             (:job-completion
+                              "completion")
+                             (:client-work
+                              "invoke")
+                             (t
+                              "prompt")))
+                (acp-session-turn session) turn))
+        (acp-extension-notify session "turn"
+                              (agentcomms:json-object "state" "running" "epoch" (first turn)
+                                                      "source" (rest turn) "outcome" ':null))
+        (acp-extension-notify session "state"))))
+  nil)
+
+(-> acp-session--work-finished (acp-session list) null)
+(defun acp-session--work-finished (session fields)
+  "Close the open turn and settle only a matching editor submission."
+  (let ((outcome (case (getf fields :outcome)
+                   (:cancelled
+                    ':cancelled)
+                   (:failed
+                    ':condition)
+                   (t
+                    ':end-turn)))
+        (turn    nil))
+    (with-lock-held ((acp-session-lock session))
+      (let ((submission (getf fields :submission)))
+        (when (and (acp-session-prompt-submission session)
+                   (equal (getf submission :id) (acp-session-prompt-submission session))
+                   (equal (getf submission :client) (acp-session-client-identifier session)))
+          (setf (acp-session-prompt-outcome session) outcome)))
+      (when (member (getf fields :kind) *acp-turn-work-kinds*)
+        (setf turn                               (acp-session-turn session)
+              (acp-session-turn session)         nil
+              (acp-session-last-outcome session) outcome))
+      (when (getf fields :idle-p)
+        (incf (acp-session-idle-count session)))
+      (sb-thread:condition-broadcast (acp-session-condition-variable session)))
+    (when turn
+      (acp-session-flush session)
+      (acp-extension-notify session "turn"
+                            (agentcomms:json-object "state" "idle" "epoch" (first turn)
+                                                    "source" (rest turn)
+                                                    "outcome" (string-downcase (symbol-name outcome))))
+      (acp-extension-notify session "state")))
+  nil)
+
+(-> acp-session--state (acp-session t) null)
+(defun acp-session--state (session state)
+  "Follow the channel's permission mode, telling the editor when it changed."
+  (let ((mode (and (consp state) (getf (rest state) :permission-mode))))
+    (when (and (keywordp mode)
+               (with-lock-held ((acp-session-lock session))
+                 (unless (eq mode (acp-session-mode session))
+                   (setf (acp-session-mode session) mode)
+                   t)))
+      (handler-case
+          (agentcomms:agent-send-update (acp-session-service session) (acp-session-identifier session)
+                                        (agentcomms:acp-update-current-mode
+                                         (string-downcase (symbol-name mode))))
+        (agentcomms:acp-error ()
+          nil))))
+  (acp-extension-notify session "state")
+  nil)
+
+
+;;;; -- Approvals --
+
+(-> acp-session--permission-option (list) hash-table)
+(defun acp-session--permission-option (option)
+  "Return the editor's permission option for the channel's approval OPTION."
+  (let ((value       (getf option :value))
+        (description (or (getf option :description) (getf option :value))))
+    (cond
+      ((equal value "once")
+       (agentcomms:acp-permission-option value "Allow once" ':allow-once))
+      ((equal value "deny")
+       (agentcomms:acp-permission-option value "Reject" ':reject-once))
+      (t
+       (agentcomms:acp-permission-option value description ':allow-always)))))
+
+(-> acp-session--approve (acp-session list) null)
+(defun acp-session--approve (session approval)
+  "Ask the editor to decide the channel's APPROVAL and answer it, denying when the editor does not choose."
+  (let* ((options (getf approval :options))
+         (values  (mapcar (lambda (option) (getf option :value)) options))
+         (kind    (getf approval :kind))
+         (title   (or (getf approval :title) "approval"))
+         (report  (with-lock-held ((acp-session-lock session))
+                    (agentcomms:acp-tool-call
+                     (acp-tool-identifier (acp-session-turn-sequence session)
+                                          (or (acp-session-tool-call session) (make-identifier)))
+                     title
+                     :name      title
+                     :kind      (if (eq kind ':command) ':execute ':other)
+                     :status    ':pending
+                     :raw-input (agentcomms:json-object "request" (or (getf approval :entry) title)))))
+         (choice  nil))
+    (acp-session-flush session)
+    (setf choice
+          (handler-case
+              (multiple-value-bind (outcome identifier)
+                  (agentcomms:agent-request-permission
+                   (acp-session-service session) (acp-session-identifier session) report
+                   :options (mapcar #'acp-session--permission-option options)
+                   :timeout *acp-permission-timeout-seconds*)
+                (and (eq outcome ':selected)
+                     (find identifier values :test #'equal)))
+            (agentcomms:acp-error ()
+              nil)))
+    (handler-case (acp-session-call session ':answer
+                                    :approval (getf approval :id)
+                                    :value    (or choice (if (member "deny" values :test #'equal)
+                                                             "deny"
+                                                             (first (last values)))))
+      (agentcomms:acp-state-error ()
+        nil)))
+  nil)

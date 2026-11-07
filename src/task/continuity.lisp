@@ -68,6 +68,8 @@ explicit safety declaration; admission alone grants no replay authority."
                :parent-call-id         (session-job-parent-call-id job)
                 :completion-owner-conversation
                 (session-job-completion-owner-conversation job)
+                :completion-owner-participant
+                (session-job-completion-owner-participant job)
                 :completion-policy     (session-job-completion-policy job)
                 :completion-mission-id (session-job-completion-mission-id job)
                 :detached-p            (session-job-detached-p job)

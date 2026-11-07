@@ -658,6 +658,85 @@
      "nonmodal resume calls do not consume the interactive startup offer"))
   nil)
 
+(-> test-switch-command-direct () null)
+(defun test-switch-command-direct ()
+  "Test (switch) resuming the named conversation in place when no server hosts the session."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (unwind-protect
+         (let* ((configuration (application-configuration application))
+                (other         (conversation-create configuration :identifier "switchtarget"))
+                (resumed       nil)
+                (presented     nil))
+           (conversation-append-user-message (application-conversation application) "stay")
+           (conversation-append-user-message other "go")
+           (test-call-with-function-replacements
+            (list (list 'application-resume-conversation
+                        (lambda (candidate identifier)
+                          (declare (ignore candidate))
+                          (push identifier resumed)))
+                  (list 'application-render-records
+                        (lambda (candidate) (declare (ignore candidate)) nil))
+                  (list 'application-present
+                        (lambda (candidate entry &key identifier)
+                          (declare (ignore candidate identifier))
+                          (push entry presented))))
+            (lambda ()
+              (application--builtin-switch-command application "switchtar")
+              (test-assert (and (equal resumed '("switchtarget"))
+                                (search "Switched to" (first presented)))
+                           "a direct session resumes the channel a unique fragment names")
+              (application--builtin-switch-command application "operation-surf")
+              (test-assert (and (equal resumed '("switchtarget"))
+                                (search "already" (first presented)))
+                           "the current channel is reported without a resume")
+              (test-assert (handler-case
+                               (progn (application--builtin-switch-command application "zzzz") nil)
+                             (world-error () t))
+                           "an unknown channel is refused"))))
+      (tool-registry-close-runtime-state (application-tool-registry application))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-rename-command () null)
+(defun test-rename-command ()
+  "Test (rename) naming this channel's agent or a designated participant for @mentions."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (unwind-protect
+         (let ((presented nil))
+           (conversation-append-user-message (application-conversation application) "stay")
+           (test-call-with-function-replacements
+            (list (list 'application-present
+                        (lambda (candidate entry &key identifier)
+                          (declare (ignore candidate identifier))
+                          (push entry presented))))
+            (lambda ()
+              (application--builtin-rename-command application "helper")
+              (test-assert (search "to @helper." (first presented))
+                           "without a target the channel's agent is renamed")
+              (application--builtin-rename-command application "helper" "worker")
+              (test-assert (search "Renamed @helper to @worker." (first presented))
+                           "a participant is designated by its name")
+              (application--builtin-rename-command application "user" "lukas")
+              (test-assert (search "Renamed @user to @lukas." (first presented))
+                           "the person can take a name too")
+              (test-assert (handler-case
+                               (progn (application--builtin-rename-command application "bad name")
+                                      nil)
+                             (world-error () t))
+                           "a name that no @mention could use is refused")
+              (test-assert (handler-case
+                               (progn (application--builtin-rename-command application "nobody" "x")
+                                      nil)
+                             (world-error () t))
+                           "an unknown participant is refused"))))
+      (tool-registry-close-runtime-state (application-tool-registry application))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-call-with-typed-control-application (function) null)
 (defun test-call-with-typed-control-application (function)
   "Call FUNCTION with an isolated public-operation application and observed service actions."
@@ -1019,7 +1098,7 @@
             (not echo-disabled-p)
             (= descriptor 7))
        "stream terminals expose their direct authentication streams")))
-  (let ((terminal (localgroup-terminal-create nil)))
+  (let ((terminal (localgroup-terminal-create)))
     (multiple-value-bind
           (input output stop-ui-p echo-disabled-p descriptor)
         (terminal-authentication-streams terminal)

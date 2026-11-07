@@ -298,6 +298,35 @@ structured type and message survive the round trip."
                                         generation
                                         :probe-runner probe-runner)))
 
+(-> generation-restart-publish (configuration pathname) null)
+(defun generation-restart-publish (configuration envelope)
+  "Publish the exact-heap restart core that the launcher's restart ENVELOPE describes.
+
+The process that saved its heap wrote ENVELOPE just before the save, naming
+the reserved generation and its final metadata. The launcher runs this
+between that process's exit and the boot of the saved core."
+  (let* ((record (handler-case (snapshot-read envelope)
+                   (error ()
+                     nil)))
+         (fields (and (consp record) (eq (first record) ':autolith-restart) (rest record))))
+    (unless (and fields
+                 (eql (getf fields :version) 1)
+                 (non-empty-string-p (getf fields :identifier))
+                 (integerp (getf fields :created-at))
+                 (listp (getf fields :metadata)))
+      (error 'checkpoint-error
+             :message  "The restart envelope is missing or invalid."
+             :stage    ':publish
+             :pathname envelope))
+    (generation-publish configuration
+                        (with-generation-errors
+                          (sbcl-generations:generation-recreate-pending
+                           (generation-store-for configuration)
+                           :identifier (getf fields :identifier)
+                           :created-at (getf fields :created-at)
+                           :metadata   (getf fields :metadata)))))
+  nil)
+
 (-> generation-request-rollback (configuration string) null)
 (defun generation-request-rollback (configuration identifier)
   "Select retained generation IDENTIFIER and request an immediate rollback."
@@ -358,22 +387,30 @@ structured type and message survive the round trip."
   "Leave unrecognized checkpoint STATE unchanged."
   state)
 
+(defvar *main-direct-start-p* nil
+  "Whether a start runs its session in this process instead of a world server's channel.
+
+A booted generation resumes its saved session this way, as recovery does,
+apart from the world server.")
+
 (-> checkpoint-resume-main (list) null)
 (defun checkpoint-resume-main (arguments)
-  "Resume the saved session by its persisted conversation identity."
+  "Run a booted saved core: serve its world server again after a restart, or resume its saved session.
+
+A world server that saved this heap to restart from it serves its channels
+again when its launcher boots the core for that restart. Any other boot,
+such as a rollback, resumes the active application's conversation by its
+persisted identity, in this process."
+  (let ((restart (world-server-restart-claim)))
+    (when restart
+      (uiop:quit (world-server-restart-resume restart))))
   (let* ((application  (and (boundp '*active-application*)
                             (symbol-value '*active-application*)))
          (conversation (and application (application-conversation application)))
          (identifier   (and conversation (conversation-identifier conversation))))
     (if (non-empty-string-p identifier)
-        (let ((previous (uiop:getenv "AUTOLITH_SESSION_STYLE")))
-          (unwind-protect
-               (progn
-                 (platform-set-environment-variable
-                  *platform* "AUTOLITH_SESSION_STYLE" "direct")
-                 (main (list "resume" identifier)))
-            (platform-set-environment-variable
-             *platform* "AUTOLITH_SESSION_STYLE" previous)))
+        (let ((*main-direct-start-p* t))
+          (main (list "resume" identifier)))
         (main arguments))))
 
 (-> checkpoint--source-snapshot (configuration) string)
@@ -549,13 +586,16 @@ quiescence, metadata, and probe hooks."
            (tool-registry-resume-runtime-state
             tool-registry :tools quiesced-runtime-tools)))))))
 
-(-> checkpoint-restart-save (checkpoint-backend generation) null)
-(defun checkpoint-restart-save (backend generation)
+(-> checkpoint-restart-save
+    (checkpoint-backend generation &key (:ready-function (option function)))
+    null)
+(defun checkpoint-restart-save (backend generation &key ready-function)
   "Persist the restart envelope and save BACKEND's exact heap.
 
 The launcher owns the envelope pathname through AUTOLITH_RESTART_POINTER.  The
 ready callback writes the final generation metadata only after validation at the
-real save boundary, then the library saves and exits.  A missing pointer is a
+real save boundary, then calls READY-FUNCTION, when supplied, with the final
+generation, and the library saves and exits.  A missing pointer is a
 configuration error rather than a silent restart without publication."
   (let ((pointer (uiop:getenv "AUTOLITH_RESTART_POINTER")))
     (unless (non-empty-string-p pointer)
@@ -577,7 +617,9 @@ configuration error rather than a silent restart without publication."
                            final-generation)
               :metadata   (copy-list
                            (sbcl-generations:generation-metadata
-                            final-generation))))))))
+                            final-generation))))
+       (when ready-function
+         (funcall ready-function final-generation))))))
 
 (-> checkpoint-create (checkpoint-backend) generation)
 (defun checkpoint-create (backend)
@@ -606,25 +648,33 @@ configuration error rather than a silent restart without publication."
   "Begin a validated checkpoint of CONTEXT's active image."
   (declare (ignore tool arguments))
   (let* ((configuration (tool-context-configuration context))
+         (application   (and (boundp '*active-application*)
+                            (symbol-value '*active-application*)))
          (backend       (checkpoint-backend-create
                          configuration
                          (tool-context-worker context)
                          :tool-registry (tool-context-registry context)))
-         (generation    (checkpoint-create backend))
-         (application   (and (boundp '*active-application*)
-                            (symbol-value '*active-application*))))
-    (if (and (platform-supports-p *platform* ':restartable-image-saver)
-             (typep application 'application))
-        (progn
-          (setf (application-checkpoint-restart-request application)
-                (cons backend generation))
-          (tool-success
-           (format nil "Exact heap checkpoint ~A is scheduled after this turn; Autolith will restart and resume the current session."
-                   (generation-identifier generation))))
-        (tool-success
-         (format nil "Checkpoint ~A is being published by coordinator process ~D."
-                 (generation-identifier generation)
-                 (generation-coordinator-pid generation))))))
+         (hosted-p      (and (typep application 'application)
+                             (application-hosted-p application)))
+         (generation    (if hosted-p
+                            nil
+                            (checkpoint-create backend))))
+    (cond
+      (hosted-p
+       (tool-success (world-server-checkpoint application backend)))
+      ((and (platform-supports-p *platform* ':restartable-image-saver)
+            (typep application 'application))
+       (progn
+         (setf (application-checkpoint-restart-request application)
+               (cons backend generation))
+         (tool-success
+          (format nil "Exact heap checkpoint ~A is scheduled after this turn; Autolith will restart and resume the current session."
+                  (generation-identifier generation)))))
+      (t
+       (tool-success
+        (format nil "Checkpoint ~A is being published by coordinator process ~D."
+                (generation-identifier generation)
+                (generation-coordinator-pid generation)))))))
 
 (defmethod tool-execute ((tool self-generations-tool)
                          (context tool-context)

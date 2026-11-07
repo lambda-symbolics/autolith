@@ -11,6 +11,12 @@
 - Use ordinary channel messages for human/agent, agent/agent, and parent/child work.
   Child agents become directly inspectable participants in the same world.
 - Client channel selection is separate from participant residence and subscription.
+  The person resides in their own inbox channel, as an agent resides in its
+  channel. A terminal views any channel and the person can post there, but
+  viewing or taking control moves nobody. A mention of the person lands in the
+  inbox with a way to follow it to the channel it came from: a link in the
+  fullscreen interface, a Lisp form to evaluate in the plain one.
+  (Decided 2026-11-05.)
 - Migrate each existing session into a channel plus an agent-operated participant,
   placing history/CWD on the channel and private state on the participant.
 
@@ -88,14 +94,48 @@ Client
 
 * Channels and participants
 
-- Each participant resides in exactly one channel. A channel may have zero or more
-  residents, human or agent. Subscription is independent of residence.
+- Each participant resides in at most one channel. A channel has at most one
+  resident agent, the person when they are there, and any number of
+  subscribers. Subscription is independent of residence. (Decided 2026-11-04.)
 - Only the user can move existing participants in the MVP.
   - Move the selected participant into the destination's resident set and remove
     it from the source's. Other residents do not move; there is no automatic swap.
+  - Moving an agent into a channel that already has a resident agent is refused.
+  - A move stops the agent at the next safe boundary, the one steering uses: the
+    tool call in flight finishes, no new request starts, and its unstarted queue
+    is dropped with a notice in the channel it leaves. In the destination it stays
+    idle until the person writes there (as the channel's only agent, a plain
+    message is addressed to it) or someone mentions it from another channel.
+    (Decided 2026-11-04.)
+  - Moves and dismissals run one at a time across processes. The agent's
+    context and goal are written to disk, with their destination, before the
+    world records the move. A failure before that point changes nothing. After
+    it, the move stands, and the destination takes the context up exactly once,
+    when it next opens or before the agent's next turn there.
+  - Moving or dismissing a child agent whose task still runs in its parent's
+    task pool interrupts it: the task is cancelled, the parent receives that
+    result, and the child goes with the context it had. The tasks of the
+    child's own children go on. (Decided 2026-11-06.)
+  - An agent whose channel a pristine or recovery session holds open cannot be
+    moved or dismissed: such a session runs apart from the server on purpose.
+  - A channel with no resident agent, because its agent left or was parked,
+    keeps its history, the person and its subscribers. Opening it offers two
+    things: move an agent in, or create a new domestic agent for it.
+    (Decided 2026-11-04.) Until one arrives, no agent turn runs there: no
+    message, mission wakeup or job completion starts one.
+  - Dismissing an agent parks it: it is stopped the way a move stops it and
+    then resides in no channel. A parked, homeless agent keeps its identity,
+    its children and the context it carries, and a move brings it into a
+    channel again. An agent with children may be parked; parking never
+    affects its children. (Decided 2026-11-04.)
 - Participants can discover, inspect, read, subscribe to, and message other channels
   and participants across the world, including across projects.
 - Participant parent/child relationships are separate from channel nesting.
+- Agents are one kind of participant. There are no sub-agents: an agent has a
+  parent and may have children, and "parent agent" and "child agent" describe
+  only that relationship. Any agent may create child agents, a child as well
+  as a top-level agent; how deep the tree grows and how many agents run at once
+  are both capped. (Decided 2026-11-04.)
 - Ownership, residence, and subscription are distinct relationships.
 - Preserve human control over the participant tree; detaching/reparenting must not
   leave participants outside that control. Exact descendant controls need specification.
@@ -106,6 +146,18 @@ Client
   - These belong to humans and agents alike and follow the participant when moved.
   - Context is private working material, subject to compaction, rather than simply
     the history of the currently displayed channel.
+  - A moved agent keeps its context window: its requests in the destination
+    continue from the context it brought, then the destination's records from
+    the move on, with a request-local notice of the move. The destination's
+    earlier history is not pushed into its context; it reads it through the
+    channel resource. (Decided 2026-11-04.) The destination records the context
+    it adopts, so the agent keeps it across restarts. A parked agent's context
+    waits on disk until a move brings it into a channel.
+  - An agent's goal or mission goes with it when it moves or is parked. The
+    channel it leaves keeps no goal, and a new resident there starts without
+    one. A running mission arrives paused until =(mission :resume)=. The jobs
+    the mission admitted in the channel left are cancelled, since they worked
+    for the agent's mission and not for the channel.
   - Plans and goals stay separate.
   - A new participant inherits no private state from previous channel residents.
 - Channel: CWD, history, jobs started there.
@@ -125,10 +177,31 @@ Client
   - Inspect a child's channel through the same interface as any other channel.
 - Messages sent to a channel reach its residents and subscribers through the same delivery path.
 - Reading history does not subscribe the reader; subscriptions deliver future messages.
-- Mentions deliver across channels without creating a subscription.
+  Every ordinary message said in a channel, the person's and the agent's reply,
+  reaches its subscribers elsewhere as a copy labeled by the subscription; a
+  message is shared when the person submits it, so a replayed turn sends no
+  second copy.
+- Mentions deliver across channels without creating a subscription. A mention
+  starts a word: an =@= inside an address or a path mentions nobody.
+- =@parent= names the sender's parent. When that parent is parked, the
+  message goes to the nearest ancestor agent that is not, and to the person
+  when no such agent is left. (Decided 2026-11-04.)
+- A copy that arrives from another channel shows in the transcript as one compact
+  line, "@name mentioned from #channel" (the same for a subscription copy); its
+  text goes only to the model's request and stays readable in the inbox and the
+  channel resource. (Decided 2026-11-04.)
+- A message that mentions the person in a channel they subscribe to reaches
+  the inbox once, as the mention notice with its text, not as a subscription
+  copy.
 - Deliver human and agent messages through the same participant interface.
   - Agent clients trigger inference; human clients present the messages to the user.
   - Working agent recipient: deliver as a clearly labeled steer with sender and source channel.
+- Explicit sends between agents have no hop limit or rate limit until a loop is
+  seen in practice; every delivery names its sender and source channel, since a
+  child may well receive several steering messages from its parent. A channel
+  message carries no authority of its own: the recipient acts under its own
+  permission mode and approvals, a child's report to its parent included.
+  (Decided 2026-11-05.)
 - Other participants' tool calls, results, and execution activity do not trigger inference.
 - Idle agents yield until a message or job completion requires work, without polling.
 - Human and agent clients set their own participant presence. Agent clients also expose
@@ -144,13 +217,20 @@ Client
   another helper agent or a separate child communication model.
 - Creating a child with its initial residence is distinct from moving an existing participant.
 - The parent can read or steer the child without subscribing to all its activity.
+- A child's agent is the resident of its nested channel and uses the channel
+  tools like any participant, under its role's ordinary tool policy: it sends,
+  subscribes and unsubscribes as itself. (Decided 2026-11-04.)
 - Notify the parent of completion using the same channel-bound job routing.
 - Jobs stay in their starting channel when participants move. Jobs cannot be detached
   from that channel.
-- Deliver completion to that channel's current residents, including new arrivals;
-  wake their agent clients and notify their human clients. An empty channel has no
-  resident to wake. Completion does not follow departed participants.
-- Moving or deleting a participant does not cancel channel-owned jobs.
+- Record each completion in its channel, where its residents and the channel
+  resource can read it. A completion wakes only the agent that started the job,
+  and only while that agent still resides there. A new arrival is not woken by
+  its predecessor's jobs, and a channel without an agent runs nothing.
+  Completion does not follow departed participants.
+- Moving or deleting a participant does not cancel channel-owned jobs. Jobs a
+  mission admitted belong to the mission and are cancelled when the mission
+  leaves with its agent.
 - Running jobs block deletion of their channel and state required by the operation,
   not removal of participants merely because they reside there.
 
@@ -160,6 +240,9 @@ Client
   memories, subject to the memory-transfer choice below.
 - Residence is not ownership. Before deleting a channel, move its residents or
   explicitly include them in deletion; do not implicitly delete other participants.
+  Deleting a participant takes its descendants with it, so every descendant of a
+  listed resident, wherever it lives, must be listed too or moved first; the
+  deletion is refused before anything is written otherwise.
 - Delete only unreferenced history. Retain referenced history and keep existing
   references resolvable after channel deletion.
 - Working choice: move a deleted participant's memories into the global store,
@@ -169,24 +252,57 @@ Client
 * Server and clients
 
 - One server hosts one authoritative world across projects.
+- Only the world server runs the agents of world channels. Terminals, editors
+  over ACP, piped scripts and later web, GUI or phone clients are clients of
+  it. A start that cannot reach the server ends with the reason. Only pristine
+  and recovery sessions, which must work when the server's image is damaged,
+  run apart from it. (Decided 2026-11-06.)
+- Clients other than terminals follow a channel through one structured client
+  protocol of portable plists, never JSON: the channel's records, turn
+  output, approvals and state go out; submissions, cancellation, approval
+  answers, mode changes and operations come back. An approval goes to the
+  terminal and every client at once, and the first answer wins. (Decided
+  2026-11-06.)
+- The server's image runs with a 2 GB heap, since it hosts every channel.
+  (Decided 2026-11-06.)
 - Extend the existing client-server architecture from 1:1 to N:1.
 - Reuse the existing localgroup server lifecycle machinery for shared-world commands.
 - The first client starts the server if needed; later clients connect to the same world.
 - Each client has an independent interface to shared channels; several clients may
   inspect and interact with the same channel.
 - At startup, select the latest-touched channel matching the client's launch CWD,
-  or offer to create a new channel there.
+  or offer to create a new channel there. Latest touched means the newest
+  conversation file write time. Whether the server holds the channel in memory
+  or its agent is working does not count. The sidebar uses the same order.
+  (Decided 2026-11-05.)
+- A checkpoint waits until no agent in any channel is working and no job is
+  running, and jobs that would start while it waits are held until it ends.
+  (Decided 2026-11-05.)
+- On Windows, which cannot fork, a checkpoint restarts the whole world server
+  from its saved heap, and every channel resumes. While the server is gone, a
+  marker naming its launcher makes clients wait instead of starting a second
+  server. (Decided 2026-11-06.)
+- The world store appends each change to its log rather than rewriting it;
+  rewrites happen only for repair and explicit compaction. (Decided 2026-11-05.)
 - Each channel has its own CWD, independent of the server's launch directory.
 
 * Implementation details left
 
-- Message ordering, batching, deduplication, and self-message handling.
-- Atomic residence moves and their boundaries during inference, tool calls,
-  and job completion; delivery ordering for multiple residents.
-- Ownership, descendant controls, and reference cleanup on deletion.
+- Checkpointing may need a new design now that one process hosts every
+  channel: a checkpoint pauses all of them, and on Windows restarts them all.
+- Message ordering, batching, deduplication, and self-message handling beyond
+  the sharing and receipt rules above.
+- The exact mention syntax beyond the word boundary rule: escaping, quoted text
+  and code blocks.
+- Ownership, descendant controls, and reference cleanup on deletion; whether the
+  working memory-transfer choice above stands.
+- Whether startup offers to create a channel when no channel matches the launch
+  directory, or creates one.
+- Independent terminal views: how a smaller observer sees a shared frame, and
+  whether unread and mention counts are per terminal only, as today, or kept.
 - Memory transfer, history-reference tracking, and retention of referenced history.
 - N:1 startup, reconnection, persistence, concurrent updates, and shared-image mutation.
-- CWD matching and the meaning of "latest touched".
+- CWD matching.
 - Channel URI addressing, bounded-history schema, and supported resource edits.
 - Exact migration fields, freshness comparison, reconciliation triggers, and removal
   of existing 1:1 session assumptions.

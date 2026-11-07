@@ -39,9 +39,9 @@
          (lambda ()
            (reject "b" nil)
            (save "b6uouHJ" "First workspace task")
-           (dolist (prefix '("b" "b-" "b6" "b-6" "b6uouHJ" "b-6uouHJ"))
+           (dolist (prefix '("b" "B" "b-" "b6" "b-6" "uou" "UOUHJ" "b6uouHJ" "b-6uouHJ"))
              (select prefix "b6uouHJ"))
-           (dolist (prefix '("" "B" "b--6" "b6uouHJx" "../b" "*"))
+           (dolist (prefix '("" "b--6" "b6uouHJx" "../b" "*"))
              (reject prefix nil))
            (save "b6uouHK" "Second workspace task")
            (let ((empty (conversation-create configuration :identifier "b6uouHL")))
@@ -69,12 +69,13 @@
            (save "abcdef234567" "Legacy second task")
            (dolist (case '(("abcdef1" "abcdef1")
                            ("a-bcdef1" "abcdef1")
-                           ("a-b" "abcdef1")
                            ("abcdef12" "abcdef123456")
+                           ("DEF12" "abcdef123456")
                            ("ABCDEF12" "abcdef123456")
                            ("ABCDEF123456" "abcdef123456")))
              (select (first case) (second case)))
-           (reject "ABC" '("abcdef123456" "abcdef234567"))
+           (reject "ABC" '("abcdef1" "abcdef123456" "abcdef234567"))
+           (reject "a-b" '("abcdef1" "abcdef123456" "abcdef234567"))
            (let ((identifiers
                    (loop for character across "ABCDEFGHJKLMNPQR"
                          collect (format nil "z1234~Cz" character))))
@@ -88,7 +89,7 @@
 
 (-> test-cli-detached-dispatch () null)
 (defun test-cli-detached-dispatch ()
-  "Exercise parsed detached starts, live reuse, receipts, and rejected options."
+  "Exercise parsed detached starts in the world server and in a rescue process, live reuse, receipts, and rejected options."
   (with-test-configuration (configuration)
     (configuration-ensure-directories configuration)
     (let* ((identifier  "b6uouHJ")
@@ -96,6 +97,7 @@
                               :session-id identifier :pid 424242))
            (live-p      nil)
            (spawned     nil)
+           (opened      nil)
            (attached    nil)
            (operations  nil)
            (spawn-error nil)
@@ -125,7 +127,13 @@
             (list 'localgroup-endpoint-records
                   (lambda (configuration)
                     (declare (ignore configuration))
-                    (when (or live-p spawned) (list record))))
+                    (when (or live-p spawned opened) (list record))))
+            (list 'world-client-open
+                  (lambda (configuration &rest arguments)
+                    (declare (ignore configuration))
+                    (when spawn-error (error spawn-error))
+                    (push arguments opened)
+                    (values identifier t)))
             (list 'localgroup-handoff-spawn-fresh
                   (lambda (configuration &rest arguments)
                     (declare (ignore configuration))
@@ -140,8 +148,8 @@
                     (push operation operations)
                     (list :ok :status (status))))
             (list 'localgroup-attach-record
-                  (lambda (configuration entry mode)
-                    (declare (ignore configuration entry mode))
+                  (lambda (configuration entry mode &key panel)
+                    (declare (ignore configuration entry mode panel))
                     (push identifier attached)
                     nil))
             (list 'localgroup-relay-exit
@@ -152,7 +160,7 @@
                     (test-assert nil "explicit detached startup never falls back to direct")
                     (error 'configuration-error :message "Unexpected direct startup."))))
            (lambda ()
-             (with-test-environment (("AUTOLITH_SESSION_STYLE" "direct"))
+             (let ((*main-direct-start-p* t))
                (main-dispatch '("--detached" "--pristine" "--permissions" "full"))
                (test-assert
                 (and (= (length spawned) 1)
@@ -161,7 +169,16 @@
                      (getf (first spawned) :immutable-p)
                      (eq (getf (first spawned) :permission-mode) ':full-access)
                      (null attached))
-                "noninteractive explicit detach forwards pristine and permissions without attaching")
+                "a pristine detach is a rescue process that gets pristine and permissions without attaching")
+               (main-dispatch '("--detached" "--permissions" "full"))
+               (test-assert
+                (and (= (length spawned) 1)
+                     (= (length opened) 1)
+                     (getf (first opened) :new-p)
+                     (null (getf (first opened) :channel))
+                     (eq (getf (getf (first opened) :launch) :permission-mode) ':full-access)
+                     (null attached))
+                "a detach opens a new channel in the world server with its launch options, without attaching")
                (let ((output (get-output-stream-string *standard-output*)))
                  (test-assert
                   (and (search "b-6uouHJ" output) (search "424242" output))
@@ -173,7 +190,7 @@
                             "detached live reuse only queries status, without spawning or detaching a client")
                (main-dispatch '("resume" "b6"))
                (test-assert (and (= (length spawned) 1) (= (length attached) 1))
-                            "ordinary live resume attaches even with direct session style")
+                            "ordinary live resume attaches even for a direct start")
                (let ((styled (with-output-to-string (stream)
                                (main--print-detached-receipt record :stream stream :styled-p t))))
                  (test-assert (and (find #\Escape styled) (search "424242" styled))
@@ -189,15 +206,18 @@
                                     ("resume" "b" "--model" "model")
                                     ("resume" "b" "--permissions" "full")))
                  (reject arguments 'configuration-error))
-               (test-assert (= (length spawned) 1) "invalid options do not launch sessions")
+               (test-assert (and (= (length spawned) 1) (= (length opened) 1))
+                            "invalid options do not launch sessions")
                (setf live-p nil
                      spawned nil
+                     opened nil
                      spawn-error (make-condition 'platform-capability-unavailable
                                                  :capability ':detached-sessions
                                                  :message    "Unavailable for test."))
-               (reject '("--detached") 'platform-capability-unavailable)
+               (reject '("--detached" "--pristine") 'platform-capability-unavailable)
                (setf spawn-error (make-condition 'localgroup-error
                                                  :operation ':spawn :message "Launch failed."))
+               (reject '("--detached" "--pristine") 'localgroup-error)
                (reject '("--detached") 'localgroup-error)
                (setf spawn-error nil
                      invalid-p t)
@@ -206,7 +226,7 @@
 
 (-> test-cli-detached-receipt-cleanup () null)
 (defun test-cli-detached-receipt-cleanup ()
-  "Cancel a ready launch if endpoint discovery or receipt authentication fails."
+  "Cancel a ready rescue launch if endpoint discovery or receipt authentication fails."
   (dolist (failure '(:lookup :status))
     (with-test-configuration (configuration)
       (configuration-ensure-directories configuration)
@@ -253,7 +273,7 @@
            (lambda ()
              (test-assert
               (handler-case
-                  (progn (main--start-detached configuration :permission-mode ':ask) nil)
+                  (progn (main--start-detached configuration :permission-mode ':ask :pristine-p t) nil)
                 (localgroup-error (condition) (eq condition failure-condition)))
               (format nil "~A receipt failure propagates its original condition" failure))
              (test-assert (and ready-p stopped-p (not released-p)
@@ -266,7 +286,7 @@
 
 (-> session-cli-tests--call-with-roots (pathname function) t)
 (defun session-cli-tests--call-with-roots (root function)
-  "Call FUNCTION with isolated CLI roots, the saved active core, and direct style."
+  "Call FUNCTION with isolated CLI roots and the saved active core."
   (test-call-with-environment
    (append
     (loop for (variable directory) in '(("XDG_CONFIG_HOME" "config/")
@@ -277,14 +297,13 @@
     (list (list "AUTOLITH_ACTIVE_CORE" (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE"))
           (list "AUTOLITH_SOURCE_ROOT" (namestring (asdf:system-source-directory :autolith)))
           (list "AUTOLITH_SBCL" (lisp-worker-sbcl-command))
-          (list "AUTOLITH_SESSION_STYLE" "direct")
           (list "AUTOLITH_SITE_CONFIG_ROOT" nil)
           (list "AUTOLITH_RECOVERED" nil)))
    function))
 
 (-> test-cli-detached-process () null)
 (defun test-cli-detached-process ()
-  "Launch a real saved-core session and verify readiness, PID, persistence, and reuse."
+  "Launch real detached channels in a saved-core world server and verify readiness, PID, persistence, and reuse."
   (with-platform-capability (':detached-sessions "explicit detached CLI process lifecycle")
     (with-test-configuration (unused root)
       (declare (ignore unused))
@@ -337,7 +356,7 @@
                         (multiple-value-bind (ignored errors missing-status)
                             (run '("resume" "--detached"))
                           (declare (ignore ignored))
-                          (test-assert (and (= missing-status 64) (search "prefix" errors))
+                          (test-assert (and (= missing-status 64) (search "conversation ID" errors))
                                        "a detached resume without an ID fails at the process boundary"))
                        (let ((saved (conversation-create configuration :identifier "b6uouHJ")))
                          (conversation-append-user-message saved "Saved resume fixture")
@@ -352,11 +371,159 @@
                                    (search (princ-to-string pid) resumed))
                               (format nil "saved detached resume publishes its original ID and actual PID: ~A ~A"
                                       resumed errors))))))))
+               ;; The channels live in the world server the first start launched.
+               (let ((world (world-client-entry configuration)))
+                 (when world
+                   ; mallet:suppress no-ignore-errors -- cleanup a server which may have exited already
+                   (ignore-errors (localgroup-query-record world ':stop))))
                (dolist (record (or records (localgroup-endpoint-records configuration)))
-                 ; mallet:suppress no-ignore-errors -- cleanup an endpoint which may have exited already
-                 (ignore-errors (localgroup-query-record record ':kill))
                  (let ((pid (getf (rest (rest record)) :pid)))
                    (unless (task-tests--wait-until
                             (lambda () (not (platform-process-alive-p *platform* pid))) 5)
                      (platform-terminate-process *platform* pid :force t)))))))))))
+  nil)
+
+(-> test-cli-world-client-start () null)
+(defun test-cli-world-client-start ()
+  "Test a client-first start opening its channel in the world server and attaching."
+  (with-test-configuration (configuration)
+    (configuration-ensure-directories configuration)
+    (let* ((identifier   "b6uouHJ")
+           (record       (list #p"unused.sexp" :localgroup-endpoint
+                               :session-id identifier :pid 424242))
+           (opened       nil)
+           (attached     nil)
+           (queried      nil)
+           (open-error   nil)
+           (attach-error nil)
+           (started-p    t)
+           (switch-to    nil)
+           (direct-p     nil))
+      (test-call-with-function-replacements
+       (list
+        (list 'configuration-create
+              (lambda (&rest arguments) (declare (ignore arguments)) configuration))
+        (list 'main--client-session-p
+              (lambda (&rest arguments) (declare (ignore arguments)) t))
+        (list 'main--interactive-input-p
+              (lambda () t))
+        (list 'main-resolve-conversation
+              (lambda (resolve-configuration prefix)
+                (declare (ignore resolve-configuration prefix))
+                identifier))
+        (list 'main--live-conversation-record
+              (lambda (&rest arguments) (declare (ignore arguments)) nil))
+        (list 'world-client-open
+              (lambda (open-configuration &rest arguments)
+                (declare (ignore open-configuration))
+                (when open-error (error open-error))
+                (push arguments opened)
+                (values identifier started-p)))
+        (list 'localgroup--find-record
+              (lambda (find-configuration session-id)
+                (declare (ignore find-configuration))
+                (test-assert (member session-id (list identifier "c6uouHJ") :test #'string=)
+                             "the client attaches to the channel the server opened")
+                record))
+        (list 'localgroup-attach-record
+              (lambda (attach-configuration entry mode &key panel)
+                (declare (ignore attach-configuration panel))
+                (push (list (rest entry) mode) attached)
+                (when attach-error (error attach-error))
+                (when switch-to
+                  (list :switch :session-id (shiftf switch-to nil)))))
+        (list 'world-client-entry
+              (lambda (candidate)
+                (declare (ignore candidate))
+                (cons "world" (list :session-id "world"))))
+        (list 'localgroup-query-record
+              (lambda (entry operation &optional arguments)
+                (declare (ignore entry))
+                ;; The sidebar's own thread asks for the channels it shows.
+                (unless (eq operation ':channels)
+                  (push (if (eq operation ':close)
+                            (list operation (getf arguments :unattached-only-p))
+                            operation)
+                        queried))
+                (list :ok)))
+        (list 'localgroup-relay-exit
+              (lambda (&rest arguments) (declare (ignore arguments))))
+        (list 'main--connect-application
+              (lambda (&rest arguments)
+                (declare (ignore arguments))
+                (setf direct-p t)
+                (error 'configuration-error :message "direct startup"))))
+       (lambda ()
+         (let ((*error-output* (make-string-output-stream)))
+           (main-dispatch '())
+           (let ((arguments (first opened)))
+             (test-assert (and (= (length opened) 1)
+                               (equal (getf arguments :directory)
+                                      (config :working-directory configuration))
+                               (null (getf arguments :channel))
+                               (member (getf arguments :permission-mode)
+                                       '(:ask :auto :sandboxed :full-access))
+                               (not (getf arguments :resume-command-p))
+                               (= (length attached) 1)
+                               (eq (second (first attached)) ':control)
+                               (null queried)
+                               (not direct-p))
+                          "a plain start opens a channel for its directory and attaches to it"))
+           (main-dispatch (list "resume" identifier))
+           (test-assert (and (= (length opened) 2)
+                             (string= (getf (first opened) :channel) identifier)
+                             (= (length attached) 2))
+                        "resuming a conversation opens that channel in the server")
+           (main-dispatch '("resume"))
+           (test-assert (and (= (length opened) 3)
+                             (null (getf (first opened) :channel))
+                             (getf (first opened) :resume-command-p))
+                        "a bare resume opens a channel that picks the conversation itself")
+           (setf attach-error (make-condition 'localgroup-error
+                                              :operation ':attach
+                                              :message   "The attachment was rejected."))
+           (test-assert (handler-case
+                            (progn (main-dispatch '()) nil)
+                          (localgroup-error (condition)
+                            (and (search "rejected" (autolith-error-message condition))
+                                 (equal queried '((:close t))))))
+                        "a failed attach asks the server to close the channel started for this terminal while nobody controls it")
+           (setf started-p nil
+                 queried   nil)
+           (test-assert (handler-case
+                            (progn (main-dispatch '()) nil)
+                          (localgroup-error (condition)
+                            (and (search "rejected" (autolith-error-message condition))
+                                 (null queried))))
+                        "a failed attach leaves a channel the server already served")
+           (setf attach-error nil
+                 open-error   (make-condition 'localgroup-error
+                                              :operation ':spawn
+                                              :message   "No world server could start."))
+           (test-assert (handler-case
+                            (progn (main-dispatch '()) nil)
+                          (localgroup-error (condition)
+                            (and (not direct-p)
+                                 (search "The world server is not available: No world server could start"
+                                         (autolith-error-message condition)))))
+                        "a failed open ends the start with its reason instead of starting directly")
+           (setf open-error nil
+                 opened     nil
+                 attached   nil
+                 switch-to  "c6uouHJ")
+           (main-dispatch '())
+           (test-assert (and (= (length opened) 2)
+                             (null (getf (second opened) :channel))
+                             (string= (getf (first opened) :channel) "c6uouHJ")
+                             (= (length attached) 2)
+                             (null switch-to))
+                        "a switch request opens the named channel and attaches to it")
+           (setf opened nil)
+           (main-dispatch '("--immutable" "--fullscreen"))
+           (test-assert (equal (getf (first opened) :launch) '(:immutable-p t :fullscreen-p t))
+                        "the options a start states explicitly travel with the open")
+           (setf opened nil)
+           (main-dispatch '())
+           (test-assert (null (getf (first opened) :launch))
+                        "a start that states nothing sends no launch options"))))))
   nil)

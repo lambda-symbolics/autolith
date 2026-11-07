@@ -1,115 +1,212 @@
 (in-package #:autolith)
 
-;;;; -- ACP Runtime Ownership --
+;;;; -- ACP Sessions as Channel Clients --
+
+;;; An ACP session is a structured client of one channel in the world server.
+;;; The channel runs the agent, its tools, its jobs and its approvals; the
+;;; session turns the channel's events into ACP updates for the editor and
+;;; the editor's requests into the channel's commands.
 
 (defparameter *acp-session-maximum-count* 32
   "Maximum live editor sessions in one ACP process.")
 
-(defparameter *acp-session-close-seconds* 10
-  "Maximum cooperative shutdown wait before reporting an active session.")
-
-(defclass acp-operation-gate ()
-  ((owner
-    :initform      nil
-    :accessor      acp-operation-gate-owner
-    :documentation "The session or setup operation owning the primary runtime, or NIL.")
-   (lock
-    :initform      (make-lock "Autolith ACP operation gate")
-    :reader        acp-operation-gate-lock
-    :documentation "The lock protecting the owner; taken after a service lock, never before."))
-  (:documentation "The one primary operation of an ACP process, shared by every client it serves."))
-
 (defclass acp-service (agentcomms:acp-agent)
   ((configuration
-    :initarg :configuration :accessor acp-service-configuration :type configuration
-    :documentation "The bootstrapped process configuration copied for each session.")
+    :initarg       :configuration
+    :accessor      acp-service-configuration
+    :type          configuration
+    :documentation "The configuration locating the world server and its data.")
    (permission-mode
-    :initarg :permission-mode :initform ':ask :reader acp-service-permission-mode
+    :initarg       :permission-mode
+    :initform      ':ask
+    :reader        acp-service-permission-mode
     :type          (member :ask :auto :sandboxed :full-access)
-    :documentation "The initial permission mode of new and loaded sessions.")
+    :documentation "The permission mode a session asks for when it opens its channel.")
+   (pristine-p
+    :initarg       :pristine-p
+    :initform      nil
+    :reader        acp-service-pristine-p
+    :type          boolean
+    :documentation "Whether a world server this process starts runs pristine.")
    (sessions
-    :initform (make-hash-table :test #'equal) :reader acp-service-sessions
-    :documentation "Live sessions keyed by canonical durable conversation ID.")
+    :initform      (make-hash-table :test #'equal)
+    :reader        acp-service-sessions
+    :documentation "Live sessions keyed by channel identifier.")
    (lock
-    :initform (make-lock "Autolith ACP service") :reader acp-service-lock
-    :documentation "The lock protecting session admission and process ownership.")
-   (gate
-    :initarg :gate :initform (make-instance 'acp-operation-gate) :reader acp-service-gate
-    :documentation "The primary operation gate this service shares with the process's other clients.")
+    :initform      (make-lock "Autolith ACP service")
+    :reader        acp-service-lock
+    :documentation "The lock protecting session admission.")
+   (open-lock
+    :initform      (make-lock "Autolith ACP session setup")
+    :reader        acp-service-open-lock
+    :documentation "Serializes setup through the protocol library's registration.")
    (closed-p
-    :initform nil :accessor acp-service-closed-p :type boolean
+    :initform      nil
+    :accessor      acp-service-closed-p
+    :type          boolean
     :documentation "Whether disconnect has stopped further session admission."))
-  (:documentation "A headless ACP endpoint over the existing Autolith agent runtime."))
+  (:documentation "An ACP endpoint whose sessions are channels of the world server."))
 
 (defclass acp-session ()
   ((service
-    :initarg :service :reader acp-session-service :type acp-service
-    :documentation "The process endpoint owning this session.")
+    :initarg       :service
+    :reader        acp-session-service
+    :type          acp-service
+    :documentation "The endpoint owning this session.")
    (identifier
-    :initarg :identifier :reader acp-session-identifier :type string
-    :documentation "The canonical durable conversation identifier.")
-   (application
-    :initarg :application :reader acp-session-application :type application
-    :documentation "The headless application owning its agent, tools, workers, and lease.")
+    :initarg       :identifier
+    :reader        acp-session-identifier
+    :type          string
+    :documentation "The channel identifier, which is also the conversation identifier.")
+   (configuration
+    :initarg       :configuration
+    :reader        acp-session-configuration
+    :type          configuration
+    :documentation "The configuration of the session's working directory, for reading its plan and history.")
+   (connection
+    :initform      nil
+    :accessor      acp-session-connection
+    :documentation "The structured client connection to the channel.")
+   (reconnect-id
+    :initform      nil
+    :accessor      acp-session-reconnect-id
+    :type          (option string)
+    :documentation "The authenticated checkpoint transition awaiting a replacement endpoint.")
+   (reconnect-thread
+    :initform      nil
+    :accessor      acp-session-reconnect-thread
+    :documentation "The worker reconnecting this session, or NIL.")
+   (reconnect-failure
+    :initform      nil
+    :accessor      acp-session-reconnect-failure
+    :type          (option string)
+    :documentation "The reported reason a planned reconnect failed, or NIL.")
+   (started-p
+    :initarg       :started-p
+    :initform      nil
+    :reader        acp-session-started-p
+    :type          boolean
+    :documentation "Whether the world server started the channel for this session.")
    (mode
-    :initarg :mode :initform ':ask :accessor acp-session-mode
-    :documentation "The session's current permission policy.")
-   (permissions
-    :initform (make-hash-table :test #'equal) :reader acp-session-permissions
-    :documentation "Exact editor-approved operations, scoped to this live session.")
+    :initarg       :mode
+    :initform      ':ask
+    :accessor      acp-session-mode
+    :documentation "The channel's permission mode as last reported.")
    (lock
-    :initform (make-lock "Autolith ACP session") :reader acp-session-lock
-    :documentation "The lock protecting cancellation, ownership, and approvals.")
-   (cleanup-lock
-    :initform (make-lock "Autolith ACP session cleanup") :reader acp-session-cleanup-lock
-    :documentation "The lock serializing complete close attempts.")
+    :initform      (make-lock "Autolith ACP session")
+    :reader        acp-session-lock
+    :documentation "The lock protecting prompt, turn and translation state.")
+   (event-lock
+    :initform      (make-lock "Autolith ACP event delivery")
+    :reader        acp-session-event-lock
+    :documentation "Serializes replay, buffered attachment events and live delivery.")
+   (attaching-p
+    :initform      nil
+    :accessor      acp-session-attaching-p
+    :documentation "Whether incoming events wait for the initial history replay.")
+   (attachment-events
+    :initform      (make-deque)
+    :reader        acp-session-attachment-events
+    :documentation "Events received after subscription while initial history is replayed.")
+   (event-sequence
+    :initform      0
+    :accessor      acp-session-event-sequence
+    :documentation "The cursor of the last completely processed channel event.")
+   (replay-boundary
+    :initform      0
+    :accessor      acp-session-replay-boundary
+    :documentation "The durable record watermark already delivered by initial replay.")
+   (catch-up-p
+    :initform      nil
+    :accessor      acp-session-catch-up-p
+    :documentation "Whether an already running provider response uses durable record projection until its next request.")
+   (condition-variable
+    :initform      (make-condition-variable :name "Autolith ACP session")
+    :reader        acp-session-condition-variable
+    :documentation "Signaled when the channel finishes work or the connection ends.")
+   (prompt-active-p
+    :initform      nil
+    :accessor      acp-session-prompt-active-p
+    :type          boolean
+    :documentation "Whether an editor prompt waits for the channel.")
+   (cancelled-p
+    :initform      nil
+    :accessor      acp-session-cancelled-p
+    :type          boolean
+    :documentation "Whether the editor cancelled the current prompt.")
+   (prompt-submission
+    :initform      nil
+    :accessor      acp-session-prompt-submission
+    :documentation "The exact submission awaited by the editor's active prompt.")
+   (prompt-outcome
+    :initform      nil
+    :accessor      acp-session-prompt-outcome
+    :documentation "The terminal outcome of the active prompt's submission.")
+   (idle-count
+    :initform      0
+    :accessor      acp-session-idle-count
+    :type          (integer 0)
+    :documentation "How many times the channel finished its work and went idle.")
+   (last-outcome
+    :initform      nil
+    :accessor      acp-session-last-outcome
+    :documentation "The outcome of the channel's last finished work.")
+   (closed-p
+    :initform      nil
+    :accessor      acp-session-closed-p
+    :type          boolean
+    :documentation "Whether the session closed or lost its channel.")
+   (epoch
+    :initform      0
+    :accessor      acp-session-epoch
+    :type          integer
+    :documentation "The generation of the latest turn, numbering turn events.")
+   (turn
+    :initform      nil
+    :accessor      acp-session-turn
+    :documentation "The running turn as (EPOCH . SOURCE), or NIL.")
+   (client-identifier
+    :initform      (make-identifier)
+    :reader        acp-session-client-identifier
+    :type          string
+    :documentation "The submitting editor identity, distinct from other clients of this channel.")
+   (turn-sequence
+    :initform      0
+    :accessor      acp-session-turn-sequence
+    :type          integer
+    :documentation "The durable user-message sequence qualifying tool identifiers.")
+   (streamed-text
+    :initform      (text-buffer-create)
+    :accessor      acp-session-streamed-text
+    :type          string
+    :documentation "Text already sent for the current provider response.")
+   (thought-state
+    :initform      nil
+    :accessor      acp-session-thought-state
+    :type          (member nil :streaming :boundary)
+    :documentation "Whether contiguous thoughts continue or cross a provider response boundary.")
+   (update-buffer
+    :initform      nil
+    :accessor      acp-session-update-buffer
+    :documentation "The ordered buffer coalescing visible thought fragments.")
+   (tool-call
+    :initform      nil
+    :accessor      acp-session-tool-call
+    :type          (option string)
+    :documentation "The latest tool call the channel started, which an approval belongs to.")
    (extension-lock
-    :initform (make-lock "Autolith ACP extension events") :reader acp-session-extension-lock
+    :initform      (make-lock "Autolith ACP extension events")
+    :reader        acp-session-extension-lock
     :documentation "Orders extension sequence allocation and wire notification writes.")
    (extension-sequence
-    :initform 0 :accessor acp-session-extension-sequence :type integer
-    :documentation "The last non-durable extension notification sequence.")
-   (extension-usage
-    :initform nil :accessor acp-session-extension-usage
-    :documentation "The latest complete provider usage, copied at its observer boundary.")
-   (extension-verified-models
-    :initform (make-hash-table :test #'equal) :reader acp-session-extension-verified-models
-    :documentation "Successful model requests and their local verification times.")
-   (completion-thread
-    :initform nil :accessor acp-session-completion-thread
-    :documentation "The owned headless completion controller thread.")
-   (completion-condition
-    :initform      (make-condition-variable :name "ACP completion wakeup")
-    :reader        acp-session-completion-condition
-    :documentation "The wakeup condition protected by the session lock.")
-   (completion-wakeup-p
-    :initform nil :accessor acp-session-completion-wakeup-p :type boolean
-    :documentation "Whether the controller must inspect pending completions.")
-   (completion-report
-    :initform nil :accessor acp-session-completion-report
-    :documentation "A bounded failure report pausing automatic continuation.")
-   (closing-p
-    :initform nil :accessor acp-session-closing-p :type boolean
-    :documentation "Whether session shutdown has stopped prompt admission.")
-   (epoch
-    :initform 0 :accessor acp-session-epoch :type integer
-    :documentation "The prompt generation used to reject delayed interrupts.")
-   (prompt-thread
-    :initform nil :accessor acp-session-prompt-thread
-    :documentation "The active prompt owner, or NIL between turns.")
-   (prompt-interruptible-p
-    :initform nil :accessor acp-session-prompt-interruptible-p :type boolean
-    :documentation "Whether cancellation may interrupt the owner before durable finalization.")
-   (tool-threads
-    :initform (make-hash-table :test #'eq) :reader acp-session-tool-threads
-    :documentation "Tool workers admitted within the current prompt generation.")
-   (cancelled-p
-    :initform nil :accessor acp-session-cancelled-p :type boolean
-    :documentation "Whether the current prompt was cancelled.")
-   (closed-p
-    :initform nil :accessor acp-session-closed-p :type boolean
-    :documentation "Whether resources and the conversation lease were released."))
-  (:documentation "One durable conversation and its ephemeral editor connection state."))
+    :initform      0
+    :accessor      acp-session-extension-sequence
+    :type          integer
+    :documentation "The last extension notification sequence."))
+  (:documentation "One editor session following one channel of the world server."))
+
+
+;;;; -- Lookup --
 
 (-> acp-service--session (acp-service string) acp-session)
 (defun acp-service--session (service identifier)
@@ -118,167 +215,81 @@
     (or (gethash identifier (acp-service-sessions service))
         (agentcomms:acp-invalid-params "Unknown session ~A." identifier))))
 
-(-> acp-service-busy-owner (acp-service) t)
-(defun acp-service-busy-owner (service)
-  "Return the operation owning the primary runtime of SERVICE's process, or NIL."
-  (let ((gate (acp-service-gate service)))
-    (with-lock-held ((acp-operation-gate-lock gate))
-      (acp-operation-gate-owner gate))))
+
+;;;; -- Commands --
+
+(-> acp-session-call (acp-session keyword &rest t) list)
+(defun acp-session-call (session command &rest arguments)
+  "Send COMMAND with ARGUMENTS to SESSION's channel and return the reply's fields."
+  (let ((connection (acp-session--await-connection session)))
+    (handler-case (apply #'localgroup-client-call connection command arguments)
+      (localgroup-request-interrupted (condition)
+        (error 'acp-request-interrupted
+               :message (autolith-error-message condition)
+               :data    (agentcomms:json-object
+                         "outcome" "interrupted"
+                         "executionOutcome" "unknown"
+                         "requestId" (localgroup-request-interrupted-identifier condition)
+                         "command" (string-downcase
+                                    (symbol-name (localgroup-request-interrupted-command condition)))
+                         "reconnectId" (localgroup-request-interrupted-reconnect-id condition))))
+      (localgroup-error (condition)
+        (error 'agentcomms:acp-state-error :message (autolith-error-message condition))))))
+
+(-> acp-session-submit
+    (acp-session string &key (:source string) (:steer-p boolean) (:submission-id string)) list)
+(defun acp-session-submit (session text &key (source "prompt") steer-p (submission-id (make-identifier)))
+  "Submit TEXT with its editor identity and turn SOURCE, returning the channel reply."
+  (acp-session-call session ':submit :text text :steer-p steer-p
+                    :submission (list :id     submission-id
+                                      :client (acp-session-client-identifier session)
+                                      :source source)))
+
+(-> acp-session-cancel (acp-session) null)
+(defun acp-session-cancel (session)
+  "Ask the channel to cancel its running turn for the editor."
+  (with-lock-held ((acp-session-lock session))
+    (setf (acp-session-cancelled-p session) t))
+  (unless (acp-session-closed-p session)
+    (handler-case (acp-session-call session ':cancel)
+      (agentcomms:acp-state-error ()
+        nil)))
+  nil)
+
+(-> acp-session-close (acp-session) null)
+(defun acp-session-close (session)
+  "Leave the channel and cancel any planned reconnect before releasing its registration."
+  (let ((connection nil)
+        (reconnect  nil))
+    (with-lock-held ((acp-session-lock session))
+      (setf (acp-session-closed-p session) t
+            (acp-session-reconnect-id session) nil
+            connection (acp-session-connection session)
+            reconnect (acp-session-reconnect-thread session))
+      (sb-thread:condition-broadcast (acp-session-condition-variable session)))
+    (acp-session--forget session)
+    (when connection
+      (localgroup-client-close connection))
+    (when (and reconnect (not (eq reconnect (current-thread))))
+      (join-thread reconnect))
+    (when (and connection (acp-session-started-p session))
+      (let* ((configuration (acp-service-configuration (acp-session-service session)))
+             (world         (world-client-entry configuration)))
+        (when world
+          (handler-case
+              (localgroup-query-record world ':close
+                                       (list :channel           (acp-session-identifier session)
+                                             :unattached-only-p t))
+            (localgroup-error ()
+              nil))))))
+  nil)
 
 (define-condition acp-operation-busy (agentcomms:acp-method-error)
   ()
   (:default-initargs :code -32603 :message "Another primary operation is active.")
-  (:documentation "Another session or setup owns the ACP process's primary operation."))
+  (:documentation "The channel works on something that does not admit this operation now."))
 
-(-> acp-service--call-with-operation (acp-service t function) t)
-(defun acp-service--call-with-operation (service owner function)
-  "Run FUNCTION as the sole primary operation of the process, rejecting overlapping work."
-  (let ((gate      (acp-service-gate service))
-        (claimed-p nil))
-    (unwind-protect
-         (progn
-           (with-lock-held ((acp-service-lock service))
-             (when (acp-service-closed-p service)
-               (error 'agentcomms:acp-connection-closed))
-             (with-lock-held ((acp-operation-gate-lock gate))
-               (when (acp-operation-gate-owner gate)
-                 (error 'acp-operation-busy))
-               (setf (acp-operation-gate-owner gate) owner
-                     claimed-p                       t)))
-           (funcall function))
-      (when claimed-p
-        (with-lock-held ((acp-operation-gate-lock gate))
-          (setf (acp-operation-gate-owner gate) nil))))))
-
-(defvar *acp-extension-invocation-p* nil
-  "Whether an explicit extension invocation owns this thread's cancellation boundary.")
-
-(-> acp-session-check-cancelled (acp-session) null)
-(defun acp-session-check-cancelled (session)
-  "Signal APPLICATION-TURN-CANCELLED at a provider or tool boundary."
-  (when (or (acp-session-cancelled-p session)
-            (acp-session-closed-p session)
-            (acp-service-closed-p (acp-session-service session))
-            (agentcomms:acp-request-cancelled-p)
-            (and (not *acp-extension-invocation-p*)
-                 (agentcomms:agent-session-cancelled-p
-                  (acp-session-service session) (acp-session-identifier session))))
-    (error 'application-turn-cancelled))
-  nil)
-
-(-> acp-session--interrupt (acp-session t integer) null)
-(defun acp-session--interrupt (session thread epoch)
-  "Deliver cancellation to THREAD only within SESSION's captured EPOCH."
-  (when (and thread (not (eq thread (current-thread))) (thread-alive-p thread))
-    (handler-case
-        (interrupt-thread
-         thread
-         (lambda ()
-           (when (with-lock-held ((acp-session-lock session))
-                   (and (acp-session-cancelled-p session)
-                        (or (and (= epoch (acp-session-epoch session))
-                                 (eq thread (acp-session-prompt-thread session))
-                                 (acp-session-prompt-interruptible-p session))
-                            (and (not (eq thread (acp-session-prompt-thread session)))
-                                 (eql epoch (gethash thread (acp-session-tool-threads session)))))))
-             (error 'application-turn-cancelled))))
-      (error ()
-        nil)))
-  nil)
-
-(-> acp-session--call-with-finalization (acp-session function) t)
-(defun acp-session--call-with-finalization (session function)
-  "Defer queued cancellation while FUNCTION repairs or finalizes durable turn records."
-  (sb-sys:without-interrupts
-      (with-lock-held ((acp-session-lock session))
-        (setf (acp-session-prompt-interruptible-p session) nil))
-    (funcall function)))
-
-(-> acp-session-cancel (acp-session &key (:expected-epoch (option integer))) null)
-(defun acp-session-cancel (session &key expected-epoch)
-  "Cancel owned work, optionally only if EXPECTED-EPOCH is still current."
-  (let ((threads nil) (epoch nil))
-    (with-lock-held ((acp-session-lock session))
-      (when (and expected-epoch (/= expected-epoch (acp-session-epoch session)))
-        (return-from acp-session-cancel nil))
-      (let ((controller (acp-input-controller session)))
-        (when controller
-          (with-lock-held ((application-input-controller-lock controller))
-            (setf (application-input-controller-queued-work-paused-p controller) t))))
-      (when (or (acp-session-closing-p session) (not (acp-session-cancelled-p session)))
-        (setf (acp-session-cancelled-p session) t
-              epoch (acp-session-epoch session)
-              threads (cons (cons (acp-session-prompt-thread session) epoch)
-                            (loop for thread being the hash-keys of (acp-session-tool-threads session)
-                                  using (hash-value generation)
-                                  collect (cons thread generation))))))
-    (when epoch
-      (let ((orchestrator (application--task-orchestrator (acp-session-application session))))
-        (when orchestrator
-          (dolist (pool (list (task-orchestrator-pool orchestrator)
-                              (task-orchestrator-execution-pool orchestrator)))
-            (dolist (job (job-pool-list-jobs pool))
-              (unless (job-terminal-p job)
-                (job-cancel job))))))
-      ;; Wake tool owners first so the prompt can join its tool wave while unwinding.
-      (dolist (owner (reverse threads))
-        (acp-session--interrupt session (first owner) (rest owner)))))
-  nil)
-
-(-> acp-session--call-with-tool (acp-session function) t)
-(defun acp-session--call-with-tool (session function)
-  "Own one tool execution and install session bindings in its worker thread."
-  (let* ((thread                      (current-thread))
-         (application                 (acp-session-application session))
-         (*active-application*        application)
-         (*configuration*             (application-configuration application))
-         (*default-pathname-defaults* (config :working-directory *configuration*))
-         (*standard-output*           *error-output*)
-         (*trace-output*              *error-output*)
-         (registered-p                nil))
-    (unwind-protect
-         (progn
-           (with-lock-held ((acp-session-lock session))
-             (unless (or (eq thread (acp-session-prompt-thread session))
-                         (nth-value 1 (gethash thread (acp-session-tool-threads session))))
-               (setf (gethash thread (acp-session-tool-threads session))
-                     (acp-session-epoch session)
-                     registered-p t)))
-           (acp-session-check-cancelled session)
-           (funcall function))
-      (when registered-p
-        (with-lock-held ((acp-session-lock session))
-          (remhash thread (acp-session-tool-threads session)))))))
-
-(-> acp-session-close (acp-session) null)
-(defun acp-session-close (session)
-  "Wait for cancelled work to unwind, then close tools, workers, and the lease."
-  (with-lock-held ((acp-session-cleanup-lock session))
-    (unless (acp-session-closed-p session)
-      (with-lock-held ((acp-session-lock session))
-        (setf (acp-session-closing-p session) t))
-      (acp-session-cancel session)
-      (acp-completion-stop session)
-      (let ((deadline (+ (get-internal-real-time)
-                         (* *acp-session-close-seconds* internal-time-units-per-second))))
-        (loop while (with-lock-held ((acp-session-lock session))
-                      (or (acp-session-prompt-thread session)
-                          (plusp (hash-table-count (acp-session-tool-threads session)))))
-              do (when (>= (get-internal-real-time) deadline)
-                   (error 'agentcomms:acp-state-error
-                          :message "The session has not finished cancelling."))
-              (sleep 0.01)))
-      (acp-input-close session)
-      (let* ((application (acp-session-application session))
-             (failures    (application--discard-connection-resources
-                           application (application-tool-registry application)
-                           (application-worker application))))
-        (when failures
-          (error 'agentcomms:acp-state-error :message "Session resource cleanup failed."))
-        (acp-mcp-release-credentials
-         (mcp-tool-registry-manager (application-tool-registry application)))
-        (application-release-conversation-lease application))
-      (with-lock-held ((acp-session-lock session))
-        (clrhash (acp-session-permissions session))
-        (setf (acp-session-closed-p session) t))))
-  nil)
+(define-condition acp-request-interrupted (agentcomms:acp-state-error agentcomms:acp-method-error)
+  ()
+  (:default-initargs :code -32603)
+  (:documentation "A channel request lost its reply; DATA identifies its unknown execution outcome."))

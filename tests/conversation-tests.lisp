@@ -304,6 +304,45 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-conversation-context-adoption () null)
+(defun test-conversation-context-adoption ()
+  "Test an adopted agent's context replaces the projection durably, follows later records, and compacts away."
+  (with-test-configuration (configuration)
+    (let* ((source      (conversation-create configuration :identifier "bsource"))
+           (destination (conversation-create configuration :identifier "bdestin")))
+      (conversation-append-user-message source "carried words")
+      (conversation-append-user-message destination "earlier resident words")
+      (flet ((texts (conversation)
+               "Return the request items of CONVERSATION as one JSON text."
+               (json-encode (coerce (conversation-input-items-for-request conversation) 'vector))))
+        (conversation-append-context-adoption destination (conversation-context-rows source)
+                                              :participant "pagent1"
+                                              :source      "bsource")
+        (conversation-append-user-message destination "words after the move")
+        (let ((live     (texts destination))
+              (reloaded (texts (conversation-load-by-id configuration "bdestin"))))
+          (test-assert (and (search "carried words" live)
+                            (search "words after the move" live)
+                            (not (search "earlier resident words" live))
+                            (string= live reloaded))
+                       "the adopted context and what follows it replace the channel's earlier projection, the same after a reload"))
+        (test-assert (search "earlier resident words"
+                             (format nil "~S" (application-tests--conversation-records destination)))
+                     "the channel's earlier history stays in its records")
+        (conversation-append-summary destination "summary of the adopted work")
+        (let ((compacted (texts destination)))
+          (test-assert (and (search "summary of the adopted work" compacted)
+                            (not (search "carried words" compacted)))
+                       "a compaction replaces the adopted context with its summary, leaving no copy of it behind"))
+        (test-assert (handler-case
+                         (progn (conversation-append-context-adoption
+                                 destination (list (list :wire-json 42)) :participant "pagent1")
+                                nil)
+                       (conversation-error ()
+                         t))
+                     "a malformed context is refused before anything is written"))))
+  nil)
+
 (-> test-conversation-compaction () null)
 (defun test-conversation-compaction ()
   "Test summary records, projection replacement, and usage tracking."

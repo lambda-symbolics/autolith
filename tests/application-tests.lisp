@@ -919,7 +919,7 @@
                          (lambda (&optional capability)
                            (declare (ignore capability))
                            (= (incf capability-checks) 1)))
-                   (list 'application--interactive-command-approval-p
+                   (list 'application-approval-possible-p
                          (lambda (ignored)
                            (declare (ignore ignored))
                            t))
@@ -3523,7 +3523,8 @@
                        (declare (ignore arguments))
                        configuration))
                (list 'application-terminal-ui-create
-                     (lambda ()
+                     (lambda (&key relay-presentation configuration)
+                       (declare (ignore relay-presentation configuration))
                        (terminal-ui-create
                         :terminal
                         (make-instance 'recording-terminal :columns 80)))))
@@ -5977,7 +5978,7 @@
          (declare (ignore application))
          (setf observed-initial-command initial-command))))
      (lambda ()
-       (with-test-environment (("AUTOLITH_SESSION_STYLE" "direct"))
+       (let ((*main-direct-start-p* t))
          (main-dispatch '("resume")))))
     (test-assert
      (string= observed-initial-command "(resume)")
@@ -6006,7 +6007,7 @@
          (declare (ignore arguments))
          (setf observed-mode (application-permission-mode application)))))
      (lambda ()
-       (with-test-environment (("AUTOLITH_SESSION_STYLE" "direct"))
+       (let ((*main-direct-start-p* t))
          (main-dispatch '("--permissions" "sandbox")))))
     (test-assert (eq observed-mode ':sandboxed)
                  "--permissions sets the initial application mode"))
@@ -6025,7 +6026,7 @@
          (declare (ignore arguments))
          (setf observed-mode (application-permission-mode application)))))
      (lambda ()
-       (with-test-environment (("AUTOLITH_SESSION_STYLE" "direct"))
+       (let ((*main-direct-start-p* t))
          (main-dispatch '("--permissions" "full")))))
     (test-assert (eq observed-mode ':full-access)
                  "--permissions sets the initial reconnect mode"))
@@ -6045,6 +6046,10 @@
     (unwind-protect
          (test-call-with-function-replacements
           (list
+           (list 'main--client-session-p
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   nil))
            (list 'main-resolve-conversation
                  (lambda (configuration prefix)
                    (declare (ignore configuration))
@@ -7681,7 +7686,8 @@
                           :immutable-p       immutable-p)))
                       (list
                        'application-terminal-ui-create
-                       (lambda ()
+                       (lambda (&key relay-presentation configuration)
+                         (declare (ignore relay-presentation configuration))
                          (terminal-ui-create
                           :terminal
                           (make-instance

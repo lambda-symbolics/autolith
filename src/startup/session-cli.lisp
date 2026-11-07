@@ -24,11 +24,13 @@
             title directory date preview (getf status :pid))))
 
 (-> main-resolve-conversation (configuration string) string)
-(defun main-resolve-conversation (configuration prefix)
-  "Resolve PREFIX against saved and live conversations, preferring exact IDs.
+(defun main-resolve-conversation (configuration fragment)
+  "Resolve FRAGMENT against saved and live conversations, preferring exact IDs.
 
-Accept canonical and displayed prefixes with localgroup's case conventions.
-Report every ambiguous match with its full displayed ID and available metadata."
+An exact identifier in canonical or display form wins; otherwise the one
+conversation whose identifier contains FRAGMENT, compared without regard to
+case. Report every ambiguous match with its full displayed ID and available
+metadata."
   (let* ((pathnames (conversation-list configuration))
          (statuses  (mapcar #'rest (localgroup-statuses configuration)))
          (identifiers
@@ -38,42 +40,29 @@ Report every ambiguous match with its full displayed ID and available metadata."
                           for identifier = (getf status :conversation-id)
                           when (non-empty-string-p identifier)
                             collect identifier))
-            :test #'string=)))
-    (labels ((normalize (identifier)
-               "Return a normalized full ID or an unchanged prefix."
-               (handler-case (session-identifier-normalize identifier)
-                 (localgroup-error () identifier))))
-      (let* ((exact      (find prefix identifiers :test #'string=))
-             (normalized (normalize prefix))
-             (matches
-               (or (and exact (list exact))
-                   (remove-if-not
-                    (lambda (identifier) (string= normalized (normalize identifier)))
-                    identifiers)
-                   (remove-if-not
-                    (lambda (identifier) (localgroup--session-prefix-p prefix identifier))
-                    identifiers))))
-        (cond
-          ((null matches)
-           (error 'configuration-error
-                  :message (format nil "No saved or running conversation matches ~S." prefix)))
-          ((rest matches)
-           (error 'configuration-error
-                  :message
-                  (format nil "Conversation ID prefix ~S is ambiguous. Use a longer prefix or a full ID:~%~{  ~A~%~}"
-                          prefix
-                          (loop for identifier in (sort matches #'string<)
-                                collect
-                                (main--resume-match-description
-                                 identifier
-                                 :pathname (find identifier pathnames
-                                                 :key #'pathname-name :test #'string=)
-                                 :status   (find identifier statuses
-                                                 :key  (lambda (status)
-                                                         (getf status :conversation-id))
-                                                 :test #'equal))))))
-          (t
-           (first matches)))))))
+            :test #'string=))
+         (matches   (identifier-match fragment identifiers)))
+    (cond
+      ((null matches)
+       (error 'configuration-error
+              :message (format nil "No saved or running conversation matches ~S." fragment)))
+      ((rest matches)
+       (error 'configuration-error
+              :message
+              (format nil "Conversation ID ~S is ambiguous. Use a longer fragment or a full ID:~%~{  ~A~%~}"
+                      fragment
+                      (loop for identifier in (sort (copy-list matches) #'string<)
+                            collect
+                            (main--resume-match-description
+                             identifier
+                             :pathname (find identifier pathnames
+                                             :key #'pathname-name :test #'string=)
+                             :status   (find identifier statuses
+                                             :key  (lambda (status)
+                                                     (getf status :conversation-id))
+                                             :test #'equal))))))
+      (t
+       (first matches)))))
 
 
 ;;;; -- Explicit Detached Starts --
@@ -86,7 +75,7 @@ Report every ambiguous match with its full displayed ID and available metadata."
   (when (getopt* command ':detached)
     (when (and resume-requested-p (not (non-empty-string-p resume-id)))
       (error 'configuration-error
-             :message "Detached resume requires a conversation ID prefix: autolith resume PREFIX --detached."))
+             :message "Detached resume requires a conversation ID: autolith resume ID --detached."))
     (dolist (option '(:images :simulate-crash :localgroup-handoff))
       (when (getopt* command option)
         (error 'configuration-error
@@ -104,7 +93,7 @@ Report every ambiguous match with its full displayed ID and available metadata."
 (defun main--validate-live-options (command)
   "Reject launch-only overrides rather than silently ignoring them on live reuse."
   (dolist (option '(:model :provider :permissions :immutable :pristine
-                    :fullscreen :almighty :images :simulate-crash))
+                    :fullscreen :plain :almighty :images :simulate-crash))
     (when (getopt* command option)
       (error 'configuration-error
              :message (format nil "A running conversation cannot accept the launch option --~A."
@@ -150,19 +139,34 @@ Report every ambiguous match with its full displayed ID and available metadata."
 
 (-> main--start-detached
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
-                        (:pristine-p boolean) (:conversation-id (option string)))
+                        (:pristine-p boolean) (:conversation-id (option string))
+                        (:launch list))
     null)
 (defun main--start-detached
-    (configuration &key permission-mode immutable-p pristine-p conversation-id)
-  "Start an unattended session, retaining startup ownership until its receipt is printed."
-  (localgroup-handoff-spawn-fresh
-   configuration
-   :permission-mode   permission-mode
-   :immutable-p       immutable-p
-   :pristine-p        pristine-p
-   :conversation-id   conversation-id
-   :attach-expected-p nil
-   :ready-function
-   (lambda (identifier)
-     (main--print-detached-receipt (localgroup--find-record configuration identifier))))
+    (configuration &key permission-mode immutable-p pristine-p conversation-id launch)
+  "Start an unattended session and print its receipt.
+
+The world server opens the channel, CONVERSATION-ID or a new one for the
+launch directory, with the launch options LAUNCH states, and keeps it running
+with no terminal attached. A pristine start is a rescue session, which runs
+apart from the world server in a process of its own and keeps startup
+ownership until its receipt is printed."
+  (if pristine-p
+      (localgroup-handoff-spawn-fresh
+       configuration
+       :permission-mode   permission-mode
+       :immutable-p       immutable-p
+       :pristine-p        t
+       :conversation-id   conversation-id
+       :attach-expected-p nil
+       :ready-function
+       (lambda (identifier)
+         (main--print-detached-receipt (localgroup--find-record configuration identifier))))
+      (let ((identifier (main--open-world-channel configuration
+                                                  :conversation-id conversation-id
+                                                  :new-p           (null conversation-id)
+                                                  :permission-mode permission-mode
+                                                  :immutable-p     immutable-p
+                                                  :launch          launch)))
+        (main--print-detached-receipt (localgroup--find-record configuration identifier))))
   nil)

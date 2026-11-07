@@ -21,38 +21,125 @@ Older inputs page in from the conversation as history traversal reaches them.")
 
 ;;;; -- Terminal Objects --
 
-(defvar *terminal-relayed-resize* nil
-  "Pending (rows . columns) relayed by a controlling client, or NIL.
+(defclass terminal (clinedi:terminal)
+  ((relayed-resize
+    :initform      nil
+    :accessor      terminal-relayed-resize
+    :type          (option (cons (integer 1) (integer 1)))
+    :documentation "Pending (rows . columns) relayed by a controlling client, or NIL.
 
 A relayed session's process has no controlling terminal, so its own
 kernel size reports only ever see fallback defaults. Controlling
 clients therefore relay exact dimensions, and the interactive reader
 applies them through TERMINAL-UI-RESIZE. All terminal dimension
-mutation passes through TERMINAL-SET-DIMENSIONS.")
+mutation passes through TERMINAL-SET-DIMENSIONS. Each terminal keeps
+its own pending size, so several relayed terminals in one process
+never apply each other's resizes.")
+   (relayed-resize-lock
+    :initform      (make-lock "Autolith relayed terminal resize")
+    :reader        terminal-relayed-resize-lock
+    :type          t
+    :documentation "The lock making relayed resize publication and consumption atomic."))
+  (:documentation "Autolith's terminal transport extension point."))
 
-(defvar *terminal-relayed-resize-lock*
-  (make-lock "Autolith relayed terminal resize")
-  "The lock making relayed resize publication and consumption atomic.")
-
-(-> terminal-relayed-resize-publish (integer integer) null)
-(defun terminal-relayed-resize-publish (rows columns)
-  "Publish positive ROWS and COLUMNS for one relayed terminal resize."
+(-> terminal-relayed-resize-publish (terminal integer integer) null)
+(defun terminal-relayed-resize-publish (terminal rows columns)
+  "Park positive ROWS and COLUMNS as TERMINAL's pending relayed resize."
   (when (and (plusp rows) (plusp columns))
-    (with-lock-held (*terminal-relayed-resize-lock*)
-      (setf *terminal-relayed-resize* (cons rows columns))))
+    (with-lock-held ((terminal-relayed-resize-lock terminal))
+      (setf (terminal-relayed-resize terminal) (cons rows columns))))
   nil)
 
 (-> terminal-relayed-resize-consume
-    ()
+    (terminal)
     (option (cons (integer 1) (integer 1))))
-(defun terminal-relayed-resize-consume ()
-  "Atomically consume and return the newest relayed terminal size."
-  (with-lock-held (*terminal-relayed-resize-lock*)
-    (prog1 *terminal-relayed-resize*
-      (setf *terminal-relayed-resize* nil))))
+(defun terminal-relayed-resize-consume (terminal)
+  "Atomically consume and return TERMINAL's newest relayed size."
+  (with-lock-held ((terminal-relayed-resize-lock terminal))
+    (prog1 (terminal-relayed-resize terminal)
+      (setf (terminal-relayed-resize terminal) nil))))
 
-(defclass terminal (clinedi:terminal) ()
-  (:documentation "Autolith's terminal transport extension point."))
+
+;;;; -- Whole-Screen Frames --
+
+(defgeneric terminal-screen-enter (terminal)
+  (:documentation "Take TERMINAL's whole screen for painted frames and return a restoration token.
+
+A terminal written directly enters the alternate buffer with keyboard and
+mouse reporting; a relayed terminal leaves that to its clients, which take
+their screens with the first frame."))
+
+(defgeneric terminal-screen-leave (terminal token)
+  (:documentation "Give TERMINAL's screen back, restoring the native mode TOKEN captured on entry."))
+
+(defgeneric terminal-screen-paint
+    (terminal painter rows &key cursor-row cursor-column cursor-visible-p)
+  (:documentation "Show display ROWS as TERMINAL's whole screen with the cursor at CURSOR-ROW and CURSOR-COLUMN.
+
+PAINTER rewrites only the rows that changed on a terminal written directly;
+a relayed terminal sends its clients the rows that changed since the frame
+each of them holds."))
+
+(defgeneric terminal-screen-invalidate (terminal painter)
+  (:documentation "Forget what TERMINAL's screen shows, so the next paint rewrites it completely."))
+
+(defmethod terminal-screen-enter ((terminal terminal))
+  "Enter the alternate buffer with keyboard and mouse reporting on, keeping the native mode token."
+  (let ((token       (platform-terminal-enable-fullscreen *platform*))
+        (completed-p nil))
+    (unwind-protect
+         (progn
+           (terminal--write
+            terminal
+            (concatenate 'string
+                         (alternate-screen-enter-sequence)
+                         (terminal-keyboard-enhancement-enable-sequence)
+                         (format nil "~C[2J~C[H" #\Escape #\Escape)
+                         (mouse-reporting-enable-sequence)))
+           (terminal-flush terminal)
+           (setf completed-p t))
+      (unless completed-p
+        (platform-terminal-restore-fullscreen *platform* token)))
+    token))
+
+(defmethod terminal-screen-leave ((terminal terminal) token)
+  "Leave the alternate buffer and its reporting modes, then restore the native mode TOKEN."
+  (unwind-protect
+       (progn
+         (terminal--write
+          terminal
+          (concatenate 'string
+                       (format nil "~C[0m~C[?7h~C[?25h" #\Escape #\Escape #\Escape)
+                       (mouse-reporting-disable-sequence)
+                       (terminal-keyboard-enhancement-disable-sequence)
+                       (alternate-screen-leave-sequence)))
+         (terminal-flush terminal))
+    (platform-terminal-restore-fullscreen *platform* token))
+  nil)
+
+(defmethod terminal-screen-paint
+    ((terminal terminal) painter rows &key (cursor-row 0) (cursor-column 0) (cursor-visible-p t))
+  "Paint ROWS through PAINTER at TERMINAL's size, rewriting only what changed."
+  (clinedi:frame-painter-paint
+   painter
+   rows
+   (lambda (controls)
+     (terminal--write terminal controls)
+     (terminal-flush terminal))
+   :height           (max 1 (terminal-rows terminal))
+   :width            (max 1 (terminal-columns terminal))
+   :cursor-row       cursor-row
+   :cursor-column    cursor-column
+   :cursor-visible-p cursor-visible-p)
+  nil)
+
+(defmethod terminal-screen-invalidate ((terminal terminal) painter)
+  "Make PAINTER's next frame complete."
+  (clinedi:frame-painter-invalidate painter)
+  nil)
+
+
+;;;; -- Stream Terminals --
 
 (defclass stream-terminal (terminal clinedi:host-terminal) ()
   (:default-initargs                    :event-decoder #'terminal--decode-editing-event
@@ -214,6 +301,13 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
     :type     (option function)
     :documentation
     "Optional function of QUERY returning ranked workspace-relative paths.")
+   (mention-function
+    :initarg  :mention-function
+    :initform nil
+    :accessor terminal-ui-mention-function
+    :type     (option function)
+    :documentation
+    "Optional function of the text after an @ returning participant completion entries.")
    (completion-selector
     :initarg       :completion-selector
     :reader        terminal-ui-completion-selector

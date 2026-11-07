@@ -13,6 +13,11 @@
     :accessor      localgroup-session-paused-p
     :type          boolean
     :documentation "Whether queued primary work must wait for explicit input.")
+   (closing-p
+    :initform      nil
+    :accessor      localgroup-session-closing-p
+    :type          boolean
+    :documentation "Whether a close was committed while no terminal controlled the session, so no terminal may attach now.")
    (checkpoint-reconnect-id
     :initarg       :checkpoint-reconnect-id
     :initform      nil
@@ -40,6 +45,12 @@
     :accessor      localgroup-session-controller-seen-p
     :type          boolean
     :documentation "Whether any controlling client has ever attached to this endpoint.")
+   (linger-p
+    :initarg       :linger-p
+    :initform      nil
+    :accessor      localgroup-session-linger-p
+    :type          boolean
+    :documentation "Whether the session outlives every client, as a world server's channels do.")
    (attach-watchdog-thread
     :initform      nil
     :accessor      localgroup-session-attach-watchdog-thread
@@ -51,6 +62,14 @@
 (defun localgroup-registry-directory (configuration)
   "Return CONFIGURATION's private localgroup endpoint directory."
   (merge-pathnames "localgroup/" (config :state-root configuration)))
+
+(-> localgroup-world-directory (configuration) pathname)
+(defun localgroup-world-directory (configuration)
+  "Return CONFIGURATION's private directory holding the world server's endpoint record.
+
+It sits apart from the channel endpoints, so session listings never show the
+server itself."
+  (merge-pathnames "world/" (localgroup-registry-directory configuration)))
 
 (-> localgroup-registry-pathname (configuration string) pathname)
 (defun localgroup-registry-pathname (configuration session-id)
@@ -181,6 +200,18 @@ conversation transaction can roll back before releasing either lease."
                   (task-orchestrator-active-count orchestrator)))
         (values 0 0))))
 
+(-> application-terminal-attached-p (application) boolean)
+(defun application-terminal-attached-p (application)
+  "Return true while a terminal shows APPLICATION: a relay with an attached client, or an interactive terminal of its own."
+  (let ((terminal (and (slot-boundp application 'ui)
+                       (application-ui application)
+                       (terminal-ui-terminal (application-ui application)))))
+    (and terminal
+         (if (typep terminal 'localgroup-terminal)
+             (image-daemon:relay-attached-p terminal)
+             (terminal-interactive-p terminal))
+         t)))
+
 (-> localgroup-status-snapshot (localgroup-session) list)
 (defun localgroup-status-snapshot (session)
   "Return a portable, internally consistent status snapshot for SESSION."
@@ -259,11 +290,14 @@ conversation transaction can roll back before releasing either lease."
             steering-count :recalled-input-p (not (null recalled-p)) :turn-cancelling-p
             (not (null cancelling-p)) :reader-paused-p (not (null reader-paused-p))
             :task-live-count task-live-count :task-active-count task-active-count
+            :message-count      (conversation-message-count conversation)
+            :mention-count
+            (let ((person (application-world-human-identifier application)))
+              (if person
+                  (gethash person (conversation-channel-mention-counts conversation) 0)
+                  0))
             :terminal-attached-p
-            (let ((terminal (terminal-ui-terminal (application-ui application))))
-              (if (typep terminal 'localgroup-terminal)
-                  (image-daemon:relay-attached-p terminal)
-                  (not (null (terminal-interactive-p terminal)))))
+            (application-terminal-attached-p application)
             :terminal-attachment
             (let ((terminal (terminal-ui-terminal (application-ui application))))
               (if (typep terminal 'localgroup-terminal)
@@ -338,6 +372,16 @@ without one."
           (localgroup-session-detached-explicitly-p session) nil))
   nil)
 
+(-> localgroup-session-admits-attachment-p (localgroup-session) boolean)
+(defun localgroup-session-admits-attachment-p (session)
+  "Return true while SESSION admits a new terminal: it is neither stopping nor committed to close.
+
+Call it with SESSION's runtime lock held, the lock a committed close takes
+before it checks for a controlling terminal, so no terminal is admitted
+between that check and the close."
+  (not (or (image-daemon:daemon-runtime-stopping-p session)
+           (localgroup-session-closing-p session))))
+
 (-> localgroup--exit-abandoned-session (localgroup-session) null)
 (defun localgroup--exit-abandoned-session (session)
   "Stop SESSION because the terminal it was serving is gone for good."
@@ -352,15 +396,15 @@ without one."
 (defun localgroup--controller-lost (session)
   "Handle SESSION losing its controlling client and report whether it exits.
 
-A session with no connection left lingers only when its controller left
-through an explicit detach. A closed window, a dropped connection, or a
-client that ended without detaching exits the session instead, so
-abandoned launches never accumulate as idle background processes. The
-exit persists pending input and cancels an active turn the way any
-forced shutdown does; the conversation stays resumable."
+A session waits for its next client after an explicit detach or when its
+LINGER-P flag is set, as it is for a world-server host. Otherwise, a closed
+window, a dropped connection, or a client that ended without detaching
+exits the session. The exit persists pending input and cancels an active
+turn the way any forced shutdown does; the conversation stays resumable."
   (let ((exit-p
          (with-lock-held ((image-daemon:daemon-runtime-lock session))
-           (not (localgroup-session-detached-explicitly-p session)))))
+           (not (or (localgroup-session-detached-explicitly-p session)
+                    (localgroup-session-linger-p session))))))
     (when exit-p (localgroup--exit-abandoned-session session))
     exit-p))
 
@@ -442,7 +486,7 @@ forced shutdown does; the conversation stays resumable."
     (let ((attachment (image-daemon:attachment-create socket stream mode)))
       (labels ((attach ()
                  (with-lock-held ((image-daemon:daemon-runtime-lock session))
-                   (unless (image-daemon:daemon-runtime-stopping-p session)
+                   (when (localgroup-session-admits-attachment-p session)
                      (image-daemon:relay-attach
                       terminal attachment :rows rows :columns columns :styled-p styled-p
                       :session-id (image-daemon:daemon-runtime-identifier session))))))
@@ -460,8 +504,12 @@ forced shutdown does; the conversation stays resumable."
                (unless attached-p
                  (return-from localgroup--serve-attachment nil))
                (application-sync-window-title application)
+               (localgroup-terminal-replay-screen terminal attachment)
                (unless (eq mode ':read-only)
-                 (localgroup--note-controller-attached session))
+                 (localgroup--note-controller-attached session)
+                 ;; A terminal now controls this channel: that is the
+                 ;; person's choice of channel, committed only here.
+                 (application-world-attached application))
                (image-daemon:relay-read-attachment
                 terminal attachment :event-validator #'localgroup--terminal-event-p))
           (let ((controlled-p (image-daemon:relay-detach terminal attachment)))
@@ -577,11 +625,16 @@ relay; a terminal that already disconnected costs nothing."
 (-> localgroup-start
     (application
      &key (:token (option string)) (:created-at (option integer))
-       (:detached-explicitly-p t) (:checkpoint-reconnect-id (option string)))
+       (:detached-explicitly-p t) (:checkpoint-reconnect-id (option string))
+       (:linger-p boolean))
     localgroup-session)
 (defun localgroup-start
-    (application &key token created-at detached-explicitly-p checkpoint-reconnect-id)
-  "Publish APPLICATION's active conversation with its product startup choreography."
+    (application &key token created-at detached-explicitly-p checkpoint-reconnect-id
+                      linger-p)
+  "Publish APPLICATION's active conversation with its product startup choreography.
+
+With LINGER-P the session outlives its clients instead of exiting when the
+last controlling client vanishes."
   (let* ((restart-p      (not (null token)))
          (startup-values (and *localgroup-startup-record* (rest *localgroup-startup-record*)))
          (configuration  (application-configuration application))
@@ -600,7 +653,8 @@ relay; a terminal that already disconnected costs nothing."
                                           :detached-explicitly-p
                                           (or detached-explicitly-p
                                               (localgroup--initially-detached-p startup-values))
-                                          :checkpoint-reconnect-id checkpoint-reconnect-id)
+                                          :checkpoint-reconnect-id checkpoint-reconnect-id
+                                          :linger-p                linger-p)
                   :request-function #'localgroup--handle-request
                   :error-function   (lambda (condition)
                                       (format *error-output*
@@ -616,6 +670,9 @@ relay; a terminal that already disconnected costs nothing."
                     (sb-thread:condition-broadcast
                      (application-input-controller-condition-variable controller)))))))
            (unless restart-p (localgroup-handoff-assert-startup-active))
+           (let ((hub (application-client-hub application)))
+             (with-lock-held ((client-hub-lock hub))
+               (setf (client-hub-admitting-p hub) t)))
            (image-daemon:daemon-runtime-start session)
            (localgroup--publish-registry session)
            (application-mission-schedules-host application session)
@@ -638,6 +695,8 @@ relay; a terminal that already disconnected costs nothing."
   (case (localgroup--request-field request :operation)
     (:attach
      (localgroup--serve-attachment session request :socket socket :stream stream))
+    (:client
+     (localgroup--serve-client session request :socket socket :stream stream))
     (:message
      (image-daemon:daemon-message-handle-request
       session request :stream stream

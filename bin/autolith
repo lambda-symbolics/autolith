@@ -209,15 +209,20 @@ active_image_valid()
        --autolith-internal-active-image-probe >/dev/null 2>&1
 }
 
+# The world server hosts every channel in one process, so the active image gets
+# a larger heap than SBCL's default. Pristine recovery keeps the default.
+active_heap_size=2GB
+
 run_active_core()
 {
-  "$sbcl_command" --noinform --core "$active_core" \
-    --end-runtime-options "$source_root" "$@"
+  "$sbcl_command" --noinform --dynamic-space-size "$active_heap_size" \
+    --core "$active_core" --end-runtime-options "$source_root" "$@"
 }
 
 run_active_source()
 {
-  "$sbcl_command" --script "$source_root/bin/autolith-active" "$@"
+  "$sbcl_command" --dynamic-space-size "$active_heap_size" \
+    --script "$source_root/bin/autolith-active" "$@"
 }
 
 refresh_runtime_command()

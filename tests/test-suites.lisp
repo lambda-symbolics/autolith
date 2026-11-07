@@ -361,6 +361,7 @@
   test-detached-fullscreen-streaming
   test-fullscreen-authentication-lifecycle
   test-terminal-fullscreen-clicks
+  test-terminal-fullscreen-submit-click
   test-localgroup-click-events
   test-terminal-fullscreen-message-jumps
   test-terminal-fullscreen-repl-message-starts
@@ -606,6 +607,77 @@
   test-agenda-malformed-state
   test-agenda-tools)
 
+(define-test-suite world
+  test-world-persistence
+  test-world-deletion-rules
+  test-world-malformed-state
+  test-world-session-reconciliation
+  test-world-session-mapping-transactions
+  test-world-agent-keeps-model-choice
+  test-world-application-sync
+  test-world-channel-resource
+  test-world-channel-resolve
+  test-world-channels-command
+  test-world-message-send
+  test-world-message-outbox
+  test-world-channel-tools
+  test-world-message-presentation
+  test-world-child-participants
+  test-world-agent-hierarchy
+  test-world-parent-mention
+  test-world-person-notice
+  test-world-inbox
+  test-world-one-resident-agent
+  test-world-agent-move
+  test-world-agentless-channel
+  test-world-staggered-retirement
+  test-world-handles
+  test-world-composer-mentions
+  test-world-mention-highlighting
+  test-world-mention-boundaries
+  test-world-presentation-cache)
+
+(define-test-suite world-server
+  test-world-server-hosting
+  test-world-server-checkpoint-quiescence
+  test-world-server-restart-marker
+  test-world-server-restart-checkpoint
+  test-world-server-stop
+  test-world-server-switch
+  test-world-server-resume-order
+  test-world-server-open-latest-touched
+  test-world-server-open-images-and-new
+  test-world-client-script-submissions
+  test-world-client-script
+  test-world-server-starting-host
+  test-world-server-launch-options
+  test-world-server-close-unattached
+  test-world-server-attachment-moves-nobody
+  test-world-server-person-unread
+  test-world-server-open-before-checkpoint
+  test-world-server-move
+  test-world-server-move-running-child
+  test-world-server-move-goal
+  test-world-server-adoption-recovery
+  test-world-client-joins-winner
+  test-world-client-switch-navigates
+  test-world-client-refusal-ends-start)
+
+(define-test-suite client-protocol
+  test-client-protocol-channel
+  test-client-approval-terminal-arbitration
+  test-client-work-movement-cancellation
+  test-client-protocol-disconnect
+  test-client-protocol-packet-limit
+  test-client-protocol-cursor-tail
+  test-client-protocol-write-failure)
+
+(define-test-suite world-sidebar
+  test-world-sidebar-gathers-apart
+  test-world-sidebar-rows
+  test-world-sidebar-visibility
+  test-world-sidebar-unread)
+
 (define-test-suite preferences
   test-preferences
   test-preferences-unavailable-provider-selection
@@ -637,12 +709,7 @@
   test-idle-compaction-controller
   test-idle-compaction-input-races
   test-idle-compaction-failure
-  test-idle-compaction-deadline-wakeup
-  test-acp-idle-compaction-publishes-and-consumes
-  test-acp-idle-compaction-prioritizes-input-and-close
-  test-acp-idle-compaction-failure-cleans-state
-  test-acp-idle-compaction-schedules-before-future-notice
-  test-acp-idle-compaction-cancellation)
+  test-idle-compaction-deadline-wakeup)
 
 (define-test-suite permissions
     test-command-permission-persistence
@@ -736,6 +803,8 @@
   test-application-command-policies
   test-built-in-application-command-policies
   test-built-in-application-command-calls
+  test-switch-command-direct
+  test-rename-command
   test-application-codex-fast-mode-command
   test-application-settings-command
   test-application-mcp-reload-capability-change
@@ -774,6 +843,7 @@
   test-precompaction-bounds-oversized-output)
 
 (define-test-suite conversation
+  test-conversation-context-adoption
   test-conversation-image-input
   test-conversation-inherited-reference
   test-conversation-ephemeral-tool-projection
@@ -1384,6 +1454,7 @@
   test-terminal-lisp-operation-completion
   test-terminal-path-completion
   test-terminal-path-completion-history
+  test-terminal-mention-completion
   test-terminal-modal-selection
   test-terminal-fullscreen-picker-capacity
   test-terminal-picker-detail-column
@@ -1402,6 +1473,9 @@
   test-localgroup-session-exit-relay
   test-localgroup-resume-instruction-relay
   test-localgroup-relay-exit
+  test-localgroup-relay-frames
+  test-localgroup-screen-paints-frames
+  test-localgroup-screen-panel
   test-localgroup-cli-targets
   test-localgroup-kill-exit-observation
   test-localgroup-kill-cli-outcomes
@@ -1417,7 +1491,9 @@
   test-localgroup-detach-preempts-active-work
   test-localgroup-client-first-resume
   test-localgroup-abandoned-session-exit
+  test-localgroup-lingering-session
   test-localgroup-fresh-session-spawn
+  test-localgroup-world-spawn
   test-localgroup-process-handoff)
 
 (define-test-suite localgroup-handoff-boundary
@@ -1428,6 +1504,7 @@
   test-cli-resume-prefixes
   test-cli-detached-dispatch
   test-cli-detached-receipt-cleanup
+  test-cli-world-client-start
   test-cli-detached-process)
 
 ;;; The release scripts and the release server that drives them deploy to
@@ -1571,8 +1648,7 @@
   test-pending-native-work-finite-and-legacy
   test-pending-native-work-lifecycle
   test-pending-native-work-vault
-  test-pending-native-work-identities
-  test-acp-input-validate-storage-native-work)
+  test-pending-native-work-identities)
 
 (define-test-suite mission-inference
   test-mission-child-bounded-unknown-length-continuation
@@ -1741,27 +1817,34 @@
   test-check-process-lifecycle)
 
 (define-test-suite acp
-  test-acp-observer-streams-one-response
-  test-acp-observer-permission-validates-offered-choice
-  test-acp-observer-forwards-serialized-tool-execution
   test-acp-observer-tool-title-previews
-  test-acp-observer-batches-thoughts-before-permission
-  test-acp-observer-skips-empty-message-text
-  test-acp-external-tool-permission-modes
+  test-acp-observer-submission-provenance
+  test-acp-prompt-submission-outcomes
+  test-acp-attachment-history-boundary
   test-acp-session-wire-new-prompt-replay-close
-  test-acp-session-busy-admission-is-owner-safe
+  test-acp-session-submission-sources
+  test-acp-session-nonprose-prompts
+  test-acp-session-busy-nonprose-prompts
   test-acp-session-cancel-blocked-provider-and-reuse
   test-acp-session-cwd-mode-and-unsupported-content
   test-acp-session-disconnect-releases-lease
   test-acp-session-live-and-replayed-tool-identities
   test-acp-session-replay-metadata-and-tool-statuses
-  test-acp-session-close-timeout-retains-ownership
-  test-acp-session-delayed-cancel-during-finalization
   test-acp-session-flushes-thoughts-on-prompt-exit
+  test-acp-session-checkpoint-reconnect
+  test-acp-session-disconnected-registration-reload
+  test-acp-session-reconnect-failure
+  test-acp-session-close-during-reconnect
+  test-localgroup-checkpoint-interrupted-request
+  test-acp-session-close-during-greeting
+  test-acp-session-close-preserves-replacement
+  test-acp-session-consecutive-checkpoint-race
+  test-acp-session-setup-disconnection
+  test-acp-request-interrupted-wire-data
+  test-channel-client-checkpoint-blocked-writer
   test-acp-extension-portable-values
   test-acp-extension-wire-state-and-authority
-  test-acp-extension-busy-and-notification-order
-  test-acp-extension-close-active-handler
+  test-acp-extension-notification-order
   test-acp-extension-shutdown-admission
   test-acp-extension-settings-types-and-mutation
   test-acp-extension-model-verification
@@ -1774,17 +1857,6 @@
   test-acp-extension-job-durable-fallback
   test-acp-extension-resource-windows
   test-acp-extension-resource-authorization
-  test-acp-completion-continues-and-closes
-  test-acp-completion-cancel-and-reuse
-  test-acp-completion-start-failure-cleans-session
-  test-acp-completion-failure-pauses
-  test-acp-input-extension-rejects-blank
-  test-acp-input-extension-queue-fifo
-  test-acp-input-extension-steers-active-turn
-  test-acp-input-extension-late-steer-promotes-before-fifo
-  test-acp-input-extension-length-and-shape-validation
-  test-acp-input-failure-and-cold-recovery
-  test-acp-input-wire-cancel-and-resume
   test-acp-mcp-overlay-configuration
   test-acp-mcp-overlay-discovery-call-and-cleanup
   test-acp-mcp-overlay-duplicate-validation)

@@ -53,7 +53,9 @@
              :message    (or (getf (rest response) :message)
                              "The localgroup endpoint rejected the request.")
              :operation  operation
-             :session-id session-id))
+             :session-id session-id
+             :retry-p    (and (proper-list-p response)
+                              (not (null (getf (rest response) :retry-p))))))
     response))
 
 (-> localgroup-owner-reachability (pathname string (integer 1)) keyword)
@@ -99,51 +101,20 @@ mismatches yield :UNKNOWN; neither read nor transport creates or modifies record
     ((or sb-sys:deadline-timeout error) ()
       ':unknown)))
 
-(-> localgroup--session-prefix-p (string string) boolean)
-(defun localgroup--session-prefix-p (prefix session-id)
-  "Return true when nonempty PREFIX matches SESSION-ID's canonical or displayed form."
-  (let ((prefix     (if (legacy-session-identifier-p session-id)
-                        (string-downcase prefix)
-                        prefix))
-        (identifier (handler-case (session-identifier-normalize session-id)
-                      (localgroup-error () session-id))))
-    (and (non-empty-string-p prefix)
-         (or (uiop:string-prefix-p prefix identifier)
-             (uiop:string-prefix-p prefix (session-identifier-display identifier))))))
-
 (-> localgroup--find-record (configuration string) cons)
 (defun localgroup--find-record (configuration session-id)
-  "Return CONFIGURATION's unique endpoint matching SESSION-ID or its prefix.
+  "Return CONFIGURATION's unique endpoint matching SESSION-ID in full or in part.
 
-Prefer exact identifiers, then normalized identifiers, then unique prefixes."
-  (let* ((records    (localgroup-endpoint-records configuration))
-         (exact      (remove-if-not
-                      (lambda (entry)
-                        (string= session-id (localgroup--record-session-id (rest entry))))
-                      records))
-         (normalized (handler-case (session-identifier-normalize session-id)
-                       (localgroup-error () session-id)))
-         (matches
-           (or exact
-               (remove-if-not
-                (lambda (entry)
-                  (string=
-                   normalized
-                   (handler-case
-                       (session-identifier-normalize
-                        (localgroup--record-session-id (rest entry)))
-                     (localgroup-error ()
-                       (localgroup--record-session-id (rest entry))))))
-                records)
-               (remove-if-not
-                (lambda (entry)
-                  (localgroup--session-prefix-p
-                   session-id (localgroup--record-session-id (rest entry))))
-                records))))
+An exact identifier in canonical or display form wins; otherwise the one
+record whose identifier contains SESSION-ID, compared without regard to case.
+Several matches are reported together and select nothing."
+  (let* ((records (localgroup-endpoint-records configuration))
+         (matches (identifier-match session-id records
+                                    :key (lambda (entry)
+                                           (localgroup--record-session-id (rest entry))))))
     (cond ((null matches)
            (error 'localgroup-error
-                  :message    (format nil "No localgroup session named ~A is running."
-                                      (session-identifier-display session-id))
+                  :message    (format nil "No running localgroup session matches ~S." session-id)
                   :operation  ':discover
                   :session-id session-id))
           ((rest matches)
@@ -570,33 +541,56 @@ HEADER-P renders field labels rather than status values."
   nil)
 
 (-> localgroup--attach-terminal-loop
-    (stream terminal keyword &key (:socket t))
+    (stream terminal keyword &key (:socket t) (:screen (option localgroup-screen)))
     (option list))
-(defun localgroup--attach-terminal-loop (socket-stream terminal mode &key socket)
-  "Relay terminal I/O; return an application exit or explicit checkpoint transition."
+(defun localgroup--attach-terminal-loop (socket-stream terminal mode &key socket screen)
+  "Relay terminal I/O; return an application exit, a checkpoint transition or a switch request.
+
+SCREEN paints the session's frames and its own side panel on TERMINAL. A
+(:SWITCH :SESSION-ID ID) result asks the caller to attach to channel ID
+instead; this attachment has ended by then."
   (let ((output    (make-mode-tracking-output-stream *standard-output*))
+        (screen    (or screen (localgroup-screen-create :terminal terminal)))
         (reconnect nil))
     (unwind-protect
          (let ((exit
                  (image-daemon:daemon-attach-client-run
                   socket-stream :mode mode :socket socket :output-stream output
-                  :input-ready-function (lambda () (terminal-input-ready-p terminal))
-                  :read-event-function  (lambda () (terminal-read-event terminal))
+                  :input-ready-function
+                  (lambda ()
+                    ;; The side panel refreshes between keystrokes.
+                    (localgroup-screen-tick screen)
+                    (terminal-input-ready-p terminal))
+                  :read-event-function
+                  (lambda ()
+                    (localgroup-screen-filter-event screen (terminal-read-event terminal)))
                   :packet-function
                   (lambda (packet)
-                    (when (and (eq (first packet) ':checkpoint-reconnect)
-                               (non-empty-string-p (getf (rest packet) :id))
-                               (typep (getf (rest packet) :history-position) '(integer 0)))
-                      (setf reconnect packet)
-                      t))
+                    (cond
+                      ((localgroup-screen-handle-packet screen packet)
+                       nil)
+                      ((or (and (eq (first packet) ':checkpoint-reconnect)
+                                (non-empty-string-p (getf (rest packet) :id))
+                                (typep (getf (rest packet) :history-position) '(integer 0)))
+                           (and (eq (first packet) ':switch)
+                                (non-empty-string-p (getf (rest packet) :session-id))))
+                       (setf reconnect packet)
+                       t)
+                      (t
+                       nil)))
                   :resize-function
                   (lambda ()
-                    (when *terminal-resize-pending-p*
-                      (setf *terminal-resize-pending-p* nil)
-                      (multiple-value-bind (rows columns) (terminal-current-size)
-                        (list :rows rows :columns columns
-                              :styled-p (terminal-environment-styling-p))))))))
+                    (let ((terminal-p (shiftf *terminal-resize-pending-p* nil)))
+                      (when (or (localgroup-screen-take-resize screen) terminal-p)
+                        (when terminal-p
+                          (multiple-value-bind (rows columns) (terminal-current-size)
+                            (terminal-set-dimensions terminal columns :rows rows))
+                          (localgroup-screen-resized screen))
+                        (multiple-value-bind (rows columns) (localgroup-screen-pane-size screen)
+                          (list :rows rows :columns columns
+                                :styled-p (terminal-environment-styling-p)))))))))
            (or reconnect exit))
+      (localgroup-screen-close screen)
       (mode-tracking-output-stream-restore output))))
 
 (-> localgroup--wait-for-handoff-entry
@@ -626,20 +620,35 @@ HEADER-P renders field labels rather than status values."
               ':attach :session-id session-id))
      (sleep 0.05))))
 
-(-> localgroup--wait-for-checkpoint-entry (cons string) cons)
-(defun localgroup--wait-for-checkpoint-entry (entry reconnect-id)
-  "Wait boundedly for ENTRY's authenticated endpoint for RECONNECT-ID."
+(-> localgroup--wait-for-checkpoint-entry
+    (cons string &key (:configuration (option configuration)) (:cancelled-p (option function))
+          (:allow-later-p boolean))
+    cons)
+(defun localgroup--wait-for-checkpoint-entry (entry reconnect-id &key configuration cancelled-p allow-later-p)
+  "Wait boundedly for ENTRY's authenticated endpoint for RECONNECT-ID.
+
+While CONFIGURATION's world server restarts from its saved heap, the wait
+starts over instead of ending, since the endpoint returns only once the
+saved core boots. ALLOW-LATER-P accepts a later transition with the same
+channel, authentication token and creation time after a verified endpoint
+loses a subscription race to another checkpoint."
   (let* ((pathname   (first entry))
          (old-record (rest entry))
          (session-id (localgroup--record-session-id old-record))
          (token      (localgroup--record-token old-record))
-         (deadline   (+ (get-internal-real-time)
-                        (* *localgroup-handoff-start-timeout-seconds*
-                           internal-time-units-per-second))))
+         (timeout    (* *localgroup-handoff-start-timeout-seconds*
+                        internal-time-units-per-second))
+         (deadline   (+ (get-internal-real-time) timeout)))
     (loop
+      (when (and cancelled-p (funcall cancelled-p))
+        (error 'localgroup-error :message "Checkpoint reconnection was cancelled."
+                                :operation ':attach :session-id session-id))
       (let ((record (image-daemon:daemon-registry-read pathname)))
         (when (and record
-                   (equal (getf (rest record) :checkpoint-reconnect-id) reconnect-id)
+                   (or (equal (getf (rest record) :checkpoint-reconnect-id) reconnect-id)
+                       (and allow-later-p
+                            (let ((identifier (getf (rest record) :checkpoint-reconnect-id)))
+                              (and (stringp identifier) (plusp (length identifier))))))
                    (string= (localgroup--record-session-id record) session-id)
                    (string= (localgroup--record-token record) token)
                    (= (getf (rest record) :created-at) (getf (rest old-record) :created-at))
@@ -652,33 +661,44 @@ HEADER-P renders field labels rather than status values."
                      (error () nil)))
           (return (cons pathname record))))
       (when (>= (get-internal-real-time) deadline)
-        (error 'localgroup-error :message "The checkpoint endpoint did not become ready."
-                                :operation ':attach :session-id session-id))
+        (unless (and configuration (world-server-restarting-p configuration))
+          (error 'localgroup-error :message "The checkpoint endpoint did not become ready."
+                                  :operation ':attach :session-id session-id))
+        (setf deadline (+ (get-internal-real-time) timeout)))
       (sleep 0.05))))
 
-(-> localgroup-attach-record ((option configuration) cons keyword) (option list))
-(defun localgroup-attach-record (configuration entry mode)
+(-> localgroup-attach-record
+    ((option configuration) cons keyword &key (:panel t))
+    (option list))
+(defun localgroup-attach-record (configuration entry mode &key panel)
   "Attach the terminal, following explicit checkpoint transitions in the same mode.
 
-Return an application exit plist, or NIL after a detach or connection loss."
+PANEL, when given, is composed beside a fullscreen session's frames. Return
+an application exit plist, a (:SWITCH :SESSION-ID ID) request from the
+session, or NIL after a detach or connection loss."
   (let ((history-position nil))
     (loop
       (let ((result (localgroup--attach-record-once configuration entry mode
-                                                   :history-position history-position)))
+                                                   :history-position history-position
+                                                   :panel            panel)))
         (unless (eq (first result) ':checkpoint-reconnect)
           (return result))
-        (setf entry (localgroup--wait-for-checkpoint-entry entry (getf (rest result) :id))
+        (setf entry (localgroup--wait-for-checkpoint-entry entry (getf (rest result) :id)
+                                                           :configuration configuration)
               history-position (getf (rest result) :history-position))))))
 
 (-> localgroup--attach-record-once
-    ((option configuration) cons keyword &key (:history-position (option integer)))
+    ((option configuration) cons keyword &key (:history-position (option integer)) (:panel t))
     (option list))
-(defun localgroup--attach-record-once (configuration entry mode &key history-position)
-  "Run one attachment and release terminal ownership before any reconnect."
+(defun localgroup--attach-record-once (configuration entry mode &key history-position panel)
+  "Run one attachment and release terminal ownership before any reconnect.
+
+The session gets the part of the terminal left beside PANEL as its size."
   (let* ((record        (rest entry))
          (socket        nil)
          (socket-stream nil)
          (terminal      nil)
+         (screen        nil)
          (resize-watch  nil))
     (unwind-protect
         (progn
@@ -688,21 +708,23 @@ Return an application exit plist, or NIL after a detach or connection loss."
                  (stream-terminal-create
                   :rows                  rows
                   :columns               columns
-                  :input-file-descriptor (terminal-standard-input-file-descriptor))))
+                  :input-file-descriptor (terminal-standard-input-file-descriptor))
+                 screen
+                 (localgroup-screen-create :terminal terminal :panel panel)))
          (unless (terminal--terminal-mode-or-nil terminal)
            (error 'localgroup-error :message
                   "localgroup attach requires an interactive terminal." :operation
                   ':attach :session-id (localgroup--record-session-id record)))
          (multiple-value-setq (socket socket-stream)
            (daemon-connect (localgroup--record-port record)))
-         (daemon-write-packet socket-stream
-                              (list :localgroup-request :version
-                                    *daemon-protocol-version* :token
-                                    (localgroup--record-token record) :operation ':attach
-                                    :arguments
-                                    (list :mode mode :rows (terminal-rows terminal)
-                                          :columns (terminal-columns terminal) :styled-p
-                                          (terminal-environment-styling-p))))
+         (multiple-value-bind (rows columns) (localgroup-screen-pane-size screen)
+           (daemon-write-packet socket-stream
+                                (list :localgroup-request :version
+                                      *daemon-protocol-version* :token
+                                      (localgroup--record-token record) :operation ':attach
+                                      :arguments
+                                      (list :mode mode :rows rows :columns columns
+                                            :styled-p (terminal-environment-styling-p)))))
          (let ((response (daemon-read-response socket-stream ':attach)))
            (cond
             ((and response (eq (first response) ':handoff))
@@ -722,7 +744,8 @@ Return an application exit plist, or NIL after a detach or connection loss."
                                             configuration session-id
                                             :token   token
                                             :old-pid old-pid)
-                                           ':control))))
+                                           ':control
+                                           :panel panel))))
             ((and response (eq (first response) ':attached))
              (let ((history (getf (rest response) :history)))
                (when (stringp history)
@@ -745,7 +768,9 @@ Return an application exit plist, or NIL after a detach or connection loss."
                 *platform*
                 (lambda ()
                   (setf *terminal-resize-pending-p* t))))
-         (localgroup--attach-terminal-loop socket-stream terminal mode :socket socket))
+         (localgroup--attach-terminal-loop socket-stream terminal mode
+                                           :socket socket
+                                           :screen screen))
       (when resize-watch
         (platform-unwatch-terminal-resize *platform* resize-watch))
       ;; Cleanup is best-effort so it never masks the attachment outcome.
@@ -1001,7 +1026,9 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
          (localgroup--operation-command
           "pause" "pause a detached session" ':pause)
          (localgroup--operation-command
-          "kill" "terminate a detached session" ':kill))
+          "kill" "terminate a detached session" ':kill)
+         (world-client--server-command)
+         (world-client--stop-command))
    :handler
    (lambda (command)
      (when (command-arguments command)

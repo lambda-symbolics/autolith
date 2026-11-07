@@ -74,19 +74,9 @@ identical failures, so blanking them groups the failures by their cause."
 (-> tool-failure--conversation-identities (configuration &key (:children-p boolean)) list)
 (defun tool-failure--conversation-identities (configuration &key children-p)
   "Return the identities of every primary conversation, and child task conversations when CHILDREN-P."
-  (append
-   (conversation-list configuration)
-   (when children-p
-     (let ((tasks (merge-pathnames "tasks/" (config :data-root configuration))))
-       (when (uiop:directory-exists-p tasks)
-         (loop for group in (uiop:subdirectories tasks)
-               append (loop for execution in (uiop:subdirectories group)
-                            for name = (first (last (pathname-directory execution)))
-                            for identity = (merge-pathnames (make-pathname :name name :type "sexp")
-                                                            execution)
-                            when (uiop:directory-exists-p
-                                  (conversation-storage-directory-pathname identity))
-                              collect identity)))))))
+  (append (conversation-list configuration)
+          (when children-p
+            (mapcar #'first (conversation-task-identities configuration)))))
 
 (-> tool-failure-scan (pathname &key (:since integer)) list)
 (defun tool-failure-scan (identity &key (since 0))

@@ -353,31 +353,32 @@ autolith acp
 #+END_SRC
 Authenticate the selected provider with =autolith auth= before starting the
 editor session. ACP uses UTF-8 JSON-RPC on stdin/stdout; diagnostics go to stderr.
-A normal launch loads durable mutations and user initialization. For AUI, use
-=autolith --permissions auto acp=. Use =--pristine= when recovering from a
-damaged mutable image.
+For AUI, use =autolith --permissions auto acp=.
 
-New sessions use the editor's absolute working directory and a durable Autolith
-conversation ID. Load that ID to replay messages, visible reasoning, tool calls,
-and results. Text prompts, resource links, and embedded text resources are
-supported. File and process operations use the native Autolith tools.
+Each editor session is a channel of the world server, like a terminal's. The
+ACP process starts the server when none runs, and with =--pristine= starts it
+pristine. A new session opens a new channel in the editor's absolute working
+directory; its ID is the channel's conversation ID. Load that ID to replay
+messages, visible reasoning, tool calls, and results, then follow the
+channel. A terminal can show the same channel at the same time. Text prompts,
+resource links, and embedded text resources are supported. File and process
+operations use the native Autolith tools.
 
-The default =ask= mode requests command and external-tool approval in the editor.
-An approval covers the exact command and working directory, or the external tool
-identity and arguments. Select =auto=, =sandboxed=, or =full-access= through ACP
-session modes; use =--permissions auto|sandbox|full= on the command line. Changing
-modes clears session approvals.
+The channel decides approvals as it does for a terminal. In =ask= mode the
+editor gets a permission request with the channel's choices, and the first
+answer, from the editor or a terminal, wins. Select =auto=, =sandboxed=, or
+=full-access= through ACP session modes; use =--permissions auto|sandbox|full=
+on the command line. A mode set in the editor is the channel's mode.
 
-Client-supplied stdio and HTTP MCP servers are merged with native registrations
-for that session. Literal environment values and headers are ephemeral and
+Client-supplied stdio and HTTP MCP servers join the tools of a channel the
+server starts for the session. A channel that already runs refuses them, and
+the editor sees why. Literal environment values and headers are ephemeral and
 redacted from server output.
 
-Cancel a prompt to stop its provider, tools, and owned jobs. Close the session or
-disconnect to release its resources and lease.
-
-Each ACP process runs one primary prompt, setting mutation, tool invocation, or
-session setup at a time. Catalog reads and owned-job controls can run alongside it.
-Ctrl-C ends an ACP process with status 130 after releasing its sessions.
+Cancel a prompt to stop the channel's turn. A prompt returns once the channel
+finished its work. Closing the session leaves the channel, and closes it when
+the server started it for this session and nothing else follows it. Ctrl-C
+ends an ACP process with status 130 after leaving its channels.
 ** Remote clients
 
 =autolith acp --http= serves remote clients at =/acp= over the transports in the
@@ -393,8 +394,7 @@ autolith acp --http [::1]:8737
 #+END_SRC
 
 Autolith prints the endpoint URL on stderr and serves until Ctrl-C. Each client
-gets its own sessions. All clients share one primary operation in the process, so
-one client's running prompt makes another client's prompt return busy.
+gets its own sessions, each a channel of the world server.
 
 With =--token=, a client must send =Authorization: Bearer TOKEN= or add
 =?token=TOKEN= to the URL. Other users of the machine can read a token on the
@@ -534,31 +534,34 @@ and fails if they exceed the shutdown timeout.
 
 * Fullscreen terminal
 
-Autolith uses the ordinary inline terminal presentation by default. Opt into the
-application-owned fullscreen viewport for a session with:
+Autolith owns the whole terminal by default: a fullscreen viewport with the
+transcript above a bottom-pinned composer. To keep the transcript in the
+terminal's own scrollback instead, start a session with:
 
 #+BEGIN_SRC sh
-autolith --fullscreen
+autolith --plain
 #+END_SRC
 
 Save the preference for future launches at the Autolith prompt:
 
 #+BEGIN_SRC lisp
-(preferences-set-fullscreen (application-configuration *active-application*) t)
+(setf (config :fullscreen-p) nil)
 #+END_SRC
+
 In fullscreen mode, scroll the transcript above the bottom-pinned composer,
 modeline, command, RLM, and task activity rows. Use =PageUp= and =PageDown= for
 page movement. Use =Ctrl-PageUp= and =Ctrl-PageDown= to jump between user and
 assistant messages while skipping reasoning and tool activity. Use =Ctrl-Home= and
 =Ctrl-End= for the oldest and newest transcript positions, and the mouse wheel
-for incremental scrolling. A message jump places the end of the message on the
-row above the composer. If the message is taller than the window, its header
-appears at the top instead. The =--fullscreen= option enables fullscreen for one
-launch without changing the saved preference.
-Pass =nil= to =preferences-set-fullscreen= to return future launches to inline
-mode. Because the viewport owns the mouse, hold =Shift= while dragging to select
-text with the terminal emulator. Fullscreen history lives in the application,
-not the terminal emulator's native scrollback. The viewport keeps about four
+for incremental scrolling. In a terminal attached to a hosted channel,
+=Ctrl-T= hides and shows the channel sidebar; see Local sessions. A message
+jump places the end of the message on the row above the composer. If the
+message is taller than the window, its header appears at the top instead. The
+=--fullscreen= and =--plain= options choose the mode for one launch without
+changing the saved preference. Set =(config :fullscreen-p)= back to =t= to
+return future launches to fullscreen. Because the viewport owns the mouse, hold
+=Shift= while dragging to select text with the terminal emulator. Fullscreen
+history lives in the application, not the terminal emulator's native scrollback. The viewport keeps about four
 million characters of recent output in memory. At the oldest retained row, the
 legend shows =(history)=. Run =(history)= to load a page of older output.
 
@@ -867,8 +870,8 @@ Omit =:to= to address the primary agent:
 (prompt :to 'test-review "Run focused tests and report failures.")
 #+END_SRC
 
-If you message a sub-agent, it can respond to you in the main conversation thread
-if it wants to.
+If you message a child agent, it can respond to you in the main conversation
+thread if it wants to.
 
 Start a message with =(= to evaluate it as Common Lisp in the active image:
 
@@ -1048,6 +1051,15 @@ Conversation history uses read-only resource URIs:
   and compaction summaries are searched.
 - =conversation:id/<id>= reads or searches another conversation by its
   identifier. Searches never span several conversations.
+
+Channels use read-only resource URIs with the same history arguments:
+
+- =channel:current= describes the current channel, its residents,
+  subscribers, workspace and owner, then reads its history like
+  =conversation:current=.
+- =channel:id/<id>= describes and reads another channel.
+- =channel:list= surveys every channel with its residents and subscribers.
+  Reading a channel never subscribes the reader.
 
 ** Memories
 
@@ -1407,14 +1419,20 @@ provider generation.
 Provider-generated refreshes are enabled by default. Use =(titles)=, =(titles t)=,
 or =(titles nil)= to inspect or change the durable global preference.
 
-=(resume)= displays titles in its picker. An explicit =(resume "ID")= still uses the
-stable conversation identifier. The terminal status bar and local session status
-show the title when one is available; otherwise they show the conversation ID.
+=(resume)= displays titles in its picker. An explicit =(resume "ID")= accepts the
+stable conversation identifier or a part that identifies one conversation.
+Several matches are listed instead. The terminal status bar and local session
+status show the title when one is available; otherwise they show the conversation
+ID.
 
-A resumed conversation runs in a fresh process. Background jobs, asynchronous
-shell runs, and Lisp worker state from before the restart no longer exist. The
-first user turn after a resume carries a request-local notice that tells the model
-so. Only durable child task results stay readable through =job.get=.
+If no process serves the conversation, it resumes in a fresh one. Background
+jobs, asynchronous shell runs, and Lisp worker state from before the restart no
+longer exist. The first user turn after such a resume carries a request-local
+notice telling the model about the restart. Only durable child task results stay
+readable through =job.get=.
+
+If a world server still serves the conversation as a channel, resume attaches to
+that live channel with its jobs intact. See Local sessions.
 
 Inspect a saved conversation without resuming or locking it with:
 
@@ -1449,11 +1467,105 @@ description or argument rule makes models fail.
 
 ** Local sessions
 
-Every running Autolith session publishes a private authenticated local endpoint.
-Its session ID is the active conversation ID, shared with =resume= and stable
-across detach, restart and checkpoint quiescence. Selecting another conversation
-with =new=, =resume= or =fork= moves the endpoint to that conversation ID while
-attached terminals continue using the same connection. Inspect endpoints with:
+*** Starting and switching channels
+
+One background server hosts your channels. Run =autolith= in a directory to
+connect to it, starting the server if needed. The client opens the channel
+in that workspace whose conversation file changed last and that no other
+terminal controls, or creates a channel if none qualifies. Use =autolith resume ID= to open a
+specific channel.
+
+If the server cannot be started or does not answer, the start ends with the
+reason. No session runs in the terminal's own process instead.
+
+Closing the terminal, detaching, or losing the connection leaves the channel
+running. Use =(quit)= to end it. Use =(switch "ID")= to attach to another
+channel; the server opens it if needed and leaves the previous one running.
+In a pristine or recovery session, which runs apart from the server, use the
+same command to resume that conversation in place.
+
+Input piped from another program runs as a script in a new channel of the
+server, or in =ID='s with =autolith resume ID=. Each line is one submission,
+and a Lisp form spanning lines is read whole. Each submission runs to its end
+before the next, and the transcript goes to standard output as plain text.
+The channel closes once the input ends. A script answers no approvals, so
+the channel decides them as it does with no terminal attached.
+
+The server runs until you stop it, even with no open channel or attached
+terminal:
+
+#+BEGIN_SRC sh
+autolith lg server
+autolith lg stop
+#+END_SRC
+
+Use =server= to inspect the server process and its hosted channels, and
+=stop= to end all channels and the server. Updating or rolling back from any
+channel also stops the server because the image is shared.
+
+*** Checkpoints and launch options
+
+A checkpoint saves the whole process and records the requesting channel as
+the rollback target. It first waits, however long it takes, until no channel
+runs a turn and no job is running. Work already under way finishes, with the
+jobs it starts; no channel starts a new turn meanwhile. Then the server
+pauses all channels, and each terminal reconnects automatically. Every
+channel receives the outcome; the requesting channel also receives the
+generation ID. The turns held during the wait then start. A terminal started
+during the pause waits for the server instead of starting another one.
+
+On Windows, which cannot fork, the world server saves its exact heap and
+exits. The launcher publishes the saved heap as the generation and starts it,
+and the server serves every channel again. Terminals reconnect as after any
+checkpoint, and a terminal started during the restart waits for the server.
+
+Use =--detached= to open a new channel in the server without attaching a
+terminal. With =--pristine=, =--detached= starts a rescue session in a
+process of its own instead.
+
+For a new channel, specify =--model=, =--permissions=, =--immutable=,
+=--fullscreen=, =--plain=, or =--almighty= at startup. Supply =--provider=
+only together with =--model=. An existing channel accepts an explicit
+=--permissions= override only when no terminal controls it. Other launch
+options are rejected, with the option named in the error. When opening a
+workspace, those other options create a new channel instead of reusing a
+running one.
+
+*** Channel sidebar
+
+In fullscreen mode, an attached terminal can show the world's channels in a
+sidebar on the left. Your inbox comes first, with the number of messages
+waiting there unread; that count is kept on disk, so every terminal shows
+the same one. The other channels are grouped by workspace, with the current
+workspace first. Within a workspace, the channel whose conversation changed
+last comes first, and child channels are nested under their parents.
+
+| Marker | Meaning |
+|--------+---------|
+| =▸= | This terminal's current channel |
+| Cyan =●= | A terminal is attached |
+| Green =●= | The agent is working |
+| =○= | Hosted but not working |
+| =·= | No running session |
+
+A yellow number counts messages received since this terminal last viewed
+the channel; =@= counts mentions of you. Each terminal tracks its own unread
+counts. A channel first seen by that terminal starts at zero. The =✉= count
+shows deliveries waiting for a channel that no process serves.
+
+Press =Ctrl-T= to hide or show the sidebar. That preference is kept when the
+same terminal switches channels or reconnects. Below 100 columns, the
+sidebar is hidden automatically.
+
+*** Session endpoints
+
+Every channel the server hosts, like every directly running session,
+publishes a private authenticated local endpoint. Its session ID is the
+active conversation ID, shared with =resume= and stable across detach,
+restart and checkpoint quiescence. Selecting another conversation with
+=new=, =resume= or =fork= moves the endpoint to that conversation ID while
+attached terminals continue using the same connection. Inspect endpoints
+with:
 
 #+BEGIN_SRC sh
 autolith localgroup status
@@ -1462,7 +1574,7 @@ autolith lg status --sexp
 
 =idle= means that the process is at input with no active work of any kind.
 
-Start an unattended session, or resume one by conversation ID prefix:
+Start an unattended session, or resume one by conversation ID or a part of it:
 
 #+BEGIN_SRC sh
 autolith --detached
@@ -1472,16 +1584,21 @@ autolith resume
 #+END_SRC
 
 With =--detached=, Autolith prints the full conversation ID and session PID,
-then exits without attaching. This works with closed stdin and with
-=AUTOLITH_SESSION_STYLE=direct=. Detached resume requires a prefix. Without
-=--detached=, omit the prefix to open the conversation picker. Exact canonical
-and displayed IDs take priority; ambiguous prefixes report every matching ID
-with its available title, workspace, time, and preview. Running conversations,
+then exits without attaching. This works with closed stdin. Detached resume
+requires an ID. Without
+=--detached=, omit the ID to open the conversation picker. An exact canonical
+or displayed ID wins; otherwise any part of an ID selects the one conversation
+containing it, without regard to case, and a part matching several reports
+every matching ID with its available title, workspace, time, and preview
+instead of selecting one. Running conversations,
 including empty new sessions, are selectable. Resuming a running conversation
 attaches to it; detached resume prints its existing PID without disturbing its
-clients. Launch-only overrides such as =--model= and =--permissions= are rejected
-when reusing a running conversation. =--image= and =--simulate-crash= cannot be
-combined with =--detached=.
+clients. Launch-only overrides such as =--model= are rejected when resuming a
+running conversation. For hosted channels, =--permissions= may be used when
+no terminal is attached, as described under Checkpoints and launch options.
+Otherwise, change the permission mode inside the conversation with
+=(permissions ...)=. =--image= and =--simulate-crash= cannot be combined with
+=--detached=.
 
 Control a session with the following commands:
 
@@ -1498,11 +1615,11 @@ autolith lg kill   [SESSION-ID]
 
 =lg= is an alias for =localgroup=. When exactly one endpoint is reachable,
 these commands select it when =SESSION-ID= is omitted. With multiple sessions,
-provide a full ID or a prefix that matches one session. Prefixes accept IDs with
-or without the display hyphen, for example =b=, =b-6=, or =b6= for =b-6uouHJ=.
-Full IDs take priority over prefix matches. If a prefix matches more than one
-session, the error lists the matching IDs; use a longer prefix. Current IDs are
-case-sensitive. Legacy hexadecimal IDs accept either case.
+provide a full ID or any part of one that matches a single session. Parts are
+matched without regard to case and with the display hyphen dropped, for
+example =b=, =b-6=, =uouh= or =6UOU= for =b-6uouHJ=. A full ID in either form
+takes priority. If a part matches more than one session, the error lists the
+matching IDs and nothing happens; give a longer part.
 
 Use =tell= to send input to a session and resume it if paused.
 =pause= cancels active work and holds queued primary work.
@@ -1557,6 +1674,124 @@ Private files and directories carry an access control list granting only the
 owner and SYSTEM, which is what mode =0600= and =0700= mean there; a file
 Autolith publishes read-only withholds write access through that list and
 keeps the read-only attribute clear, so it can still be replaced and deleted.
+
+** Channels
+
+Autolith is moving from one session per process to one shared world of
+channels and participants. A channel is an addressable conversation and
+execution location with its own working directory and history. A participant
+is a person or an agent with private state; each resides in at most one channel and
+may subscribe to others. You reside in your inbox, a channel of your own
+named =inbox= where no agent ever lives; viewing or controlling another
+channel moves nobody. Every durable conversation is kept in step with a
+channel of the same identifier, initially with an agent participant residing there,
+owned by the one human participant, so =conversation:id/X= and =channel:id/X=
+name the same history. A conversation newer than its channel is migrated
+again onto the same identities, and a deleted conversation retires its channel
+and agent. The world lives in =world/= below the data root. One world server
+process hosts the open channels, each with its own endpoint for terminals;
+see Local sessions.
+
+=(channels)= lists every channel with its residents and subscribers, newest
+change first, and then the parked agents. Agents are all one kind of
+participant: an agent has a parent and may have children, and any agent,
+a child too, may create child agents. A child agent resides in a channel
+nested under its parent's channel and belongs to its parent agent, so
+=channel:id/<execution id>= reads a child's transcript and a message to that
+channel steers it. How deep the tree grows is capped:
+=AUTOLITH_TASK_MAX_DEPTH=, default 2, counts the levels of child agents below
+a top-level agent, and the limits on running and queued jobs cap how many
+run at once.
+
+Every participant has a unique name, its handle, so =@name= reaches exactly
+one of them. A session's agent is named after its workspace directory, =frob=
+for an agent working in =~/work/frob=, and a second agent there is =frob-2=;
+a child agent takes the name its parent gave it, as in
+=(prompt :to 'test-review ...)=, or =agent= when it has none; you are =user=.
+Names are letters, digits, hyphens and underscores, matched without regard to
+case. =(rename "NAME")= renames this channel's agent and
+=(rename "WHO" "NAME")= renames the participant =WHO= names by handle,
+identifier or a part of it, yourself included. A name another participant
+has is refused, and so is =parent=, which always means the sender's parent.
+
+A channel has at most one resident agent. =(move "WHO")= moves the agent =WHO=
+names, by handle, identifier or a part of it, into this channel, and
+=(move "WHO" "ID")= into channel =ID=. The move stops the agent where it is
+the way a steer does: the tool call in flight finishes, no new request
+starts, and the prompts it had not started are dropped with a notice in
+the channel it leaves; nothing moves until the turn has stopped. In its new
+channel the agent keeps the context it had, followed by what is said there
+from the move onward, and its own model; the channel's earlier history stays
+readable at =channel:id/ID= but is not part of the agent's context. The
+context is kept on disk before anything else changes, so a restart, a
+failure partway through, or a channel opened only later, finds it, and the
+agent takes it up before its next turn. Its goal or mission goes with it, and
+the channel it leaves keeps none; a running mission arrives paused, its jobs
+cancelled, until =(mission :resume)=. The agent then waits: it works again
+when you write there or someone mentions it from another channel. Jobs it
+started keep running in the channel it left and leave their results in that
+channel's history, but they wake no agent there. Moves and parks happen one
+at a time. A move into a channel that already has an agent is refused, and
+so is a move into the inbox or of yourself: you stay in the inbox while a
+terminal shows you any channel. A move interrupts a child agent whose task
+is still running for its parent: the task is cancelled, the parent gets that
+result, and the child moves with the context it had. The tasks of the child's
+own children go on. An agent whose channel a pristine or recovery session has open
+is not moved or parked. =(dismiss "WHO")= parks an agent instead, after it
+stops the same way: a parked agent resides in no channel and keeps
+its identity, its children and its context, and =(move "WHO")= brings it into
+a channel again. Parking never affects its children. A mention of a parked
+agent reaches nobody, and the send says the agent is parked. A channel
+without an agent, because its agent moved or was parked, keeps its history
+and its subscribers, runs no agent turn, and refuses typed prompts until =(move "WHO")=
+brings an agent or =(domestic)= creates a new one for it, named after the
+workspace and using this session's model and starting with no context but the channel's
+history to read. Messages sent to such a channel
+wait in its inbox until an agent is there to read them.
+
+Typing =@= in the composer completes participant handles the way it completes
+workspace paths; a token with a slash stays a path. A message you type that
+mentions a participant residing in another channel is delivered to that
+channel as a mention from you when you submit it, before your own agent
+takes the message, so =@frob have a look= reaches frob wherever you are. A
+mention starts a word: an =@= inside an address or a path, as in
+=alice@frob.example=, mentions nobody. A plain message you type, and your
+agent's reply to it, reach every subscriber of your channel residing
+elsewhere the same way, as copies labeled by the subscription; a replayed
+turn after a restart sends no second copy. The transcript highlights
+mentions: your own name in the user color, other participants' names in the
+accent color.
+
+Messages travel between channels through the same path for people and agents.
+=(tell "ID" "text")= sends a message to channel =ID= as yourself, where =ID=
+may be any part of the identifier that names one channel, as in
+=channel:id/ID= and =(switch "ID")=; the agent
+tools =channel.send=, =channel.subscribe= and =channel.unsubscribe= do the same
+for an agent, a child agent included: it is the resident of its nested
+channel and messages as that participant under its role's ordinary tool
+policy. A message reaches the channel's residents, every subscriber of
+the channel and every participant it mentions as =@name= or =@id=, wherever
+they reside. =@parent= names the sender's parent; when that parent is parked,
+the message goes to the nearest ancestor agent that is not, and to you when
+none is left. An idle agent wakes with the message; a working one receives it
+as a steer labeled with the sender and the channel. The transcript shows the
+sender's name and the channel. A message for you, one that mentions you or
+reaches you through =@parent=, is a notice: it goes to your inbox and no
+agent takes it as a turn. Once a terminal shows the inbox, the notice is
+recorded in the inbox's history and shown in full; until then it waits,
+unread. The sidebar counts it, and so does the modeline of every channel,
+as in =✉ 2 unread=, in plain mode too. Each notice ends with the form that goes
+where it was said, such as =(switch "b-6uouHJ")=; in fullscreen, clicking it
+runs it as if you had typed it. =(switch "inbox")= opens the inbox, which
+=(resume)= and the conversation picker never offer. Typing in the inbox
+reaches no agent; =(tell "ID" "text")= writes to a channel from there.
+Messages you write elsewhere name the channel you wrote them in as their
+source. Messages wait in the channel's inbox under
+=world/inbox/= until a process serves the channel, and a crash between
+delivery and the durable record repeats nothing. A send is recorded under
+=world/outbox/= before its copies go out, so a copy an inbox refuses because
+it is full, or one a crash skipped, is delivered later under the same
+identifier, once, and the sender hears which channels still wait.
 
 Conversation leases, Localgroup endpoint records, and recovery state live under
 =${XDG_STATE_HOME:-~/.local/state}/autolith/= rather than =XDG_RUNTIME_DIR=.
@@ -2955,7 +3190,9 @@ files. If a scope is unsupported or the helper is unavailable, execution fails
 rather than proceeding without isolation.
 
 The default pool admits eight concurrent children.
-=AUTOLITH_TASK_MAX_CONCURRENCY= raises that up to 32. Child jobs have no
+=AUTOLITH_TASK_MAX_CONCURRENCY= raises that up to 32. =AUTOLITH_TASK_MAX_DEPTH=,
+default 2, is how many levels of child agents may sit below a top-level
+agent; a child at the last level cannot create children. Child jobs have no
 deadline unless =AUTOLITH_TASK_MAX_RUNTIME_MS= is set positive.
 
 ** Retained command output

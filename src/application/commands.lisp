@@ -675,7 +675,8 @@ notice preference is on, so enabling it mid-session takes effect immediately."
                     (namestring current-directory))))
          (current-items nil)
          (other-items   nil))
-    (dolist (pathname (conversation-list configuration))
+    (dolist (pathname (remove-if #'conversation-inbox-pathname-p
+                                 (conversation-list configuration)))
       (let* ((identifier (pathname-name pathname))
              (identifier-display
                (conversation-identifier-display identifier))
@@ -744,13 +745,19 @@ notice preference is on, so enabling it mid-session takes effect immediately."
 
 (-> application--persist-model-selection (application configuration) null)
 (defun application--persist-model-selection (application configuration)
-  "Record the selected provider, model and effort on the active conversation."
+  "Record the selected provider, model and effort on the active conversation and its resident agent."
   (let ((provider (config :model-provider configuration)))
     (conversation-set-model-selection
      (application-conversation application)
      (config :model configuration)
      (config :reasoning-effort configuration)
-     :provider (and (non-empty-string-p provider) provider)))
+     :provider (and (non-empty-string-p provider) provider))
+    (application-world-agent-settings-update
+     application
+     (append (list :model (config :model configuration))
+             (and (non-empty-string-p provider) (list :model-provider provider))
+             (let ((effort (config :reasoning-effort configuration)))
+               (and effort (list :reasoning-effort effort))))))
   nil)
 
 (-> application-set-reasoning-effort (application string) null)
@@ -2325,20 +2332,25 @@ are forwarded to TERMINAL-UI-SELECT."
                 (checkpoint-backend-create
                  configuration (application-worker application)
                  :tool-registry (application-tool-registry application)))
-              (generation    (checkpoint-create backend)))
-         (if (platform-supports-p *platform* ':restartable-image-saver)
-             (progn
-               (setf (application-checkpoint-restart-request application)
-                     (cons backend generation))
-               (application-present
-                application
-                (format nil "Exact heap checkpoint ~A is scheduled. Autolith will restart after this command and resume this session."
-                        (generation-identifier generation))))
-             (application-present
-              application
-              (format nil "Checkpoint ~A is publishing in process ~D."
-                      (generation-identifier generation)
-                      (generation-coordinator-pid generation)))))
+              (generation    (if (application-hosted-p application)
+                                 nil
+                                 (checkpoint-create backend))))
+         (cond
+           ((application-hosted-p application)
+            (application-present application (world-server-checkpoint application backend)))
+           ((platform-supports-p *platform* ':restartable-image-saver)
+            (setf (application-checkpoint-restart-request application)
+                  (cons backend generation))
+            (application-present
+             application
+             (format nil "Exact heap checkpoint ~A is scheduled. Autolith will restart after this command and resume this session."
+                     (generation-identifier generation))))
+           (t
+            (application-present
+             application
+             (format nil "Checkpoint ~A is publishing in process ~D."
+                     (generation-identifier generation)
+                     (generation-coordinator-pid generation))))))
     (application-set-activity application nil))
   nil)
 
@@ -2978,10 +2990,98 @@ The current value and its source sit in aligned columns of their own."
     (when (or identifier picker-p)
       (setf (application-project-adaptation-offer-p application) nil))
     (when identifier
-      (application-resume-conversation application identifier)
+      (application-resume-conversation
+       application
+       (application-world-channel-identifier application identifier))
       (application-render-records application)
       (when startup-offer-p
         (application-maybe-offer-project-adaptation application))))
+  ':continue)
+
+(-> application--switch-target (application string) string)
+(defun application--switch-target (application designator)
+  "Return the identifier of the channel DESIGNATOR names, among the world's channels or the running sessions.
+
+A channel opened moments ago has no durable record and so no world channel
+yet, but its session is published, so the running sessions are searched when
+the world knows no such channel."
+  (handler-case
+      (application-world-channel-identifier application designator)
+    (world-error (condition)
+      (or (handler-case
+              (localgroup--record-session-id
+               (rest (localgroup--find-record (application-configuration application)
+                                              designator)))
+            (localgroup-error ()
+              nil))
+          (error condition)))))
+
+(define-application-command application--builtin-switch-command
+    (:name              "/switch"
+     :argument          "ID"
+     :description       "move this terminal to another channel"
+     :tip               "takes a channel ID or a unique fragment of one; the channel you leave keeps running."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application designator)
+  (let* ((identifier (application--switch-target application (princ-to-string designator)))
+         (display    (conversation-identifier-display identifier))
+         (current    (conversation-identifier (application-conversation application)))
+         (terminal   (terminal-ui-terminal (application-ui application)))
+         (controller (application-input-controller application)))
+    (cond
+      ((string= identifier current)
+       (application-present application
+                            (format nil "This terminal is already in channel ~A." display)))
+      ((and (application-hosted-p application) (typep terminal 'localgroup-terminal))
+       (application-present
+        application
+        (if (localgroup-terminal-switch-controller terminal identifier)
+            (format nil "Switching this terminal to channel ~A." display)
+            (format nil "No terminal controls this channel; attach one to move it to ~A."
+                    display))))
+      ((and controller (application-input-controller-turn-active-p controller))
+       (application-present
+        application
+        (format nil "Wait for the turn to finish, then (switch ~S) resumes that channel here."
+                display)))
+      (t
+       (application-resume-conversation application identifier)
+       (application-render-records application)
+       (application-present application (format nil "Switched to channel ~A." display)))))
+  ':continue)
+
+(define-application-command application--builtin-rename-command
+    (:name              "/rename"
+     :argument          "[WHO] NAME"
+     :description       "name a participant for @mentions"
+     :tip               "renames this channel's agent, or the participant WHO names; names are letters, digits, hyphens and underscores."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application first &optional (second nil second-p))
+  (let* ((configuration (application-configuration application))
+         (name          (princ-to-string (if second-p second first)))
+         (participant   (if second-p
+                            (let ((designator (princ-to-string first)))
+                              (or (world-participant-designated
+                                   (values (world-reconcile-sessions configuration))
+                                   designator)
+                                  (error 'world-error
+                                         :message    (format nil "No participant is named ~A." designator)
+                                         :pathname   nil
+                                         :operation  ':rename-participant
+                                         :identifier designator)))
+                            (or (world-session-participant configuration
+                                                           (application-conversation application))
+                                (error 'world-error
+                                       :message   "This channel has no agent participant yet; it gets one with its first durable message."
+                                       :pathname  nil
+                                       :operation ':rename-participant))))
+         (before        (participant-name participant)))
+    (world-participant-rename configuration (participant-identifier participant) name)
+    (application-present application (format nil "Renamed @~A to @~A." before name)))
   ':continue)
 
 (define-application-command application--builtin-conversations-command
@@ -2995,6 +3095,152 @@ The current value and its source sit in aligned columns of their own."
     (application)
   (application-present application
                        (application-conversations-entry application))
+  ':continue)
+
+(define-application-command application--builtin-channels-command
+    (:name              "/channels"
+     :argument          nil
+     :description       "list channels and their participants"
+     :tip               "lists every channel with its residents and subscribers, newest change first."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application)
+  (application-present application
+                       (application-channels-entry application))
+  ':continue)
+
+(define-application-command application--builtin-move-command
+    (:name              "/move"
+     :argument          "AGENT [CHANNEL]"
+     :description       "move an agent into a channel, this one by default"
+     :tip               "stops the agent where it is; in its new channel it waits until someone writes there or mentions it."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application agent &optional channel)
+  (let* ((configuration (application-configuration application))
+         (here          (application-world--served-channel application))
+         (target        (if channel
+                            (princ-to-string channel)
+                            (or here
+                                (error 'world-error
+                                       :message   "This conversation is not a channel yet; name the channel to move the agent into."
+                                       :pathname  nil
+                                       :operation ':move))))
+         (server        (application-world-server application)))
+    (if server
+        (let ((answer (rest (world-server-move server (princ-to-string agent) target))))
+          (application-present
+           application
+           (format nil "Agent ~A moved ~:[out of parking~;from channel ~:*~A~] to ~A~@[; ~D queued message~:P dropped~]."
+                   (participant-name (world-participant-find (world-load configuration)
+                                                             (getf answer :participant)))
+                   (let ((source (getf answer :source)))
+                     (and source (conversation-identifier-display source)))
+                   (conversation-identifier-display (getf answer :channel))
+                   (let ((dropped (getf answer :dropped)))
+                     (and (plusp dropped) dropped)))))
+        (let* ((world       (values (world-reconcile-sessions configuration)))
+               (participant (or (world-participant-designated world (princ-to-string agent))
+                                (error 'world-error
+                                       :message    (format nil "No participant is named ~A." agent)
+                                       :pathname   nil
+                                       :operation  ':move
+                                       :identifier (princ-to-string agent))))
+               (destination (channel-identifier (world-channel-designated world configuration target)))
+               (source-p    (and here (equal here (participant-residence participant))))
+               (result      (world-move-agent
+                             configuration participant destination
+                             :source-application      (and source-p application)
+                             :destination-application (and here (string= here destination) application)
+                             :interrupt-task          (lambda (candidate)
+                                                        (application-world-interrupt-task
+                                                         application candidate)))))
+          (application-present
+           application
+           (format nil "Agent ~A moved ~:[out of parking~;from channel ~:*~A~] to ~A~@[; ~D queued message~:P dropped~]."
+                   (participant-name participant)
+                   (let ((source (getf result :source)))
+                     (and source (conversation-identifier-display source)))
+                   (conversation-identifier-display destination)
+                   (let ((dropped (getf result :dropped)))
+                     (and (plusp dropped) dropped)))))))
+  ':continue)
+
+(define-application-command application--builtin-domestic-command
+    (:name              "/domestic"
+     :argument          nil
+     :description       "create a new agent for this channel"
+     :tip               "for a channel without an agent: a fresh agent with this session's model, named after the workspace."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application)
+  (application-world-domestic-agent application)
+  ':continue)
+
+(define-application-command application--builtin-dismiss-command
+    (:name              "/dismiss"
+     :argument          "AGENT"
+     :description       "park an agent, leaving its channel without one"
+     :tip               "stops the agent and parks it in no channel, keeping its context and leaving its children unaffected; (move \"WHO\") brings it back. Its channel then takes a moved agent or a domestic one."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application agent)
+  (let* ((configuration (application-configuration application))
+         (server        (application-world-server application))
+         (answer        (if server
+                            (rest (world-server-dismiss server (princ-to-string agent)))
+                            (let* ((world       (values (world-reconcile-sessions configuration)))
+                                   (participant (or (world-participant-designated
+                                                     world (princ-to-string agent))
+                                                    (error 'world-error
+                                                           :message    (format nil "No participant is named ~A."
+                                                                               agent)
+                                                           :pathname   nil
+                                                           :operation  ':park
+                                                           :identifier (princ-to-string agent))))
+                                   (here        (application-world--served-channel application)))
+                              (list* :name (participant-name participant)
+                                     (world-park-agent
+                                      configuration participant
+                                      :application    (and here
+                                                           (equal here (participant-residence participant))
+                                                           application)
+                                      :interrupt-task (lambda (candidate)
+                                                        (application-world-interrupt-task
+                                                         application candidate))))))))
+    (application-present
+     application
+     (format nil "Agent ~A parked~:[, already out of every channel~; from channel ~:*~A~]~@[; ~D queued message~:P dropped~]. (move \"~A\") brings it into a channel."
+             (getf answer :name)
+             (let ((channel (getf answer :channel)))
+               (and channel (conversation-identifier-display channel)))
+             (let ((dropped (getf answer :dropped)))
+               (and (plusp dropped) dropped))
+             (getf answer :name))))
+  ':continue)
+
+(define-application-command application--builtin-tell-command
+    (:name              "/tell"
+     :argument          "CHANNEL MESSAGE"
+     :description       "send a message to a channel as yourself"
+     :tip               "reaches the channel's residents and subscribers and wakes their agents."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
+    (application channel &rest words)
+  (let ((result (application-world-send application
+                                        :channel (princ-to-string channel)
+                                        :text    (format nil "~{~A~^ ~}" words))))
+    (application-present
+     application
+     (format nil "Sent to ~{~A~^, ~}~@[; reached live: ~{~A~^, ~}~]~@[; waiting for a full inbox: ~{~A~^, ~}~]."
+             (mapcar #'conversation-identifier-display (getf result :channels))
+             (mapcar #'conversation-identifier-display (getf result :notified))
+             (mapcar #'conversation-identifier-display (getf result :pending)))))
   ':continue)
 
 (define-application-command application--builtin-history-command

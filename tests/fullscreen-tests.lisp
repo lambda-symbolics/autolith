@@ -716,11 +716,16 @@
                                       :rows 12 :columns 40 :styled-p nil
                                       :session-id "startup-test")
            (terminal-ui-open-prompt-block active)
-           (let* ((history   (image-daemon:relay-history-text terminal))
-                  (alternate (search (alternate-screen-enter-sequence) history))
-                  (row       (search "row 29" history)))
-             (test-assert (and alternate row (< alternate row))
-                          "the attached client sees the transcript only in its fullscreen paint")))
+           (let ((history (image-daemon:relay-history-text terminal))
+                 (frames  (localgroup-tests--frames attachment)))
+             (test-assert (and (not (search (alternate-screen-enter-sequence) history))
+                               (not (search "row 29" history)))
+                          "an attached client receives no painted output as text")
+             (test-assert (and frames
+                               (getf (rest (first frames)) :complete-p)
+                               (some (lambda (frame) (localgroup-tests--frame-text-p frame "row 29"))
+                                     frames))
+                          "the attached client sees the transcript in a complete frame")))
       (ignore-errors (image-daemon:relay-detach terminal attachment))
       (terminal-ui-stop ui)))
   nil)
@@ -793,7 +798,7 @@
                   (not (search question (image-daemon:relay-history-text terminal)))
                   "Detached fullscreen streaming does not spill into normal-screen relay text")
                  (attach)
-                 (let ((frame (fullscreen-test--frame active)))
+                 (let ((frame (localgroup-terminal-screen-frame terminal)))
                    (test-assert
                     (= 1 (count-if (lambda (row)
                                      (search question (clinedi:ansi-strip row)))
@@ -810,6 +815,29 @@
 
 
 ;;;; -- Transcript Clicks --
+
+(-> test-terminal-fullscreen-submit-click () null)
+(defun test-terminal-fullscreen-submit-click ()
+  "Test clicking a form widget submits the form as typed input and keeps the draft."
+  (let ((terminal (make-instance 'recording-terminal :columns 40 :rows 12))
+        (actions  nil))
+    (with-terminal-ui (ui (fullscreen-test--ui terminal))
+      (setf (terminal-ui-action-function ui)
+            (lambda (action)
+              (push action actions)))
+      (terminal-ui-append-finalized
+       ui ':notice
+       (list (terminal-span ':dim "  ↪ ")
+             (termdown:make-widget ':code "(switch \"b-x\")" '(:submit "(switch \"b-x\")"))))
+      (terminal-ui-insert-input ui "half typed")
+      (multiple-value-bind (action payload) (terminal-ui-process-event ui '(:click 8 1))
+        (test-assert (and (eq action ':submit)
+                          (equal payload "(switch \"b-x\")")
+                          (null actions))
+                     "a clicked form returns as its submission, not as an action"))
+      (test-assert (equal (line-editor-text (terminal-ui-editor ui)) "half typed")
+                   "the draft stays as it was")))
+  nil)
 
 (-> test-terminal-fullscreen-clicks () null)
 (defun test-terminal-fullscreen-clicks ()

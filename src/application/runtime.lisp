@@ -16,6 +16,36 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-configuration
     :type          configuration
     :documentation "The current paths, model, and provider choices.")
+   (client-hub
+    :initform      (make-instance 'client-hub)
+    :reader        application-client-hub
+    :type          client-hub
+    :documentation "The structured clients following this application's channel.")
+   (world-deliveries
+    :initform      (make-hash-table :test #'equal :synchronized t)
+    :reader        application-world-deliveries
+    :type          hash-table
+    :documentation "Channel delivery receipts this process has queued or taken as steering.")
+   (world-pending-share
+    :initform      nil
+    :accessor      application-world-pending-share
+    :type          list
+    :documentation "The messages the person submitted before this conversation persisted, oldest first, shared in that order once it does.")
+   (world-inbox-unread
+    :initform      0
+    :accessor      application-world-inbox-unread
+    :type          (integer 0)
+    :documentation "The messages waiting unread in the person's inbox as last counted, shown on the modeline.")
+   (world-human
+    :initform      nil
+    :accessor      application-world-human
+    :type          (option string)
+    :documentation "The human participant's identifier once the world has one.")
+   (world-cache
+    :initform      nil
+    :accessor      application-world-cache
+    :type          (option cons)
+    :documentation "The world as last read for presentation, with the source token it was read at.")
    (conversation
     :initarg       :conversation
     :accessor      application-conversation
@@ -52,6 +82,16 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-ui
     :type          (option terminal-ui)
     :documentation "The reconnectable primary-screen terminal UI.")
+   (hosted-p
+    :initform      nil
+    :accessor      application-hosted-p
+    :type          boolean
+    :documentation "Whether a world server hosts this application beside other channels.")
+   (world-server
+    :initform      nil
+    :accessor      application-world-server
+    :type          t
+    :documentation "The world server hosting this application, or NIL in a direct session.")
    (lisp-hinted-command-names
     :initform      nil
     :accessor      application-lisp-hinted-command-names
@@ -409,15 +449,15 @@ Clicking the rendered call's header inserts it into the composer.")
   nil)
 
 (-> application-pending-terminal-size
-    ()
+    (terminal-ui)
     (option (cons (integer 1) (integer 1))))
-(defun application-pending-terminal-size ()
-  "Consume one pending resize and return refreshed rows and columns.
+(defun application-pending-terminal-size (ui)
+  "Consume one pending resize of UI's terminal and return refreshed rows and columns.
 
 A relayed client size takes precedence over local measurement: a
 relayed session cannot measure its terminal, so the packet is the only
 truthful source of dimensions."
-  (let ((relayed (terminal-relayed-resize-consume)))
+  (let ((relayed (terminal-relayed-resize-consume (terminal-ui-terminal ui))))
     (cond
       (relayed
        (setf *terminal-resize-pending-p* nil)
@@ -446,23 +486,35 @@ exchange without scrolling through reasoning and tool activity.")
   "Ask Autolith anything. Type (help) for operations."
   "The dim hint shown on the prompt row while input is empty.")
 
-(-> application-terminal-ui-create () terminal-ui)
-(defun application-terminal-ui-create ()
-  "Create the standard interactive terminal UI at the current terminal size."
+(-> application-terminal-ui-create (&key (:relay-presentation list) (:configuration (option configuration))) terminal-ui)
+(defun application-terminal-ui-create (&key relay-presentation configuration)
+  "Create the standard interactive terminal UI at the current terminal size.
+
+RELAY-PRESENTATION, a plist of :ROWS, :COLUMNS and :STYLED-P, creates a relay
+without a direct terminal at that geometry for a client that attaches later.
+CONFIGURATION, when given, lets the composer complete @ participant names
+from its world."
   (multiple-value-bind (rows columns)
       (terminal-current-size)
     (terminal-ui-create
      :terminal
-     (localgroup-terminal-create
-      (unless (localgroup-startup-detached-p)
-        (stream-terminal-create
-         :rows                  rows
-         :columns               columns
-         :input-file-descriptor (terminal-standard-input-file-descriptor))))
+     (if relay-presentation
+         (localgroup-terminal-create :rows     (getf relay-presentation :rows)
+                                     :columns  (getf relay-presentation :columns)
+                                     :styled-p (getf relay-presentation :styled-p))
+         (localgroup-terminal-create
+          :direct-terminal
+          (unless (localgroup-startup-detached-p)
+            (stream-terminal-create
+             :rows                  rows
+             :columns               columns
+             :input-file-descriptor (terminal-standard-input-file-descriptor)))))
      :prompt                  *application-prompt*
      :message-header-prefixes *application-message-header-prefixes*
      :placeholder             *application-placeholder*
-     :completion-function     #'application-command-completion-entries)))
+     :completion-function     #'application-command-completion-entries
+     :mention-function        (and configuration
+                                   (application-world-mention-function configuration)))))
 
 (-> application--configuration-for-conversation
     (configuration conversation)
@@ -1057,153 +1109,202 @@ newly acquired lease."
 
 Supplying IMAGE-REPLAY-FAILURES means startup already loaded private image state
 for this configuration and pristine mode. Reuse that replay's diagnostics and
-lineage instead of loading it again."
-  (let ((preferred-configuration configuration))
-    (context-runtime-reset)
-    (configuration-ensure-directories preferred-configuration)
-    (conversation-identifier-migrate preferred-configuration)
-    (if pristine-p
-        (clrhash *durable-mutations*)
-        (durable-mutations-load preferred-configuration))
-    (let* ((recovery-state
-             (multiple-value-list
-              (application-recovery-state preferred-configuration)))
-           (recovery-conversation-id        (first recovery-state))
-           (selected-conversation-id
-             (application--selected-conversation-id
-              conversation-id recovery-conversation-id))
-           (recovery-rendered-sequence      (second recovery-state))
-           (recovery-history-floor-sequence (third recovery-state))
-           (mutation-replay-failures
-             (if image-state-loaded-p
-                 image-replay-failures
-                 (if pristine-p
-                     (image-state-load preferred-configuration :pristine-p t)
-                     (image-state-load preferred-configuration))))
-           (extension-registry-snapshot     nil)
-           (registry                        nil)
-           (worker                          nil)
-           (conversation                    nil)
-           (conversation-lease              nil)
-           (conversation-lease-acquired-p   nil)
-           (application                     nil)
-           (completed-p                     nil))
+lineage instead of loading it again.
+
+The extension registry is restored when construction fails, so a failed start
+leaves no registrations of the user init it ran."
+  (let ((mutation-replay-failures
+          (apply #'application--prepare-process configuration
+                 :pristine-p pristine-p
+                 (when image-state-loaded-p
+                   (list :image-replay-failures image-replay-failures))))
+        (extension-registry-snapshot nil)
+        (completed-p                 nil))
+    (with-extension-registry-transaction
+      (setf extension-registry-snapshot
+            (application--extension-registry-snapshot))
       (unwind-protect
-           (with-extension-registry-transaction
-             (setf extension-registry-snapshot
-                   (application--extension-registry-snapshot))
-             (unwind-protect
-                  (progn
-                    (mcp-configuration-load preferred-configuration)
-                    (unless pristine-p
-                      (user-init-load preferred-configuration))
-                    (setf preferred-configuration
-                          (provider-bootstrap-configuration
-                           preferred-configuration))
-                    (multiple-value-setq
-                        (conversation
-                         conversation-lease
-                         conversation-lease-acquired-p)
-                      (if selected-conversation-id
-                          (application--conversation-load-owned
-                           nil
-                           preferred-configuration
-                           selected-conversation-id)
-                          (application--conversation-create-owned
-                           nil preferred-configuration)))
-                    (let* ((permission-state
-                             (permissions-load preferred-configuration))
-                           (configuration
-                             (application--configuration-for-conversation
-                              preferred-configuration
-                              conversation))
-                           (recovering-conversation-p
-                             (and
-                              (null conversation-id)
-                              recovery-conversation-id
-                              (string=
-                               (conversation-identifier conversation)
-                               (conversation-identifier-migration-resolve
-                                preferred-configuration
-                                recovery-conversation-id))))
-                           (installation-provenance
-                             (installation-provenance-detect configuration))
-                           (update-availability
-                             (update-availability-current
-                              configuration installation-provenance))
-                           (provider
-                             (provider-create
-                              configuration
-                              :reasoning-summaries-p
-                              (config :reasoning-traces-p configuration))))
-                      (setf registry
-                            (application--create-tool-registry configuration)
-                            worker
-                            (lisp-worker-pool-create configuration))
-                      (let* ((agent
-                               (agent-create
-                                :configuration configuration
-                                :provider      provider
-                                :conversation  conversation
-                                :tool-registry registry
-                                :worker        worker))
-                             (ui (application-terminal-ui-create)))
-                        (setf application
-                              (make-instance
-                               'application
-                               :configuration       configuration
-                               :conversation        conversation
-                               :conversation-lease  conversation-lease
-                               :provider            provider
-                               :tool-registry       registry
-                               :worker              worker
-                               :agent               agent
-                               :ui                  ui
-                               :permission-state    permission-state
-                               :permission-mode     permission-mode
-                               :pristine-p          pristine-p
-                               :installation-provenance
-                               installation-provenance
-                               :update-availability update-availability
-                               :recovery-startup-p
-                               (not (null recovering-conversation-p)))
-                              (application-mutation-replay-failures application)
-                              mutation-replay-failures)
-                        (multiple-value-bind
-                              (restored-rendered-sequence
-                               restored-history-floor-sequence)
-                            (application--normalize-recovery-cursors
-                             conversation
-                             :recovering-p
-                             (not (null recovering-conversation-p))
-                             :rendered-sequence      recovery-rendered-sequence
-                             :history-floor-sequence recovery-history-floor-sequence)
-                          (setf
-                           (application-rendered-sequence application)
-                           restored-rendered-sequence
-                           (application-render-position application) 0
-                           (application-render-generation application)
-                           (conversation-log-generation conversation)
-                           (application-transcript-synchronized-p application)
-                           nil
-                           (application-history-floor-sequence application)
-                           restored-history-floor-sequence))
-                        (application-refresh-context-meter application)
-                        (application-connect-task-presentation application)
-                        (application--load-goal application)
-                        (application-publish-recovery-session application)
-                        (telemetry--call-safely
-                         (lambda () (telemetry-attach configuration)))
-                        (setf completed-p t)
-                        application)))
-               (unless completed-p
-                 (application--extension-registry-restore
-                  extension-registry-snapshot))))
+           (progn
+             (application--load-extension-configuration configuration
+                                                        :pristine-p pristine-p)
+             (prog1 (application--build
+                     (provider-bootstrap-configuration configuration)
+                     :conversation-id          conversation-id
+                     :permission-mode          permission-mode
+                     :pristine-p               pristine-p
+                     :recovery-p               t
+                     :mutation-replay-failures mutation-replay-failures)
+               (setf completed-p t)))
         (unless completed-p
-          (application--discard-connection-resources
-           application registry worker)
-          (when conversation-lease-acquired-p
-            (conversation-lease-release conversation-lease)))))))
+          (application--extension-registry-restore
+           extension-registry-snapshot))))))
+
+(-> application--prepare-process
+    (configuration &key (:pristine-p boolean) (:image-replay-failures list))
+    list)
+(defun application--prepare-process
+    (configuration &key pristine-p (image-replay-failures nil image-state-loaded-p))
+  "Prepare this process for the applications it will build on CONFIGURATION.
+
+Reset request context, migrate conversation identifiers, load the durable
+mutation journal and, unless IMAGE-REPLAY-FAILURES says startup already did,
+the private image state. Return the private image replay failures. Call this
+once per process; APPLICATION--BUILD then constructs each application."
+  (context-runtime-reset)
+  (configuration-ensure-directories configuration)
+  (conversation-identifier-migrate configuration)
+  (if pristine-p
+      (clrhash *durable-mutations*)
+      (durable-mutations-load configuration))
+  (if image-state-loaded-p
+      image-replay-failures
+      (if pristine-p
+          (image-state-load configuration :pristine-p t)
+          (image-state-load configuration))))
+
+(-> application--build
+    (configuration &key (:conversation-id (option string))
+                        (:permission-mode (member :ask :auto :sandboxed :full-access))
+                        (:pristine-p boolean)
+                        (:recovery-p boolean)
+                        (:mutation-replay-failures list)
+                        (:relay-presentation list)
+                        (:tool-registry-function (option function)))
+    application)
+(defun application--build
+    (configuration &key conversation-id (permission-mode ':ask) pristine-p
+                        recovery-p mutation-replay-failures relay-presentation
+                        tool-registry-function)
+  "Build one connected application on bootstrapped CONFIGURATION.
+
+Load CONVERSATION-ID if supplied; otherwise try automatic recovery when
+RECOVERY-P is true, falling back to a fresh conversation.
+MUTATION-REPLAY-FAILURES are the private image replay diagnostics to report.
+RELAY-PRESENTATION is a plist of :ROWS, :COLUMNS and :STYLED-P for a relay
+terminal awaiting a client. Without it, use this process's terminal setup.
+TOOL-REGISTRY-FUNCTION, called with the conversation's configuration, builds
+the tool registry instead of the ordinary one, as for an editor's own MCP
+servers. Release acquired resources if construction fails."
+  (let* ((recovery-state
+           (if recovery-p
+               (multiple-value-list
+                (application-recovery-state configuration))
+               (list nil nil nil)))
+         (recovery-conversation-id        (first recovery-state))
+         (selected-conversation-id
+           (application--selected-conversation-id
+            conversation-id recovery-conversation-id))
+         (recovery-rendered-sequence      (second recovery-state))
+         (recovery-history-floor-sequence (third recovery-state))
+         (registry                        nil)
+         (worker                          nil)
+         (conversation                    nil)
+         (conversation-lease              nil)
+         (conversation-lease-acquired-p   nil)
+         (application                     nil)
+         (completed-p                     nil))
+    (unwind-protect
+         (progn
+           (multiple-value-setq
+               (conversation
+                conversation-lease
+                conversation-lease-acquired-p)
+             (if selected-conversation-id
+                 (application--conversation-load-owned
+                  nil configuration selected-conversation-id)
+                 (application--conversation-create-owned
+                  nil configuration)))
+           (let* ((permission-state
+                    (permissions-load configuration))
+                  (configuration
+                    (application--configuration-for-conversation
+                     configuration conversation))
+                  (recovering-conversation-p
+                    (and
+                     (null conversation-id)
+                     recovery-conversation-id
+                     (string=
+                      (conversation-identifier conversation)
+                      (conversation-identifier-migration-resolve
+                       configuration recovery-conversation-id))))
+                  (installation-provenance
+                    (installation-provenance-detect configuration))
+                  (update-availability
+                    (update-availability-current
+                     configuration installation-provenance))
+                  (provider
+                    (provider-create
+                     configuration
+                     :reasoning-summaries-p
+                     (config :reasoning-traces-p configuration))))
+             (setf registry (if tool-registry-function
+                                (funcall tool-registry-function configuration)
+                                (application--create-tool-registry configuration))
+                   worker   (lisp-worker-pool-create configuration))
+             (let* ((agent
+                      (agent-create
+                       :configuration configuration
+                       :provider      provider
+                       :conversation  conversation
+                       :tool-registry registry
+                       :worker        worker))
+                    (ui (application-terminal-ui-create
+                         :relay-presentation relay-presentation
+                         :configuration      configuration)))
+               (setf application
+                     (make-instance
+                      'application
+                      :configuration       configuration
+                      :conversation        conversation
+                      :conversation-lease  conversation-lease
+                      :provider            provider
+                      :tool-registry       registry
+                      :worker              worker
+                      :agent               agent
+                      :ui                  ui
+                      :permission-state    permission-state
+                      :permission-mode     permission-mode
+                      :pristine-p          pristine-p
+                      :installation-provenance
+                      installation-provenance
+                      :update-availability update-availability
+                      :recovery-startup-p
+                      (not (null recovering-conversation-p)))
+                     (application-mutation-replay-failures application)
+                     mutation-replay-failures)
+               (multiple-value-bind
+                     (restored-rendered-sequence
+                      restored-history-floor-sequence)
+                   (application--normalize-recovery-cursors
+                    conversation
+                    :recovering-p
+                    (not (null recovering-conversation-p))
+                    :rendered-sequence      recovery-rendered-sequence
+                    :history-floor-sequence recovery-history-floor-sequence)
+                 (setf
+                  (application-rendered-sequence application)
+                  restored-rendered-sequence
+                  (application-render-position application) 0
+                  (application-render-generation application)
+                  (conversation-log-generation conversation)
+                  (application-transcript-synchronized-p application)
+                  nil
+                  (application-history-floor-sequence application)
+                  restored-history-floor-sequence))
+               (application-refresh-context-meter application)
+               (application-connect-task-presentation application)
+               (application--load-goal application)
+               (application-publish-recovery-session application)
+               (application-world-sync application :all-p t)
+               (telemetry--call-safely
+                (lambda () (telemetry-attach configuration)))
+               (setf completed-p t)
+               application)))
+      (unless completed-p
+        (application--discard-connection-resources
+         application registry worker)
+        (when conversation-lease-acquired-p
+          (conversation-lease-release conversation-lease))))))
 
 (-> application--normalize-recovery-cursors
     (conversation &key (:recovering-p boolean)
@@ -1362,7 +1463,8 @@ lineage instead of loading it again."
                                              :tool-registry registry
                                              :hurry-up-p    hurry-up-p
                                              :worker        worker))
-                             (ui (application-terminal-ui-create)))
+                             (ui (application-terminal-ui-create
+                                  :configuration configuration)))
                         (setf new-application
                               (make-instance
                                'application
@@ -2032,6 +2134,7 @@ runtimes, which the replacement must retain while retiring the old registry."
                (not
                 (eq previous-conversation-lease conversation-lease)))
       (conversation-lease-release previous-conversation-lease))
+    (application-world-sync application)
     (application-refresh-context-meter application)
     application))
 
@@ -2210,7 +2313,9 @@ line above."
    application
    :role      ':user
    :timestamp timestamp
-   :body      (list (terminal-span ':plain (application--indented-body application text)))))
+   :body      (application-world-mention-spans
+               application
+               (list (terminal-span ':plain (application--indented-body application text))))))
 
 (-> application--child-response-entry (application list) (option list))
 (defun application--child-response-entry (application payload)
@@ -2574,13 +2679,17 @@ has no faithful invocation."
 
 (-> application--operation-request-entry (application list t) list)
 (defun application--operation-request-entry (application request timestamp)
-  "Show the operation that generated a model request instead of its text."
-  (application--transcript-entry
-   application
-   :style     ':notice
-   :header    (format nil "▸ ~A" (getf request :operation))
-   :timestamp timestamp
-   :body      (getf request :summary)))
+  "Show the operation that generated a model request instead of its text.
+
+A channel message shows its sender and channel instead of an operation."
+  (if (getf request :message)
+      (application--channel-message-entry application request timestamp)
+      (application--transcript-entry
+       application
+       :style     ':notice
+       :header    (format nil "▸ ~A" (getf request :operation))
+       :timestamp timestamp
+       :body      (getf request :summary))))
 
 (-> application--job-completion-entry (application list) list)
 (defun application--job-completion-entry (application properties)
@@ -2700,7 +2809,9 @@ rows."
 
 (-> application-present (application (or string list) &key (:identifier t)) boolean)
 (defun application-present (application entry &key identifier)
-  "Append non-conversation ENTRY once, optionally under a stable IDENTIFIER."
+  "Append non-conversation ENTRY once, optionally under a stable IDENTIFIER.
+
+The channel's structured clients receive its text as a :PRESENT event."
   (let* ((ui (application-ui application))
          (invocation
            (and *application-command-presentation-pending-p*
@@ -2711,17 +2822,20 @@ rows."
            (if invocation
                (application--command-presentation-entry invocation entry)
                entry)))
-    (when (and *application-command-presentation-capture-p*
-               (not (null entry)))
-      (let ((text (if ui
-                      (nth-value 0 (terminal-ui--finalized-content ui entry))
-                      (concatenate
-                       'string
-                       (if (stringp entry)
-                           entry
-                           (terminal--spans-text entry))
-                       (string #\Newline)))))
-        (push text *application-command-presentation-text*)))
+    (flet ((entry-text ()
+             (if ui
+                 (nth-value 0 (terminal-ui--finalized-content ui entry))
+                 (concatenate
+                  'string
+                  (if (stringp entry)
+                      entry
+                      (terminal--spans-text entry))
+                  (string #\Newline)))))
+      (when (and *application-command-presentation-capture-p*
+                 (not (null entry)))
+        (push (entry-text) *application-command-presentation-text*))
+      (when (and entry (application-clients-attached-p application))
+        (application-clients-publish application (list :present :text (entry-text)))))
     (if (null ui)
         (progn
           (when invocation
@@ -3439,9 +3553,11 @@ A fullscreen transcript evicts its oldest output; those records page in again."
   (setf (application-deferred-goal-continuation application) nil))
 
 (defmethod (setf application-conversation) :after (value (application application))
-  "Discard deferred continuation authority when switching conversations."
+  "Discard deferred continuation authority when switching conversations, and let clients follow the new one."
   (declare (ignore value))
-  (setf (application-deferred-goal-continuation application) nil))
+  (setf (application-deferred-goal-continuation application) nil)
+  (when (application-clients-attached-p application)
+    (application-clients--follow-conversation application)))
 
 (-> application--take-deferred-goal-continuation-p (application list) boolean)
 (defun application--take-deferred-goal-continuation-p (application work)
@@ -3460,47 +3576,54 @@ A fullscreen transcript evicts its oldest output; those records page in again."
                  (eq (getf (application-goal application) :status) ':active)
                  t)))))))
 
+(-> goal->record ((option list)) list)
+(defun goal->record (goal)
+  "Return the durable goal record of GOAL, or the record clearing the goal for NIL."
+  (if goal
+      (cons :goal (copy-tree goal))
+      (list :goal
+            :objective nil
+            :status        ':cleared
+            :continuations 0
+            :created-at    nil)))
+
 (-> application--record-goal (application) null)
 (defun application--record-goal (application)
   "Append APPLICATION's current goal state to the durable conversation."
   (setf (application-deferred-goal-continuation application) nil)
-  (let ((goal (application-goal application)))
-    (conversation-append-record
-     (application-conversation application)
-     (if goal
-         (cons :goal (copy-tree goal))
-         (list :goal
-               :objective nil
-               :status        ':cleared
-               :continuations 0
-               :created-at    nil))))
+  (conversation-append-record (application-conversation application)
+                              (goal->record (application-goal application)))
   nil)
+
+(-> goal-record->goal ((option list)) (option list))
+(defun goal-record->goal (record)
+  "Return the goal described by durable RECORD, or NIL if absent or cleared."
+  (let ((objective (and record (getf (rest record) :objective)))
+        (status    (and record (getf (rest record) :status))))
+    (and (non-empty-string-p objective)
+         (member status '(:active :paused :complete :verified :blocked
+                          :exhausted :cancelled :failed))
+         (if (eq (getf (rest record) :kind) ':mission)
+             (let ((goal (copy-tree (rest record))))
+               (loop while (remf goal :seq))
+               (loop while (remf goal :time))
+               (loop while (remf goal :adoption-transition))
+               goal)
+             (list :objective objective
+                   :status    status
+                   :continuations
+                   (let ((count (getf (rest record) :continuations)))
+                     (if (integerp count) count 0))
+                   :created-at
+                   (let ((time (getf (rest record) :created-at)))
+                     (if (integerp time) time (getf (rest record) :time))))))))
 
 (-> application--load-goal (application) null)
 (defun application--load-goal (application)
   "Restore APPLICATION's goal from the newest durable goal record."
-  (let* ((record
-           (conversation-latest-goal-record
-            (application-conversation application)))
-         (objective (and record (getf (rest record) :objective)))
-         (status    (and record (getf (rest record) :status))))
-    (setf (application-goal application)
-          (and (non-empty-string-p objective)
-               (member status '(:active :paused :complete :verified :blocked
-                                :exhausted :cancelled :failed))
-               (if (eq (getf (rest record) :kind) ':mission)
-                 (let ((goal (copy-tree (rest record))))
-                   (loop while (remf goal :seq))
-                   (loop while (remf goal :time))
-                   goal)
-                 (list :objective objective
-                       :status    status
-                       :continuations
-                       (let ((count (getf (rest record) :continuations)))
-                         (if (integerp count) count 0))
-                       :created-at
-                       (let ((time (getf (rest record) :created-at)))
-                         (if (integerp time) time (getf (rest record) :time))))))))
+  (setf (application-goal application)
+        (goal-record->goal (conversation-latest-goal-record
+                            (application-conversation application))))
   (mission-restore application)
   (application-mission-schedules application)
   nil)
@@ -3606,9 +3729,13 @@ continuation turns, so the notice names what woke the model."
 
 (-> application--status-details (application) terminal-styled-text)
 (defun application--status-details (application)
-  "Return cached-phase session, model, effort, Fast mode, and repository status spans."
+  "Return cached-phase inbox, session, model, effort, Fast mode, and repository status spans.
+
+Unread messages in the person's inbox come first, so a narrow modeline
+clips the session title before it hides them."
   (when (slot-boundp application 'configuration)
     (let* ((configuration (application-configuration application))
+           (unread        (application-world-inbox-unread application))
            (conversation
              (and (slot-boundp application 'conversation)
                   (application-conversation application)))
@@ -3622,6 +3749,9 @@ continuation turns, so the notice names what woke the model."
              (application--git-branch
               (config :working-directory configuration))))
       (append
+       (when (plusp unread)
+         (list (terminal-span ':status-accent (format nil "✉ ~D unread" unread))
+               (terminal-span ':status-dim " · ")))
        (list (terminal-span ':status-model
                             (config :model configuration))
              (terminal-span ':status-dim " · ")
@@ -3794,7 +3924,10 @@ checked."
      &key steering-function steering-persisted-function
           user-message-persisted-function pending-operations-function
           user-message-input (continuation-p nil) operation-request)
-  "Return a terminal observer streaming one APPLICATION turn as stable lines."
+  "Return a terminal observer streaming one APPLICATION turn as stable lines.
+
+The turn's text, reasoning and status also go to the channel's structured
+clients as :TEXT, :REASONING and :STATUS events."
   (let ((ui                       (application-ui application))
         (activity-label           (application-thinking-label))
         (related-memories-shown-p nil)
@@ -3904,9 +4037,13 @@ checked."
                        stream-marker-pending-p nil
                        stream-renderer nil))))
       (callback-agent-observer-create
-       :text-callback               #'stream-text-delta
+       :text-callback
+       (lambda (delta)
+         (application-clients-publish application (list :text :delta delta))
+         (stream-text-delta delta))
        :reasoning-callback
        (lambda (delta)
+         (application-clients-publish application (list :reasoning :delta delta))
          (when (plusp (length delta))
            (terminal-ui-note-status-progress ui))
          (when (and (application-reasoning-traces-p application)
@@ -3918,6 +4055,9 @@ checked."
             (application--reasoning-preview-rows application reasoning-text))))
        :status-callback
        (lambda (status details)
+         (when (eq status ':provider-request-completed)
+           (application-clients-note-usage application (getf details :usage)))
+         (application-clients-publish application (list :status :status status :details details))
          (case status
            (:user-message-persisted
             (setf related-memories-shown-p nil
@@ -4066,7 +4206,13 @@ checked."
                              (getf details :attempt)
                              (getf details :maximum-attempts)))))))
            (:assistant-response-persisted
-            (setf request-empty-p nil))
+            (setf request-empty-p nil)
+            ;; Only the reply to the person's typed message reaches the
+            ;; channel's subscribers. A reply to a channel message, a job
+            ;; completion or any other automatic turn stays here, so two
+            ;; agents subscribed to each other never answer each other forever.
+            (when (and (null operation-request) (not continuation-p))
+              (application-world-share-reply application (getf details :text))))
            (:provider-request-completed
             (when (plusp (getf details :tool-call-count 0))
               (setf request-empty-p nil))

@@ -144,10 +144,10 @@
     ((:plain "Configuring a language server in ")
      (:code "lsp.sexp")
      (:plain " under your Autolith config directory adds definition, hover, and diagnostics tools for workspace code."))
-    ((:code "autolith --fullscreen")
-     (:plain " uses a scrollable transcript and bottom-pinned composer. Save the choice for future launches with ")
-     (:code "(setf (config :fullscreen-p) t)")
-     (:plain "; nil restores the inline default."))
+    ((:code "autolith --plain")
+     (:plain " keeps the transcript in your terminal's own scrollback instead of fullscreen. Save the choice for future launches with ")
+     (:code "(setf (config :fullscreen-p) nil)")
+     (:plain "; t restores the fullscreen default."))
     ((:plain "Claude caches a prompt for five minutes. If you often pause longer, ")
      (:code "(setf (config :prompt-cache-ttl) \"1h\")")
      (:plain " asks Anthropic and OpenRouter Claude models for one hour, at twice the cache-write price."))
@@ -368,39 +368,104 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
     (t
      nil)))
 
-(-> application-run
+(-> application-call-with-session-quiesced (application function) t)
+(defun application-call-with-session-quiesced (application function)
+  "Call FUNCTION while APPLICATION's reader, update check and endpoint threads are stopped.
+
+Attached clients reconnect to the endpoint restarted afterwards. Without a
+controller, only the update check and the endpoint are quiesced."
+  (let ((controller (application-input-controller application)))
+    (flet ((quiesced ()
+             "Join the update check and quiesce the endpoint around FUNCTION."
+             (application--quiesce-update-check application)
+             (application-call-with-localgroup-quiesced application function)))
+      (if controller
+          (application-input-controller-call-with-reader-paused controller #'quiesced)
+          (quiesced)))))
+
+(-> application--direct-quiescer (application) function)
+(defun application--direct-quiescer (application)
+  "Return the checkpoint quiescer of a direct session owning APPLICATION's process.
+
+It stops the session threads, the management REPL and Slynk around the
+checkpoint work."
+  (lambda (function)
+    (application-call-with-session-quiesced
+     application
+     (lambda ()
+       (management-repl-call-quiesced
+        application
+        (lambda ()
+          (slynk-call-quiesced function)))))))
+
+(-> application-serve
     (application &key (:initial-command (option string))
                       (:initial-input (option user-message-input))
                       (:recovery-diagnosis (option string))
-                      (:resume-offer-p boolean))
-    null)
-(defun application-run
+                      (:resume-offer-p boolean)
+                      (:hosted-p boolean)
+                      (:quiescer (option function))
+                      (:ready-function (option function))
+                      (:resume-p boolean)
+                      (:localgroup-identity list)
+                      (:notice (option string)))
+    (option keyword))
+(defun application-serve
     (application &key initial-command initial-input recovery-diagnosis
-                      resume-offer-p)
-  "Run APPLICATION with responsive input, always restoring terminal and workers."
+                      resume-offer-p hosted-p quiescer ready-function
+                      resume-p localgroup-identity notice)
+  "Serve APPLICATION's session on this thread until it exits, then release its resources.
+
+A direct session owns its process: APPLICATION-RUN wraps this function with
+the terminal resize watch, and this function starts and stops the management
+REPL, Slynk and telemetry with the session. With HOSTED-P the application is
+one of several a world server hosts, each on its own thread: its endpoint
+lingers without clients, the process services stay with the server, and
+QUIESCER, a function of one thunk, runs checkpoint work with every hosted
+session stopped. READY-FUNCTION, when supplied, is called with APPLICATION
+once its endpoint is published.
+
+A session that exits for a checkpoint keeps its resources: its endpoint
+stops, so its thread can end for the fork, and the same application is
+served again with RESUME-P, which skips the startup presentation and
+recovery, LOCALGROUP-IDENTITY, the :TOKEN, :CREATED-AT and
+:CHECKPOINT-RECONNECT-ID its clients wait for, and NOTICE, presented once
+the session shows again. Return the controller's exit reason."
   (let* ((ui                     (application-ui application))
          (worker                 (application-worker application))
          (input-controller       nil)
-         (resize-watch           nil)
+         (exit-reason            nil)
          (tool-runtimes-closed-p nil)
          (worker-stopped-p       nil)
          (recovery-startup-p     (application-recovery-startup-p application))
          (recovery-input-storage-ready-p
            (or (not recovery-startup-p)
                (application-recovery-input-vault-import application))))
+    (setf (application-hosted-p application) hosted-p)
     (when (and (config :fullscreen-p (application-configuration application))
                (not (terminal-ui-fullscreen-p ui)))
       (change-class ui 'fullscreen-terminal-ui))
     (when (terminal-ui-fullscreen-p ui)
       (setf (terminal-ui-fullscreen-welcome-p ui) t))
-    (labels ((close-runtime-resources ()
-               "Close APPLICATION's external runtimes at most once."
+    (labels ((pause-resources ()
+               "Stop only the session's own threads, keeping APPLICATION ready to serve again."
                ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
                (ignore-errors (localgroup-stop application))
+               ; mallet:suppress no-ignore-errors -- a failed join must not keep the pause from completing
+               (ignore-errors (application--quiesce-update-check application))
+               nil)
+
+             (close-runtime-resources ()
+               "Close APPLICATION's external runtimes at most once, or only pause them for a checkpoint."
+               (when (eq exit-reason ':checkpoint)
+                 (return-from close-runtime-resources (pause-resources)))
                ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
-               (ignore-errors (management-repl-stop application))
-               ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
-               (ignore-errors (slynk-stop))
+               (ignore-errors (localgroup-stop application))
+               (unless hosted-p
+                 ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
+                 (ignore-errors (management-repl-stop application))
+                 ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
+                 (ignore-errors (slynk-stop)))
                (unless tool-runtimes-closed-p
                  (unwind-protect
                       ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
@@ -416,9 +481,10 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                       (when worker
                         (lisp-worker-manager-stop worker))
                    (setf worker-stopped-p t)))
-               ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
-               (ignore-errors (rlm-environment-pool-flush))
-               (telemetry--call-safely #'telemetry-shutdown)
+               (unless hosted-p
+                 ; mallet:suppress no-ignore-errors -- best-effort shutdown must close every runtime
+                 (ignore-errors (rlm-environment-pool-flush))
+                 (telemetry--call-safely #'telemetry-shutdown))
                (conversation-picker-search-close
                 (application-conversation application))
                (application-release-conversation-lease application)
@@ -432,26 +498,22 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                       input-controller #'close-runtime-resources)
                      (setf input-controller nil))
                    (close-runtime-resources))))
-      (setf resize-watch
-            (platform-watch-terminal-resize
-             *platform*
-             (lambda ()
-               (setf *terminal-resize-pending-p* t))))
       (unwind-protect
            (with-terminal-ui (active-ui ui)
              (unwind-protect
                   (progn
                     (application-sync-window-title application)
-                    (application-present application
-                                         (application-banner application))
-                    (let ((update-notice
-                            (application--update-notice application)))
-                      (when update-notice
-                        (application-present application update-notice)))
-                    (when (and (null initial-command)
-                               (null initial-input)
-                               (null recovery-diagnosis))
-                      (application--offer-startup-update application))
+                    (unless resume-p
+                      (application-present application
+                                           (application-banner application))
+                      (let ((update-notice
+                              (application--update-notice application)))
+                        (when update-notice
+                          (application-present application update-notice)))
+                      (when (and (null initial-command)
+                                 (null initial-input)
+                                 (null recovery-diagnosis))
+                        (application--offer-startup-update application)))
                     (let ((provenance
                             (application-installation-provenance application)))
                       (when provenance
@@ -459,20 +521,21 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                               (update-check-start
                                (application-configuration application)
                                provenance))))
-                    (dolist (failure
-                             (application-mutation-replay-failures application))
-                      (application-present
-                       application
-                       (application--transcript-entry
-                        application
-                        :style  ':failure
-                        :header "✗ mutation replay skipped"
-                        :body   (format nil "~A~%~A"
-                                        (namestring (first failure))
-                                        (rest failure)))))
-                    (let ((skips (application-replay-skips-entry application)))
-                      (when skips
-                        (application-present application skips)))
+                    (unless resume-p
+                      (dolist (failure
+                               (application-mutation-replay-failures application))
+                        (application-present
+                         application
+                         (application--transcript-entry
+                          application
+                          :style  ':failure
+                          :header "✗ mutation replay skipped"
+                          :body   (format nil "~A~%~A"
+                                          (namestring (first failure))
+                                          (rest failure)))))
+                      (let ((skips (application-replay-skips-entry application)))
+                        (when skips
+                          (application-present application skips))))
                     (application-render-records application)
                     (setf (application-recovery-startup-p application) nil)
                     (when initial-input
@@ -491,19 +554,26 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                            :pending-persistence-enabled-p
                            recovery-input-storage-ready-p
                            :start-reader-p nil))
-                    (application-mission-schedules-recover application :startup-p t)
-                    (application-peer-messages-recover application)
-                    (application-recovery-input-vault-present-startup-warning
-                     application)
-                    (application-present-generation-health-warning
-                     application)
-                    (localgroup-start application)
-                    (application-startup-presentation
-                     application input-controller
-                     :onboarding-p (null recovery-diagnosis))
-                    (management-repl-start application)
-                    (slynk-start (application-configuration application)
-                                 :background-p t)
+                    (unless resume-p
+                      (application-mission-schedules-recover application :startup-p t)
+                      (application-peer-messages-recover application)
+                      (application-recovery-input-vault-present-startup-warning
+                       application)
+                      (application-present-generation-health-warning
+                       application))
+                    (apply #'localgroup-start application :linger-p hosted-p localgroup-identity)
+                    (when ready-function
+                      (funcall ready-function application))
+                    (if resume-p
+                        (when notice
+                          (application-present application notice))
+                        (application-startup-presentation
+                         application input-controller
+                         :onboarding-p (null recovery-diagnosis)))
+                    (unless hosted-p
+                      (management-repl-start application)
+                      (slynk-start (application-configuration application)
+                                   :background-p t))
                     (application-input-controller--open-prompt-if-ready
                      input-controller)
                     (application-input-controller--start-reader
@@ -511,18 +581,7 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                     ;; Entering the interactive debugger would hang the raw
                     ;; terminal, so debugger entry becomes fatal recovery.
                     (let ((*checkpoint-thread-quiescer*
-                            (lambda (function)
-                              (application-input-controller-call-with-reader-paused
-                               input-controller
-                               (lambda ()
-                                 (application--quiesce-update-check application)
-                                 (application-call-with-localgroup-quiesced
-                                  application
-                                  (lambda ()
-                                    (application-call-with-management-repl-quiesced
-                                     application
-                                     (lambda ()
-                                       (slynk-call-quiesced function)))))))))
+                            (or quiescer (application--direct-quiescer application)))
                           (*debugger-hook*
                             (lambda (condition hook)
                               (declare (ignore hook))
@@ -562,13 +621,39 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                            (application-input-failed-original-condition
                             condition)
                            (application-input-failed-backtrace condition)))))
-                    (when (eq (application-input-controller-exit-reason
-                               input-controller)
-                              ':interrupt)
+                    (setf exit-reason
+                          (application-input-controller-exit-reason input-controller))
+                    (when (eq exit-reason ':interrupt)
                       (application--present-resume-instruction application)))
                (finish-shutdown)))
-        (platform-unwatch-terminal-resize *platform* resize-watch)
-        (finish-shutdown))))
+        (finish-shutdown)))
+    exit-reason))
+
+(-> application-run
+    (application &key (:initial-command (option string))
+                      (:initial-input (option user-message-input))
+                      (:recovery-diagnosis (option string))
+                      (:resume-offer-p boolean))
+    null)
+(defun application-run
+    (application &key initial-command initial-input recovery-diagnosis
+                      resume-offer-p)
+  "Run APPLICATION as this process's direct session, always restoring the terminal.
+
+The kernel's resize signal is watched for the session's lifetime; everything
+else about the session is APPLICATION-SERVE's."
+  (let ((resize-watch
+          (platform-watch-terminal-resize
+           *platform*
+           (lambda ()
+             (setf *terminal-resize-pending-p* t)))))
+    (unwind-protect
+         (application-serve application
+                            :initial-command    initial-command
+                            :initial-input      initial-input
+                            :recovery-diagnosis recovery-diagnosis
+                            :resume-offer-p     resume-offer-p)
+      (platform-unwatch-terminal-resize *platform* resize-watch)))
   nil)
 
 
@@ -757,13 +842,7 @@ dependencies."
 (-> main--initial-image-input (list) (option user-message-input))
 (defun main--initial-image-input (image-values)
   "Return a labelled initial composer draft for IMAGE-VALUES' local images."
-  (let ((pathnames (main--image-pathnames image-values)))
-    (when pathnames
-      (user-message-input-create
-       :text            (format nil "~{~A~^ ~}"
-                                (loop for number from 1 to (length pathnames)
-                                      collect (terminal-ui--image-label number)))
-       :image-pathnames pathnames))))
+  (terminal-ui-image-draft (main--image-pathnames image-values)))
 
 (-> main--connect-application
     (&key (:configuration configuration)
@@ -850,8 +929,16 @@ state, including an empty list after successful or pristine startup."
                                        (main--model-arguments command)))))
               ;; The command line beats the saved preference; provider
               ;; validation stays deferred until executable user init.
+              (when (and (getopt* command ':plain)
+                         (or (getopt* command ':fullscreen) (getopt* command ':almighty)))
+                (error 'configuration-error
+                       :message (format nil "--plain cannot be combined with ~:[--almighty~;--fullscreen~]."
+                                        (getopt* command ':fullscreen))))
               (when (getopt* command ':fullscreen)
                 (configuration-set base (configuration-setting base :fullscreen-p) t
+                                   :source ':override))
+              (when (getopt* command ':plain)
+                (configuration-set base (configuration-setting base :fullscreen-p) nil
                                    :source ':override))
               (when (getopt* command ':almighty)
                 (configuration-set base (configuration-setting base :terminal-theme)
@@ -914,6 +1001,14 @@ state, including an empty list after successful or pristine startup."
     (when handoff-record
       (localgroup-handoff-begin-startup handoff-record)
       (application--clear-recovery-environment))
+    (when (and handoff-record (getf (rest handoff-record) :world-p))
+      (let* ((*localgroup-startup-record* handoff-record)
+             (status                      (world-server-run configuration
+                                                            :permission-mode permission-mode
+                                                            :pristine-p      pristine-p)))
+        (when status
+          (uiop:quit status)))
+      (return-from main--start-session nil))
     (unless handoff-record
       (let ((record (and effective-resume-id
                          (main--live-conversation-record configuration effective-resume-id))))
@@ -930,47 +1025,45 @@ state, including an empty list after successful or pristine startup."
                             :permission-mode permission-mode
                             :immutable-p     immutable-p
                             :pristine-p      pristine-p
-                            :conversation-id effective-resume-id)
+                            :conversation-id effective-resume-id
+                            :launch          (main--launch-options
+                                              command :permission-mode permission-mode))
       (return-from main--start-session nil))
     (when (and (string-equal (software-type) "Linux")
                (not (application--command-sandbox-available-p)))
       (format *error-output* "~&Autolith: ~A~%"
               (application--command-sandbox-unavailable-message))
       (force-output *error-output*))
-    (when (main--client-session-p
-           :handoff-record           handoff-record
-           :authenticate-p           authenticate-p
-           :resume-requested-p       effective-resume-requested-p
-           :resume-id                effective-resume-id
-           :recovery-conversation-id recovery-conversation-id
-           :recovery-diagnosis       recovery-diagnosis
-           :image-values             image-values
-           :pristine-p               pristine-p
-           :simulate-crash-p         (not (null (getopt* command ':simulate-crash))))
-      (let ((session-id (main--spawn-client-session
-                         configuration
-                         :permission-mode     permission-mode
-                         :immutable-p         immutable-p
-                          :conversation-id
-                          (or effective-resume-id recovery-conversation-id)
-                          :resume-command-p
-                          (and effective-resume-requested-p
-                               (null effective-resume-id))
-                          :recovery-diagnosis recovery-diagnosis)))
-        (when session-id
-          (let* ((record (localgroup--find-record configuration session-id))
-                 (exit
-                   (handler-case
-                       (localgroup-attach-record configuration record ':control)
-                     (serious-condition (condition)
-                       ;; The freshly spawned session has no other owner yet, so
-                       ;; a failed first attach would leak it as an idle
-                       ;; detached process.
-                       ; mallet:suppress no-ignore-errors -- best-effort kill while the attach failure propagates
-                       (ignore-errors (localgroup-query-record record ':kill))
-                       (error condition)))))
-            (localgroup-relay-exit configuration exit ':control))
-          (return-from main--start-session nil))))
+    (when (and (main--client-session-p
+                :handoff-record           handoff-record
+                :resume-requested-p       effective-resume-requested-p
+                :resume-id                effective-resume-id
+                :recovery-conversation-id recovery-conversation-id
+                :recovery-diagnosis       recovery-diagnosis
+                :pristine-p               pristine-p
+                :simulate-crash-p         (not (null (getopt* command ':simulate-crash))))
+               (if (main--interactive-input-p)
+                   (main--run-world-client
+                    configuration
+                    :permission-mode    permission-mode
+                    :immutable-p        immutable-p
+                    :pristine-p         pristine-p
+                    :conversation-id    (or effective-resume-id recovery-conversation-id)
+                    :resume-command-p   (and effective-resume-requested-p
+                                             (null effective-resume-id))
+                    :recovery-diagnosis recovery-diagnosis
+                    :launch             (main--launch-options
+                                         command :permission-mode permission-mode)
+                    :images             (mapcar #'namestring (main--image-pathnames image-values)))
+                   (progn
+                     (world-client-run-script
+                      configuration
+                      :conversation-id (or effective-resume-id recovery-conversation-id)
+                      :permission-mode permission-mode
+                      :immutable-p     immutable-p
+                      :launch          (main--launch-options command :permission-mode permission-mode))
+                     t)))
+      (return-from main--start-session nil))
     (let ((*localgroup-startup-record* handoff-record))
       (setf *active-application*
             (apply #'main--connect-application
@@ -1023,60 +1116,215 @@ state, including an empty list after successful or pristine startup."
 
 (-> main--client-session-p
     (&key (:handoff-record (option list))
-          (:authenticate-p boolean)
           (:resume-requested-p boolean)
           (:resume-id (option string))
           (:recovery-conversation-id (option string))
           (:recovery-diagnosis t)
-          (:image-values t)
           (:pristine-p boolean)
           (:simulate-crash-p boolean))
     boolean)
 (defun main--client-session-p
-    (&key handoff-record authenticate-p resume-requested-p resume-id
-          recovery-conversation-id recovery-diagnosis image-values
+    (&key handoff-record resume-requested-p resume-id
+          recovery-conversation-id recovery-diagnosis
           pristine-p simulate-crash-p)
-  "Return true when this start should spawn a detached session and attach.
+  "Return true when this start should open a channel in the world server and attach.
 
 A client-first start keeps this terminal a thin relay whose detach is
-immediate and never interrupts session work, so resumes and crash recovery
-take it too. Replacements, authentication, startup images, crash simulation,
-non-interactive terminals, hosts without detached sessions, and
-AUTOLITH_SESSION_STYLE=direct keep the direct path."
+immediate and never interrupts session work, so resumes, crash recovery,
+startup images, the session after authentication and input piped from
+another program take it too. Replacements, crash simulation, hosts without
+detached sessions, and a booted generation's resume, under
+*MAIN-DIRECT-START-P*, keep the direct path."
   (declare (ignore resume-requested-p resume-id
                    recovery-conversation-id recovery-diagnosis))
   (and (null handoff-record)
        (not pristine-p)
-       (not authenticate-p)
-       (null image-values)
        (not simulate-crash-p)
-       (not (string= (or (uiop:getenv "AUTOLITH_SESSION_STYLE") "")
-                     "direct"))
+       (not *main-direct-start-p*)
        (platform-supports-p *platform* ':detached-sessions)
-       (not (null (interactive-stream-p *standard-input*)))))
+       t))
 
-(-> main--spawn-client-session
+(-> main--interactive-input-p () boolean)
+(defun main--interactive-input-p ()
+  "Return true when standard input is a terminal someone types at, not piped input."
+  (not (null (interactive-stream-p *standard-input*))))
+
+(-> main--open-world-channel
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
+                        (:pristine-p boolean)
                         (:conversation-id (option string))
                         (:resume-command-p boolean)
-                        (:recovery-diagnosis t))
-    (option string))
-(defun main--spawn-client-session
-    (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        resume-command-p recovery-diagnosis)
-  "Spawn the detached session for a client-first start, or NIL to run direct."
+                        (:recovery-diagnosis (option string))
+                        (:launch list)
+                        (:new-p boolean)
+                        (:images list))
+    (values string boolean))
+(defun main--open-world-channel
+    (configuration &key (permission-mode ':ask) immutable-p pristine-p conversation-id
+                        resume-command-p recovery-diagnosis launch new-p images)
+  "Open this terminal's channel in the world server and return its session identifier.
+
+CONVERSATION-ID opens that channel; otherwise the launch directory selects
+or creates one, and NEW-P creates one. IMAGES become the channel's composer
+draft. The second value says whether the server started the channel
+for this terminal. Only the world server runs a channel's agent, so a server
+that refuses the open, or cannot be started or reached, ends the start with
+the reason; no session runs in this terminal's own process instead."
   (handler-case
-      (localgroup-handoff-spawn-fresh configuration
-                                      :permission-mode    permission-mode
-                                      :immutable-p        immutable-p
-                                      :conversation-id    conversation-id
-                                      :resume-command-p   resume-command-p
-                                      :recovery-diagnosis recovery-diagnosis)
+      (world-client-open configuration
+                         :directory          (config :working-directory configuration)
+                         :channel            conversation-id
+                         :permission-mode    permission-mode
+                         :immutable-p        immutable-p
+                         :pristine-p         pristine-p
+                         :resume-command-p   resume-command-p
+                         :recovery-diagnosis recovery-diagnosis
+                         :launch             launch
+                         :new-p              new-p
+                         :images             images)
     (error (condition)
-      (format *error-output*
-              "Autolith is starting directly in this terminal: ~A~%"
-              (bounded-string condition :limit 400))
-      nil)))
+      (when (main--world-refusal-p condition)
+        (error condition))
+      (error 'localgroup-error
+             :message   (format nil "The world server is not available: ~A"
+                                (bounded-string (princ-to-string condition) :limit 400))
+             :operation ':open))))
+
+(-> main--world-refusal-p (condition) boolean)
+(defun main--world-refusal-p (condition)
+  "Return true when CONDITION is the world server's answer refusing an open, not a failure to reach it."
+  (and (typep condition 'localgroup-error)
+       (eq (image-daemon:daemon-error-operation condition) ':open)
+       (null (image-daemon:daemon-error-cause condition))
+       (not (localgroup-error-retry-p condition))))
+
+(-> main--launch-options (clingon:command &key (:permission-mode (option keyword))) list)
+(defun main--launch-options (command &key permission-mode)
+  "Return the launch options COMMAND states explicitly, as a world server applies them to a channel.
+
+Only options given on the command line appear, PERMISSION-MODE among them
+when --permissions was, so a channel the server already serves can tell a
+request it conflicts with from one that says nothing."
+  (append (let ((model (getopt* command ':model)))
+            (when model
+              (list :model model)))
+          (let ((provider (getopt* command ':provider)))
+            (when provider
+              (list :provider provider)))
+          (when (and permission-mode (getopt* command ':permissions))
+            (list :permission-mode permission-mode))
+          (when (getopt* command ':immutable)
+            (list :immutable-p t))
+          (when (or (getopt* command ':fullscreen) (getopt* command ':almighty))
+            (list :fullscreen-p t))
+          (when (getopt* command ':plain)
+            (list :plain-p t))
+          (when (getopt* command ':almighty)
+            (list :theme ':almighty))))
+
+(-> main--run-world-client
+    (configuration &key (:permission-mode keyword) (:immutable-p boolean)
+                        (:pristine-p boolean)
+                        (:conversation-id (option string))
+                        (:resume-command-p boolean)
+                        (:recovery-diagnosis (option string))
+                        (:launch list)
+                        (:images list))
+    boolean)
+(defun main--run-world-client
+    (configuration &key (permission-mode ':ask) immutable-p pristine-p conversation-id
+                        resume-command-p recovery-diagnosis launch images)
+  "Serve this terminal as a client of the world server until its channel lets it go.
+
+IMAGES, absolute image namestrings, become the channel's composer draft.
+Return T once the terminal's channel lets it go. A channel that asks the
+terminal to switch is left running, and the terminal attaches to the channel
+it named, opening it in the server first without this start's launch
+options; when that channel refuses the open or the terminal's attachment,
+the terminal attaches to the one it left. One sidebar of the world follows
+the terminal from channel to channel."
+  (multiple-value-bind (session-id started-p)
+      (main--open-world-channel configuration
+                                :permission-mode    permission-mode
+                                :immutable-p        immutable-p
+                                :pristine-p         pristine-p
+                                :conversation-id    conversation-id
+                                :resume-command-p   resume-command-p
+                                :recovery-diagnosis recovery-diagnosis
+                                :launch             launch
+                                :images             images)
+    (let ((panel (world-sidebar-create configuration)))
+      (world-sidebar-start panel)
+      (unwind-protect
+           (loop
+             with origin = nil
+            do
+            (let* ((record (localgroup--find-record configuration session-id))
+                   (exit
+                     (flet ((close-started ()
+                              ;; A channel started for this terminal would
+                              ;; otherwise idle in the server. The server closes
+                              ;; it only while no terminal controls it: another
+                              ;; one may have attached since this one started it.
+                              (when started-p
+                                ; mallet:suppress no-ignore-errors -- best-effort close of a channel nobody attached to
+                                (ignore-errors
+                                  (let ((world (world-client-entry configuration)))
+                                    (when world
+                                      (localgroup-query-record world ':close
+                                                              (list :channel           session-id
+                                                                    :unattached-only-p t))))))))
+                       (handler-case
+                           (progn
+                             (setf (world-sidebar-current panel) session-id)
+                             (localgroup-attach-record configuration record ':control :panel panel))
+                         (localgroup-error (condition)
+                           (close-started)
+                           ;; A switch whose channel refuses this terminal, as
+                           ;; when another terminal controls it, returns it to
+                           ;; the channel it left.
+                           (unless (and origin
+                                        (eq (image-daemon:daemon-error-operation condition) ':attach))
+                             (error condition))
+                           (format *error-output* "~&Autolith: could not switch to ~A: ~A~%"
+                                   (conversation-identifier-display session-id)
+                                   (autolith-error-message condition))
+                           (force-output *error-output*)
+                           (list ':return))
+                         (serious-condition (condition)
+                           (close-started)
+                           (error condition))))))
+              (cond
+                ((and (consp exit) (eq (first exit) ':return))
+                 (setf session-id origin
+                       origin     nil
+                       started-p  nil))
+                ((and (consp exit) (eq (first exit) ':switch))
+                  ;; A switch navigates: it states none of this start's launch
+                  ;; options, and a channel that refuses it leaves the terminal
+                  ;; where it was.
+                 (let ((left session-id))
+                   (handler-case
+                       (progn
+                         (multiple-value-setq (session-id started-p)
+                           (world-client-open configuration
+                                              :channel         (getf (rest exit) :session-id)
+                                              :permission-mode permission-mode
+                                              :immutable-p     immutable-p
+                                              :pristine-p      pristine-p))
+                         (setf origin left))
+                     (localgroup-error (condition)
+                       (format *error-output* "~&Autolith: could not switch to ~A: ~A~%"
+                               (conversation-identifier-display (getf (rest exit) :session-id))
+                               (autolith-error-message condition))
+                       (force-output *error-output*)
+                       (setf session-id left
+                             origin     nil
+                             started-p  nil)))))
+                (t
+                 (localgroup-relay-exit configuration exit ':control)
+                 (return t)))))
+        (world-sidebar-stop panel)))))
 
 (-> main--session-options () list)
 (defun main--session-options ()
@@ -1104,6 +1352,11 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
                 :key         ':fullscreen
                 :persistent  t
                 :description "use a scrollable alternate-screen UI with a pinned composer")
+   (make-option ':flag
+                :long-name   "plain"
+                :key         ':plain
+                :persistent  t
+                :description "keep the transcript in the terminal's own scrollback instead of fullscreen")
    (make-option ':flag
                 :long-name   "almighty"
                 :key         ':almighty
@@ -1175,14 +1428,14 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
   (make-command
    :name        "resume"
    :description "resume a saved conversation, or pick one interactively"
-   :usage       "[PREFIX] [--detached]"
+   :usage       "[ID] [--detached]"
    :handler
    (lambda (command)
      (main--start-session
       command
       :resume-requested-p t
        :resume-id         (progn
-                            (main--single-selection command "conversation ID prefix")
+                            (main--single-selection command "conversation ID")
                             (first (command-arguments command)))))))
 
 (-> main--replay-command () clingon:command)
@@ -1536,6 +1789,10 @@ autolith uninstall removes the installation and keeps user data."
      (telemetry--worker-main))
     ((equal arguments '("--worker"))
      (worker-main))
+    ((and (= (length arguments) 2)
+          (string= (first arguments) "--publish-restart"))
+     (generation-restart-publish (configuration-create :defer-provider-validation-p t)
+                                 (uiop:parse-native-namestring (second arguments))))
     (t
      (let ((command
              (handler-case

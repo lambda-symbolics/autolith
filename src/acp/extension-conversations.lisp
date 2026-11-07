@@ -54,10 +54,10 @@
                 t
                 (argo:json-false)))))
 
-(-> acp-extension-conversations (acp-session hash-table) hash-table)
-(defun acp-extension-conversations (session params)
+(-> acp-extension-conversations (application hash-table) hash-table)
+(defun acp-extension-conversations (application params)
   "Return durable conversations with bounded stable offset paging."
-  (let* ((application   (acp-session-application session))
+  (let* ((application   application)
          (configuration (application-configuration application))
          (cwd-value     (gethash "cwd" params))
          (cursor-value  (gethash "cursor" params))
@@ -84,12 +84,14 @@
     (let* ((requested-cwd (and cwd (acp-extension--conversation-cwd cwd)))
            (paths         (remove-if-not
                            (lambda (pathname)
-                             (or (null requested-cwd)
-                                 (let* ((conversation (conversation-load pathname))
-                                        (origin       (conversation-origin-directory conversation)))
-                                   (and origin
-                                        (string= requested-cwd
-                                                 (acp-extension--conversation-cwd origin))))))
+                             (and (not (conversation-inbox-pathname-p pathname))
+                                  (or (null requested-cwd)
+                                      (let* ((conversation (conversation-load pathname))
+                                             (origin       (conversation-origin-directory
+                                                            conversation)))
+                                        (and origin
+                                             (string= requested-cwd
+                                                      (acp-extension--conversation-cwd origin)))))))
                            (conversation-list configuration)))
            (page          (subseq paths (min offset (length paths))
                                   (min (+ offset limit) (length paths))))

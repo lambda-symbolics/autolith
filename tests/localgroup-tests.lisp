@@ -96,7 +96,7 @@
           (stream-terminal-create :input-stream          (make-string-input-stream "")
                                   :output-stream         (make-string-output-stream)
                                   :input-file-descriptor -1))
-         (relay (localgroup-terminal-create direct)))
+         (relay (localgroup-terminal-create :direct-terminal direct)))
     (terminal-start relay)
     (test-assert (terminal-started-p direct) "a direct relay starts its direct terminal")
     (terminal-stop relay)
@@ -108,6 +108,188 @@
     (test-assert (terminal-started-p direct)
      "a stopped direct relay restarts its direct terminal")
     (terminal-stop relay))
+  nil)
+
+(-> localgroup-tests--queued-packets (image-daemon:attachment) list)
+(defun localgroup-tests--queued-packets (attachment)
+  "Return the packets queued for ATTACHMENT as forms, oldest first."
+  (loop for text across (structlisp:deque->vector (image-daemon:attachment-queue attachment))
+        collect (with-standard-io-syntax
+                  (let ((*read-eval* nil))
+                    (read-from-string text t nil :start (1+ (position #\Newline text)))))))
+
+(-> localgroup-tests--frames (image-daemon:attachment) list)
+(defun localgroup-tests--frames (attachment)
+  "Return the frame packets queued for ATTACHMENT, oldest first."
+  (remove ':frame (localgroup-tests--queued-packets attachment) :key #'first :test-not #'eq))
+
+(-> localgroup-tests--frame-text-p (list string) boolean)
+(defun localgroup-tests--frame-text-p (frame text)
+  "Return true when one row of FRAME contains TEXT."
+  (not (null (some (lambda (row) (search text (second row))) (getf (rest frame) :rows)))))
+
+(-> test-localgroup-relay-frames () null)
+(defun test-localgroup-relay-frames ()
+  "Test a hosted fullscreen session sending its screen to clients as frames of rows."
+  (let* ((terminal   (localgroup-terminal-create :rows 8 :columns 40))
+         (ui         (terminal-ui-create :terminal terminal :fullscreen-p t))
+         (controller (make-instance 'image-daemon:attachment :socket nil
+                                    :stream (make-broadcast-stream) :mode ':control))
+         (observer   (make-instance 'image-daemon:attachment :socket nil
+                                    :stream (make-broadcast-stream) :mode ':read-only)))
+    (image-daemon:relay-attach terminal controller :rows 8 :columns 40 :styled-p nil
+                                                   :session-id "frames")
+    (unwind-protect
+         (progn
+           (terminal-ui-start ui)
+           (terminal-ui-append-finalized ui 1 (list (terminal-span ':plain "first line")))
+           (let ((frames (localgroup-tests--frames controller)))
+             (test-assert (and frames (getf (rest (first frames)) :complete-p)
+                               (= (getf (rest (first frames)) :height) 8)
+                               (= (getf (rest (first frames)) :width) 40))
+                          "the first paint sends the controller a complete frame of its size")
+             (test-assert (some (lambda (frame) (localgroup-tests--frame-text-p frame "first line"))
+                                frames)
+                          "frames carry the transcript rows"))
+           (image-daemon:relay-attach terminal observer :rows 8 :columns 40 :styled-p nil
+                                                        :session-id "frames")
+           (localgroup-terminal-replay-screen terminal observer)
+           (let ((frames (localgroup-tests--frames observer)))
+             (test-assert (and (= (length frames) 1)
+                               (getf (rest (first frames)) :complete-p)
+                               (localgroup-tests--frame-text-p (first frames) "first line"))
+                          "a client attaching later is replayed one complete frame"))
+           (localgroup-terminal-replay-screen terminal observer)
+           (test-assert (= (length (localgroup-tests--frames observer)) 1)
+                        "a replay is sent once per attachment")
+           (terminal-ui-append-finalized ui 2 (list (terminal-span ':plain "second line")))
+           (let ((frame (first (last (localgroup-tests--frames observer)))))
+             (test-assert (and (not (getf (rest frame) :complete-p))
+                               (localgroup-tests--frame-text-p frame "second line")
+                               (not (localgroup-tests--frame-text-p frame "first line")))
+                          "later paints send only the rows that changed"))
+           (terminal-ui-detach ui)
+           (test-assert (and (member '(:screen :leave) (localgroup-tests--queued-packets observer)
+                                     :test #'equal)
+                             (member '(:screen :leave) (localgroup-tests--queued-packets controller)
+                                     :test #'equal))
+                        "leaving the screen tells every client to give its own back")
+           (terminal-ui-stop ui))
+      (terminal-stop terminal)))
+  nil)
+
+(-> test-localgroup-screen-paints-frames () null)
+(defun test-localgroup-screen-paints-frames ()
+  "Test a client painting a session's frames on its own terminal."
+  (let* ((terminal (make-instance 'recording-terminal :columns 40 :rows 8))
+         (screen   (localgroup-screen-create :terminal terminal)))
+    (flet ((output ()
+             "Return everything written to the client terminal so far."
+             (apply #'concatenate 'string (reverse (recording-terminal-chunks terminal))))
+           (frame (complete-p rows)
+             "Return a frame packet of ROWS for the test terminal."
+             (list :frame :height 8 :width 40 :complete-p complete-p :rows rows
+                          :cursor-row 3 :cursor-column 1 :cursor-visible-p t)))
+      (test-assert (not (localgroup-screen-handle-packet screen '(:other)))
+                   "packets that are not frames are left to the caller")
+      (test-assert (and (localgroup-screen-handle-packet screen (frame nil '((0 "early"))))
+                        (not (localgroup-screen-active-p screen))
+                        (zerop (length (output))))
+                   "changed rows before any complete frame are dropped")
+      (test-assert (not (localgroup-screen-handle-packet
+                         screen (list :frame :height 0 :width 40 :complete-p t :rows nil
+                                             :cursor-row 0 :cursor-column 0)))
+                   "a malformed frame is not consumed")
+      (localgroup-screen-handle-packet screen (frame t '((0 "hello") (2 "world"))))
+      (test-assert (and (localgroup-screen-active-p screen)
+                        (search (alternate-screen-enter-sequence) (output))
+                        (search "hello" (output))
+                        (search "world" (output)))
+                   "the first complete frame takes the screen and paints its rows")
+      (setf (recording-terminal-chunks terminal) nil)
+      (localgroup-screen-handle-packet screen (frame nil '((0 "bye"))))
+      (test-assert (and (search "bye" (output)) (not (search "world" (output))))
+                   "changed rows repaint only themselves")
+      (setf (recording-terminal-chunks terminal) nil)
+      (localgroup-screen-resized screen)
+      (test-assert (and (search "bye" (output)) (search "world" (output)))
+                   "a resize repaints the whole frame")
+      (localgroup-screen-handle-packet screen '(:screen :leave))
+      (test-assert (and (not (localgroup-screen-active-p screen))
+                        (search (alternate-screen-leave-sequence) (output)))
+                   "a leave gives the screen back")
+      (localgroup-screen-close screen)
+      (test-assert (= 1 (count-if (lambda (chunk) (search (alternate-screen-leave-sequence) chunk))
+                                  (recording-terminal-chunks terminal)))
+                   "closing an inactive screen writes nothing")))
+  nil)
+
+(defclass localgroup-tests-panel ()
+  ((rows
+    :initarg       :rows
+    :reader        localgroup-tests-panel-rows
+    :type          list
+    :documentation "The fixed rows the test panel shows."))
+  (:documentation "A side panel of fixed rows for client screen tests."))
+
+(defmethod screen-panel-width ((panel localgroup-tests-panel))
+  "Ten columns."
+  10)
+
+(defmethod screen-panel-minimum-columns ((panel localgroup-tests-panel))
+  "Sixty columns."
+  60)
+
+(defmethod screen-panel-refresh ((panel localgroup-tests-panel))
+  "Nothing changes."
+  nil)
+
+(defmethod screen-panel-rows ((panel localgroup-tests-panel) terminal height)
+  "Return HEIGHT rows padded to the panel's width."
+  (declare (ignore terminal))
+  (loop for index below height
+        collect (format nil "~10A" (or (nth index (localgroup-tests-panel-rows panel)) ""))))
+
+(-> test-localgroup-screen-panel () null)
+(defun test-localgroup-screen-panel ()
+  "Test a client composing its side panel beside the session's frame and keeping the keys apart."
+  (let* ((terminal (make-instance 'recording-terminal :columns 80 :rows 6))
+         (panel    (make-instance 'localgroup-tests-panel :rows '("PANEL-A" "PANEL-B")))
+         (screen   (localgroup-screen-create :terminal terminal :panel panel)))
+    (flet ((output ()
+             "Return everything written to the client terminal so far."
+             (apply #'concatenate 'string (reverse (recording-terminal-chunks terminal))))
+           (pane ()
+             "Return the session's pane size as a list."
+             (multiple-value-list (localgroup-screen-pane-size screen))))
+      (test-assert (equal (pane) '(6 69))
+                   "the session gets the columns left beside the panel and its rule")
+      (localgroup-screen-handle-packet
+       screen '(:frame :height 6 :width 69 :complete-p t :rows ((0 "host row") (1 "second"))
+                :cursor-row 1 :cursor-column 2 :cursor-visible-p t))
+      (let ((painted (output)))
+        (test-assert (and (search "PANEL-A   │host row" painted)
+                          (search "PANEL-B   │second" painted))
+                     "frames are painted beside the panel rows with a rule between"))
+      (test-assert (eq (localgroup-screen-filter-event screen '(:click 5 2)) ':ignore)
+                   "a click in the panel does nothing")
+      (test-assert (equal (localgroup-screen-filter-event screen '(:click 20 2)) '(:click 9 2))
+                   "a click in the session's pane is moved to its columns")
+      (test-assert (eq (localgroup-screen-filter-event screen ':page-up) ':page-up)
+                   "other events pass through")
+      (test-assert (and (eq (localgroup-screen-filter-event screen '(:control #\t)) ':ignore)
+                        (localgroup-screen-take-resize screen)
+                        (not (localgroup-screen-take-resize screen))
+                        (equal (pane) '(6 80)))
+                   "the toggle key hides the panel and notes the pane's new size once")
+      (test-assert (equal (localgroup-screen-filter-event screen '(:click 5 2)) '(:click 5 2))
+                   "with the panel hidden clicks keep their columns")
+      (localgroup-screen-filter-event screen '(:control #\t))
+      (terminal-set-dimensions terminal 50 :rows 6)
+      (test-assert (and (equal (pane) '(6 50))
+                        (not (localgroup-screen-panel-visible-p screen)))
+                   "a narrow terminal hides the panel although it is wanted")
+      (localgroup-screen-close screen)))
   nil)
 
 (-> test-localgroup-picker-waits-for-relayed-input () null)
@@ -308,7 +490,8 @@
           (list 'localgroup--run-status
                 (lambda (&key sexp-p) (push (list :status sexp-p) calls) nil))
           (list 'localgroup-attach-record
-                (lambda (client-configuration entry mode)
+                (lambda (client-configuration entry mode &key panel)
+                  (declare (ignore panel))
                   (test-assert (eq client-configuration configuration)
                                "attach receives the selected client configuration")
                   (push (list (localgroup--record-session-id (rest entry)) ':attach mode)
@@ -437,8 +620,8 @@
                     (push (list session-id operation arguments) calls)
                     (list :ok :operation operation :session-id session-id))))
           (list 'localgroup-attach-record
-                (lambda (client-configuration entry mode)
-                  (declare (ignore client-configuration))
+                (lambda (client-configuration entry mode &key panel)
+                  (declare (ignore client-configuration panel))
                   (push (list (localgroup--record-session-id (rest entry))
                               ':attach mode)
                         calls)
@@ -446,39 +629,40 @@
          (lambda ()
            (reject "b" nil)
            (publish "b6uouHJ")
-           (dolist (selector '("b" "b-" "b6" "b-6" "b6uou" "b-6uou"
+           (dolist (selector '("b" "B" "b-" "b6" "b-6" "b6uou" "b-6uou" "uou" "UOUHJ"
                                "b6uouHJ" "b-6uouHJ"))
              (select selector "b6uouHJ"))
-           (dolist (selector '("" "z" "B" "b--6" "b6uouHJx" "-"))
+           (dolist (selector '("" "z" "b--6" "b6uouHJx" "-"))
              (reject selector nil))
            (dolist (session-id '("b6uouHK" "c6uouHJ" "abcdef1"
                                  "abcdef123456" "abcdef234567"))
              (publish session-id))
            (dolist (selector '("b" "b-" "b6" "b-6" "b6uouH" "b-6uouH"))
              (reject selector '("b6uouHJ" "b6uouHK")))
-           (dolist (selector '("a" "abc" "ABC"))
-             (reject selector '("abcdef123456" "abcdef234567")))
+           (dolist (selector '("a" "abc" "ABC" "a-b"))
+             (reject selector '("abcdef1" "abcdef123456" "abcdef234567")))
            (dolist (case '(("b6uouHJ" "b6uouHJ")
                            ("b-6uouHJ" "b6uouHJ")
                            ("abcdef1" "abcdef1")
                            ("a-bcdef1" "abcdef1")
-                           ("a-b" "abcdef1")
                            ("abcdef12" "abcdef123456")
+                           ("DEF12" "abcdef123456")
                            ("ABCDEF12" "abcdef123456")
                            ("ABCDEF123456" "abcdef123456")))
              (select (first case) (second case)))
-           (dolist (case '((("tell" "c" "message")
+           (reject "c" '("c6uouHJ" "abcdef1" "abcdef123456" "abcdef234567"))
+           (dolist (case '((("tell" "c6" "message")
                             ("c6uouHJ" :tell (:message "message")))
-                           (("pause" "c") ("c6uouHJ" :pause nil))
-                           (("detach" "c") ("c6uouHJ" :detach nil))
-                           (("kill" "c") ("c6uouHJ" :kill nil))
-                           (("attach" "c") ("c6uouHJ" :attach :control))
-                           (("attach" "c-6" "--read-only")
+                           (("pause" "c-6") ("c6uouHJ" :pause nil))
+                           (("detach" "C6") ("c6uouHJ" :detach nil))
+                           (("kill" "c6uouhj") ("c6uouHJ" :kill nil))
+                           (("attach" "c-6uouHJ") ("c6uouHJ" :attach :control))
+                           (("attach" "c6u" "--read-only")
                             ("c6uouHJ" :attach :read-only))
-                           (("attach" "c6" "--take-over")
+                           (("attach" "C-6UOUHJ" "--take-over")
                             ("c6uouHJ" :attach :take-over))))
              (test-assert (equal (invoke (first case)) (second case))
-                          "each CLI operation resolves its session prefix")))))))
+                          "each CLI operation resolves its session fragment")))))))
   nil)
 
 (-> test-localgroup-protocol () null)
@@ -699,7 +883,7 @@
 (defun test-localgroup-checkpoint-reconnect-transition ()
   "Test repeated checkpoint reconnects over real controller and observer sockets."
   (with-test-configuration (configuration root)
-    (let* ((relay       (localgroup-terminal-create nil))
+    (let* ((relay       (localgroup-terminal-create))
            (application (make-instance 'application
                                        :configuration configuration
                                        :conversation  (conversation-create configuration)
@@ -896,7 +1080,7 @@
              (multiple-value-setq (application controller)
                (test-localgroup--application configuration))
              (setf (application-ui application)
-                   (terminal-ui-create :terminal (localgroup-terminal-create nil)))
+                   (terminal-ui-create :terminal (localgroup-terminal-create)))
              (terminal-ui-start (application-ui application))
              (setf session (localgroup-start application))
              (multiple-value-setq (socket stream)
@@ -1031,7 +1215,7 @@
           (stream-terminal-create :input-stream (make-string-input-stream "")
                                   :output-stream output :input-file-descriptor 0 :rows 24
                                   :columns      80))
-         (relay         (localgroup-terminal-create direct))
+         (relay         (localgroup-terminal-create :direct-terminal direct))
          (conversation  (conversation-create configuration))
          (ui            (terminal-ui-create :terminal relay))
          (application

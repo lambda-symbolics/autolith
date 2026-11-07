@@ -15,7 +15,7 @@
             :input-file-descriptor 0
             :rows                  24
             :columns               80))
-         (relay        (localgroup-terminal-create direct))
+         (relay        (localgroup-terminal-create :direct-terminal direct))
          (conversation (conversation-create configuration))
          (ui           (terminal-ui-create :terminal relay))
          (application
@@ -71,8 +71,9 @@
                           (platform-session-launch-command
                              *platform* (config :source-root configuration))
                           (list "--permissions" "auto")
-                          (when enabled-p
-                            (list "--immutable" "--pristine" "--fullscreen"))
+                          (if enabled-p
+                              (list "--immutable" "--pristine" "--fullscreen")
+                              (list "--plain"))
                           (list "--site-config-root"
                                 (namestring
                                    (config :site-config-root configuration))
@@ -319,17 +320,48 @@
   nil)
 
 (-> test-localgroup--abandonment-fixture
-    (configuration &key (:persisted-p boolean))
+    (configuration &key (:persisted-p boolean) (:linger-p boolean))
     (values application application-input-controller localgroup-terminal
             localgroup-session))
-(defun test-localgroup--abandonment-fixture (configuration &key persisted-p)
+(defun test-localgroup--abandonment-fixture (configuration &key persisted-p linger-p)
   "Return a started relay APPLICATION whose foreground terminal was released."
   (configuration-ensure-directories configuration)
   (multiple-value-bind (application controller relay)
       (test-localgroup--relay-application configuration :persisted-p persisted-p)
-    (let ((session (localgroup-start application)))
+    (let ((session (localgroup-start application :linger-p linger-p)))
       (image-daemon:relay-release-direct relay)
       (values application controller relay session))))
+
+(-> test-localgroup-lingering-session () null)
+(defun test-localgroup-lingering-session ()
+  "Test a lingering session surviving lost clients and checkpoint restarts."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (application   nil)
+         (controller    nil))
+    (unwind-protect
+        (multiple-value-bind (fixture-application fixture-controller relay session)
+            (test-localgroup--abandonment-fixture configuration :persisted-p t :linger-p t)
+          (declare (ignore relay))
+          (setf application fixture-application
+                controller fixture-controller)
+          (application-input-controller--enqueue controller ':message "queued input")
+          (localgroup--note-controller-attached session)
+          (test-assert
+           (and (not (localgroup--controller-lost session))
+                (null (application-input-controller-exit-reason controller)))
+           "a lingering session outlives a client that vanished without detaching")
+          (application-call-with-localgroup-quiesced application (lambda () nil))
+          (let ((restarted (application-localgroup-session application)))
+            (test-assert
+             (and restarted
+                  (not (eq restarted session))
+                  (localgroup-session-linger-p restarted)
+                  (not (localgroup--controller-lost restarted))
+                  (null (application-input-controller-exit-reason controller)))
+             "a checkpoint restart keeps the session lingering")))
+      (test-localgroup--abandonment-cleanup application controller root)))
+  nil)
 
 (-> test-localgroup--abandonment-cleanup
     ((option application) (option application-input-controller) pathname)
@@ -463,10 +495,8 @@
   (flet ((client-p (&rest arguments)
            (apply #'main--client-session-p
                   :handoff-record           nil
-                  :authenticate-p           nil
                   :recovery-conversation-id nil
                   :recovery-diagnosis       nil
-                  :image-values             nil
                   :simulate-crash-p         nil
                   arguments)))
     (let ((ordinary (client-p :resume-requested-p nil :resume-id nil)))
@@ -479,32 +509,26 @@
   (test-assert
    (eq (main--client-session-p
         :handoff-record           nil
-        :authenticate-p           nil
         :resume-requested-p       nil
         :resume-id                nil
         :recovery-conversation-id "K-8vQ2mp"
         :recovery-diagnosis       "diagnose the crash"
-        :image-values             nil
         :simulate-crash-p         nil)
        (main--client-session-p
         :handoff-record           nil
-        :authenticate-p           nil
         :resume-requested-p       nil
         :resume-id                nil
         :recovery-conversation-id nil
         :recovery-diagnosis       nil
-        :image-values             nil
         :simulate-crash-p         nil))
    "crash recovery keeps the same client-first path as an ordinary start")
   (test-assert
    (not (main--client-session-p
          :handoff-record           (list :localgroup-handoff :version 1)
-         :authenticate-p           nil
          :resume-requested-p       nil
          :resume-id                nil
          :recovery-conversation-id nil
          :recovery-diagnosis       nil
-         :image-values             nil
          :simulate-crash-p         nil))
    "the spawned session itself runs direct")
   nil)
@@ -903,4 +927,51 @@
            (tool-registry-close-runtime-state (application-tool-registry application))))
        (when controller (application-input-controller-stop controller))
        (when relay (terminal-stop relay)))))
+  nil)
+
+(-> test-localgroup-world-spawn () null)
+(defun test-localgroup-world-spawn ()
+  "Test a world server launch recording its kind and resolving the world endpoint."
+  (with-test-configuration (configuration)
+    (configuration-ensure-directories configuration)
+    (let* ((launched   nil)
+           (waited     nil)
+           (*localgroup-fresh-launch-function*
+             (lambda (launch-configuration &key handoff-pathname &allow-other-keys)
+               (declare (ignore launch-configuration))
+               (push handoff-pathname launched)))
+           (*localgroup-fresh-wait-function*
+             (lambda (&rest arguments)
+               (declare (ignore arguments))
+               (error "A world launch must not wait for a session endpoint.")))
+           (*localgroup-world-wait-function*
+             (lambda (wait-configuration token old-pid)
+               (declare (ignore wait-configuration))
+               (setf waited (list token old-pid))
+               "world"))
+           (identifier (localgroup-handoff-spawn-fresh configuration :world-p t))
+           (record     (localgroup-handoff--read configuration (first launched))))
+      (test-assert (and (string= identifier "world")
+                        (getf (rest record) :world-p)
+                        (equal waited (list (getf (rest record) :token) (current-process-id))))
+                   "a world launch records its kind and resolves the world endpoint under its token"))
+    (let* ((token   (daemon-random-token))
+           (runtime (image-daemon:daemon-runtime-create
+                     :directory        (localgroup-world-directory configuration)
+                     :identifier       "world"
+                     :token            token
+                     :request-function (lambda (runtime request &key socket stream)
+                                         (declare (ignore runtime request socket))
+                                         (daemon-write-packet
+                                          stream (list :ok :status (list :world-status)))))))
+      (image-daemon:daemon-runtime-start runtime)
+      (unwind-protect
+           (progn
+             (test-assert (string= (localgroup-world--wait-for-fresh configuration token 0) "world")
+                          "the world wait resolves a published endpoint carrying the launch token")
+             (test-assert (string= (let ((*localgroup-handoff-start-timeout-seconds* 0))
+                                     (localgroup-world--wait-for-fresh configuration "other-token" 0))
+                                   "world")
+                          "the world wait takes an answering endpoint under another token: that launch lost the race to it"))
+        (image-daemon:daemon-runtime-stop runtime))))
   nil)

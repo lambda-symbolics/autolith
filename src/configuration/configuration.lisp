@@ -546,8 +546,9 @@ Ordinary native defaults remain lazy and follow the current environment."
 (define-setting :fullscreen-p (boolean-setting)
   :label                      "Fullscreen"
   :group                      :terminal
-  :documentation              "Whether interactive sessions use the fullscreen terminal UI."
-  :scope                      :durable)
+  :documentation              "Whether interactive sessions use the fullscreen terminal UI; false keeps the transcript in the terminal's own scrollback."
+  :scope                      :durable
+  :default                    t)
 
 (define-setting :activity-line-p (boolean-setting)
   :label                         "Activity line"
@@ -1000,6 +1001,16 @@ selects its own registration, rather than inheriting the previous provider."
 (defun configuration-agenda-path (configuration)
   "Return the atomic workspace-agenda pathname."
   (merge-pathnames "agendas.sexp" (config :data-root configuration)))
+
+(-> configuration-world-path (configuration) pathname)
+(defun configuration-world-path (configuration)
+  "Return the pathname of the append-only participants and channels log."
+  (merge-pathnames "world/world.sexp" (config :data-root configuration)))
+
+(-> configuration-world-sessions-path (configuration) pathname)
+(defun configuration-world-sessions-path (configuration)
+  "Return the pathname of the legacy conversation-to-participant mapping."
+  (merge-pathnames "world/sessions.sexp" (config :data-root configuration)))
 
 (-> configuration-image-commit-root (configuration) pathname)
 (defun configuration-image-commit-root (configuration)

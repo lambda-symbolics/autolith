@@ -278,12 +278,13 @@ that a body returned. An artifact that cannot be written downgrades the state to
     (session-job)
     (option keyword))
 (defun session-job--cancelled-ancestor-reason (job)
-  "Return the reason an ancestor of JOB was cancelled, or NIL when none was.
+  "Return JOB's inherited cancellation reason, or NIL.
 
 A job admitted just as its parent was cancelled can miss that cancellation's
 cross-pool walk. Checking retained ancestry before any work closes that window.
 An evicted ancestor counts as live because a normally completed parent is no
-reason to stop a detached descendant."
+reason to stop a detached descendant. An ancestor's :moved cancellation,
+caused by its agent moving or parking, is also ignored here."
   (let ((jobs
           (task-orchestrator-list-jobs
            (session-job-orchestrator job))))
@@ -292,7 +293,7 @@ reason to stop a detached descendant."
               (find identifier jobs :key #'job-identifier :test #'string=)))
         (when ancestor
           (let ((reason (job-cancellation-reason ancestor)))
-            (when reason
+            (when (and reason (not (eq reason ':moved)))
               (return reason))))))))
 
 (-> task-job--cancelled-ancestor-reason (task-job) (option keyword))
@@ -567,6 +568,8 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
                        :public-identifier    identifier
                        :completion-owner-conversation
                        (conversation-identifier (agent-conversation parent-agent))
+                       :completion-owner-participant
+                       (conversation-adopted-participant (agent-conversation parent-agent))
                        :completion-policy    completion-policy
                        :completion-mission-id
                        (task-completion-mission-identifier parent-agent)
@@ -755,6 +758,8 @@ guarantee."
                               :parent-call-id        parent-call-id
                               :completion-owner-conversation
                               (conversation-identifier (agent-conversation parent-agent))
+                              :completion-owner-participant
+                              (conversation-adopted-participant (agent-conversation parent-agent))
                               :completion-policy     (or (getf item :completion-policy) ':continue)
                               :completion-mission-id
                               (task-completion-mission-identifier parent-agent)

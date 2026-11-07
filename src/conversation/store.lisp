@@ -156,6 +156,24 @@
     :accessor      conversation-prompt-cache-key
     :type          (option non-empty-string)
     :documentation "The root-lineage key shared by provider prompt caches.")
+   (parent-identifier
+    :initarg       :parent-identifier
+    :initform      nil
+    :reader        conversation-parent-identifier
+    :type          (option non-empty-string)
+    :documentation "The conversation of the agent that created this child agent's conversation, or NIL for a top-level one.")
+   (agent-name
+    :initarg       :agent-name
+    :initform      nil
+    :reader        conversation-agent-name
+    :type          (option non-empty-string)
+    :documentation "The readable name the parent gave this child agent, or NIL for a top-level one.")
+   (inbox-p
+    :initarg       :inbox-p
+    :initform      nil
+    :reader        conversation-inbox-p
+    :type          boolean
+    :documentation "Whether this is the history of the person's inbox channel, which no agent ever reads.")
    (pathname
     :initarg       :pathname
     :reader        conversation-pathname
@@ -248,6 +266,21 @@
     :reader        conversation-projection
     :type          clinker-transcript:projection
     :documentation "The ordered provider projection and its item metadata.")
+   (adopted-participant
+    :initform      nil
+    :accessor      conversation-adopted-participant
+    :type          (option string)
+    :documentation "The agent whose context the latest context adoption installed, or NIL while the channel's first agent speaks.")
+   (adopted-transition
+    :initform      nil
+    :accessor      conversation-adopted-transition
+    :type          (option string)
+    :documentation "The move whose context the latest context adoption installed, so a retried adoption happens once.")
+   (record-listener
+    :initform      nil
+    :accessor      conversation-record-listener
+    :type          (option function)
+    :documentation "Called with each record this conversation appends, once it is durable; a channel publishes it to its clients.")
    (ephemeral-input-entries
     :initform nil
     :accessor conversation-ephemeral-input-entries
@@ -334,6 +367,16 @@ not yet been told that work from the previous process is gone.")
     :accessor      conversation-user-turn-count
     :type          (integer 0)
     :documentation "The number of durable user message records.")
+   (message-count
+    :initform      0
+    :accessor      conversation-message-count
+    :type          (integer 0)
+    :documentation "The number of durable messages: user input, channel deliveries and assistant replies.")
+   (channel-mention-counts
+    :initform      (make-hash-table :test #'equal)
+    :reader        conversation-channel-mention-counts
+    :type          hash-table
+    :documentation "How many channel deliveries mentioned each participant, by identifier.")
    (working-seconds
     :initform 0
     :accessor conversation-working-seconds
@@ -991,6 +1034,28 @@ a crash may leave one that a later lease acquisition can reuse safely."
     (conversation--remember-pending-input-identifier conversation identifier))
   nil)
 
+(-> conversation--note-messages (conversation list) null)
+(defun conversation--note-messages (conversation record)
+  "Count RECORD in CONVERSATION's messages and channel mentions when it is one.
+
+User input, channel deliveries and assistant replies are messages; tool
+activity is not. A channel delivery's request names the participants it
+mentions."
+  (let* ((properties (rest record))
+         (user-p     (and (eq (first record) ':message)
+                          (eq (getf properties :role) ':user)))
+         (request    (and user-p (getf properties :operation-request))))
+    (when (or user-p
+              (and (eq (first record) ':provider-item)
+                   (stringp (getf properties :wire-json))
+                   (search "\"assistant\"" (getf properties :wire-json))))
+      (incf (conversation-message-count conversation)))
+    (when (equal (getf request :operation) "channel")
+      (dolist (mention (getf (getf request :message) :mentions))
+        (when (stringp mention)
+          (incf (gethash mention (conversation-channel-mention-counts conversation) 0))))))
+  nil)
+
 (-> conversation--note-activity (conversation list) null)
 (defun conversation--note-activity (conversation record)
   "Project RECORD's activity and startup metadata into CONVERSATION."
@@ -1003,6 +1068,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
     (setf (conversation-working-seconds conversation) working-seconds
           (conversation-user-turn-count conversation) user-turn-count
           (conversation-last-activity-at conversation) last-activity-at))
+  (conversation--note-messages conversation record)
   (conversation--note-input-history conversation record)
   (conversation--note-prompt-cache-usage conversation record)
   (conversation--note-usage-totals conversation record)
@@ -1013,8 +1079,11 @@ a crash may leave one that a later lease acquisition can reuse safely."
     list)
 (defun conversation--header-record
     (conversation &key (chunk-start-sequence 1))
-  "Return a self-contained portable chunk header for CONVERSATION."
-  (list :conversation
+  "Return a self-contained portable chunk header for CONVERSATION.
+
+Only a child agent's conversation names its parent and itself, and only the
+person's inbox says it is one."
+  (list* :conversation
         :version 2
         :id                   (conversation-identifier conversation)
         :created-at           (conversation-created-at conversation)
@@ -1050,7 +1119,12 @@ a crash may leave one that a later lease acquisition can reuse safely."
         (copy-tree (deque->list
                     (conversation-pending-async-lisp-events conversation)))
         :latest-goal-record
-        (copy-tree (conversation-latest-goal-record conversation))))
+        (copy-tree (conversation-latest-goal-record conversation))
+        (append (and (conversation-parent-identifier conversation)
+                     (list :parent     (conversation-parent-identifier conversation)
+                           :agent-name (conversation-agent-name conversation)))
+                (and (conversation-inbox-p conversation)
+                     (list :inbox-p t)))))
 
 (-> conversation--initial-publication-lock-pathname (conversation) pathname)
 (defun conversation--initial-publication-lock-pathname (conversation)
@@ -1385,11 +1459,21 @@ The revision is durable source coordination, not a regenerable search payload."
     (configuration &key (:identifier (option string))
                         (:prompt-cache-key (option string))
                         (:storage-root (option pathname))
-                        (:created-at (option timestamp)))
+                        (:created-at (option timestamp))
+                        (:parent-identifier (option string))
+                        (:agent-name (option string))
+                        (:inbox-p boolean)
+                        (:origin-directory (option string)))
     conversation)
 (defun conversation-create
-    (configuration &key identifier prompt-cache-key storage-root created-at)
-  "Create an in-memory conversation that persists under optional STORAGE-ROOT."
+    (configuration &key identifier prompt-cache-key storage-root created-at
+                        parent-identifier agent-name inbox-p origin-directory)
+  "Create an in-memory conversation that persists under optional STORAGE-ROOT.
+
+A child agent's conversation records PARENT-IDENTIFIER, the conversation of
+the agent that created it, and AGENT-NAME, the name it was given. INBOX-P
+marks the history of the person's inbox channel. ORIGIN-DIRECTORY replaces
+the configured working directory as the directory it began in."
   (let* ((created-at       (or created-at (get-universal-time)))
          (root             (conversation-cache-register-root
                             (uiop:ensure-directory-pathname
@@ -1400,8 +1484,8 @@ The revision is durable source coordination, not a regenerable search payload."
            (conversation-identifier-validate-path-component
             (or identifier
                 (conversation-identifier-generate root :timestamp created-at))))
-         (origin-directory (namestring
-                            (config :working-directory configuration)))
+         (origin-directory (or origin-directory
+                               (namestring (config :working-directory configuration))))
          (identity         (merge-pathnames
                             (make-pathname :name conversation-id :type "sexp")
                             root))
@@ -1414,6 +1498,9 @@ The revision is durable source coordination, not a regenerable search payload."
     (make-instance 'conversation
                    :identifier        conversation-id
                    :prompt-cache-key  prompt-cache-key
+                   :parent-identifier parent-identifier
+                   :agent-name        agent-name
+                   :inbox-p           inbox-p
                    :pathname          identity
                    :log-pathname      log-pathname
                    :persisted-p       nil
@@ -1578,6 +1665,9 @@ this append's original EOF, including when publication failed after the write."
           (setf (conversation-latest-goal-record conversation) sequenced)))
       (conversation-input-history--publish conversation sequenced)
       (conversation-picker-metadata-publish conversation)
+      (let ((listener (conversation-record-listener conversation)))
+        (when listener
+          (funcall listener sequenced)))
       sequenced)))
 
 (-> conversation--bounded-turn-abort-text (t string integer) non-empty-string)
@@ -2106,12 +2196,13 @@ copied."
     (conversation (or string user-message-input)
      &key (:pending-input-identifier (option non-empty-string))
           (:automatic-p boolean)
+          (:adoption-transition (option string))
           (:job-completion (option list))
           (:operation-request (option list)))
     (values json-object list))
 (defun conversation-append-user-message
     (conversation input
-     &key pending-input-identifier automatic-p job-completion operation-request)
+     &key pending-input-identifier automatic-p adoption-transition job-completion operation-request)
   "Persist user INPUT and return its provider item and sequenced record.
 
 JOB-COMPLETION and OPERATION-REQUEST are portable metadata that let the
@@ -2151,8 +2242,12 @@ transcript show automatic INPUT as a short notice."
                        (list :message
                              :role :user
                              :content content)
+                       (when (user-message-input-submission input)
+                         (list :submission (copy-tree (user-message-input-submission input))))
                        (when automatic-p
                          (list :automatic-p t))
+                       (when adoption-transition
+                         (list :adoption-transition adoption-transition))
                        (when pending-input-identifier
                          (list :pending-input-identifier
                                (copy-seq pending-input-identifier)))
@@ -2179,8 +2274,9 @@ transcript show automatic INPUT as a short notice."
   "Return ITEM after rejecting provider calls that would poison durable replay."
   (when (function-call-item-p item)
     (handler-case
-        (clinker-transcript:validate-function-call
-         item :preceding-items (conversation-input-items conversation))
+        (with-recursive-lock-held ((conversation-append-lock conversation))
+          (clinker-transcript:projection-validate-function-call
+           (conversation-projection conversation) item))
       (clinker-transcript:reconciliation-error (condition)
         (error 'conversation-invariant-error
                :message  (format nil "Invalid provider function call: ~A" condition)
@@ -3176,6 +3272,11 @@ later picker searches read it without scanning the log."
   (conversation--peek-segment-header
    (conversation--record-source-pathname pathname)))
 
+(-> conversation-inbox-pathname-p (pathname) boolean)
+(defun conversation-inbox-pathname-p (pathname)
+  "Return true when the conversation at PATHNAME is the person's inbox, which lists of resumable conversations leave out."
+  (eq (getf (rest (conversation-peek-header pathname)) :inbox-p) t))
+
 (-> conversation--header-string-list-p (t) boolean)
 (defun conversation--header-string-list-p (value)
   "Return true when VALUE is a finite proper list of unique nonempty strings."
@@ -3325,6 +3426,11 @@ later picker searches read it without scanning the log."
               (make-instance 'conversation
                              :identifier        identifier
                              :prompt-cache-key  prompt-cache-key
+                             :parent-identifier (let ((parent (getf properties :parent)))
+                                                  (and (non-empty-string-p parent) parent))
+                             :agent-name        (let ((name (getf properties :agent-name)))
+                                                  (and (non-empty-string-p name) name))
+                             :inbox-p           (eq (getf properties :inbox-p) t)
                              :pathname          identity
                              :log-pathname      log-pathname
                              :persisted-p       t
@@ -3548,6 +3654,37 @@ later picker searches read it without scanning the log."
           (push (list identity (or (file-write-date active) 0)) summaries))))
     (mapcar #'first
             (sort summaries #'> :key #'second))))
+
+(-> conversation-task-identity-pathname (configuration string string) pathname)
+(defun conversation-task-identity-pathname (configuration root-identifier execution-identifier)
+  "Return the identity of child conversation EXECUTION-IDENTIFIER run for ROOT-IDENTIFIER."
+  (merge-pathnames
+   (make-pathname :name execution-identifier :type "sexp")
+   (merge-pathnames (format nil "tasks/~A/~A/"
+                            (or (conversation-identifier-path-fragment root-identifier)
+                                (string-downcase root-identifier))
+                            execution-identifier)
+                    (config :data-root configuration))))
+
+(-> conversation-task-identities (configuration) list)
+(defun conversation-task-identities (configuration)
+  "Return every child task conversation with its root, as (IDENTITY ROOT-IDENTIFIER) pairs.
+
+Children live under tasks/<root>/<execution>/ in the data root; only those
+with durable storage are listed."
+  (let ((tasks (merge-pathnames "tasks/" (config :data-root configuration))))
+    (when (uiop:directory-exists-p tasks)
+      (loop for group in (uiop:subdirectories tasks)
+            for root = (first (last (pathname-directory group)))
+            when (stringp root)
+              append (loop for execution in (uiop:subdirectories group)
+                           for name = (first (last (pathname-directory execution)))
+                           for identity = (and (stringp name)
+                                               (merge-pathnames
+                                                (make-pathname :name name :type "sexp")
+                                                execution))
+                           when (and identity (conversation-storage-active-pathname identity))
+                             collect (list identity root))))))
 
 (-> conversation-activity-summary (pathname)
     (values (integer 0) (integer 0)))

@@ -582,18 +582,21 @@
 
 (-> application-peer-message-dispatch (application list &key (:cancelled-p (option function))) t)
 (defun application-peer-message-dispatch (application envelope &key cancelled-p)
-  "Compose daemon messaging with primary-owned peer grants and named mission events."
-  (if (eq (getf envelope :action) ':event)
-      (progn
-        (unless (and (equal (getf envelope :receiver)
-                            (conversation-identifier (application-conversation application)))
-                     (stringp (getf envelope :payload)))
-          (peer-message--reject ':event-scope))
-        (application-mission-schedule-event application (getf envelope :payload) (getf envelope :id)))
-      (let* ((actor   (application-peer-messages--actor application))
-             (service (and actor (peer-message-service-find actor))))
-        (unless service (peer-message--reject ':peer-scope))
-        (peer-message-dispatch service envelope :cancelled-p cancelled-p))))
+  "Compose daemon messaging with primary-owned peer grants, mission events and channel inboxes."
+  (case (getf envelope :action)
+    (:channel
+     (list :ok :queued (application-world-deliver application)))
+    (:event
+     (unless (and (equal (getf envelope :receiver)
+                         (conversation-identifier (application-conversation application)))
+                  (stringp (getf envelope :payload)))
+       (peer-message--reject ':event-scope))
+     (application-mission-schedule-event application (getf envelope :payload) (getf envelope :id)))
+    (otherwise
+     (let* ((actor   (application-peer-messages--actor application))
+            (service (and actor (peer-message-service-find actor))))
+       (unless service (peer-message--reject ':peer-scope))
+       (peer-message-dispatch service envelope :cancelled-p cancelled-p)))))
 
 (-> application-peer-messages--actor (application) (option agent))
 (defun application-peer-messages--actor (application)

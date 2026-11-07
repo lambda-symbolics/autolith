@@ -92,8 +92,8 @@
   :version "git-26940f414741addba4703a9c12e3220da64191c0"))
 ("clinker-transcript" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/clinker-transcript.git" :ref "1a2af5d4c7441fe756ead213c96a7f332ea8ce25")
-  :version "git-1a2af5d4c7441fe756ead213c96a7f332ea8ce25"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/clinker-transcript.git" :ref "bfba366773c7a9cefcc88ed4172c94fdc6310342")
+  :version "git-bfba366773c7a9cefcc88ed4172c94fdc6310342"))
 ("cl-rfc8252" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-rfc8252.git" :ref "e2bbd2374ec159f86123c046c020fce27fce2d99")
@@ -176,8 +176,8 @@
   :version "git-ee9fc57a46a396e6386d61f81a6df926ca9f9906"))
 ("idsmall" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/idsmall.git" :ref "51032ca6799956bf267857332495c0b6696cc0bb")
-  :version "git-51032ca6799956bf267857332495c0b6696cc0bb"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/idsmall.git" :ref "00cdcc08c95079298bff996be49e40a5319fae58")
+  :version "git-00cdcc08c95079298bff996be49e40a5319fae58"))
 ("mcparen" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/mcparen.git" :ref "bef9d739fa6c187dcf1c2cfd8995d51b2c942b0b")
@@ -192,8 +192,8 @@
   :version "git-9280b5bf0dc056dee49dcf8c9940f30c049015f9"))
 ("sexp-store" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-store.git" :ref "2da08f067f50dca8cd1c546e9b7adf45f6386f87")
-  :version "git-2da08f067f50dca8cd1c546e9b7adf45f6386f87"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-store.git" :ref "2afac2d8d551da250ea5645d4597191e4b6d0432")
+  :version "git-2afac2d8d551da250ea5645d4597191e4b6d0432"))
 ("sophisticated-clipboard" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sophisticated-clipboard.git" :ref "b933a913481bdcdc0ca0895f053d19eca314eac5")

@@ -246,35 +246,56 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
                    (= through (1- (getf properties :seq))))
         (conversation--record-error
          conversation properties "A compaction cutoff is outside its checkpoint."))))
+  (conversation-compaction--append-rows conversation properties projection
+                                        :rows (getf properties :carry-forward))
+  (conversation-compaction--check-correlations conversation properties projection)
+  (setf (slot-value conversation 'projection) projection
+        (conversation-last-total-tokens conversation) 0)
+  nil)
+
+(-> conversation-compaction--append-rows
+    (conversation list clinker-transcript:projection &key (:rows list)) null)
+(defun conversation-compaction--append-rows (conversation properties projection &key rows)
+  "Decode carried ROWS of the record with PROPERTIES onto PROJECTION, with their family metadata.
+
+A row is a plist of its item's :WIRE-JSON and the :FAMILY, :HANDOFF-FAMILY
+and :CHECKPOINT-SUMMARY metadata the item had where it was carried from."
   (handler-case
-      (dolist (row (getf properties :carry-forward))
-       (unless (and (listp row) (list-length row) (evenp (length row))
-                    (stringp (getf row :wire-json))
-                    (let ((keys (plist-keys row)))
-                      (and (= (length keys) (length (remove-duplicates keys)))
-                           (every (lambda (key)
-                                      (member key '(:wire-json :family :handoff-family :checkpoint-summary))) keys))))
-           (conversation--record-error
-            conversation properties "A compaction carry-forward row is invalid."))
-       (let ((item (json-decode (getf row :wire-json))))
-         (unless (typep item 'json-object)
-           (conversation--record-error
-            conversation properties "A compaction carry-forward item is not an object."))
-         (native-compaction-item-canonicalize item)
-         (clinker-transcript:projection-append projection item)
-         (dolist (key '(:family :handoff-family :checkpoint-summary))
-          (when (member key row)
-             (unless (or (eq key ':checkpoint-summary) (null (getf row key)) (keywordp (getf row key)))
-               (conversation--record-error
-                conversation properties "A carry-forward family is invalid."))
-           (setf (gethash item
-                            (clinker-transcript:projection-metadata-table projection key))
-                 (getf row key))))))
+      (dolist (row rows)
+        (unless (and (listp row) (list-length row) (evenp (length row))
+                     (stringp (getf row :wire-json))
+                     (let ((keys (plist-keys row)))
+                       (and (= (length keys) (length (remove-duplicates keys)))
+                            (every (lambda (key)
+                                     (member key '(:wire-json :family :handoff-family :checkpoint-summary)))
+                                   keys))))
+          (conversation--record-error
+           conversation properties "A carried context row is invalid."))
+        (let ((item (json-decode (getf row :wire-json))))
+          (unless (typep item 'json-object)
+            (conversation--record-error
+             conversation properties "A carried context item is not an object."))
+          (native-compaction-item-canonicalize item)
+          (clinker-transcript:projection-append projection item)
+          (dolist (key '(:family :handoff-family :checkpoint-summary))
+            (when (member key row)
+              (unless (or (eq key ':checkpoint-summary) (null (getf row key)) (keywordp (getf row key)))
+                (conversation--record-error
+                 conversation properties "A carried context family is invalid."))
+              (setf (gethash item
+                             (clinker-transcript:projection-metadata-table projection key))
+                    (getf row key))))))
     (conversation-error (condition)
       (error condition))
     (error ()
       (conversation--record-error
-       conversation properties "A compaction carry-forward payload is invalid.")))
+       conversation properties "A carried context payload is invalid.")))
+  nil)
+
+(-> conversation-compaction--check-correlations
+    (conversation list clinker-transcript:projection) null)
+(defun conversation-compaction--check-correlations (conversation properties projection)
+  "Reject PROJECTION, restored from the record with PROPERTIES, when a call lacks its output."
   (handler-case
       (let ((reconciliation
               (clinker-transcript:reconcile-items
@@ -282,12 +303,10 @@ boundary, including arrivals encoded in CARRY-FORWARD, as required by chunks."
                :repaired-output-p #'conversation-compaction--repaired-output-p)))
         (when (clinker-transcript:reconciliation-repairs reconciliation)
           (conversation--record-error
-           conversation properties "A compaction checkpoint has unresolved calls.")))
+           conversation properties "A restored context has unresolved calls.")))
     (clinker-transcript:projection-error ()
       (conversation--record-error
-       conversation properties "A compaction checkpoint has invalid correlations.")))
-  (setf (slot-value conversation 'projection) projection
-        (conversation-last-total-tokens conversation) 0)
+       conversation properties "A restored context has invalid correlations.")))
   nil)
 
 (defmethod conversation--project-record

@@ -93,6 +93,19 @@
 (defparameter *slynk-quiesce-seconds* 5
   "How long stopping waits for sly connections to close.")
 
+(-> slynk--free-saved-lock () null)
+(defun slynk--free-saved-lock ()
+  "Free *SLYNK-LOCK* in a booted saved heap.
+
+A checkpoint saves the heap inside SLYNK-CALL-QUIESCED, so the saved lock
+names the saving thread as its owner. That thread is gone after the boot,
+and no thread of the new process can hold the lock yet."
+  (when (sb-thread:mutex-owner *slynk-lock*)
+    (sb-thread:release-mutex *slynk-lock* :if-not-owner ':force))
+  nil)
+
+(pushnew 'slynk--free-saved-lock sb-ext:*init-hooks*)
+
 
 ;;;; -- Starting and Stopping --
 

@@ -1,144 +1,6 @@
 (in-package #:autolith)
 
-;;;; -- ACP Observer Behaviour --
-
-(defclass acp-observer-test-client (agentcomms:acp-client)
-  ((updates
-    :initform nil :accessor acp-observer-test-client-updates
-    :documentation "Updates received by the deterministic ACP client.")
-   (permission-updates
-    :initform nil :accessor acp-observer-test-client-permission-updates
-    :documentation "Updates handled before the latest permission request.")
-   (permission-choice
-    :initarg :permission-choice :initform "once"
-    :accessor      acp-observer-test-client-permission-choice
-    :documentation "The permission option selected by the client."))
-  (:documentation "A minimal ACP client used by observer protocol tests."))
-
-(defmethod agentcomms:client-session-update
-    ((client acp-observer-test-client) session-id update &key params)
-  "Record UPDATE so tests can inspect the notifications the client received."
-  (declare (ignore session-id params))
-  (push update (acp-observer-test-client-updates client))
-  nil)
-
-(defmethod agentcomms:client-request-permission
-    ((client acp-observer-test-client) session-id tool-call &key options params)
-  "Snapshot the updates seen so far and select the client's configured permission choice."
-  (declare (ignore session-id tool-call options params))
-  (setf (acp-observer-test-client-permission-updates client)
-        (reverse (acp-observer-test-client-updates client)))
-  (values ':selected (acp-observer-test-client-permission-choice client)))
-
-(defmethod agentcomms:client-extension-request ((client acp-observer-test-client) method params)
-  "Acknowledge a barrier after the client has handled preceding notifications."
-  (declare (ignore params))
-  (if (equal method "_sync")
-      (agentcomms:json-object)
-      (call-next-method)))
-
-(-> acp-observer-test-service (configuration) acp-service)
-(defun acp-observer-test-service (configuration)
-  "Create a service suitable for direct observer protocol tests."
-  (make-instance 'acp-service :configuration configuration))
-
-(-> test-acp-observer-streams-one-response () null)
-(defun test-acp-observer-streams-one-response ()
-  "Exercise test-acp-observer-streams-one-response."
-  (with-test-configuration (configuration)
-    (let* ((service  (acp-observer-test-service configuration))
-           (session
-            (make-instance 'acp-session :service service :identifier "observer" :application
-                           (make-instance 'application :configuration configuration)))
-           (observer (make-instance 'acp-observer :session session :turn-sequence 7))
-           (client   (make-instance 'acp-observer-test-client))
-           (updates  nil))
-      (multiple-value-bind (server client-channel)
-          (agentcomms:make-acp-channel-pair)
-        (unwind-protect
-             (progn
-               (agentcomms:acp-agent-connect service server)
-               (agentcomms:acp-client-connect client client-channel)
-               (agentcomms:client-initialize client)
-               (setf (acp-observer-test-client-updates client) nil)
-               (agent-observer-text observer "hello ")
-               (agent-observer-text observer "world")
-               (agent-observer-status observer ':assistant-response-persisted
-                                      (list :text "hello world"))
-               (agentcomms:agent-client-request service "_sync" (agentcomms:json-object))
-               (setf updates (reverse (acp-observer-test-client-updates client)))
-               (test-assert
-                (= 2 (count ':agent-message-chunk updates :key #'agentcomms:acp-update-kind))
-                "streamed response is not repeated on persistence")
-               (test-assert
-                (equal "hello world"
-                       (apply #'concatenate 'string
-                              (mapcar
-                               (lambda (update)
-                                 (agentcomms:acp-content-text
-                                  (agentcomms:json-get update "content")))
-                               (remove-if-not
-                                (lambda (update)
-                                  (eq ':agent-message-chunk (agentcomms:acp-update-kind update)))
-                                updates))))
-                "streamed response chunks preserve order"))
-          (agentcomms:connection-close (agentcomms:acp-client-connection client))))))
-  nil)
-
-(-> test-acp-observer-permission-validates-offered-choice () null)
-(defun test-acp-observer-permission-validates-offered-choice ()
-  "Exercise test-acp-observer-permission-validates-offered-choice."
-  (with-test-configuration (configuration root)
-    (declare (ignore root))
-    (let* ((service        (acp-observer-test-service configuration))
-           (session
-            (make-instance 'acp-session :service service :identifier "permissions" :application
-                           (make-instance 'application :configuration configuration)))
-           (observer       (make-instance 'acp-observer :session session :turn-sequence 1))
-           (client         (make-instance 'acp-observer-test-client :permission-choice "bogus"))
-           (server         nil)
-           (client-channel nil))
-      (multiple-value-setq (server client-channel) (agentcomms:make-acp-channel-pair))
-      (unwind-protect
-           (progn
-             (agentcomms:acp-agent-connect service server)
-             (agentcomms:acp-client-connect client client-channel)
-             (agentcomms:client-initialize client)
-             (test-assert
-              (null
-               (acp-observer--approval observer "shell.run"
-                                       :arguments (agentcomms:json-object)
-                                       :key       '("command")))
-              "an unoffered permission choice is denied")
-             (setf (acp-observer-test-client-permission-choice client) "session")
-             (test-assert
-              (acp-observer--approval observer "shell.run"
-                                      :arguments (agentcomms:json-object)
-                                      :key       '("command"))
-              "an offered session choice is accepted"))
-        (agentcomms:connection-close (agentcomms:acp-client-connection client)))))
-  nil)
-
-(-> test-acp-observer-forwards-serialized-tool-execution () null)
-(defun test-acp-observer-forwards-serialized-tool-execution ()
-  "Exercise test-acp-observer-forwards-serialized-tool-execution."
-  (with-test-configuration (configuration)
-    (let* ((service     (acp-observer-test-service configuration))
-           (application (make-instance 'application :configuration configuration))
-           (session
-            (make-instance 'acp-session :service service :identifier "forward" :application
-                           application))
-           (observer    (make-instance 'acp-observer :session session :turn-sequence 1))
-           (serialized  (make-instance 'serialized-agent-observer :delegate observer))
-           (seen        nil))
-      (agent-observer-call-with-tool-execution serialized "call-1"
-                                               (lambda ()
-                                                 (setf seen
-                                                       (and (eq *active-application* application)
-                                                            (string= *acp-current-tool-call-id*
-                                                                     "call-1")))))
-      (test-assert seen "serialized observer forwards ACP tool ownership and bindings")))
-  nil)
+;;;; -- ACP Tool Presentation Tests --
 
 (-> test-acp-observer-tool-title-previews () null)
 (defun test-acp-observer-tool-title-previews ()
@@ -179,157 +41,210 @@
      (acp-tool-title "lisp.eval" (json-object "forms" (make-array 4 :initial-element (make-string 1000000 :initial-element #\x))))))
   nil)
 
-(-> test-acp-observer-batches-thoughts-before-permission () null)
-(defun test-acp-observer-batches-thoughts-before-permission ()
-  "Coalesce fragments across response boundaries while preserving approval ordering."
+(-> test-acp-observer-submission-provenance () null)
+(defun test-acp-observer-submission-provenance ()
+  "Distinguish identical submissions by provenance, including after a refusal."
   (with-test-configuration (configuration)
-    (let* ((service  (acp-observer-test-service configuration))
-           (session  (make-instance 'acp-session :service service :identifier "thoughts"
-                                    :application (make-instance 'application :configuration configuration)))
-           (observer (make-instance 'acp-observer :session session :turn-sequence 1))
-           (client   (make-instance 'acp-observer-test-client)))
-      (multiple-value-bind (server client-channel) (agentcomms:make-acp-channel-pair)
-        (unwind-protect
-             (progn
-               (agentcomms:acp-agent-connect service server)
-               (agentcomms:acp-client-connect client client-channel)
-               (agentcomms:client-initialize client)
-               (agent-observer-reasoning observer "first ")
-               (agent-observer-reasoning observer "thought")
-               (agent-observer-status observer ':provider-request-started nil)
-               (agent-observer-reasoning observer "")
-               (agent-observer-reasoning observer "next ")
-               (agent-observer-reasoning observer "thought")
-               (agent-observer-text observer "answer")
-               (agent-observer-status observer ':provider-request-started nil)
-               (agent-observer-reasoning observer "before ")
-               (agent-observer-reasoning observer "approval")
-               (agent-observer-reasoning observer "continued ")
-               (agent-observer-text observer "")
-               (agent-observer-reasoning observer "thought")
-               (test-assert
-                (acp-observer--approval observer "shell.run"
-                                        :arguments (json-object "command" "pwd")
-                                        :key       '(:command))
-                "the editor can approve after receiving pending thoughts")
-               (let ((updates (acp-observer-test-client-permission-updates client)))
-                 (test-assert
-                  (equal '(:agent-thought-chunk :agent-message-chunk :agent-thought-chunk)
-                         (mapcar #'agentcomms:acp-update-kind updates))
-                  "thought batches precede the next message and permission request")
-                 (test-assert
-                  (equal (list (format nil "first thought~2%next thought") "answer"
-                               (format nil "before approvalcontinued thought"))
-                         (mapcar (lambda (update)
-                                   (agentcomms:acp-content-text (agentcomms:json-get update "content")))
-                                 updates))
-                  "coalescing preserves fragment text and order")))
-          (agentcomms:connection-close (agentcomms:acp-client-connection client))))))
-  nil)
-
-(-> test-acp-observer-skips-empty-message-text () null)
-(defun test-acp-observer-skips-empty-message-text ()
-  "Skip empty deltas while preserving thought batching and nonstreamed final text."
-  (with-test-configuration (configuration)
-    (let* ((service  (acp-observer-test-service configuration))
-           (session  (make-instance 'acp-session :service service :identifier "empty-text"
-                                    :application (make-instance 'application :configuration configuration)))
-           (observer (make-instance 'acp-observer :session session :turn-sequence 1))
-           (client   (make-instance 'acp-observer-test-client)))
-      (multiple-value-bind (server client-channel) (agentcomms:make-acp-channel-pair)
-        (unwind-protect
-             (progn
-               (agentcomms:acp-agent-connect service server)
-               (agentcomms:acp-client-connect client client-channel)
-               (agentcomms:client-initialize client)
-               (agent-observer-text observer "")
-               (agentcomms:agent-client-request service "_sync" (agentcomms:json-object))
-               (test-assert (null (acp-observer-test-client-updates client))
-                            "empty text alone sends no update")
-               ;; Providers stream an empty content delta beside each
-               ;; reasoning delta while the model is still thinking.
-               (agent-observer-reasoning observer "first ")
-               (agent-observer-text observer "")
-               (agent-observer-reasoning observer "thought")
-               (agent-observer-text observer "")
-               (agent-observer-status observer ':assistant-response-persisted
-                                      (list :text "answer"))
-               (agentcomms:agent-client-request service "_sync" (agentcomms:json-object))
-               (let ((updates (reverse (acp-observer-test-client-updates client))))
-                 (test-assert
-                  (equal '(:agent-thought-chunk :agent-message-chunk)
-                         (mapcar #'agentcomms:acp-update-kind updates))
-                  "the final response follows one thought batch")
-                 (test-assert
-                  (equal (list "first thought" "answer")
-                         (mapcar (lambda (update)
-                                   (agentcomms:acp-content-text (agentcomms:json-get update "content")))
-                                 updates))
-                  "empty streamed deltas preserve the nonstreamed final response")))
-          (agentcomms:connection-close (agentcomms:acp-client-connection client))))))
-  nil)
-
-(-> test-acp-external-tool-permission-modes () null)
-(defun test-acp-external-tool-permission-modes ()
-  "Keep editor policy independent and classify external calls without a sandbox."
-  (with-test-configuration (configuration root)
-    (let* ((application
-             (make-instance 'application :configuration configuration
-                            :permission-mode            ':full-access
-                            :provider                   (make-instance 'rlm-inference-test-provider :results nil)))
-           (session        (make-instance 'acp-session
-                                          :service     (acp-observer-test-service configuration)
-                                          :identifier  "external-permissions"
-                                          :application application))
-           (observer       (make-instance 'acp-observer :session session :turn-sequence 1))
-           (tool           (make-instance 'tool :namespace "service" :name "lookup"
-                                          :description "Read one record."))
-           (arguments      (json-object "record" "one"))
-           (approved-p     nil)
-           (approval-count 0)
-           (decision       ':full-access))
-      (permissions-allow :configuration configuration
-                         :state         (application-permission-state application)
-                         :command       (application--tool-permission-key tool arguments)
-                         :directory root :kind ':external-tool)
+    (let* ((service     (make-instance 'acp-service :configuration configuration))
+           (session     (make-instance 'acp-session :service service :identifier "channel"
+                                                  :configuration configuration :mode ':ask))
+           (other       (make-instance 'acp-session :service service :identifier "channel"
+                                                  :configuration configuration :mode ':ask))
+           (submissions nil)
+           (updates     nil)
+           (refuse-p    t))
       (test-call-with-function-replacements
-       (list
-        (list 'acp-observer--approval
-              (lambda (observer title &key arguments key)
-                (declare (ignore observer arguments key))
-                (incf approval-count)
-                (test-assert (string= title (tool-display-name tool))
-                             "editor permission titles use the readable tool identity")
-                approved-p))
-        (list 'permissions-model-classify-command
-              (lambda (request directory &key provider configuration
-                                             sandbox-available-p user-instructions)
-                (declare (ignore directory provider configuration user-instructions))
-                (test-assert (and (not sandbox-available-p)
-                                  (search "External tool call" request))
-                             "editor auto mode classifies external execution without a local sandbox")
-                (values decision "test policy"))))
+       (list (list 'acp-session-call
+                   (lambda (session command &rest arguments)
+                     (declare (ignore command))
+                     (push (getf arguments :submission) submissions)
+                     (when refuse-p
+                       (error 'agentcomms:acp-state-error :message "Submission refused."))
+                     (acp-session--work-finished
+                      session (list :submission (getf arguments :submission) :outcome ':done))
+                     (list :busy-p nil)))
+             (list 'acp-session-flush
+                   (lambda (session)
+                     (declare (ignore session))
+                     nil))
+             (list 'acp-session--send
+                   (lambda (session update)
+                     (push (cons session update) updates)
+                     nil)))
        (lambda ()
-         (test-assert (eq (agent-observer-authorize-tool observer tool arguments) ':deny)
-                      "terminal full access and persistent grants cannot bypass an editor session")
-         (setf approved-p t)
-         (test-assert (eq (agent-observer-authorize-tool observer tool arguments) ':allow)
-                      "the editor can approve an exact external request")
-         (setf (acp-session-mode session) ':sandboxed approved-p nil)
-         (test-assert (eq (agent-observer-authorize-tool observer tool arguments) ':deny)
-                      "editor sandbox mode still requires external approval")
-         (let ((before approval-count))
-           (setf (acp-session-mode session) ':full-access)
-           (test-assert (and (eq (agent-observer-authorize-tool observer tool arguments) ':allow)
-                             (= before approval-count))
-                        "editor full access permits external calls without another approval")
-           (setf (acp-session-mode session) ':auto)
-           (dolist (case '((:full-access :allow) (:sandboxed :deny) (:deny :deny)))
-             (setf decision (first case))
-             (clrhash (application-command-classifications application))
-             (test-assert (eq (agent-observer-authorize-tool observer tool arguments)
-                              (second case))
-                          "editor auto applies only available external grants"))
-           (test-assert (= before approval-count)
-                        "editor auto never falls back to an approval prompt"))))))
+         (handler-case (acp-session-prompt session "same")
+           (agentcomms:acp-state-error ()
+             nil))
+         (test-assert (not (acp-session-prompt-active-p session))
+                      "a refused submission releases the editor prompt")
+         (setf refuse-p nil)
+         (acp-session-prompt other "same")
+         (let ((record (list :message :role ':user :content "same" :submission (first submissions))))
+           (acp-session--record session record)
+           (test-assert (= 1 (length updates))
+                        "another client's identical text is visible after refusal")
+           (acp-session--record other record)
+           (test-assert (= 1 (length updates)) "the originating editor does not receive its own echo"))
+         (acp-session-prompt session "same")
+         (test-assert (not (equal (getf (first submissions) :id) (getf (second submissions) :id)))
+                      "identical text receives distinct submission identities")
+         (let ((record (list :message :role ':user :content "same" :submission (first submissions))))
+           (acp-session--record session record)
+           (acp-session--record other record)
+           (test-assert (equal (list other session) (mapcar #'first updates))
+                        "each client sees only the other client's identical submission")
+           (test-assert (eq ':user-message-chunk
+                            (agentcomms:acp-update-kind (acp-replay--record-update record 1)))
+                        "replay includes prompts independently of their live origin"))
+         (acp-session--record session '(:message :role :user :content "same"))
+         (test-assert (= 3 (length updates)) "legacy records without provenance are displayed")
+         (dolist (steer-p '(nil t))
+           (acp-input--submit session (agentcomms:json-object "text" "same") steer-p)
+           (test-assert (equal (if steer-p "steering" "queue")
+                               (getf (first submissions) :source))
+                        "extension submissions carry their actual source")
+           (acp-session--record session
+                                (list :message :role ':user :content "same"
+                                      :submission (first submissions))))
+         (test-assert (= 5 (length updates)) "queued and steering input are visible to their origin")
+         (setf updates nil)
+         (acp-session-submit session "same")
+         (acp-session-submit other "same")
+         (dolist (submission (subseq submissions 0 2))
+           (dolist (recipient (list session other))
+             (acp-session--record recipient
+                                  (list :message :role ':user :content "same" :submission submission))))
+         (test-assert (equal (list other session) (mapcar #'first updates))
+                      "identical submissions admitted before either echo are distinguished by client")
+         (let* ((record '(:message :role :user :content "#.(error \"replay evaluated text\")"))
+                (before (copy-tree record)))
+           (dotimes (repeat 2)
+             (test-assert
+              (equal (getf (rest record) :content)
+                     (agentcomms:acp-content-text
+                      (agentcomms:json-get (acp-replay--record-update record 1) "content")))
+              "legacy replay treats reader syntax as literal content"))
+           (test-assert (and (equal before record) (= 2 (length updates)))
+                        "reading legacy history neither consumes records nor sends live updates"))))))
+  nil)
+
+(-> test-acp-prompt-submission-outcomes () null)
+(defun test-acp-prompt-submission-outcomes ()
+  "Await the exact queued submission despite an unrelated idle event before its reply."
+  (with-test-configuration (configuration)
+    (dolist (case '((:done :end-turn t) (:cancelled :cancelled t) (:failed :condition nil)))
+      (destructuring-bind (work-outcome expected busy-p) case
+        (let* ((service       (make-instance 'acp-service :configuration configuration))
+               (session       (make-instance 'acp-session :service service :identifier "channel"
+                                                         :configuration configuration :mode ':ask))
+               (waiting       (sb-thread:make-semaphore))
+               (finished      (sb-thread:make-semaphore))
+               (original-wait (symbol-function 'condition-wait))
+               (submission    nil)
+               (result        nil)
+               (thread        nil))
+          (test-call-with-function-replacements
+           (list (list 'acp-session-call
+                       (lambda (recipient command &rest arguments)
+                         (declare (ignore command))
+                         (setf submission (getf arguments :submission))
+                         (acp-session--work-finished
+                          recipient '(:kind :message :submission (:id "other" :client "terminal")
+                                      :outcome :done :idle-p t))
+                         (list :busy-p busy-p)))
+                 (list 'acp-session-flush (lambda (recipient) (declare (ignore recipient)) nil))
+                 (list 'condition-wait
+                       (lambda (condition-variable lock &rest arguments)
+                         (when (eq condition-variable (acp-session-condition-variable session))
+                           (sb-thread:signal-semaphore waiting))
+                         (apply original-wait condition-variable lock arguments))))
+           (lambda ()
+             (unwind-protect
+                  (progn
+                    (setf thread
+                          (make-thread
+                           (lambda ()
+                             (unwind-protect
+                                  (setf result
+                                        (handler-case (acp-session-prompt session "queued prompt")
+                                          (agentcomms:acp-method-error () ':condition)
+                                          (agentcomms:acp-state-error () ':closed)))
+                               (sb-thread:signal-semaphore finished)))
+                           :name "ACP exact submission test"))
+                    (test-assert (sb-thread:wait-on-semaphore waiting :timeout 5)
+                                 "unrelated idleness cannot finish the submission, even with a nonbusy reply")
+                    (with-lock-held ((acp-session-lock session))
+                      (test-assert (null (acp-session-prompt-outcome session))
+                                   "the unrelated work has no outcome for this prompt"))
+                    (acp-session-event session
+                                       (list :work-finished :sequence 1 :kind ':message
+                                             :submission submission :outcome work-outcome :idle-p nil))
+                    (test-assert (sb-thread:wait-on-semaphore finished :timeout 5)
+                                 "a matching outcome completes without requiring channel idleness")
+                    (test-assert (eq expected result) "the matching submission supplies the stop reason")
+                    (acp-session-event session
+                                       (list :work-finished :sequence 1 :kind ':message
+                                             :submission submission :outcome ':done :idle-p t))
+                    (test-assert (= 1 (acp-session-event-sequence session))
+                                 "replayed completion cursors are consumed once"))
+               (with-lock-held ((acp-session-lock session))
+                 (setf (acp-session-closed-p session) t)
+                 (sb-thread:condition-broadcast (acp-session-condition-variable session)))
+               (when thread (sb-thread:join-thread thread :timeout 5 :default nil)))))))))
+  nil)
+
+(-> test-acp-attachment-history-boundary () null)
+(defun test-acp-attachment-history-boundary ()
+  "Deliver assistant and tool records appended during initial replay exactly once and in order."
+  (with-test-configuration (configuration)
+    (let* ((service      (make-instance 'acp-service :configuration configuration))
+           (session      (make-instance 'acp-session :service service :identifier "channel"
+                                                    :configuration configuration :mode ':ask))
+           (updates      nil)
+           (records      '((:message :seq 1 :role :user :content "question")
+                           (:message :seq 2 :role :assistant :content "old reply")
+                           (:tool-result :seq 3 :call-id "call" :status :ok :output "old result")))
+           (conversation (conversation-create configuration)))
+      (test-call-with-function-replacements
+       (list (list 'conversation-replay-load
+                   (lambda (&rest arguments) (declare (ignore arguments)) conversation))
+             (list 'conversation-replay--map-records
+                   (lambda (source function)
+                     (declare (ignore source))
+                     (dolist (record records) (funcall function record))
+                     ;; New durable records are already visible to the reader, but lie
+                     ;; beyond its captured boundary and arrive on the subscription.
+                     (dolist (record '((:message :seq 4 :role :assistant :content "during attachment")
+                                       (:tool-result :seq 5 :call-id "call" :status :ok :output "during result")))
+                       (funcall function record)
+                       (acp-session-event session
+                                         (list :record  :sequence (+ 8 (getf (rest record) :seq))
+                                                :record record)))
+                     (acp-session-event session
+                                       '(:status :sequence 14 :status :assistant-response-persisted
+                                          :details (:text "during attachment")))
+                     (acp-session-event session
+                                       '(:status :sequence 15 :status :tool-call-completed
+                                          :details (:call-id "call" :success-p t :output "during result")))
+                     nil))
+             (list 'acp-session--plan (lambda (recipient) (declare (ignore recipient)) nil))
+             (list 'acp-session-flush (lambda (recipient) (declare (ignore recipient)) nil))
+             (list 'acp-session--send
+                   (lambda (recipient update) (declare (ignore recipient)) (push update updates) nil)))
+       (lambda ()
+         (acp-session-begin-attachment session)
+         ;; A delayed listener for an already replayed record must not echo it.
+         (acp-session-event session (list :record :sequence 11 :record (second records)))
+         (acp-session-finish-attachment session '(:attached :sequence 10 :record-sequence 3) :replay-p t)
+         (test-assert (equal '(:user-message-chunk :agent-message-chunk :tool-call-update
+                               :agent-message-chunk :tool-call-update)
+                             (mapcar #'agentcomms:acp-update-kind (reverse updates)))
+                      "bounded history precedes each buffered assistant and tool result exactly once")
+         (test-assert (= 15 (acp-session-event-sequence session)) "the delivered tail advances its event cursor")
+         (test-assert (= 1 (acp-session-turn-sequence session)) "catch-up tool identities keep the replayed user turn")
+         (acp-session-event session '(:status :sequence 16 :status :provider-request-started :details nil))
+         (acp-session-event session '(:text :sequence 17 :delta "live reply"))
+         (test-assert (eq ':agent-message-chunk (agentcomms:acp-update-kind (first updates)))
+                      "the next provider request resumes live streaming")
+         (test-assert (= 6 (length updates)) "going live does not replay the buffered transcript")))))
   nil)

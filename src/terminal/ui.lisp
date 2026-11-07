@@ -140,18 +140,19 @@ offered only while the typed prefix no longer matches its primary."
      (:completion-function (option function))
      (:completion-root (option pathname))
      (:path-search-function (option function))
+     (:mention-function (option function))
      (:message-header-prefixes list)
      (:clock-function function))
     terminal-ui)
 (defun terminal-ui-create
     (&key terminal editor (prompt "> ") (placeholder "") completions
-       completion-function completion-root path-search-function fullscreen-p
-       message-header-prefixes
+       completion-function completion-root path-search-function mention-function
+       fullscreen-p message-header-prefixes
        (clock-function #'terminal-ui--monotonic-seconds))
   "Create an inline or opt-in fullscreen UI for interactive TERMINAL.
 
 MESSAGE-HEADER-PREFIXES name the transcript lines the fullscreen viewport
-jumps between as messages."
+jumps between as messages. MENTION-FUNCTION completes @ participant names."
   (unless (typep terminal 'terminal)
     (error 'terminal-error
            :message   "TERMINAL-UI-CREATE requires a terminal instance."
@@ -183,6 +184,11 @@ jumps between as messages."
            :message   "The path search provider must be a function or NIL."
            :operation ':create-ui
            :cause     nil))
+  (unless (typep mention-function '(option function))
+    (error 'terminal-error
+           :message   "The mention provider must be a function or NIL."
+           :operation ':create-ui
+           :cause     nil))
   (let ((live-region
           (make-live-region
            :columns        (terminal-columns terminal)
@@ -211,6 +217,7 @@ jumps between as messages."
                    (and completion-root
                         (uiop:ensure-directory-pathname completion-root))
                    :path-search-function    path-search-function
+                   :mention-function        mention-function
                    :completion-selector
                    (make-selector
                     :visible-count *terminal-ui-visible-completions*
@@ -275,6 +282,16 @@ emergency terminal input responsive while another thread owns presentation."
 (defun terminal-ui--image-label (number)
   "Return the visible composer label for image NUMBER."
   (format nil "[Image #~D]" number))
+
+(-> terminal-ui-image-draft (list) (option user-message-input))
+(defun terminal-ui-image-draft (pathnames)
+  "Return a composer draft attaching the images at PATHNAMES under their labels, or NIL for none."
+  (when pathnames
+    (user-message-input-create
+     :text            (format nil "~{~A~^ ~}"
+                              (loop for number from 1 to (length pathnames)
+                                    collect (terminal-ui--image-label number)))
+     :image-pathnames pathnames)))
 
 (-> terminal-ui--copy-image-attachments (list) list)
 (defun terminal-ui--copy-image-attachments (attachments)
@@ -660,6 +677,30 @@ the draft is exact."
        :token-end       end
        :search-function (terminal-ui-path-search-function ui)))))
 
+(-> terminal-ui--matching-mention-completions (terminal-ui string (integer 0)) list)
+(defun terminal-ui--matching-mention-completions (ui text cursor)
+  "Return participant completions for the @ token at CURSOR in TEXT.
+
+A token with a slash names a path, never a participant. Each entry is spliced
+over the token, keeping the @, and does not submit."
+  (let ((function (terminal-ui-mention-function ui)))
+    (when function
+      (multiple-value-bind (start end token)
+          (terminal-path-token text cursor)
+        (when (and token (not (find #\/ token)))
+          (let ((entries (funcall function (subseq token 1))))
+            (unless (and (listp entries) (every #'terminal-completion-p entries))
+              (error 'terminal-error
+                     :message   "The mention provider returned invalid entries."
+                     :operation ':complete
+                     :cause     nil))
+            (loop for entry in entries
+                  collect (list* :kind        ':mention
+                                 :token-start start
+                                 :token-end   end
+                                 :submit-p    nil
+                                 entry))))))))
+
 (-> terminal-ui--paired-closers (line-editor) (option string))
 (defun terminal-ui--paired-closers (editor)
   "Return the closing brackets after EDITOR's cursor when nothing else follows it.
@@ -740,7 +781,9 @@ name. Path completions apply when no command prefix matches."
                   (terminal-ui--current-completions ui))))))
     (if command-matches
         command-matches
-        (terminal-ui--matching-path-completions ui (line-editor-text editor) cursor))))
+        (let ((text (line-editor-text editor)))
+          (append (terminal-ui--matching-mention-completions ui text cursor)
+                  (terminal-ui--matching-path-completions ui text cursor))))))
 
 (-> terminal-ui--reconcile-completions (terminal-ui) list)
 (defun terminal-ui--reconcile-completions (ui)
@@ -860,9 +903,9 @@ recalled drafts. An @ path token still offers file completion."
     (terminal-ui--reconcile-completions ui)
     (terminal-ui--choice-rows (terminal-ui-completion-selector ui) row-width)))
 
-(-> terminal-ui--accept-path-completion (terminal-ui list) null)
-(defun terminal-ui--accept-path-completion (ui entry)
-  "Replace ENTRY's original path token in UI's input with its completed name."
+(-> terminal-ui--accept-token-completion (terminal-ui list) null)
+(defun terminal-ui--accept-token-completion (ui entry)
+  "Replace ENTRY's original @ token in UI's input with its completed name."
   (let* ((editor   (terminal-ui-editor ui))
          (original (or (terminal-ui-completion-prefix ui)
                        (line-editor-text editor)))
@@ -889,8 +932,8 @@ recalled drafts. An @ path token still offers file completion."
 
 Paired closers after the cursor stay after it while the completed name leaves
 its parenthesis open, and are dropped once the name closes it itself."
-  (if (eq (getf entry :kind) ':path)
-      (terminal-ui--accept-path-completion ui entry)
+  (if (member (getf entry :kind) '(:path :mention))
+      (terminal-ui--accept-token-completion ui entry)
       (let* ((editor   (terminal-ui-editor ui))
              (closers  (or (terminal-ui--paired-closers editor) ""))
              (inserted (sanitize-text
@@ -979,7 +1022,7 @@ its parenthesis open, and are dropped once the name closes it itself."
            (terminal-ui--end-completion ui)
            (cond
              ((or (getf entry :argument)
-                  (eq (getf entry :kind) ':path)
+                  (member (getf entry :kind) '(:path :mention))
                   (not (getf entry :submit-p t)))
               (terminal-ui--repaint-live ui)
               (values :changed nil))
@@ -2548,8 +2591,10 @@ plain text. This formatter does not change UI."
     (terminal-ui (option function))
     boolean)
 (defun terminal-ui-refresh-size (ui callback)
-  "Apply CALLBACK's pending terminal size to UI and report whether it repainted."
-  (let ((size (and callback (funcall callback))))
+  "Apply CALLBACK's pending terminal size to UI and report whether it repainted.
+
+CALLBACK receives UI, so it can consult the terminal the size belongs to."
+  (let ((size (and callback (funcall callback ui))))
     (cond
       ((null size)
        nil)
@@ -2625,7 +2670,7 @@ cannot show them keeps none."
      (:initial-value (option string)) (:search-p boolean)
      (:search-key function) (:resize-callback (option function))
      (:on-event (option function)) (:poll-interval (option real))
-     (:status-kind keyword))
+     (:status-kind keyword) (:external-event-function (option function)))
     (option string))
 (defun terminal-ui-select
     (ui &key (title "select") items hint
@@ -2633,13 +2678,17 @@ cannot show them keeps none."
           initial-name initial-value search-p
           (search-key #'terminal-ui--picker-default-search-text)
           resize-callback on-event
-          (poll-interval *terminal-ui-picker-poll-interval*) (status-kind ':question))
+          (poll-interval *terminal-ui-picker-poll-interval*) (status-kind ':question)
+          external-event-function)
   "Select an application entry through Clinedi's filtered modal session.
 
 Entries carry :NAME and optionally a distinct :VALUE. ON-EVENT receives
 (EVENT SELECTOR) and may return NIL, :CONTINUE, (:ACCEPT VALUE), (:CANCEL),
-or (:REPLACE TITLE ITEMS [HINT [VALUE]]). Filtering, stable selection,
-readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
+or (:REPLACE TITLE ITEMS [HINT [VALUE]]). EXTERNAL-EVENT-FUNCTION, polled
+with the terminal, returns an event from outside it, such as a client's
+answer, or NIL; such an event reaches ON-EVENT before terminal input.
+Filtering, stable selection, readiness polling, resize coordination and
+lifecycle cleanup belong to Clinedi."
   (unless (and items (every #'terminal-completion-p items)
                (terminal-interactive-p (terminal-ui-terminal ui)))
     (return-from terminal-ui-select nil))
@@ -2714,8 +2763,14 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
                  (lambda ()
                    (clinedi:run-selection-session
                     session
-                    :read-event     (lambda () (terminal-read-event (terminal-ui-terminal ui)))
-                    :input-ready-p  (lambda () (terminal-input-ready-p (terminal-ui-terminal ui)))
+                    :read-event     (lambda ()
+                                      (or (and external-event-function
+                                               (funcall external-event-function))
+                                          (terminal-read-event (terminal-ui-terminal ui))))
+                    :input-ready-p  (lambda ()
+                                      (or (and external-event-function
+                                               (not (null (funcall external-event-function))))
+                                          (terminal-input-ready-p (terminal-ui-terminal ui))))
                     :poll-interval  poll-interval
                     :call-with-lock (lambda (function)
                                       (with-terminal-ui-locked (ui) (funcall function)))
@@ -3705,21 +3760,34 @@ installed owner the thunk simply runs."
   "Apply EVENT to UI's suggestions or editor and return its action and payload.
 
 A transcript action that EVENT clicked runs after the presentation lock is
-released, so the action may present notices of its own."
-  (multiple-value-prog1
+released, so the action may present notices of its own. A clicked
+(:submit TEXT) instead returns :SUBMIT and TEXT for the caller to submit,
+without replacing the draft."
+  (multiple-value-bind (action payload)
       (terminal-ui--process-locked-event ui event
                                          :queue-completion-p queue-completion-p
                                          :queue-editing-p    queue-editing-p)
-    (terminal-ui--run-pending-action ui)))
+    (let ((submission (terminal-ui--run-pending-action ui)))
+      (if submission
+          (values ':submit submission)
+          (values action payload)))))
 
-(-> terminal-ui--run-pending-action (terminal-ui) null)
+(-> terminal-ui--run-pending-action (terminal-ui) (option string))
 (defun terminal-ui--run-pending-action (ui)
-  "Deliver and clear UI's pending clicked action outside the presentation lock."
+  "Deliver and clear UI's pending clicked action outside the presentation lock.
+
+Returns the text of a clicked (:submit TEXT) for the caller to submit, and
+NIL after delivering any other action."
   (let ((action (with-terminal-ui-locked (ui)
                   (shiftf (terminal-ui-pending-action ui) nil))))
-    (when action
-      (terminal-ui-activate ui action)))
-  nil)
+    (cond
+      ((null action)
+       nil)
+      ((and (eq (first action) ':submit) (stringp (second action)))
+       (second action))
+      (t
+       (terminal-ui-activate ui action)
+       nil))))
 
 (-> terminal-ui--process-locked-event
     (terminal-ui t &key (:queue-completion-p boolean) (:queue-editing-p boolean))

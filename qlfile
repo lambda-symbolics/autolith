@@ -21,7 +21,7 @@ git cl+ssl https://github.com/cl-plus-ssl/cl-plus-ssl.git :ref d7a92f9ed0cbae10f
 git clinedi https://github.com/lambda-symbolics/clinedi.git :ref 32cabe46c00c4152b3b096f5f566fa9868e21cf0
 git clermaid https://github.com/lambda-symbolics/clermaid.git :ref 7a4497aff7514134dd69ab28b7d07c06335b7852
 git cl-jobpond https://github.com/lambda-symbolics/cl-jobpond.git :ref 26940f414741addba4703a9c12e3220da64191c0
-git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 1a2af5d4c7441fe756ead213c96a7f332ea8ce25
+git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref bfba366773c7a9cefcc88ed4172c94fdc6310342
 git cl-rfc8252 https://github.com/lambda-symbolics/cl-rfc8252.git :ref e2bbd2374ec159f86123c046c020fce27fce2d99
 git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref 38d5b6ae81a24031ad6c95b4f42ba99f2cf0a6c3
 git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref 9f2154b55edaf0fbf9ca79651ca3ea3cf7aa75bd
@@ -42,11 +42,11 @@ git org-templater https://github.com/lambda-symbolics/org-templater.git :ref f9b
 git image-daemon https://github.com/lambda-symbolics/image-daemon.git :ref fa5a80c0084cf727258d1f937db41cf2ebed2072
 git ls-compat https://github.com/lambda-symbolics/ls-compat.git :ref f3eaf96a8f80120423b5a31055984f9aa688566b
 git ls-flock https://github.com/lambda-symbolics/ls-flock.git :ref ee9fc57a46a396e6386d61f81a6df926ca9f9906
-git idsmall https://github.com/lambda-symbolics/idsmall.git :ref 51032ca6799956bf267857332495c0b6696cc0bb
+git idsmall https://github.com/lambda-symbolics/idsmall.git :ref 00cdcc08c95079298bff996be49e40a5319fae58
 git mcparen https://github.com/lambda-symbolics/mcparen.git :ref bef9d739fa6c187dcf1c2cfd8995d51b2c942b0b
 git sbcl-generations https://github.com/lambda-symbolics/sbcl-generations.git :ref 1c7a363843de8319be7a92149b3ed8dac6c3122f
 git sexp-config https://github.com/lambda-symbolics/sexp-config.git :ref 9280b5bf0dc056dee49dcf8c9940f30c049015f9
-git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref 2da08f067f50dca8cd1c546e9b7adf45f6386f87
+git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref 2afac2d8d551da250ea5645d4597191e4b6d0432
 git sophisticated-clipboard https://github.com/lambda-symbolics/sophisticated-clipboard.git :ref b933a913481bdcdc0ca0895f053d19eca314eac5
 git sbcl-workers https://github.com/lambda-symbolics/sbcl-workers.git :ref cded09d0c0d2a3c889f6fbb3414342b957978d74
 git surgeon https://github.com/lambda-symbolics/surgeon.git :ref b159c64231f35d2b20aedd41544f8621d16a0c29
