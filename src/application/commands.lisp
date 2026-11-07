@@ -2324,14 +2324,14 @@ are forwarded to TERMINAL-UI-SELECT."
                   (application-configuration application)) model)))))
   nil)
 
-(-> application-checkpoint-notice (string) list)
-(defun application-checkpoint-notice (text)
-  "Return TEXT as a checkpoint notice line, dimmed and marked with a dot."
+(-> application-notice-line (string) list)
+(defun application-notice-line (text)
+  "Return TEXT as a notice line, dimmed and marked with a dot."
   (list (terminal-span ':notice (format nil "· ~A" text))))
 
-(-> application-checkpoint-failure (string) list)
-(defun application-checkpoint-failure (text)
-  "Return TEXT as a checkpoint failure line, in the failure color and marked with an exclamation point."
+(-> application-failure-line (string) list)
+(defun application-failure-line (text)
+  "Return TEXT as a failure line, in the failure color and marked with an exclamation point."
   (list (terminal-span ':failure (format nil "! ~A" text))))
 
 (-> application-checkpoint (application &key (:allow-dirty-p boolean)) null)
@@ -2353,20 +2353,20 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
          (cond
            ((application-hosted-p application)
             (application-present application
-                                 (application-checkpoint-notice
+                                 (application-notice-line
                                   (world-server-checkpoint application backend))))
            ((platform-supports-p *platform* ':restartable-image-saver)
             (setf (application-checkpoint-restart-request application)
                   (cons backend generation))
             (application-present
              application
-             (application-checkpoint-notice
+             (application-notice-line
               (format nil "checkpoint ~A scheduled: Autolith will restart after this command, then resume this session"
                       (generation-identifier generation)))))
            (t
             (application-present
              application
-             (application-checkpoint-notice
+             (application-notice-line
               (format nil "checkpoint ~A is publishing in process ~D"
                       (generation-identifier generation)
                       (generation-coordinator-pid generation)))))))
@@ -3052,23 +3052,21 @@ the world knows no such channel."
     (cond
       ((string= identifier current)
        (application-present application
-                            (format nil "This terminal is already in channel ~A." display)))
+                            (application-notice-line (format nil "already in channel ~A" display))))
       ((and (application-hosted-p application) (typep terminal 'localgroup-terminal))
-       (application-present
-        application
-        (if (localgroup-terminal-switch-controller terminal identifier)
-            (format nil "Switching this terminal to channel ~A." display)
-            (format nil "No terminal controls this channel; attach one to move it to ~A."
-                    display))))
+       (unless (localgroup-terminal-switch-controller terminal identifier)
+         (application-present
+          application
+          (application-failure-line
+           (format nil "no terminal controls this channel to move to ~A" display)))))
       ((and controller (application-input-controller-turn-active-p controller))
        (application-present
         application
-        (format nil "Wait for the turn to finish, then (switch ~S) resumes that channel here."
-                display)))
+        (application-notice-line
+         (format nil "wait for the turn to finish, then (switch ~S)" display))))
       (t
        (application-resume-conversation application identifier)
-       (application-render-records application)
-       (application-present application (format nil "Switched to channel ~A." display)))))
+       (application-render-records application))))
   ':continue)
 
 (define-application-command application--builtin-rename-command
