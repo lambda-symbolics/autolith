@@ -527,3 +527,23 @@
            (test-assert (null (getf (first opened) :launch))
                         "a start that states nothing sends no launch options"))))))
   nil)
+
+(-> test-cli-startup-failure-line () null)
+(defun test-cli-startup-failure-line ()
+  "Test a failed start reports one marked line, styled only for a styled terminal."
+  (dolist (styled-p '(nil t))
+    (test-call-with-function-replacements
+     (list (list 'main--output-styled-p
+                 (lambda (stream)
+                   (declare (ignore stream))
+                   styled-p)))
+     (lambda ()
+       (let ((line     (main--startup-failure-line "World server response timeout" *error-output*))
+             (expected "! Autolith could not start: World server response timeout")
+             (sequence (terminal-style-sequence ':failure)))
+         (if (and styled-p sequence)
+             (test-assert (string= line (concatenate 'string sequence expected *terminal-style-reset*))
+                          "a styled terminal shows the whole line in the failure style")
+             (test-assert (string= line expected)
+                          "other output shows the plain marked line"))))))
+  nil)

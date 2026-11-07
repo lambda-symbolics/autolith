@@ -512,7 +512,7 @@
            (setf observed-styled-p ':unset)
            (test-call-with-function-replacements
             (list (list 'main--authentication-provider provider-function)
-                  (list 'main--authentication-output-styled-p
+                  (list 'main--output-styled-p
                         (lambda (stream)
                           (declare (ignore stream))
                           t))
