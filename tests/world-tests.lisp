@@ -397,6 +397,43 @@
                            "the retired mapping is removed")))))))
   nil)
 
+(-> test-world-session-mapping-transactions () null)
+(defun test-world-session-mapping-transactions ()
+  "Test remapping one session preserves another writer's concurrent remap."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (world-reconcile-sessions configuration)
+    (let ((store    (world-session--store configuration))
+          (transact #'sexp-store:store-transact)
+          (raced-p  nil))
+      (test-call-with-function-replacements
+       (list (list 'world-session--store
+                   (lambda (configuration)
+                     (declare (ignore configuration))
+                     store))
+             (list 'sexp-store:store-transact
+                   (lambda (actual update &rest options)
+                     ;; Another process publishes while the first writer
+                     ;; waits to acquire the mapping store's lock.
+                     (when (and (eq actual store) (not raced-p))
+                       (setf raced-p t)
+                       (world-session-remap configuration "bsecnd2" nil))
+                     (apply transact actual update options))))
+       (lambda ()
+         (test-assert (world-session-remap configuration "bfirst1" nil)
+                      "the requested session is remapped")))
+      (let ((mappings (world-session-mappings configuration)))
+        (test-assert (and raced-p
+                          (every (lambda (identifier)
+                                   (let ((mapping (find identifier mappings
+                                                        :key  #'world-session-mapping-conversation
+                                                        :test #'string=)))
+                                     (and mapping (null (world-session-mapping-participant mapping)))))
+                                 '("bfirst1" "bsecnd2")))
+                     "concurrent remaps of different sessions both persist"))))
+  nil)
+
 (-> test-world-application-sync () null)
 (defun test-world-application-sync ()
   "Test the application hook migrates sessions and tolerates a missing conversation."

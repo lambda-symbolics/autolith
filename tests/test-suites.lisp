@@ -636,6 +636,7 @@
   test-world-deletion-rules
   test-world-malformed-state
   test-world-session-reconciliation
+  test-world-session-mapping-transactions
   test-world-agent-keeps-model-choice
   test-world-application-sync
   test-world-channel-resource
