@@ -146,20 +146,24 @@ agent working in frob; a second agent there is frob-2.")
       (sexp-store:store-error (cause)
         (world--store-error cause)))))
 
-(-> world-session--write-mappings (configuration list) null)
-(defun world-session--write-mappings (configuration mappings)
-  "Replace the stored mappings with MAPPINGS."
-  (handler-case
-      (sexp-store:store-transact
-       (world-session--store configuration)
-       (lambda (current)
-         (declare (ignore current))
-         (values (sort (copy-list mappings) #'string<
-                       :key #'world-session-mapping-conversation)
-                 nil t)))
-    (sexp-store:store-error (cause)
-      (world--store-error cause)))
-  nil)
+(-> world-session--transact (configuration function) t)
+(defun world-session--transact (configuration update)
+  "Call UPDATE with fresh mappings under the store lock and return its result.
+
+UPDATE returns replacement mappings, its result, and whether to publish."
+  (with-recursive-lock-held (*world-sessions-lock*)
+    (handler-case
+        (nth-value 0
+                   (sexp-store:store-transact
+                    (world-session--store configuration)
+                    (lambda (current)
+                      (multiple-value-bind (mappings result write-p) (funcall update current)
+                        (values (when write-p
+                                  (sort (copy-list mappings) #'string<
+                                        :key #'world-session-mapping-conversation))
+                                result write-p)))))
+      (sexp-store:store-error (cause)
+        (world--store-error cause)))))
 
 
 ;;;; -- Conversation Facts --
@@ -241,19 +245,19 @@ A move writes the destination's mapping with the moved agent and the
 source's with NIL, so neither channel gets a second agent invented at its
 next reconciliation. A channel without a conversation has no mapping to
 rewrite and nothing to reconcile, so the move leaves it to the world store."
-  (with-recursive-lock-held (*world-sessions-lock*)
-    (let* ((mappings (world-session-mappings configuration))
-           (mapping  (find conversation-identifier mappings
-                           :key #'world-session-mapping-conversation :test #'string=)))
-      (when mapping
-        (world-session--write-mappings
-         configuration
-         (cons (make-instance 'world-session-mapping
-                              :conversation conversation-identifier
-                              :participant  participant-identifier
-                              :token        (world-session-mapping-token mapping))
-               (remove mapping mappings))))
-      (not (null mapping)))))
+  (world-session--transact
+   configuration
+   (lambda (mappings)
+     (let ((mapping (find conversation-identifier mappings
+                          :key #'world-session-mapping-conversation :test #'string=)))
+       (if mapping
+           (values (cons (make-instance 'world-session-mapping
+                                        :conversation conversation-identifier
+                                        :participant  participant-identifier
+                                        :token        (world-session-mapping-token mapping))
+                         (remove mapping mappings))
+                   t t)
+           (values nil nil nil))))))
 
 
 ;;;; -- Reconciliation --
@@ -630,16 +634,18 @@ conversation and creates an inbox conversation when none is found."
                                                              :now      now)
                                       (setf updated planned ended retired)
                                       (values records nil)))))))
-                (world-session--write-mappings
+                (world-session--transact
                  configuration
-                 (append updated
-                         (remove-if (lambda (mapping)
-                                      (let ((identifier (world-session-mapping-conversation mapping)))
-                                        (or (member identifier ended :test #'string=)
-                                            (member identifier updated
-                                                    :key  #'world-session-mapping-conversation
-                                                    :test #'string=))))
-                                    mappings)))
+                 (lambda (current)
+                   (values (append updated
+                                   (remove-if (lambda (mapping)
+                                                (let ((identifier (world-session-mapping-conversation mapping)))
+                                                  (or (member identifier ended :test #'string=)
+                                                      (member identifier updated
+                                                              :key  #'world-session-mapping-conversation
+                                                              :test #'string=))))
+                                              current))
+                           nil t)))
                 (values committed (+ (length changes) (length vanished))))))))))
 
 (-> world-session--inbox-header-p (list) boolean)
