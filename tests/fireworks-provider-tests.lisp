@@ -68,11 +68,28 @@
                      "environment-key-a")
             "the environment key takes precedence over the saved key")
            (platform-setenv "FIREWORKS_API_KEY" "")
+           (let* ((credentials (credential-manager-load manager))
+                  (secrets     (cl-rfc8628:oauth-credentials-secret-values credentials)))
+             (test-assert
+              (string= (oauth-credentials-access-token credentials) "saved-fireworks-key")
+              "the saved interactive key is the environment fallback")
+             (test-assert
+              (string= (oauth-credentials-account-id credentials) "api-key/fireworks")
+              "legacy and environment keys identify the same synthetic account")
+             (test-assert
+              (equal (oauth-credentials-source-path credentials)
+                     (configuration-fireworks-auth-path configuration))
+              "normalizing a legacy account preserves its credential source")
+             (test-assert
+              (string= (cl-rfc8628:redact-exact-string-values
+                        "fireworks saved-fireworks-key" secrets "[redacted]")
+                       "fireworks [redacted]")
+              "request redaction removes the actual key without corrupting provider text"))
+           (platform-setenv "FIREWORKS_API_KEY" "environment-key-b")
            (test-assert
-            (string= (oauth-credentials-access-token
-                      (credential-manager-load manager))
-                     "saved-fireworks-key")
-            "the saved interactive key is the environment fallback"))
+            (string= (oauth-credentials-access-token (credential-manager-load manager))
+                     "environment-key-b")
+            "the same account can return from the saved key to the environment"))
       (platform-setenv "FIREWORKS_API_KEY" (or saved ""))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

@@ -362,7 +362,10 @@ never retains the resulting credential after this call."
 (defun environment-api-key-credential-source--pathname (account-id)
   "Return the conventional reporting path for ACCOUNT-ID's environment source."
   (merge-pathnames
-   (format nil "~A-auth.sexp" account-id)
+   (format nil "~A-auth.sexp"
+           (if (uiop:string-prefix-p "api-key/" account-id)
+               (subseq account-id (length "api-key/"))
+               account-id))
    (merge-pathnames
     "autolith/"
     (environment-directory
@@ -384,6 +387,27 @@ never retains the resulting credential after this call."
   (:documentation
    "A static API-key manager that prefers the current environment key."))
 
+(defmethod credential-manager-accept-account :around
+    ((manager static-api-key-credential-manager) (credentials oauth-credentials)
+     &key allow-change)
+  "Normalize old synthetic API-key identifiers before pinning the account."
+  (let* ((bootstrap (credential-manager-bootstrap-source manager))
+         (canonical (cl-rfc8628:environment-credential-source-account-id bootstrap))
+         (account   (oauth-credentials-account-id credentials)))
+    (if (and (uiop:string-prefix-p "api-key/" canonical)
+             (string= account (subseq canonical (length "api-key/"))))
+        (call-next-method
+         manager
+         (make-instance 'oauth-credentials
+                        :access-token  (oauth-credentials-access-token credentials)
+                        :refresh-token (oauth-credentials-refresh-token credentials)
+                        :id-token      (oauth-credentials-id-token credentials)
+                        :account-id    canonical
+                        :expires-at    (oauth-credentials-expires-at credentials)
+                        :source-path   (oauth-credentials-source-path credentials))
+         :allow-change allow-change)
+        (call-next-method))))
+
 (-> api-key-credential-manager-persist-key
     (api-key-credential-manager non-empty-string)
     oauth-credentials)
@@ -403,7 +427,9 @@ never retains the resulting credential after this call."
             :account-id
             (if (typep bootstrap 'environment-api-key-credential-source)
                 (cl-rfc8628:environment-credential-source-account-id bootstrap)
-                (string-downcase (credential-manager-provider-label manager)))
+                (format nil "api-key/~A"
+                        (string-downcase
+                         (credential-manager-provider-label manager))))
             :expires-at    nil
             :source-path   (credential-source-pathname source)))))))
 
