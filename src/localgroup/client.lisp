@@ -560,16 +560,22 @@ instead; this attachment has ended by then."
               ':attach :session-id session-id))
      (sleep 0.05))))
 
-(-> localgroup--wait-for-checkpoint-entry (cons string) cons)
-(defun localgroup--wait-for-checkpoint-entry (entry reconnect-id)
-  "Wait boundedly for ENTRY's authenticated endpoint for RECONNECT-ID."
+(-> localgroup--wait-for-checkpoint-entry
+    (cons string &key (:configuration (option configuration)))
+    cons)
+(defun localgroup--wait-for-checkpoint-entry (entry reconnect-id &key configuration)
+  "Wait boundedly for ENTRY's authenticated endpoint for RECONNECT-ID.
+
+While CONFIGURATION's world server restarts from its saved heap, the wait
+starts over instead of ending, since the endpoint returns only once the
+saved core boots."
   (let* ((pathname   (first entry))
          (old-record (rest entry))
          (session-id (localgroup--record-session-id old-record))
          (token      (localgroup--record-token old-record))
-         (deadline   (+ (get-internal-real-time)
-                        (* *localgroup-handoff-start-timeout-seconds*
-                           internal-time-units-per-second))))
+         (timeout    (* *localgroup-handoff-start-timeout-seconds*
+                        internal-time-units-per-second))
+         (deadline   (+ (get-internal-real-time) timeout)))
     (loop
       (let ((record (image-daemon:daemon-registry-read pathname)))
         (when (and record
@@ -586,8 +592,10 @@ instead; this attachment has ended by then."
                      (error () nil)))
           (return (cons pathname record))))
       (when (>= (get-internal-real-time) deadline)
-        (error 'localgroup-error :message "The checkpoint endpoint did not become ready."
-                                :operation ':attach :session-id session-id))
+        (unless (and configuration (world-server-restarting-p configuration))
+          (error 'localgroup-error :message "The checkpoint endpoint did not become ready."
+                                  :operation ':attach :session-id session-id))
+        (setf deadline (+ (get-internal-real-time) timeout)))
       (sleep 0.05))))
 
 (-> localgroup-attach-record
@@ -606,7 +614,8 @@ session, or NIL after a detach or connection loss."
                                                    :panel            panel)))
         (unless (eq (first result) ':checkpoint-reconnect)
           (return result))
-        (setf entry (localgroup--wait-for-checkpoint-entry entry (getf (rest result) :id))
+        (setf entry (localgroup--wait-for-checkpoint-entry entry (getf (rest result) :id)
+                                                           :configuration configuration)
               history-position (getf (rest result) :history-position))))))
 
 (-> localgroup--attach-record-once

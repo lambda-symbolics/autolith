@@ -675,6 +675,8 @@
 (define-test-suite world-server
   test-world-server-hosting
   test-world-server-checkpoint-quiescence
+  test-world-server-restart-marker
+  test-world-server-restart-checkpoint
   test-world-server-stop
   test-world-server-switch
   test-world-server-resume-order

@@ -412,7 +412,15 @@ apart from the world server.")
 
 (-> checkpoint-resume-main (list) null)
 (defun checkpoint-resume-main (arguments)
-  "Resume the saved session by its persisted conversation identity, in this process."
+  "Run a booted saved core: serve its world server again after a restart, or resume its saved session.
+
+A world server that saved this heap to restart from it serves its channels
+again when its launcher boots the core for that restart. Any other boot,
+such as a rollback, resumes the active application's conversation by its
+persisted identity, in this process."
+  (let ((restart (world-server-restart-claim)))
+    (when restart
+      (uiop:quit (world-server-restart-resume restart))))
   (let* ((application  (and (boundp '*active-application*)
                             (symbol-value '*active-application*)))
          (conversation (and application (application-conversation application)))
@@ -595,13 +603,16 @@ quiescence, metadata, and probe hooks."
            (tool-registry-resume-runtime-state
             tool-registry :tools quiesced-runtime-tools)))))))
 
-(-> checkpoint-restart-save (checkpoint-backend generation) null)
-(defun checkpoint-restart-save (backend generation)
+(-> checkpoint-restart-save
+    (checkpoint-backend generation &key (:ready-function (option function)))
+    null)
+(defun checkpoint-restart-save (backend generation &key ready-function)
   "Persist the restart envelope and save BACKEND's exact heap.
 
 The launcher owns the envelope pathname through AUTOLITH_RESTART_POINTER.  The
 ready callback writes the final generation metadata only after validation at the
-real save boundary, then the library saves and exits.  A missing pointer is a
+real save boundary, then calls READY-FUNCTION, when supplied, with the final
+generation, and the library saves and exits.  A missing pointer is a
 configuration error rather than a silent restart without publication."
   (let ((pointer (uiop:getenv "AUTOLITH_RESTART_POINTER")))
     (unless (non-empty-string-p pointer)
@@ -623,7 +634,9 @@ configuration error rather than a silent restart without publication."
                            final-generation)
               :metadata   (copy-list
                            (sbcl-generations:generation-metadata
-                            final-generation))))))))
+                            final-generation))))
+       (when ready-function
+         (funcall ready-function final-generation))))))
 
 (-> checkpoint-create (checkpoint-backend) generation)
 (defun checkpoint-create (backend)
@@ -654,13 +667,10 @@ configuration error rather than a silent restart without publication."
   (let* ((configuration (tool-context-configuration context))
          (application   (and (boundp '*active-application*)
                             (symbol-value '*active-application*)))
-         (backend       (progn
-                          (when (typep application 'application)
-                            (application--refuse-hosted-restart-checkpoint application))
-                          (checkpoint-backend-create
-                           configuration
-                           (tool-context-worker context)
-                           :tool-registry (tool-context-registry context))))
+         (backend       (checkpoint-backend-create
+                         configuration
+                         (tool-context-worker context)
+                         :tool-registry (tool-context-registry context)))
          (hosted-p      (and (typep application 'application)
                              (application-hosted-p application)))
          (generation    (if hosted-p

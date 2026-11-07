@@ -236,19 +236,21 @@ the management REPL and Slynk, start with the server."
 
 (-> world-server-running-p (configuration) boolean)
 (defun world-server-running-p (configuration)
-  "Return true while a process holds the world's lease: a server runs, whether or not its endpoint answers.
+  "Return true while a world server runs, whether or not its endpoint answers.
 
-A server publishes its endpoint again after a checkpoint, so a client that
-finds the lease held waits for the endpoint instead of starting a second
-server."
+A server runs while a process holds the world's lease, and while it restarts
+from its saved heap with the lease free. It publishes its endpoint again after
+a checkpoint, so a client that finds it running waits for the endpoint
+instead of starting a second server."
   (let ((pathname (world-server-lock-pathname configuration)))
-    (and (probe-file pathname)
-         (handler-case
-             (progn
-               (lease-release (lease-acquire pathname))
-               nil)
-           (file-lock-busy ()
-             t)))))
+    (or (and (probe-file pathname)
+             (handler-case
+                 (progn
+                   (lease-release (lease-acquire pathname))
+                   nil)
+               (file-lock-busy ()
+                 t)))
+        (world-server-restarting-p configuration))))
 
 (-> world-server--runtime-start
     (world-server &key (:token (option string)) (:created-at (option integer)))
@@ -1157,9 +1159,11 @@ another thread with RESUME-P, RECONNECT-ID for its clients and NOTICE."
 
 The checkpoint runs on the server's main thread once this channel's turn has
 ended, pausing every channel; the outcome is presented in each channel when
-it is served again."
+it is served again. Where the host cannot fork, the server saves its exact
+heap and restarts from it instead."
   (let ((server       (application-world-server application))
-        (reconnect-id (make-identifier)))
+        (reconnect-id (make-identifier))
+        (restart-p    (platform-supports-p *platform* ':restartable-image-saver)))
     (unless (typep server 'world-server)
       (error 'checkpoint-error
              :message  "This session is not hosted by a world server."
@@ -1167,11 +1171,16 @@ it is served again."
              :pathname nil))
     (world-server--enqueue server
                            (lambda ()
-                             (world-server--checkpoint-job server
-                                                           :application  application
-                                                           :backend      backend
-                                                           :reconnect-id reconnect-id)))
-    "Checkpoint scheduled: every channel of the world server pauses while it saves, and resumes here with the outcome."))
+                             (funcall (if restart-p
+                                          #'world-server--restart-job
+                                          #'world-server--checkpoint-job)
+                                      server
+                                      :application  application
+                                      :backend      backend
+                                      :reconnect-id reconnect-id)))
+    (if restart-p
+        "Checkpoint scheduled: every channel of the world server pauses, the server restarts from its saved heap, and this channel resumes here with the outcome."
+        "Checkpoint scheduled: every channel of the world server pauses while it saves, and resumes here with the outcome.")))
 
 (-> world-server--enqueue (world-server function) null)
 (defun world-server--enqueue (server job)
@@ -1361,18 +1370,25 @@ the host to restart: their job pools own threads the fork must not see."
                    :stage    ':fork
                    :pathname nil))))
       (dolist (host hosts)
-        (let ((served (world-host-application host)))
-          (when (and (world-host-paused-p host) (not (eq served application)))
-            (multiple-value-bind (quiesced failure)
-                (tool-registry-quiesce-runtime-state (application-tool-registry served))
-              (setf (world-host-quiesced-tools host) quiesced)
-              (when failure
-                (error 'checkpoint-error
-                       :message  (format nil "Channel ~A could not stop its tools: ~A"
-                                         (conversation-identifier-display (world-host-channel host))
-                                         (bounded-string (princ-to-string failure) :limit 400))
-                       :stage    ':fork
-                       :pathname nil))))))))
+        (when (and (world-host-paused-p host)
+                   (not (eq (world-host-application host) application)))
+          (world-server--quiesce-host-tools host)))))
+  nil)
+
+(-> world-server--quiesce-host-tools (world-host) null)
+(defun world-server--quiesce-host-tools (host)
+  "Close HOST's tool runtimes for a checkpoint and keep them on HOST to restart."
+  (multiple-value-bind (quiesced failure)
+      (tool-registry-quiesce-runtime-state
+       (application-tool-registry (world-host-application host)))
+    (setf (world-host-quiesced-tools host) quiesced)
+    (when failure
+      (error 'checkpoint-error
+             :message  (format nil "Channel ~A could not stop its tools: ~A"
+                               (conversation-identifier-display (world-host-channel host))
+                               (bounded-string (princ-to-string failure) :limit 400))
+             :stage    ':fork
+             :pathname nil)))
   nil)
 
 (-> world-server--call-with-services-stopped (world-server function) t)
