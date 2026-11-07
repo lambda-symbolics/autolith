@@ -684,7 +684,8 @@
   test-world-client-refusal-ends-start)
 
 (define-test-suite client-protocol
-  test-client-protocol-channel)
+  test-client-protocol-channel
+  test-client-protocol-disconnect)
 
 (define-test-suite world-sidebar
   test-world-sidebar-gathers-apart

@@ -31,6 +31,18 @@
     :reader        channel-client-stream
     :type          stream
     :documentation "The connection events are written to.")
+   (hub
+    :initform      nil
+    :accessor      channel-client-hub
+    :documentation "The hub owning this client's registration, or NIL before attachment.")
+   (socket
+    :initarg       :socket
+    :reader        channel-client-socket
+    :documentation "The accepted socket, shut down to wake the serving reader.")
+   (transport-lock
+    :initarg       :transport-lock
+    :reader        channel-client-transport-lock
+    :documentation "The daemon lock serializing socket shutdown with its final close.")
    (lock
     :initform      (make-lock "Autolith channel client")
     :reader        channel-client-lock
@@ -125,23 +137,16 @@ the channel's state and history again.")
 (-> application-clients-add (application channel-client) null)
 (defun application-clients-add (application client)
   "Attach CLIENT to APPLICATION's channel and start writing its events."
-  (setf (channel-client-writer-thread client)
-        (make-thread (lambda () (channel-client--write-events client))
-                     :name (format nil "Autolith ~A client writer" (channel-client-name client))))
-  (let ((hub (application-client-hub application)))
-    (with-lock-held ((client-hub-lock hub))
-      (push client (client-hub-clients hub))))
+  (with-lock-held ((channel-client-lock client))
+    (unless (channel-client-closed-p client)
+      (let ((hub (application-client-hub application)))
+        (setf (channel-client-hub client) hub)
+        (with-lock-held ((client-hub-lock hub))
+          (push client (client-hub-clients hub))))
+      (setf (channel-client-writer-thread client)
+            (make-thread (lambda () (channel-client--write-events client))
+                         :name (format nil "Autolith ~A client writer" (channel-client-name client))))))
   (application-clients--follow-conversation application)
-  nil)
-
-(-> application-clients-remove (application channel-client) null)
-(defun application-clients-remove (application client)
-  "Detach CLIENT from APPLICATION's channel and stop its writer."
-  (let ((hub (application-client-hub application)))
-    (with-lock-held ((client-hub-lock hub))
-      (setf (client-hub-clients hub) (remove client (client-hub-clients hub)))
-      (condition-notify (client-hub-condition-variable hub))))
-  (channel-client-close client)
   nil)
 
 (-> application-clients--follow-conversation (application) null)
@@ -252,21 +257,38 @@ channel that stops before running it refuses it."
 
 (-> channel-client-enqueue (channel-client list) null)
 (defun channel-client-enqueue (client event)
-  "Queue EVENT for CLIENT, closing a client that fell too far behind."
-  (with-lock-held ((channel-client-lock client))
-    (unless (channel-client-closed-p client)
-      (if (>= (deque-count (channel-client-events client)) *channel-client-queue-limit*)
-          (setf (channel-client-closed-p client) t)
-          (deque-push-back (channel-client-events client) event))
-      (condition-notify (channel-client-condition-variable client))))
+  "Queue EVENT for CLIENT, disconnecting a client that fell too far behind."
+  (when (with-lock-held ((channel-client-lock client))
+          (unless (channel-client-closed-p client)
+            (if (>= (deque-count (channel-client-events client)) *channel-client-queue-limit*)
+                t
+                (progn
+                  (deque-push-back (channel-client-events client) event)
+                  (condition-notify (channel-client-condition-variable client))
+                  nil))))
+    (channel-client-close client))
   nil)
 
 (-> channel-client-close (channel-client) null)
 (defun channel-client-close (client)
-  "Close CLIENT: it takes no more events and its writer ends."
-  (with-lock-held ((channel-client-lock client))
-    (setf (channel-client-closed-p client) t)
-    (condition-notify (channel-client-condition-variable client)))
+  "Detach CLIENT once, wake approval waiters and shut down its reader and writer.
+
+The daemon owns final socket closure. Never shut down or close a transport
+while holding the queue or hub lock."
+  (when (with-lock-held ((channel-client-lock client))
+          (unless (channel-client-closed-p client)
+            (setf (channel-client-closed-p client) t)
+            (condition-notify (channel-client-condition-variable client))
+            t))
+    (let ((hub (channel-client-hub client)))
+      (when hub
+        (with-lock-held ((client-hub-lock hub))
+          (setf (client-hub-clients hub) (delete client (client-hub-clients hub)))
+          (sb-thread:condition-broadcast (client-hub-condition-variable hub)))))
+    (with-lock-held ((channel-client-transport-lock client))
+      ; mallet:suppress no-ignore-errors -- the peer or daemon may have shut down already
+      (ignore-errors (sb-bsd-sockets:socket-shutdown (channel-client-socket client)
+                                                    :direction ':io))))
   nil)
 
 (-> channel-client--next-event (channel-client) (option list))

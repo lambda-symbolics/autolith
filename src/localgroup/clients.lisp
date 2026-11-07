@@ -37,8 +37,8 @@
 
 ;;;; -- Serving --
 
-(-> localgroup--serve-client (localgroup-session list &key (:stream stream)) null)
-(defun localgroup--serve-client (session request &key stream)
+(-> localgroup--serve-client (localgroup-session list &key (:socket t) (:stream stream)) null)
+(defun localgroup--serve-client (session request &key socket stream)
   "Serve REQUEST's structured client on STREAM until it disconnects."
   (unless (localgroup--valid-request-p request session)
     (daemon-write-packet stream (list :error :message "The localgroup request was rejected."))
@@ -47,32 +47,36 @@
          (arguments   (localgroup--request-field request :arguments))
          (name        (getf arguments :name))
          (client      (make-instance 'channel-client
-                                     :name       (if (non-empty-string-p name) name "client")
-                                     :approves-p (getf arguments :approves-p t)
-                                     :stream     stream)))
-    (channel-client-enqueue client
-                            (client-portable
-                             (list :attached
-                                   :client-id  (channel-client-identifier client)
-                                   :session-id (image-daemon:daemon-runtime-identifier session)
-                                   :state      (localgroup-status-snapshot session))))
-    (application-clients-add application client)
+                                     :name           (if (non-empty-string-p name) name "client")
+                                     :approves-p     (getf arguments :approves-p t)
+                                     :stream         stream
+                                     :socket         socket
+                                     :transport-lock (image-daemon:daemon-runtime-lock session))))
     (unwind-protect
-         (loop for packet = (handler-case (daemon-read-packet stream)
-                              (error ()
-                                nil))
-               while (and packet (not (channel-client-closed-p client)))
-               do (if (eq (first packet) ':operation)
-                      ;; An operation may wait for the channel, and the channel
-                      ;; for this client's answer to an approval, which arrives
-                      ;; on this connection after it.
-                      (let ((command packet))
-                        (make-thread (lambda ()
-                                       (channel-client-enqueue client
-                                                               (localgroup--client-reply session command)))
-                                     :name "Autolith client operation"))
-                      (channel-client-enqueue client (localgroup--client-reply session packet))))
-      (application-clients-remove application client)))
+         (progn
+           (channel-client-enqueue client
+                                   (client-portable
+                                    (list :attached
+                                          :client-id  (channel-client-identifier client)
+                                          :session-id (image-daemon:daemon-runtime-identifier session)
+                                          :state      (localgroup-status-snapshot session))))
+           (application-clients-add application client)
+           (loop for packet = (handler-case (daemon-read-packet stream)
+                                (error ()
+                                  nil))
+                 while (and packet (not (channel-client-closed-p client)))
+                 do (let* ((command packet)
+                           (reply   (lambda ()
+                                      (channel-client-enqueue client
+                                                              (localgroup--client-reply session command)))))
+                      ;; Operations may wait for an approval answered on this connection.
+                      (if (eq (first command) ':operation)
+                          (make-thread reply :name "Autolith client operation")
+                          (funcall reply)))))
+      (channel-client-close client)
+      (let ((writer (channel-client-writer-thread client)))
+        (when writer
+          (join-thread writer)))))
   nil)
 
 (-> localgroup--client-reply (localgroup-session list) list)
