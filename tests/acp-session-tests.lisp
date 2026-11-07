@@ -541,7 +541,16 @@
                      "the channel admits queued and steering input while a prompt runs")))
              (acp-session-test-gated-release provider)
              (join-thread thread))
-           (test-assert (eq result ':end-turn) "the prompt waits through steering and queued work")
+           (test-assert (eq result ':end-turn) "the prompt completes with its own submission")
+           (with-lock-held ((acp-session-lock session))
+             (test-assert
+              (loop until (plusp (acp-session-idle-count session))
+                    do (unless (condition-wait (acp-session-condition-variable session)
+                                               (acp-session-lock session) :timeout 5)
+                         (return nil))
+                    finally (return t))
+              "queued follow-up work reaches its terminal outcome"))
+           (with-lock-held ((acp-session-event-lock session)))
            (let* ((conversation (application-conversation (acp-session-test--application session)))
                   (records      nil))
              (conversation-map-records
@@ -567,4 +576,92 @@
            (acp-session-test-check-turns
             client '("prompt" "steering" "queue") '("end-turn" "end-turn" "end-turn"))))
        :provider provider)))
+  nil)
+
+(-> test-acp-session-nonprose-prompts () null)
+(defun test-acp-session-nonprose-prompts ()
+  "Settle blank, command and Lisp prompts using their admitted outcomes."
+  (with-test-configuration (configuration root)
+    (acp-session-test--call-with-client
+     configuration
+     (lambda (service client)
+       (declare (ignore service))
+       (let ((identifier (agentcomms:client-new-session client (namestring root))))
+         (dolist (case '(("" :end-turn)
+                         ("/status" :end-turn)
+                         ("(+ 1 2)" :end-turn)
+                         ("/no-such-acp-command" :end-turn)
+                         ("(error \"local evaluation failed\")" :cancelled)))
+           (destructuring-bind (text expected) case
+             (let ((result (handler-case
+                               (agentcomms:client-prompt client identifier
+                                                        (list (agentcomms:acp-text-content text)))
+                             (agentcomms:acp-remote-error () ':condition))))
+               (test-assert (eq expected result)
+                            (format nil "~S returns ~S, expected ~S" text result expected)))))))))
+  nil)
+
+(-> test-acp-session-busy-nonprose-prompts () null)
+(defun test-acp-session-busy-nonprose-prompts ()
+  "Complete responsive input immediately and defer held or boundary input until execution."
+  (dolist (case '(("" :inline) ("/status" :inline) ("(status)" :inline)
+                  ("/timestamps on" :apply) ("(+ 1 2)" :hold)))
+    (destructuring-bind (text action) case
+      (with-test-configuration (configuration root)
+        (let ((provider (make-instance 'acp-session-test-gated-provider
+                                       :configuration configuration
+                                       :results       (list (acp-session-test-text-result "background answer")))))
+          (acp-session-test--call-with-client
+           configuration
+           (lambda (service client)
+             (let* ((identifier  (agentcomms:client-new-session client (namestring root)))
+                    (session     (acp-service--session service identifier))
+                    (scheduled   (sb-thread:make-semaphore))
+                    (enqueue     (symbol-function 'application-input-controller--enqueue))
+                    (apply-input (symbol-function 'application-input-controller--schedule-apply))
+                    (result      nil)
+                    (thread      nil))
+               (localgroup-client-call (acp-session-connection session) ':submit :text "background")
+               (acp-session-test-gated-wait provider)
+               (unwind-protect
+                    (test-call-with-function-replacements
+                     (list
+                      (list 'application-input-controller--enqueue
+                            (lambda (controller kind input)
+                              (prog1 (funcall enqueue controller kind input)
+                                (when (equal text (user-message-input-text input))
+                                  (sb-thread:signal-semaphore scheduled)))))
+                      (list 'application-input-controller--schedule-apply
+                            (lambda (controller input)
+                              (prog1 (funcall apply-input controller input)
+                                (sb-thread:signal-semaphore scheduled)))))
+                     (lambda ()
+                       (setf thread
+                             (make-thread
+                              (lambda ()
+                                (setf result
+                                      (handler-case
+                                          (agentcomms:client-prompt client identifier
+                                                                   (list (agentcomms:acp-text-content text)))
+                                        (error (condition) condition))))
+                              :name "ACP nonprose prompt"))
+                       (unless (eq action ':inline)
+                         (test-assert (sb-thread:wait-on-semaphore scheduled :timeout 5)
+                                      "the input reaches its canonical deferred queue")
+                         (test-assert (null result) "acceptance alone does not complete deferred input")
+                         (acp-session-test-gated-release provider))
+                       (test-assert (not (eq ':unfinished
+                                            (sb-thread:join-thread thread :timeout 60 :default ':unfinished)))
+                                    (format nil "~S reaches completion; queued ~S, pending ~S" text
+                                            (application-input-controller--state
+                                             (application-input-controller (acp-session-test--application session)) :work-items)
+                                            (deque->list (application-input-controller-pending-apply-items
+                                                          (application-input-controller (acp-session-test--application session))))))
+                       (test-assert (eq result ':end-turn)
+                                    (format nil "~S receives its own outcome, got ~S" text result))))
+                 (acp-session-test-gated-release provider)
+                 (when (and thread (sb-thread:thread-alive-p thread))
+                   (acp-session-close session)
+                   (sb-thread:join-thread thread :timeout 5 :default nil)))))
+           :provider provider)))))
   nil)

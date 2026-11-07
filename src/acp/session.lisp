@@ -134,6 +134,14 @@
     :accessor      acp-session-cancelled-p
     :type          boolean
     :documentation "Whether the editor cancelled the current prompt.")
+   (prompt-submission
+    :initform      nil
+    :accessor      acp-session-prompt-submission
+    :documentation "The exact submission awaited by the editor's active prompt.")
+   (prompt-outcome
+    :initform      nil
+    :accessor      acp-session-prompt-outcome
+    :documentation "The terminal outcome of the active prompt's submission.")
    (idle-count
     :initform      0
     :accessor      acp-session-idle-count
@@ -228,11 +236,12 @@
       (localgroup-error (condition)
         (error 'agentcomms:acp-state-error :message (autolith-error-message condition))))))
 
-(-> acp-session-submit (acp-session string &key (:source string) (:steer-p boolean)) list)
-(defun acp-session-submit (session text &key (source "prompt") steer-p)
+(-> acp-session-submit
+    (acp-session string &key (:source string) (:steer-p boolean) (:submission-id string)) list)
+(defun acp-session-submit (session text &key (source "prompt") steer-p (submission-id (make-identifier)))
   "Submit TEXT with its editor identity and turn SOURCE, returning the channel reply."
   (acp-session-call session ':submit :text text :steer-p steer-p
-                    :submission (list :id     (make-identifier)
+                    :submission (list :id     submission-id
                                       :client (acp-session-client-identifier session)
                                       :source source)))
 
