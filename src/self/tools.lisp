@@ -123,6 +123,19 @@ symbol itself."
   `(with-recursive-lock-held (*live-mutation-lock*)
      ,@body))
 
+(-> live-mutation--free-saved-lock () null)
+(defun live-mutation--free-saved-lock ()
+  "Free *LIVE-MUTATION-LOCK* in a booted saved heap.
+
+A checkpoint saves the heap inside WITH-LIVE-MUTATION, so the saved lock
+names the saving thread as its owner. That thread is gone after the boot,
+and no thread of the new process can hold the lock yet."
+  (when (sb-thread:mutex-owner *live-mutation-lock*)
+    (sb-thread:release-mutex *live-mutation-lock* :if-not-owner ':force))
+  nil)
+
+(pushnew 'live-mutation--free-saved-lock sb-ext:*init-hooks*)
+
 
 ;;;; -- Repair Context --
 
