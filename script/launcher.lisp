@@ -575,11 +575,16 @@ of deleting them, as the Windows update path also hands off to the user."
         (error () nil)))))
 
 (defun launcher-publish-restart (context)
-  "Publish the saved exact heap described by CONTEXT's restart envelope."
-  (launcher-run-diagnostic
-   (launcher-script-command
-    context "script/restart-publisher.lisp"
-    (uiop:native-namestring (launcher-context-restart-pointer context)))))
+  "Publish the saved exact heap described by CONTEXT's restart envelope.
+
+The active image publishes it when it matches the source; otherwise the
+system loads from source to do so."
+  (let ((envelope (uiop:native-namestring (launcher-context-restart-pointer context))))
+    (launcher-run-diagnostic
+     (if (launcher-active-image-valid-p context)
+         (launcher-active-core-command context (launcher-context-active-core context)
+                                       "--publish-restart" envelope)
+         (launcher-active-source-command context "--publish-restart" envelope)))))
 
 (defun launcher-run-with-restarts (context request)
   "Run REQUEST, publishing and booting every exact-heap restart core.

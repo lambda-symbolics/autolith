@@ -1789,6 +1789,10 @@ autolith uninstall removes the installation and keeps user data."
      (telemetry--worker-main))
     ((equal arguments '("--worker"))
      (worker-main))
+    ((and (= (length arguments) 2)
+          (string= (first arguments) "--publish-restart"))
+     (generation-restart-publish (configuration-create :defer-provider-validation-p t)
+                                 (uiop:parse-native-namestring (second arguments))))
     (t
      (let ((command
              (handler-case
