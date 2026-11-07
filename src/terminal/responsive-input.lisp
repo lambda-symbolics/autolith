@@ -522,7 +522,8 @@ second reports whether shutdown was prepared."
          (user-message-input
           (user-message-input-create
            :text            (subseq text 1)
-           :image-pathnames (user-message-input-image-pathnames input)))))
+           :image-pathnames (user-message-input-image-pathnames input)
+           :submission      (user-message-input-submission input)))))
       ((or (terminal-ui--lisp-draft-p text)
            (terminal-ui--async-lisp-draft-p text))
        nil)
@@ -650,10 +651,11 @@ lock."
     (user-message-input
      (list :user-message-input
            :version 1
-           :text (copy-seq (user-message-input-text input))
+           :text       (copy-seq (user-message-input-text input))
            :image-pathnames
            (mapcar #'namestring
-                   (user-message-input-image-pathnames input))))))
+                   (user-message-input-image-pathnames input))
+           :submission (copy-tree (user-message-input-submission input))))))
 
 (-> application-input--restore-pending-form
     (t)
@@ -676,7 +678,8 @@ lock."
                (when (every #'uiop:absolute-pathname-p image-pathnames)
                  (user-message-input-create
                   :text            (copy-seq text)
-                  :image-pathnames image-pathnames)))
+                  :image-pathnames image-pathnames
+                  :submission      (getf (rest form) :submission))))
            (error ()
              nil)))))
     (t
@@ -4264,7 +4267,11 @@ however it ended."
                (setf (application-deferred-goal-continuation application) nil)))
            (application-input-controller--begin-prompt-work controller work)
            (when (application-clients-attached-p application)
-             (application-clients-publish application (list :work-started :kind (first work))))
+             (application-clients-publish
+              application
+              (append (list :work-started :kind (first work))
+                      (when (eq (first work) ':message)
+                        (list :submission (user-message-input-submission (second work)))))))
            (application-world-before-turn application (first work))
            (case (first work)
              (:idle-compaction

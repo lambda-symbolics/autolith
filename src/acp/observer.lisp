@@ -166,7 +166,7 @@
        (make-thread (lambda () (acp-session--approve session fields))
                     :name "Autolith ACP approval"))
       (:work-started
-       (acp-session--work-started session (getf fields :kind)))
+       (acp-session--work-started session fields))
       (:work-finished
        (acp-session--work-finished session fields))
       (:state
@@ -261,44 +261,44 @@ fragments that providers interleave with empty content deltas."
 
 (-> acp-session--record (acp-session t) null)
 (defun acp-session--record (session record)
-  "Show a user message someone else gave the channel, such as queued or typed input.
-
-The editor already shows its own prompts, so their records are skipped once."
+  "Show user messages except live prompts already displayed by this editor."
   (when (and (consp record)
              (eq (first record) ':message)
              (eq (getf (rest record) :role) ':user)
              (not (getf (rest record) :automatic-p)))
-    (let ((content (getf (rest record) :content)))
-      (with-lock-held ((acp-session-lock session))
-        (if (member content (acp-session-own-prompts session) :test #'equal)
-            (setf (acp-session-own-prompts session)
-                  (remove content (acp-session-own-prompts session) :test #'equal :count 1))
-            (when (stringp content)
-              (acp-session--send session (agentcomms:acp-update-user-message
-                                          (agentcomms:acp-text-content content))))))))
+    (let* ((fields     (rest record))
+           (submission (getf fields :submission))
+           (content    (getf fields :content)))
+      (unless (and (equal (getf submission :client) (acp-session-client-identifier session))
+                   (equal (getf submission :source) "prompt"))
+        (when (stringp content)
+          (with-lock-held ((acp-session-lock session))
+            (acp-session--send session (agentcomms:acp-update-user-message
+                                        (agentcomms:acp-text-content content))))))))
   nil)
 
-(-> acp-session--work-started (acp-session keyword) null)
-(defun acp-session--work-started (session kind)
-  "Open a turn for the editor when the channel starts work of KIND it sees as one."
-  (when (member kind *acp-turn-work-kinds*)
-    (let ((turn nil))
-      (with-lock-held ((acp-session-lock session))
-        (setf turn (cons (incf (acp-session-epoch session))
-                         (case kind
-                           (:message
-                            (or (pop (acp-session-sources session)) "prompt"))
-                           (:job-completion
-                            "completion")
-                           (:client-work
-                            "invoke")
-                           (t
-                            "prompt")))
-              (acp-session-turn session) turn))
-      (acp-extension-notify session "turn"
-                            (agentcomms:json-object "state" "running" "epoch" (first turn)
-                                                    "source" (rest turn) "outcome" ':null))
-      (acp-extension-notify session "state")))
+(-> acp-session--work-started (acp-session list) null)
+(defun acp-session--work-started (session fields)
+  "Open the editor's turn using the channel's admitted work metadata."
+  (let ((kind (getf fields :kind)))
+    (when (member kind *acp-turn-work-kinds*)
+      (let ((turn nil))
+        (with-lock-held ((acp-session-lock session))
+          (setf turn (cons (incf (acp-session-epoch session))
+                           (case kind
+                             (:message
+                              (or (getf (getf fields :submission) :source) "prompt"))
+                             (:job-completion
+                              "completion")
+                             (:client-work
+                              "invoke")
+                             (t
+                              "prompt")))
+                (acp-session-turn session) turn))
+        (acp-extension-notify session "turn"
+                              (agentcomms:json-object "state" "running" "epoch" (first turn)
+                                                      "source" (rest turn) "outcome" ':null))
+        (acp-extension-notify session "state"))))
   nil)
 
 (-> acp-session--work-finished (acp-session list) null)

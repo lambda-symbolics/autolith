@@ -1810,7 +1810,9 @@
 
 (define-test-suite acp
   test-acp-observer-tool-title-previews
+  test-acp-observer-submission-provenance
   test-acp-session-wire-new-prompt-replay-close
+  test-acp-session-submission-sources
   test-acp-session-cancel-blocked-provider-and-reuse
   test-acp-session-cwd-mode-and-unsupported-content
   test-acp-session-disconnect-releases-lease
