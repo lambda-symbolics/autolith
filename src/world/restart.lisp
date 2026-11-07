@@ -113,7 +113,7 @@ began ends the process, and the next client starts a new server."
         (failure       nil))
     (flet ((notice (served)
              "Return what channel SERVED is told about the failure."
-             (application-checkpoint-failure
+             (application-failure-line
               (format nil "~:[world server checkpoint~;checkpoint~] failed: ~A"
                       (eq served application)
                       (bounded-string (princ-to-string failure) :limit 400)))))
@@ -294,7 +294,7 @@ conversation another process took meanwhile is dropped."
               server application reconnect-id
               :notice-function
               (lambda (served)
-                (application-checkpoint-notice
+                (application-notice-line
                  (format nil "~:[world server restarted from checkpoint ~A~;checkpoint ~A published, world server restarted from it~]"
                          (eq served application) generation-id))))
              (or (world-server-serve server) 0))

@@ -1243,17 +1243,17 @@ not be a channel's thread, which could not end for the pause."
              "Return what channel SERVED is told about the outcome."
              (cond
                ((typep outcome 'condition)
-                (application-checkpoint-failure
+                (application-failure-line
                  (format nil "~:[world server checkpoint~;checkpoint~] failed: ~A"
                          (eq served application)
                          (bounded-string (princ-to-string outcome) :limit 400))))
                ((eq served application)
-                (application-checkpoint-notice
+                (application-notice-line
                  (format nil "checkpoint ~A is publishing in process ~D"
                          (generation-identifier outcome)
                          (generation-coordinator-pid outcome))))
                (t
-                (application-checkpoint-notice
+                (application-notice-line
                  (format nil "world server saved checkpoint ~A"
                          (generation-identifier outcome)))))))
       (world-server--call-with-quiescer
@@ -1430,7 +1430,7 @@ notice directly if it never paused, as when a checkpoint fails early."
             (tool-registry-resume-runtime-state (application-tool-registry served) :tools tools)
           (serious-condition (condition)
             (application-present served
-                                 (application-checkpoint-failure
+                                 (application-failure-line
                                   (format nil "some tools did not restart after the checkpoint: ~A"
                                           (bounded-string (princ-to-string condition) :limit 400)))))))
       (cond
