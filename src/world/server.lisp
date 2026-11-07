@@ -945,7 +945,7 @@ forgotten again when no thread could start."
                                   (:resume-offer-p boolean)
                                   (:resume-p boolean)
                                   (:reconnect-id (option string))
-                                  (:notice (option string))
+                                  (:notice (or null string list))
                                   (:boot-screen-p boolean))
     null)
 (defun world-server--serve-host (server host &key initial-command recovery-diagnosis
@@ -989,7 +989,7 @@ itself so that threads those threads start inherit it too."
                                   (:resume-offer-p boolean)
                                   (:resume-p boolean)
                                   (:reconnect-id (option string))
-                                  (:notice (option string))
+                                  (:notice (or null string list))
                                   (:boot-screen-p boolean))
     null)
 (defun world-server--host (server host &key initial-command recovery-diagnosis resume-offer-p
@@ -1188,8 +1188,8 @@ heap and restarts from it instead."
                                       :backend      backend
                                       :reconnect-id reconnect-id)))
     (if restart-p
-        "Checkpoint scheduled: every channel of the world server pauses, the server restarts from its saved heap, and this channel resumes here with the outcome."
-        "Checkpoint scheduled: every channel of the world server pauses while it saves, and resumes here with the outcome.")))
+        "checkpoint scheduled: every channel will be paused while a checkpoint is saving, then resumed after the world server restarts from it"
+        "checkpoint scheduled: every channel will be paused while a checkpoint is saving, then resumed")))
 
 (-> world-server--enqueue (world-server function) null)
 (defun world-server--enqueue (server job)
@@ -1243,16 +1243,19 @@ not be a channel's thread, which could not end for the pause."
              "Return what channel SERVED is told about the outcome."
              (cond
                ((typep outcome 'condition)
-                (format nil "~:[A checkpoint of the world server~;Checkpoint~] failed: ~A"
-                        (eq served application)
-                        (bounded-string (princ-to-string outcome) :limit 400)))
+                (application-checkpoint-failure
+                 (format nil "~:[world server checkpoint~;checkpoint~] failed: ~A"
+                         (eq served application)
+                         (bounded-string (princ-to-string outcome) :limit 400))))
                ((eq served application)
-                (format nil "Checkpoint ~A is publishing in process ~D."
-                        (generation-identifier outcome)
-                        (generation-coordinator-pid outcome)))
+                (application-checkpoint-notice
+                 (format nil "checkpoint ~A is publishing in process ~D"
+                         (generation-identifier outcome)
+                         (generation-coordinator-pid outcome))))
                (t
-                (format nil "The world server saved checkpoint ~A."
-                        (generation-identifier outcome))))))
+                (application-checkpoint-notice
+                 (format nil "world server saved checkpoint ~A"
+                         (generation-identifier outcome)))))))
       (world-server--call-with-quiescer
        server
        :application     application
@@ -1427,8 +1430,9 @@ notice directly if it never paused, as when a checkpoint fails early."
             (tool-registry-resume-runtime-state (application-tool-registry served) :tools tools)
           (serious-condition (condition)
             (application-present served
-                                 (format nil "Some tools did not restart after the checkpoint: ~A"
-                                         (bounded-string (princ-to-string condition) :limit 400))))))
+                                 (application-checkpoint-failure
+                                  (format nil "some tools did not restart after the checkpoint: ~A"
+                                          (bounded-string (princ-to-string condition) :limit 400)))))))
       (cond
         ((world-host-paused-p host)
          (with-lock-held ((world-server-lock server))

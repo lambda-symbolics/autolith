@@ -2321,6 +2321,16 @@ INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT to TERMINAL-UI-SELECT."
                   (application-configuration application)) model)))))
   nil)
 
+(-> application-checkpoint-notice (string) list)
+(defun application-checkpoint-notice (text)
+  "Return TEXT as a checkpoint notice line, dimmed and marked with a dot."
+  (list (terminal-span ':notice (format nil "· ~A" text))))
+
+(-> application-checkpoint-failure (string) list)
+(defun application-checkpoint-failure (text)
+  "Return TEXT as a checkpoint failure line, in the failure color and marked with an exclamation point."
+  (list (terminal-span ':failure (format nil "! ~A" text))))
+
 (-> application-checkpoint (application &key (:allow-dirty-p boolean)) null)
 (defun application-checkpoint (application &key allow-dirty-p)
   "Begin a retained generation for APPLICATION.
@@ -2339,20 +2349,24 @@ ALLOW-DIRTY-P permits uncommitted source changes and marks the generation dirty.
                                  (checkpoint-create backend))))
          (cond
            ((application-hosted-p application)
-            (application-present application (world-server-checkpoint application backend)))
+            (application-present application
+                                 (application-checkpoint-notice
+                                  (world-server-checkpoint application backend))))
            ((platform-supports-p *platform* ':restartable-image-saver)
             (setf (application-checkpoint-restart-request application)
                   (cons backend generation))
             (application-present
              application
-             (format nil "Exact heap checkpoint ~A is scheduled. Autolith will restart after this command and resume this session."
-                     (generation-identifier generation))))
+             (application-checkpoint-notice
+              (format nil "checkpoint ~A scheduled: Autolith will restart after this command, then resume this session"
+                      (generation-identifier generation)))))
            (t
             (application-present
              application
-             (format nil "Checkpoint ~A is being published by process ~D."
-                     (generation-identifier generation)
-                     (generation-coordinator-pid generation))))))
+             (application-checkpoint-notice
+              (format nil "checkpoint ~A is being published by process ~D"
+                      (generation-identifier generation)
+                      (generation-coordinator-pid generation)))))))
     (application-set-activity application nil))
   nil)
 

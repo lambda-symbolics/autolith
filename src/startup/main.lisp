@@ -408,7 +408,7 @@ checkpoint work."
                       (:ready-function (option function))
                       (:resume-p boolean)
                       (:localgroup-identity list)
-                      (:notice (option string))
+                      (:notice (or null string list))
                       (:boot-screen-p boolean))
     (option keyword))
 (defun application-serve

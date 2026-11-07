@@ -649,14 +649,14 @@
                                :pathname nil))))
           (lambda ()
             (application-checkpoint application)
-            (test-assert (search "Checkpoint scheduled"
+            (test-assert (search "checkpoint scheduled"
                                  (image-daemon:relay-history-text terminal-a))
                          "the channel is told its checkpoint is scheduled")
             (test-assert (task-tests--wait-until
                           (lambda ()
-                            (and (search "Checkpoint failed: synthetic fork failure"
+                            (and (search "! checkpoint failed: synthetic fork failure"
                                          (image-daemon:relay-history-text terminal-a))
-                                 (search "A checkpoint of the world server failed"
+                                 (search "! world server checkpoint failed"
                                          (image-daemon:relay-history-text terminal-b))))
                           30)
                          "each channel learns the outcome once it is served again")
