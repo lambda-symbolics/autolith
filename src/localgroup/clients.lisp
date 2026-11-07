@@ -114,7 +114,8 @@
             controller
             (user-message-input-create
              :text            text
-             :image-pathnames (mapcar #'image-input-validate-pathname images))
+             :image-pathnames (mapcar #'image-input-validate-pathname images)
+             :submission      (getf arguments :submission))
             :steer-p (not (null (getf arguments :steer-p))))
            (list :busy-p (application-input-controller-busy-p controller))))
         (:cancel

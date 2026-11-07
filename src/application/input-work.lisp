@@ -47,7 +47,8 @@
          (user-message-input
           (user-message-input-create
            :text            (subseq text 1)
-           :image-pathnames (user-message-input-image-pathnames input)))))
+           :image-pathnames (user-message-input-image-pathnames input)
+           :submission      (user-message-input-submission input)))))
       ((or (input-lisp-p text)
            (input-async-lisp-p text))
        nil)
@@ -96,7 +97,8 @@
            :text (copy-seq (user-message-input-text input))
            :image-pathnames
            (mapcar #'namestring
-                   (user-message-input-image-pathnames input))))))
+                    (user-message-input-image-pathnames input))
+            :submission (copy-tree (user-message-input-submission input))))))
 
 (-> input-value-from-form
     (t)
@@ -119,7 +121,8 @@
                (when (every #'uiop:absolute-pathname-p image-pathnames)
                  (user-message-input-create
                   :text            (copy-seq text)
-                  :image-pathnames image-pathnames)))
+                   :image-pathnames image-pathnames
+                   :submission      (getf (rest form) :submission))))
            (error ()
              nil)))))
     (t

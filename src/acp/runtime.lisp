@@ -211,11 +211,9 @@ the failure to the editor."
       (setf (acp-session-prompt-active-p session) t
             (acp-session-cancelled-p session)     nil
             (acp-session-last-outcome session)    nil
-            (acp-session-own-prompts session)     (append (acp-session-own-prompts session) (list text))
-            (acp-session-sources session)         (append (acp-session-sources session) (list "prompt"))
             mark                                  (acp-session-idle-count session)))
     (unwind-protect
-         (let ((busy-p (getf (acp-session-call session ':submit :text text) :busy-p)))
+         (let ((busy-p (getf (acp-session-submit session text) :busy-p)))
            (with-lock-held ((acp-session-lock session))
              (loop until (or (acp-session-closed-p session)
                              (not busy-p)
@@ -239,9 +237,7 @@ the failure to the editor."
                       :message "The turn failed; the channel's transcript has its report."))
              outcome))
       (with-lock-held ((acp-session-lock session))
-        (setf (acp-session-prompt-active-p session) nil
-              (acp-session-sources session)       (remove "prompt" (acp-session-sources session)
-                                                          :test #'equal :count 1))))))
+        (setf (acp-session-prompt-active-p session) nil)))))
 
 (defmethod agentcomms:agent-prompt ((service acp-service) session-id prompt &key params)
   "Run one editor prompt in the session's channel."

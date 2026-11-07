@@ -3821,7 +3821,11 @@ however it ended."
                (setf (application-deferred-goal-continuation application) nil)))
            (application-input-controller--begin-prompt-work controller work)
            (when (application-clients-attached-p application)
-             (application-clients-publish application (list :work-started :kind (first work))))
+             (application-clients-publish
+              application
+              (append (list :work-started :kind (first work))
+                      (when (eq (first work) ':message)
+                        (list :submission (user-message-input-submission (second work)))))))
            (application-world-before-turn application (first work))
            (case (first work)
              (:idle-compaction

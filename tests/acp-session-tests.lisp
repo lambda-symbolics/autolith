@@ -186,6 +186,9 @@
          (setf identifier (agentcomms:client-new-session client (namestring root)))
          (test-assert (stringp identifier) "session/new returns a durable identifier")
          (agentcomms:client-prompt client identifier (list (agentcomms:acp-text-content "hello")))
+         (test-assert (zerop (count ':user-message-chunk (acp-session-test-updates client)
+                                   :key #'agentcomms:acp-update-kind))
+                      "the editor's prompt is not echoed during its live turn")
          (test-assert (= 1 (count ':agent-message-chunk (acp-session-test-updates client)
                                   :key #'agentcomms:acp-update-kind))
                       "a nonstreamed provider response is emitted once")
@@ -533,4 +536,65 @@
              "late stream delivery tolerates editor disconnection")
             (test-assert (null (acp-observer-flush observer))
                          "pending thought flush tolerates editor disconnection")))))))
+  nil)
+(-> test-acp-session-submission-sources () null)
+(defun test-acp-session-submission-sources ()
+  "Preserve queue and steering provenance through the channel and durable history."
+  (with-test-configuration (configuration root)
+    (let ((provider (make-instance 'acp-session-test-gated-provider
+                                   :configuration configuration
+                                   :results       (loop repeat 4 collect (acp-session-test-text-result "answer")))))
+      (acp-session-test--call-with-client
+       configuration
+       (lambda (service client)
+         (let* ((identifier (agentcomms:client-new-session client (namestring root)))
+                (session    (acp-service--session service identifier))
+                (result     nil)
+                (thread     (make-thread
+                             (lambda ()
+                               (setf result
+                                     (handler-case
+                                         (agentcomms:client-prompt
+                                          client identifier (list (agentcomms:acp-text-content "prompt")))
+                                       (error (condition) condition))))
+                             :name "ACP provenance prompt")))
+           (unwind-protect
+                (progn
+                  (acp-session-test-gated-wait provider)
+                  (dolist (method '("_autolith/queue" "_autolith/steer"))
+                    (test-assert
+                     (equal "ok"
+                            (agentcomms:json-get
+                             (agentcomms:client-agent-request
+                              client method (agentcomms:json-object "sessionId" identifier "text" method))
+                             "outcome"))
+                     "the channel admits queued and steering input while a prompt runs")))
+             (acp-session-test-gated-release provider)
+             (join-thread thread))
+           (test-assert (eq result ':end-turn) "the prompt waits through steering and queued work")
+           (let* ((conversation (application-conversation (acp-session-test--application session)))
+                  (records      nil))
+             (conversation-map-records
+              conversation
+              (lambda (record)
+                (when (and (eq (first record) ':message)
+                           (eq (getf (rest record) :role) ':user))
+                  (push record records))))
+             (setf records (nreverse records))
+             (test-assert (equal '("prompt" "steering" "queue")
+                                 (mapcar (lambda (record)
+                                           (getf (getf (rest record) :submission) :source))
+                                         records))
+                          "durable records retain source across steering and follow-up queues")
+             (test-assert (every (lambda (record)
+                                   (equal (acp-session-client-identifier session)
+                                          (getf (getf (rest record) :submission) :client)))
+                                 records)
+                          "all three records retain their submitting editor identity"))
+           (test-assert (= 2 (count ':user-message-chunk (acp-session-test-updates client)
+                                     :key #'agentcomms:acp-update-kind))
+                        "only the live prompt is suppressed, not queued or steering input")
+           (acp-session-test-check-turns
+            client '("prompt" "steering" "queue") '("end-turn" "end-turn" "end-turn"))))
+       :provider provider)))
   nil)

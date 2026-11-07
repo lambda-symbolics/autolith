@@ -2255,6 +2255,8 @@ transcript show automatic INPUT as a short notice."
                        (list :message
                              :role :user
                              :content content)
+                       (when (user-message-input-submission input)
+                         (list :submission (copy-tree (user-message-input-submission input))))
                        (when automatic-p
                          (list :automatic-p t))
                        (when pending-input-identifier
