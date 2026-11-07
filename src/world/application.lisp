@@ -802,15 +802,9 @@ child, so the agent moves as it stood when interrupted."
        (multiple-value-bind (prepared provider dropped)
            (world-agent--transition
             configuration participant
-            :application source-application
-            :destination channel
-            :prepare     (lambda ()
-                           (if destination-application
-                               (application-world-prepare-agent destination-application participant)
-                               (values nil nil)))
-            :commit      (lambda ()
-                           (world-participant-move configuration identifier channel
-                                                   :expected-residence source)))
+            :application              source-application
+             :destination             channel
+             :destination-application destination-application)
          ;; The destination's session names the agent at once; its
          ;; adoption names it again, should this write fail.
          (handler-case (world-session-remap configuration channel identifier)
@@ -839,21 +833,13 @@ stops it."
   (world-call-with-transition
    configuration
    (lambda ()
-     (let ((identifier (participant-identifier participant))
-           (channel    (participant-residence participant)))
+      (let ((channel (participant-residence participant)))
        (world-agent--require-movable (world-load configuration) participant ':park)
        (funcall interrupt-task participant)
        (list :channel channel
              :dropped (nth-value 2 (world-agent--transition
                                     configuration participant
-                                    :application application
-                                    :destination nil
-                                    :prepare     (lambda ()
-                                                   (values nil nil))
-                                    :commit      (lambda ()
-                                                   (world-participant-park
-                                                    configuration identifier
-                                                    :expected-residence channel)))))))))
+                                    :application application)))))))
 
 (-> world-agent--require-movable (world participant keyword) null)
 (defun world-agent--require-movable (world participant operation)
@@ -909,18 +895,18 @@ A task that does not end in time refuses the move."
 (-> world-agent--transition
     (configuration participant &key (:application (option application))
                                     (:destination (option string))
-                                    (:prepare function) (:commit function))
+                                    (:destination-application (option application)))
     (values t t (integer 0)))
-(defun world-agent--transition (configuration participant &key application destination prepare commit)
-  "Stop PARTICIPANT, keep its context and goal for DESTINATION, call COMMIT and leave its channel without it.
+(defun world-agent--transition
+    (configuration participant &key application destination destination-application)
+  "Move PARTICIPANT to DESTINATION, or park it when NIL, carrying its context and goal.
 
-Return what PREPARE returned and the queued messages dropped. APPLICATION
-serves the agent's channel; an unserved channel is held by its conversation
-lease meanwhile, and one another process serves refuses the change. PREPARE
-readies the destination before the transition's context write and COMMIT.
-Until COMMIT returns, a failure restores the context file's prior state if a
-write was attempted and lets APPLICATION's work resume; earlier interruptions
-and context adoptions are not undone."
+Return the prepared destination configuration and provider, and the queued
+messages dropped. Stop APPLICATION at a safe boundary, or hold the unserved
+source's conversation lease. Prepare DESTINATION-APPLICATION before writing
+context and committing residence. A failure before commitment restores the
+context file and resumes APPLICATION; prior interruptions and adoptions are
+not undone. After commitment, settle the source without rolling back."
   (let* ((identifier (participant-identifier participant))
          (source     (participant-residence participant))
          (previous   (and (probe-file (world-context-pathname configuration identifier))
@@ -937,7 +923,9 @@ and context adoptions are not undone."
                (unwind-protect
                     (multiple-value-bind (rows from goal)
                         (world-agent-context configuration participant :application application)
-                      (multiple-value-prog1 (funcall prepare)
+                     (multiple-value-prog1
+                         (when destination-application
+                           (application-world-prepare-agent destination-application participant))
                         (setf written-p t)
                         (world-context-write configuration identifier
                                              :source      from
@@ -945,8 +933,12 @@ and context adoptions are not undone."
                                              :goal        goal
                                              :destination destination
                                              :transition  (make-identifier))
-                        (funcall commit)
-                        (setf committed-p t)))
+                       (if destination
+                           (world-participant-move configuration identifier destination
+                                                   :expected-residence source)
+                           (world-participant-park configuration identifier
+                                                   :expected-residence source))
+                       (setf committed-p t)))
                  (unless committed-p
                    (when written-p
                      (if previous
