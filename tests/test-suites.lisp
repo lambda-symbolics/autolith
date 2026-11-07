@@ -674,7 +674,8 @@
   test-world-composer-mentions
   test-world-mention-highlighting
   test-world-mention-boundaries
-  test-world-presentation-cache)
+  test-world-presentation-cache
+  test-world-compaction)
 
 (define-test-suite world-server
   test-world-server-hosting

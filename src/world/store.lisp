@@ -497,7 +497,38 @@ becomes one hyphen, with no hyphen at either end."
      :validator     (lambda (form) (keywordp (first form)))
      :initial-state (lambda () (make-instance 'world))
      :reducer       (lambda (world record)
-                      (world--reduce-record pathname world record)))))
+                      (world--reduce-record pathname world record))
+     :compactor     #'world--records)))
+
+(-> world--records (world) list)
+(defun world--records (world)
+  "Return the fewest records that fold to WORLD: each channel, then each participant."
+  (append (loop for channel being the hash-values of (world--channel-table world)
+                collect (world--channel-record channel))
+          (loop for participant being the hash-values of (world--participant-table world)
+                collect (world--participant-record participant))))
+
+(defparameter *world-compaction-ratio* 2
+  "How many log records per live channel or participant make the world log worth compacting.")
+
+(-> world-compact-when-grown (configuration) boolean)
+(defun world-compact-when-grown (configuration)
+  "Compact CONFIGURATION's world log once it holds *WORLD-COMPACTION-RATIO* times the records it needs.
+
+A log only grows: every change appends, and nothing old is dropped. Return
+whether it was compacted."
+  (let ((pathname (configuration-world-path configuration)))
+    (with-recursive-lock-held (*world-lock*)
+      (handler-case
+          (let* ((world   (world-load configuration))
+                 (live    (+ (hash-table-count (world--participant-table world))
+                             (hash-table-count (world--channel-table world))))
+                 (records (nth-value 2 (sexp-store:log-map (constantly nil) pathname))))
+            (when (> records (1+ (* *world-compaction-ratio* (max 1 live))))
+              (sexp-store:store-compact (world--store configuration))
+              t))
+        (sexp-store:store-error (cause)
+          (world--store-error cause))))))
 
 (-> world--store-error (sexp-store:store-error) nil)
 (defun world--store-error (cause)
