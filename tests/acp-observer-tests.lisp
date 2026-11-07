@@ -56,10 +56,12 @@
       (test-call-with-function-replacements
        (list (list 'acp-session-call
                    (lambda (session command &rest arguments)
-                     (declare (ignore session command))
+                     (declare (ignore command))
                      (push (getf arguments :submission) submissions)
                      (when refuse-p
                        (error 'agentcomms:acp-state-error :message "Submission refused."))
+                     (acp-session--work-finished
+                      session (list :submission (getf arguments :submission) :outcome ':done))
                      (list :busy-p nil)))
              (list 'acp-session-flush
                    (lambda (session)
@@ -124,6 +126,71 @@
               "legacy replay treats reader syntax as literal content"))
            (test-assert (and (equal before record) (= 2 (length updates)))
                         "reading legacy history neither consumes records nor sends live updates"))))))
+  nil)
+
+(-> test-acp-prompt-submission-outcomes () null)
+(defun test-acp-prompt-submission-outcomes ()
+  "Await the exact queued submission despite an unrelated idle event before its reply."
+  (with-test-configuration (configuration)
+    (dolist (case '((:done :end-turn t) (:cancelled :cancelled t) (:failed :condition nil)))
+      (destructuring-bind (work-outcome expected busy-p) case
+        (let* ((service       (make-instance 'acp-service :configuration configuration))
+               (session       (make-instance 'acp-session :service service :identifier "channel"
+                                                         :configuration configuration :mode ':ask))
+               (waiting       (sb-thread:make-semaphore))
+               (finished      (sb-thread:make-semaphore))
+               (original-wait (symbol-function 'condition-wait))
+               (submission    nil)
+               (result        nil)
+               (thread        nil))
+          (test-call-with-function-replacements
+           (list (list 'acp-session-call
+                       (lambda (recipient command &rest arguments)
+                         (declare (ignore command))
+                         (setf submission (getf arguments :submission))
+                         (acp-session--work-finished
+                          recipient '(:kind :message :submission (:id "other" :client "terminal")
+                                      :outcome :done :idle-p t))
+                         (list :busy-p busy-p)))
+                 (list 'acp-session-flush (lambda (recipient) (declare (ignore recipient)) nil))
+                 (list 'condition-wait
+                       (lambda (condition-variable lock &rest arguments)
+                         (when (eq condition-variable (acp-session-condition-variable session))
+                           (sb-thread:signal-semaphore waiting))
+                         (apply original-wait condition-variable lock arguments))))
+           (lambda ()
+             (unwind-protect
+                  (progn
+                    (setf thread
+                          (make-thread
+                           (lambda ()
+                             (unwind-protect
+                                  (setf result
+                                        (handler-case (acp-session-prompt session "queued prompt")
+                                          (agentcomms:acp-method-error () ':condition)
+                                          (agentcomms:acp-state-error () ':closed)))
+                               (sb-thread:signal-semaphore finished)))
+                           :name "ACP exact submission test"))
+                    (test-assert (sb-thread:wait-on-semaphore waiting :timeout 5)
+                                 "unrelated idleness cannot finish the submission, even with a nonbusy reply")
+                    (with-lock-held ((acp-session-lock session))
+                      (test-assert (null (acp-session-prompt-outcome session))
+                                   "the unrelated work has no outcome for this prompt"))
+                    (acp-session-event session
+                                       (list :work-finished :sequence 1 :kind ':message
+                                             :submission submission :outcome work-outcome :idle-p nil))
+                    (test-assert (sb-thread:wait-on-semaphore finished :timeout 5)
+                                 "a matching outcome completes without requiring channel idleness")
+                    (test-assert (eq expected result) "the matching submission supplies the stop reason")
+                    (acp-session-event session
+                                       (list :work-finished :sequence 1 :kind ':message
+                                             :submission submission :outcome ':done :idle-p t))
+                    (test-assert (= 1 (acp-session-event-sequence session))
+                                 "replayed completion cursors are consumed once"))
+               (with-lock-held ((acp-session-lock session))
+                 (setf (acp-session-closed-p session) t)
+                 (sb-thread:condition-broadcast (acp-session-condition-variable session)))
+               (when thread (sb-thread:join-thread thread :timeout 5 :default nil)))))))))
   nil)
 
 (-> test-acp-attachment-history-boundary () null)

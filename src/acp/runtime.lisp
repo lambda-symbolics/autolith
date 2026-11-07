@@ -236,46 +236,38 @@ subsequent events after its bounded history snapshot."
 
 (-> acp-session-prompt (acp-session string) keyword)
 (defun acp-session-prompt (session text)
-  "Submit the editor's prompt TEXT to the channel and return its stop reason once the channel is idle.
-
-A turn the editor cancelled stops with :CANCELLED; a turn that failed signals
-the failure to the editor."
-  (let ((mark nil))
+  "Submit TEXT and await this submission's terminal outcome, independently of other channel work."
+  (let ((submission-id (make-identifier)))
     (with-lock-held ((acp-session-lock session))
       (when (acp-session-closed-p session)
         (error 'agentcomms:acp-state-error :message "The session is closed."))
       (when (acp-session-prompt-active-p session)
         (error 'agentcomms:acp-state-error :message "A prompt is already running in this session."))
       (setf (acp-session-prompt-active-p session) t
-            (acp-session-cancelled-p session)     nil
-            (acp-session-last-outcome session)    nil
-            mark                                  (acp-session-idle-count session)))
+            (acp-session-cancelled-p session) nil
+            (acp-session-prompt-submission session) submission-id
+            (acp-session-prompt-outcome session) nil))
     (unwind-protect
-         (let ((busy-p (getf (acp-session-submit session text) :busy-p)))
-           (with-lock-held ((acp-session-lock session))
-             (loop until (or (acp-session-closed-p session)
-                             (not busy-p)
-                             (> (acp-session-idle-count session) mark))
-                   do (condition-wait (acp-session-condition-variable session)
-                                      (acp-session-lock session))))
-           (acp-session-flush session)
-           (let ((outcome (with-lock-held ((acp-session-lock session))
-                            (cond
-                              ((acp-session-cancelled-p session)
-                               ':cancelled)
-                              ((and (acp-session-closed-p session)
-                                    (= (acp-session-idle-count session) mark))
-                               (error 'agentcomms:acp-state-error
-                                      :message "The channel went away before the turn finished."))
-                              (t
-                               (or (acp-session-last-outcome session) ':end-turn))))))
+         (progn
+           (acp-session-submit session text :submission-id submission-id)
+           (let ((outcome
+                   (with-lock-held ((acp-session-lock session))
+                     (loop until (or (acp-session-closed-p session)
+                                     (acp-session-prompt-outcome session))
+                           do (condition-wait (acp-session-condition-variable session)
+                                              (acp-session-lock session)))
+                     (or (acp-session-prompt-outcome session)
+                         (error 'agentcomms:acp-state-error
+                                :message "The channel went away before the submission finished.")))))
+             (acp-session-flush session)
              (when (eq outcome ':condition)
                (error 'agentcomms:acp-method-error
                       :code    -32603
                       :message "The turn failed; the channel's transcript has its report."))
              outcome))
       (with-lock-held ((acp-session-lock session))
-        (setf (acp-session-prompt-active-p session) nil)))))
+        (setf (acp-session-prompt-active-p session) nil
+              (acp-session-prompt-submission session) nil)))))
 
 (defmethod agentcomms:agent-prompt ((service acp-service) session-id prompt &key params)
   "Run one editor prompt in the session's channel."

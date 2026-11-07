@@ -115,13 +115,17 @@
            (when (application-localgroup-handoff-pending-p application)
              (refuse "The channel is detaching and no longer accepts input."))
            (application-localgroup-resume application)
-           (application-input-controller--handle-submission
-            controller
-            (user-message-input-create
-             :text            text
-             :image-pathnames (mapcar #'image-input-validate-pathname images)
-             :submission      (getf arguments :submission))
-            :steer-p (not (null (getf arguments :steer-p))))
+           (if (and (not (non-empty-string-p text)) (null images))
+               (application-clients-publish
+                application (list :work-finished :kind ':submission
+                                  :submission (getf arguments :submission) :outcome ':done))
+               (application-input-controller--handle-submission
+                controller
+                (user-message-input-create
+                 :text            text
+                 :image-pathnames (mapcar #'image-input-validate-pathname images)
+                 :submission      (getf arguments :submission))
+                :steer-p (not (null (getf arguments :steer-p)))))
            (list :busy-p (application-input-controller-busy-p controller))))
         (:cancel
          (list :accepted-p
