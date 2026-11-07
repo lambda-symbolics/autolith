@@ -653,12 +653,12 @@ participant and, once empty, their channel. A world that has anything in it
 gets the person's inbox: the first reconciliation without one examines every
 conversation and creates an inbox conversation when none is found."
   (with-recursive-lock-held (*world-sessions-lock*)
-    (let* ((discovery (world-load configuration))
-           (mappings  (world-session-mappings configuration))
+    (let* ((discovery  (world-load configuration))
+           (mappings   (world-session-mappings configuration))
            ;; Discover against one snapshot; WORLD--TRANSACT reloads under
            ;; the store lock before planning any records.
-           (all-p     (or (not identities-p)
-                          (null (world-inbox-channel discovery))))
+           (all-p      (or (not identities-p)
+                           (null (world-inbox-channel discovery))))
            (identities (if all-p
                            (append (conversation-list configuration)
                                    (conversation-task-identities configuration))

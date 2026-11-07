@@ -923,67 +923,77 @@ participant owns and resides in, as a plist of :id, :workspace, :title and
                          (list (world--participant-record participant)))
                  (list participant channel))))))))
 
-(-> world-participant-update
-    (configuration string &key (:name (option string)) (:settings list)
-                          (:presence (option participant-presence)) (:now timestamp))
+(-> world--update-participant
+    (configuration string &key (:operation keyword) (:now timestamp) (:change function))
     participant)
-(defun world-participant-update
-    (configuration identifier &key name (settings nil settings-p) presence
-                                   (now (get-universal-time)))
-  "Replace the given fields of participant IDENTIFIER and return it."
+(defun world--update-participant (configuration identifier &key operation now change)
+  "Apply CHANGE to participant IDENTIFIER in a fresh world transaction.
+
+CHANGE receives the world and participant and returns changed initargs, or
+NIL for no change. Persist one replacement with a monotonic timestamp and
+return it; a no-op returns the existing participant without appending."
   (world--transact
    configuration
    (lambda (world)
-     (let ((participant (world--require-participant world identifier ':update-participant)))
-       (when (and settings-p (not (world-settings-p settings)))
-         (error 'world-error
-                :message    "Participant settings must be a bounded plist of portable values."
-                :pathname   nil
-                :operation  ':update-participant
-                :identifier identifier))
-       (let ((updated (world--copy-participant
-                       participant
-                       :name       (if name
-                                       (world--validate-name name ':update-participant)
-                                       (participant-name participant))
-                       :settings   (if settings-p
-                                       (copy-list settings)
-                                       (participant-settings participant))
-                       :presence   (or presence (participant-presence participant))
-                       :updated-at (max now (participant-updated-at participant)))))
-         (values (list (world--participant-record updated)) updated))))))
+     (let* ((participant (world--require-participant world identifier operation))
+            (changes     (funcall change world participant)))
+       (if changes
+           (let ((updated (apply #'world--copy-participant participant
+                                 :updated-at (max now (participant-updated-at participant))
+                                 changes)))
+             (values (list (world--participant-record updated)) updated))
+           (values nil participant))))))
+
+(-> world-participant-update
+    (configuration string &key (:settings list) (:presence (option participant-presence))
+                           (:now timestamp))
+    participant)
+(defun world-participant-update
+    (configuration identifier &key (settings nil settings-p) presence
+                                   (now (get-universal-time)))
+  "Replace IDENTIFIER's settings or presence and return the participant."
+  (world--update-participant
+   configuration identifier :operation ':update-participant :now now
+   :change (lambda (world participant)
+             (declare (ignore world))
+             (when (and settings-p (not (world-settings-p settings)))
+               (error 'world-error
+                      :message    "Participant settings must be a bounded plist of portable values."
+                      :pathname   nil
+                      :operation  ':update-participant
+                      :identifier identifier))
+             (list :settings (if settings-p
+                                 (copy-list settings)
+                                 (participant-settings participant))
+                   :presence (or presence (participant-presence participant))))))
 
 (-> world-participant-rename (configuration string string &key (:now timestamp)) participant)
 (defun world-participant-rename (configuration identifier name &key (now (get-universal-time)))
   "Name participant IDENTIFIER NAME, a handle no other participant has, and return it."
-  (world--transact
-   configuration
-   (lambda (world)
-     (let ((participant (world--require-participant world identifier ':rename-participant)))
-       (unless (world-handle-p name)
-         (error 'world-error
-                :message    (format nil "A name is up to ~D letters, digits, hyphens and underscores, so @mentions can use it."
-                                    *world-handle-limit*)
-                :pathname   nil
-                :operation  ':rename-participant
-                :identifier identifier))
-       (when (world-handle-reserved-p name)
-         (error 'world-error
-                :message    (format nil "@~A always names the sender's parent; choose another name." name)
-                :pathname   nil
-                :operation  ':rename-participant
-                :identifier identifier))
-       (when (world-participant-named-p world name :except identifier)
-         (error 'world-error
-                :message    (format nil "Another participant is already named ~A." name)
-                :pathname   nil
-                :operation  ':rename-participant
-                :identifier identifier))
-       (let ((renamed (world--copy-participant
-                       participant
-                       :name       name
-                       :updated-at (max now (participant-updated-at participant)))))
-         (values (list (world--participant-record renamed)) renamed))))))
+  (world--update-participant
+   configuration identifier :operation ':rename-participant :now now
+   :change (lambda (world participant)
+             (declare (ignore participant))
+             (unless (world-handle-p name)
+               (error 'world-error
+                      :message    (format nil "A name is up to ~D letters, digits, hyphens and underscores, so @mentions can use it."
+                                          *world-handle-limit*)
+                      :pathname   nil
+                      :operation  ':rename-participant
+                      :identifier identifier))
+             (when (world-handle-reserved-p name)
+               (error 'world-error
+                      :message    (format nil "@~A always names the sender's parent; choose another name." name)
+                      :pathname   nil
+                      :operation  ':rename-participant
+                      :identifier identifier))
+             (when (world-participant-named-p world name :except identifier)
+               (error 'world-error
+                      :message    (format nil "Another participant is already named ~A." name)
+                      :pathname   nil
+                      :operation  ':rename-participant
+                      :identifier identifier))
+             (list :name name))))
 
 (-> world-channel-update
     (configuration string &key (:title (option string)) (:workspace (option string))
@@ -1020,34 +1030,28 @@ one resident agent, so an agent is refused a channel where another already
 resides. Once the inbox exists the person resides there and is not moved.
 With EXPECTED-RESIDENCE the move happens only while the participant still
 resides there, NIL for parked."
-  (world--transact
-   configuration
-   (lambda (world)
-     (let ((participant (world--require-participant world identifier ':move-participant)))
-       (when expected-residence-p
-         (world--require-residence participant expected-residence ':move-participant))
-       (world--require-channel world channel-identifier ':move-participant)
-       (when (eq (participant-kind participant) ':agent)
-         (let ((resident (find-if (lambda (candidate)
-                                    (and (eq (participant-kind candidate) ':agent)
-                                         (not (string= (participant-identifier candidate)
-                                                       identifier))))
-                                  (world-channel-residents world channel-identifier))))
-           (when resident
-             (error 'world-error
-                    :message    (format nil "Channel ~A already has resident agent ~A; a channel has one agent. Move that one away first."
-                                        (conversation-identifier-display channel-identifier)
-                                        (participant-name resident))
-                    :pathname   nil
-                    :operation  ':move-participant
-                    :identifier identifier))))
-       (if (equal (participant-residence participant) channel-identifier)
-           (values nil participant)
-           (let ((moved (world--copy-participant participant
-                                                 :residence  channel-identifier
-                                                 :updated-at (max now (participant-updated-at
-                                                                       participant)))))
-             (values (list (world--participant-record moved)) moved)))))))
+  (world--update-participant
+   configuration identifier :operation ':move-participant :now now
+   :change (lambda (world participant)
+             (when expected-residence-p
+               (world--require-residence participant expected-residence ':move-participant))
+             (world--require-channel world channel-identifier ':move-participant)
+             (when (eq (participant-kind participant) ':agent)
+               (let ((resident (find-if (lambda (candidate)
+                                          (and (eq (participant-kind candidate) ':agent)
+                                               (not (string= (participant-identifier candidate)
+                                                             identifier))))
+                                        (world-channel-residents world channel-identifier))))
+                 (when resident
+                   (error 'world-error
+                          :message    (format nil "Channel ~A already has resident agent ~A; a channel has one agent. Move that one away first."
+                                              (conversation-identifier-display channel-identifier)
+                                              (participant-name resident))
+                          :pathname   nil
+                          :operation  ':move-participant
+                          :identifier identifier))))
+             (unless (equal (participant-residence participant) channel-identifier)
+               (list :residence channel-identifier)))))
 
 (-> world-participant-park
     (configuration string &key (:now timestamp) (:expected-residence (option string)))
@@ -1061,26 +1065,21 @@ A parked agent keeps its identity, its children and its subscriptions, and a
 move brings it into a channel again. Only agents park; the person always
 resides somewhere. With EXPECTED-RESIDENCE the park happens only while the
 agent still resides there."
-  (world--transact
-   configuration
-   (lambda (world)
-     (let ((participant (world--require-participant world identifier ':park)))
-       (when expected-residence-p
-         (world--require-residence participant expected-residence ':park))
-       (unless (eq (participant-kind participant) ':agent)
-         (error 'world-error
-                :message    (format nil "~A is not an agent; only agents are parked."
-                                    (participant-name participant))
-                :pathname   nil
-                :operation  ':park
-                :identifier identifier))
-       (if (null (participant-residence participant))
-           (values nil participant)
-           (let ((parked (world--copy-participant participant
-                                                  :residence  nil
-                                                  :updated-at (max now (participant-updated-at
-                                                                        participant)))))
-             (values (list (world--participant-record parked)) parked)))))))
+  (world--update-participant
+   configuration identifier :operation ':park :now now
+   :change (lambda (world participant)
+             (declare (ignore world))
+             (when expected-residence-p
+               (world--require-residence participant expected-residence ':park))
+             (unless (eq (participant-kind participant) ':agent)
+               (error 'world-error
+                      :message    (format nil "~A is not an agent; only agents are parked."
+                                          (participant-name participant))
+                      :pathname   nil
+                      :operation  ':park
+                      :identifier identifier))
+             (when (participant-residence participant)
+               (list :residence nil)))))
 
 (-> world-parked-agents (world) list)
 (defun world-parked-agents (world)
@@ -1094,36 +1093,25 @@ agent still resides there."
 (-> world-participant-subscribe (configuration string string &key (:now timestamp)) participant)
 (defun world-participant-subscribe (configuration identifier channel-identifier &key (now (get-universal-time)))
   "Subscribe participant IDENTIFIER to channel CHANNEL-IDENTIFIER and return it."
-  (world--transact
-   configuration
-   (lambda (world)
-     (let ((participant (world--require-participant world identifier ':subscribe)))
-       (world--require-channel world channel-identifier ':subscribe)
-       (if (member channel-identifier (participant-subscriptions participant) :test #'string=)
-           (values nil participant)
-           (let ((subscribed (world--copy-participant
-                              participant
-                              :subscriptions (append (participant-subscriptions participant)
-                                                     (list channel-identifier))
-                              :updated-at    (max now (participant-updated-at participant)))))
-             (values (list (world--participant-record subscribed)) subscribed)))))))
+  (world--update-participant
+   configuration identifier :operation ':subscribe :now now
+   :change (lambda (world participant)
+             (world--require-channel world channel-identifier ':subscribe)
+             (unless (member channel-identifier (participant-subscriptions participant) :test #'string=)
+               (list :subscriptions (append (participant-subscriptions participant)
+                                            (list channel-identifier)))))))
 
 (-> world-participant-unsubscribe (configuration string string &key (:now timestamp)) participant)
 (defun world-participant-unsubscribe (configuration identifier channel-identifier &key (now (get-universal-time)))
   "Remove channel CHANNEL-IDENTIFIER from participant IDENTIFIER's subscriptions."
-  (world--transact
-   configuration
-   (lambda (world)
-     (let ((participant (world--require-participant world identifier ':unsubscribe)))
-       (if (member channel-identifier (participant-subscriptions participant) :test #'string=)
-           (let ((unsubscribed (world--copy-participant
-                                participant
-                                :subscriptions (remove channel-identifier
-                                                       (participant-subscriptions participant)
-                                                       :test #'string=)
-                                :updated-at    (max now (participant-updated-at participant)))))
-             (values (list (world--participant-record unsubscribed)) unsubscribed))
-           (values nil participant))))))
+  (world--update-participant
+   configuration identifier :operation ':unsubscribe :now now
+   :change (lambda (world participant)
+             (declare (ignore world))
+             (when (member channel-identifier (participant-subscriptions participant) :test #'string=)
+               (list :subscriptions (remove channel-identifier
+                                            (participant-subscriptions participant)
+                                            :test #'string=))))))
 
 (-> world--participant-deletion-records
     (world participant timestamp &key (:except (option string)) (:deleted list)
