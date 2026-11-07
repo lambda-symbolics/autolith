@@ -1832,7 +1832,7 @@
                                     "the parked agent keeps the context it built, from the channel it left")))
                    (test-assert (not (wakes-p nil))
                                 "a job outliving its agent's park starts no turn in the channel it left")
-                   (test-assert (and (eq (submit "more words") ':rejected)
+                   (test-assert (and (eq (submit "more words") ':no-agent)
                                      (search "this channel has no agent"
                                              (recording-terminal-output terminal)))
                                 "a channel without an agent refuses a typed prompt and offers a move or a domestic agent")
