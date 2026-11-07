@@ -633,7 +633,8 @@ owns the response stream and must bound its body before allocating it."))
   "Open the streaming Dexador response without ambient authentication or proxies."
   (declare (ignore platform))
   (dex:request source :method ':get
-                     :headers '(("Accept" . "application/json"))
+                     :headers '(("Accept" . "application/json")
+                                ("Accept-Encoding" . "gzip"))
                      :max-redirects 0 :connect-timeout 3 :read-timeout 3
                      :keep-alive nil :use-connection-pool nil :want-stream t :force-binary t
                      :proxy nil :insecure nil :verbose nil))
