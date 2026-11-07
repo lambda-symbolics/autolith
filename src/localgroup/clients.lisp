@@ -54,13 +54,18 @@
                                      :transport-lock (image-daemon:daemon-runtime-lock session))))
     (unwind-protect
          (progn
-           (channel-client-enqueue client
-                                   (client-portable
-                                    (list :attached
-                                          :client-id  (channel-client-identifier client)
-                                          :session-id (image-daemon:daemon-runtime-identifier session)
-                                          :state      (localgroup-status-snapshot session))))
-           (application-clients-add application client)
+           (handler-case
+               (application-clients-add
+                application client
+                :after-sequence (getf arguments :after-sequence)
+                :attached       (list :attached
+                                      :client-id (channel-client-identifier client)
+                                      :session-id (image-daemon:daemon-runtime-identifier session)
+                                      :state      (localgroup-status-snapshot session)))
+             (localgroup-error (condition)
+              (daemon-write-packet stream (list :error  :message (autolith-error-message condition)
+                                               :retry-p (localgroup-error-retry-p condition)))
+              (return-from localgroup--serve-client nil)))
            (loop for packet = (handler-case (daemon-read-packet stream)
                                 (error ()
                                   nil))
@@ -203,6 +208,10 @@
     :accessor      localgroup-client-connection-closed-p
     :type          boolean
     :documentation "Whether the connection ended.")
+   (entry
+    :initarg       :entry
+    :reader        localgroup-client-connection-entry
+    :documentation "The original authenticated endpoint entry used for this connection.")
    (attached
     :initarg       :attached
     :reader        localgroup-client-connection-attached
@@ -215,9 +224,10 @@
   (:documentation "A structured client's connection to one channel."))
 
 (-> localgroup-client-connect
-    (cons &key (:name string) (:event-function function) (:approves-p boolean))
+    (cons &key (:name string) (:event-function function) (:approves-p boolean)
+          (:after-sequence (option integer)))
     localgroup-client-connection)
-(defun localgroup-client-connect (entry &key (name "client") event-function (approves-p t))
+(defun localgroup-client-connect (entry &key (name "client") event-function (approves-p t) after-sequence)
   "Connect to the channel of localgroup endpoint ENTRY as a structured client NAME.
 
 EVENT-FUNCTION is called on the reader thread with each event, and with
@@ -236,15 +246,18 @@ does not leaves them to a terminal or another client."
                                      :version   *daemon-protocol-version*
                                      :token     (localgroup--record-token record)
                                      :operation ':client
-                                     :arguments (list :name name :approves-p approves-p)))
+                                     :arguments (list :name name :approves-p approves-p
+                                                      :after-sequence after-sequence)))
           (let ((greeting (daemon-read-response stream ':client)))
             (unless (eq (first greeting) ':attached)
               (error 'localgroup-error
                      :message    (or (getf (rest greeting) :message)
                                      "The channel did not accept the client.")
                      :operation  ':client
+                     :retry-p    (getf (rest greeting) :retry-p)
                      :session-id (localgroup--record-session-id record)))
             (let ((connection (make-instance 'localgroup-client-connection
+                                             :entry    entry
                                              :socket   socket
                                              :stream   stream
                                              :attached greeting)))

@@ -125,3 +125,59 @@
            (test-assert (and (equal before record) (= 2 (length updates)))
                         "reading legacy history neither consumes records nor sends live updates"))))))
   nil)
+
+(-> test-acp-attachment-history-boundary () null)
+(defun test-acp-attachment-history-boundary ()
+  "Deliver assistant and tool records appended during initial replay exactly once and in order."
+  (with-test-configuration (configuration)
+    (let* ((service      (make-instance 'acp-service :configuration configuration))
+           (session      (make-instance 'acp-session :service service :identifier "channel"
+                                                    :configuration configuration :mode ':ask))
+           (updates      nil)
+           (records      '((:message :seq 1 :role :user :content "question")
+                           (:message :seq 2 :role :assistant :content "old reply")
+                           (:tool-result :seq 3 :call-id "call" :status :ok :output "old result")))
+           (conversation (conversation-create configuration)))
+      (test-call-with-function-replacements
+       (list (list 'conversation-replay-load
+                   (lambda (&rest arguments) (declare (ignore arguments)) conversation))
+             (list 'conversation-replay--map-records
+                   (lambda (source function)
+                     (declare (ignore source))
+                     (dolist (record records) (funcall function record))
+                     ;; New durable records are already visible to the reader, but lie
+                     ;; beyond its captured boundary and arrive on the subscription.
+                     (dolist (record '((:message :seq 4 :role :assistant :content "during attachment")
+                                       (:tool-result :seq 5 :call-id "call" :status :ok :output "during result")))
+                       (funcall function record)
+                       (acp-session-event session
+                                         (list :record  :sequence (+ 8 (getf (rest record) :seq))
+                                                :record record)))
+                     (acp-session-event session
+                                       '(:status :sequence 14 :status :assistant-response-persisted
+                                          :details (:text "during attachment")))
+                     (acp-session-event session
+                                       '(:status :sequence 15 :status :tool-call-completed
+                                          :details (:call-id "call" :success-p t :output "during result")))
+                     nil))
+             (list 'acp-session--plan (lambda (recipient) (declare (ignore recipient)) nil))
+             (list 'acp-session-flush (lambda (recipient) (declare (ignore recipient)) nil))
+             (list 'acp-session--send
+                   (lambda (recipient update) (declare (ignore recipient)) (push update updates) nil)))
+       (lambda ()
+         (acp-session-begin-attachment session)
+         ;; A delayed listener for an already replayed record must not echo it.
+         (acp-session-event session (list :record :sequence 11 :record (second records)))
+         (acp-session-finish-attachment session '(:attached :sequence 10 :record-sequence 3) :replay-p t)
+         (test-assert (equal '(:user-message-chunk :agent-message-chunk :tool-call-update
+                               :agent-message-chunk :tool-call-update)
+                             (mapcar #'agentcomms:acp-update-kind (reverse updates)))
+                      "bounded history precedes each buffered assistant and tool result exactly once")
+         (test-assert (= 15 (acp-session-event-sequence session)) "the delivered tail advances its event cursor")
+         (test-assert (= 1 (acp-session-turn-sequence session)) "catch-up tool identities keep the replayed user turn")
+         (acp-session-event session '(:status :sequence 16 :status :provider-request-started :details nil))
+         (acp-session-event session '(:text :sequence 17 :delta "live reply"))
+         (test-assert (eq ':agent-message-chunk (agentcomms:acp-update-kind (first updates)))
+                      "the next provider request resumes live streaming")
+         (test-assert (= 6 (length updates)) "going live does not replay the buffered transcript")))))
+  nil)
