@@ -578,14 +578,37 @@ channel's record of messages queued for the agent is forgotten, so the next
 resident receives every message the conversation has not durably received.
 The channel is told and its work resumes."
   (let ((controller (application-input-controller application))
+        (removed    nil)
         (dropped    0))
     (when controller
       (with-lock-held ((application-input-controller-lock controller))
         (dolist (items (list (application-input-controller-work-items controller)
                              (application-input-controller-steering-items controller)))
           (loop until (deque-empty-p items)
-                do (deque-pop-front items)
-                   (incf dropped))))
+                  for item = (deque-pop-front items)
+                  do (push item removed)
+                     (incf dropped))))
+      ;; Finish removed requests outside the controller lock: their waiting
+      ;; callers and event listeners may submit fresh administrative work.
+      (dolist (item (nreverse removed))
+        (case (first item)
+          (:client-work
+           (client-work-cancel (second item) (if destination ':moved ':dismissed)))
+          ((:message :command :lisp)
+           (let ((submission (if (eq (first item) ':message)
+                                 (user-message-input-submission (second item))
+                                 (getf (rest (rest item)) :submission))))
+             (when submission
+               (application-clients-publish
+                application
+                (list :work-finished
+                      :kind       (first item)
+                      :outcome    ':cancelled
+                      :submission submission
+                      :idle-p     (with-lock-held ((application-input-controller-lock controller))
+                                    (and (deque-empty-p (application-input-controller-work-items controller))
+                                         (deque-empty-p (application-input-controller-steering-items controller))
+                                         t)))))))))
       ;; Receipts in the conversation say what was received; the queue's
       ;; bookkeeping only kept a message from being queued twice.
       (clrhash (application-world-deliveries application))
