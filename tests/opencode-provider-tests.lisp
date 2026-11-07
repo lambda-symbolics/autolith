@@ -411,7 +411,7 @@
          (observed-url          nil)
          (observed-headers      nil)
          (body
-           "{\"data\":[{\"id\":\"gpt-5.6-luna\"},{\"id\":\"grok-4.5\"},{\"id\":\"kimi-k3\"}]}"))
+           "{\"data\":[{\"id\":\"gpt-5.6-luna\",\"limit\":{\"context\":1000000}},{\"id\":\"grok-4.5\"},{\"id\":\"kimi-k3\"}]}"))
     (unwind-protect
          (progn
            (platform-setenv *opencode-environment-variable* "synthetic-opencode-key")
@@ -440,6 +440,10 @@
              (test-assert
               (member model (provider-model-identifiers) :test #'string=)
               (format nil "OpenCode discovery publishes namespaced model ~A" model)))
+           (test-assert
+            (eql (provider-model-context-window-for "opencode/gpt-5.6-luna")
+                 1000000)
+            "OpenCode discovery propagates the nested context limit")
            (test-assert
             (and
              (string= (provider-registration-name
