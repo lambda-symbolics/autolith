@@ -1110,7 +1110,10 @@ The caller must hold CONTROLLER's publication lock."
               (application-input-controller-live-vault-sync-p controller) t)
         (deque-push-back
          (application-input-controller-work-items controller)
-         (list kind (user-message-input-copy input)))
+         (append (list kind (user-message-input-copy
+                             (if (eq kind ':message) input (user-message-input-text input))))
+                 (when (and (not (eq kind ':message)) (user-message-input-submission input))
+                   (list :submission (user-message-input-submission input)))))
         (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller))))
     (when resumed-p
@@ -1748,13 +1751,13 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
   nil)
 
 (-> application-input-controller--schedule-command
-    (application-input-controller string)
-    null)
+    (application-input-controller (or string user-message-input))
+    boolean)
 (defun application-input-controller--schedule-command (controller input)
   "Queue busy command INPUT to run at the first idle opportunity."
   (when (application-input-controller--enqueue controller ':command input)
-    (application-input-controller--present-scheduled-command controller input))
-  nil)
+    (application-input-controller--present-scheduled-command controller (user-message-input-text input))
+    t))
 
 (-> application-input-controller--present-scheduled-lisp
     (application-input-controller string)
@@ -1775,23 +1778,23 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
   nil)
 
 (-> application-input-controller--schedule-lisp
-    (application-input-controller string)
-    null)
+    (application-input-controller (or string user-message-input))
+    boolean)
 (defun application-input-controller--schedule-lisp (controller source)
   "Queue local Lisp SOURCE to run at the first idle opportunity."
   (when (application-input-controller--enqueue controller ':lisp source)
-    (application-input-controller--present-scheduled-lisp controller source))
-  nil)
+    (application-input-controller--present-scheduled-lisp controller (user-message-input-text source))
+    t))
 
 (-> application-input-controller--schedule-apply
-    (application-input-controller string)
-    null)
+    (application-input-controller (or string user-message-input))
+    boolean)
 (defun application-input-controller--schedule-apply (controller input)
   "Queue busy command INPUT to apply at the active turn's next safe boundary."
   (with-lock-held ((application-input-controller-lock controller))
     (deque-push-back
      (application-input-controller-pending-apply-items controller)
-     input))
+     (user-message-input-copy input)))
   (application-present
    (application-input-controller-application controller)
    (list
@@ -1801,9 +1804,9 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
     (terminal-span ':dim
                    (format nil "  ~A"
                            (text-cell-prefix
-                            (sanitize-text input :single-line-p t)
+                            (sanitize-text (user-message-input-text input) :single-line-p t)
                             72)))))
-  nil)
+  t)
 
 (-> application-input-controller--take-pending-applies
     (application-input-controller)
@@ -1834,13 +1837,17 @@ reaches the very next provider request."
         (application (application-input-controller-application controller)))
     (when inputs
       (dolist (input inputs)
-        (cond
-          ((input-async-lisp-p input)
-           (application-run-async-lisp-input application input))
-          ((input-lisp-p input)
-           (application-run-lisp-input application input :interactive-p nil))
-          (t
-           (application--run-command-input application input :interactive-p nil))))
+        (application-input-controller--call-submitted-input
+         controller input
+         (lambda ()
+           (let ((text (user-message-input-text input)))
+             (cond
+               ((input-async-lisp-p text)
+                (application-run-async-lisp-input application text))
+               ((input-lisp-p text)
+                (application-run-lisp-input application text :interactive-p nil))
+               (t
+                (application--run-command-input application text :interactive-p nil)))))))
       (when agent
         (application--agent-adopt-runtime application agent))))
   nil)
@@ -2233,85 +2240,113 @@ may execute immediately; other Lisp waits for the idle boundary."
                      (string-downcase message :end (min 1 (length message)))))))
         nil))))
 
+(-> application-input-controller--call-submitted-input
+    (application-input-controller (or string user-message-input) function) t)
+(defun application-input-controller--call-submitted-input (controller input function)
+  "Run FUNCTION and publish the terminal outcome of INPUT unless its work was deferred."
+  (let ((submission (user-message-input-submission input))
+        (outcome    ':failed))
+    (unwind-protect
+         (handler-bind ((application-turn-cancelled
+                          (lambda (condition)
+                            (declare (ignore condition))
+                            (setf outcome ':cancelled))))
+           (let* ((results (multiple-value-list (funcall function)))
+                  (result  (first results)))
+             (setf outcome (cond
+                             ((eq result ':deferred)
+                              nil)
+                             ((eq result ':aborted)
+                              ':cancelled)
+                             ((application-input-controller--prompt-result-failure-p result)
+                              ':failed)
+                             (t
+                              ':done)))
+             (values-list results)))
+      (when (and submission outcome)
+        (application-clients-publish
+         (application-input-controller-application controller)
+         (list :work-finished :kind ':submission :submission submission :outcome outcome))))))
+
 (-> application-input-controller--handle-submission
     (application-input-controller (or string user-message-input)
      &key (:steer-p boolean))
     null)
-(defun application-input-controller--handle-submission
-    (controller input &key steer-p)
-  "Route submitted INPUT to canonical prompt, local Lisp, or command policy."
-  (let* ((application
-           (application-input-controller-application controller))
-         (message (input-message input))
-         (text    (user-message-input-text input))
-         (async-p (input-async-lisp-p text)))
-    (cond
-      (async-p
-       (when (application-input-controller--submission-storage-ready-p
-              controller input)
+(defun application-input-controller--handle-submission (controller input &key steer-p)
+  "Route INPUT through canonical policy and preserve its exact terminal outcome."
+  (application-input-controller--call-submitted-input
+   controller input
+   (lambda () (application-input-controller--route-submission controller input :steer-p steer-p)))
+  nil)
+
+(-> application-input-controller--route-submission
+    (application-input-controller (or string user-message-input)
+     &key (:steer-p boolean))
+    t)
+(defun application-input-controller--route-submission (controller input &key steer-p)
+  "Apply canonical input policy, returning :DEFERRED only after accepting later work."
+  (let* ((application (application-input-controller-application controller))
+         (message     (input-message input))
+         (text        (user-message-input-text input)))
+    (flet ((deferred (accepted-p)
+             (if accepted-p ':deferred ':failed))
+
+           (executed (result)
+             (when (eq result ':quit)
+               (application-input-controller--request-exit controller ':quit))
+             result))
+      (cond
+        ((input-async-lisp-p text)
+         (if (application-input-controller--submission-storage-ready-p controller input)
+             (progn
+               (application-localgroup-resume application)
+               (application-run-async-lisp-input application text))
+             ':failed))
+        (message
+         (deferred (application-input-controller--prompt controller message :prefer-steering-p steer-p)))
+        ((not (application-input-controller--submission-storage-ready-p controller input))
+         ':failed)
+        ((input-lisp-p text)
          (application-localgroup-resume application)
-         (application-run-async-lisp-input application text)))
-      (message
-       (application-input-controller--prompt
-        controller message :prefer-steering-p steer-p))
-      ((not (application-input-controller--submission-storage-ready-p
-             controller input))
-       nil)
-      (t
-       (cond
-         ((input-lisp-p text)
-          (application-localgroup-resume application)
-          (if (application-input-controller-busy-p controller)
-              (ecase (application-input-controller--lisp-active-turn-action
-                      controller text)
-                (:cancel
-                 (application-input-controller--request-exit controller ':quit))
-                (:execute
-                 (when (eq (application-input-controller--run-responsive-lisp
-                            controller text)
-                           ':quit)
-                   (application-input-controller--request-exit controller ':quit)))
-                (:apply
-                 (application-input-controller--schedule-apply controller text))
-                (:hold
-                 (application-input-controller--schedule-lisp controller text)))
-              (application-input-controller--enqueue controller ':lisp text)))
-         ((not (non-empty-string-p text))
-          nil)
-         ((application-input-controller-busy-p controller)
-          (let* ((invocation
-                   (application-input-controller--parse-responsive-command
-                    controller text))
-                 (command
-                   (and invocation
-                        (application-command-invocation-command invocation)))
-                 (action
-                   (when invocation
-                     (if command
-                         (application-command-busy-action command invocation)
-                         ;; Unknown commands fail immediately, without scheduling.
-                         ':execute))))
-            (when action
-             (application-localgroup-resume application)
-             (ecase action
+         (if (application-input-controller-busy-p controller)
+             (ecase (application-input-controller--lisp-active-turn-action controller text)
                (:cancel
                 (application-input-controller--request-exit controller ':quit))
                (:execute
-                (when (eq (if command
-                              (application-input-controller--run-responsive-command
-                               controller command invocation)
-                              (application-input-controller--run-responsive-unknown
-                               controller text))
-                          ':quit)
-                  (application-input-controller--request-exit controller ':quit)))
+                (executed (application-input-controller--run-responsive-lisp controller text)))
                (:apply
-                (application-input-controller--schedule-apply controller text))
+                (deferred (application-input-controller--schedule-apply controller input)))
                (:hold
-                (application-input-controller--schedule-command controller text))))))
-         (t
-          (application-localgroup-resume application)
-          (application-input-controller--enqueue controller ':command text))))))
-  nil)
+                (deferred (application-input-controller--schedule-lisp controller input))))
+             (deferred (application-input-controller--enqueue controller ':lisp input))))
+        ((not (non-empty-string-p text))
+         ':done)
+        ((application-input-controller-busy-p controller)
+         (let* ((invocation (application-input-controller--parse-responsive-command controller text))
+                (command    (and invocation (application-command-invocation-command invocation)))
+                (action     (when invocation
+                              (if command
+                                  (application-command-busy-action command invocation)
+                                  ':execute))))
+           (if action
+               (progn
+                 (application-localgroup-resume application)
+                 (ecase action
+                   (:cancel
+                    (application-input-controller--request-exit controller ':quit))
+                   (:execute
+                    (executed
+                     (if command
+                         (application-input-controller--run-responsive-command controller command invocation)
+                         (application-input-controller--run-responsive-unknown controller text))))
+                   (:apply
+                    (deferred (application-input-controller--schedule-apply controller input)))
+                   (:hold
+                    (deferred (application-input-controller--schedule-command controller input)))))
+               ':failed)))
+        (t
+         (application-localgroup-resume application)
+         (deferred (application-input-controller--enqueue controller ':command input)))))))
 
 (-> application-input-controller--handle-queue-submission
     (application-input-controller (or string user-message-input))
@@ -3775,30 +3810,35 @@ submission-time sharing request."
         (typep condition 'application-turn-cancelled))
   nil)
 
+(-> application-input-controller--work-submission (list) list)
+(defun application-input-controller--work-submission (work)
+  "Return the admitted submission identity of message, command or Lisp WORK."
+  (case (first work)
+    (:message
+     (user-message-input-submission (second work)))
+    ((:command :lisp)
+     (getf (rest (rest work)) :submission))))
+
 (-> application-input-controller--publish-work-finished (application-input-controller list) null)
 (defun application-input-controller--publish-work-finished (controller work)
-  "Tell CONTROLLER's structured clients that WORK finished, how, and whether more work waits.
-
-The outcome is :CANCELLED or :FAILED as the prompt result recorded it, else
-:DONE. IDLE-P says that no queued work or steering follows, so a client that
-submitted a prompt knows its turn is over."
+  "Publish WORK's exact submission outcome, retaining it for disconnected clients."
   (let ((application (application-input-controller-application controller)))
-    (when (application-clients-attached-p application)
-      (application-clients-publish
-       application
-       (list :work-finished
-             :kind    (first work)
-             :outcome (case (application-input-controller-prompt-marker-status controller)
-                        (130
-                         ':cancelled)
-                        (1
-                         ':failed)
-                        (t
-                         ':done))
-             :idle-p  (with-lock-held ((application-input-controller-lock controller))
-                        (and (deque-empty-p (application-input-controller-work-items controller))
-                             (deque-empty-p (application-input-controller-steering-items controller))
-                             t))))))
+    (application-clients-publish
+     application
+     (list :work-finished
+           :kind       (first work)
+           :submission (application-input-controller--work-submission work)
+           :outcome    (case (application-input-controller-prompt-marker-status controller)
+                         (130
+                          ':cancelled)
+                         (1
+                          ':failed)
+                         (t
+                          ':done))
+           :idle-p     (with-lock-held ((application-input-controller-lock controller))
+                         (and (deque-empty-p (application-input-controller-work-items controller))
+                              (deque-empty-p (application-input-controller-steering-items controller))
+                              t)))))
   nil)
 
 (-> application-input-controller--run-work
@@ -3820,12 +3860,11 @@ however it ended."
              (unless (eq work (fourth (application-deferred-goal-continuation application)))
                (setf (application-deferred-goal-continuation application) nil)))
            (application-input-controller--begin-prompt-work controller work)
-           (when (application-clients-attached-p application)
-             (application-clients-publish
-              application
-              (append (list :work-started :kind (first work))
-                      (when (eq (first work) ':message)
-                        (list :submission (user-message-input-submission (second work)))))))
+           (application-clients-publish
+            application
+            (append (list :work-started :kind (first work))
+                    (when (application-input-controller--work-submission work)
+                      (list :submission (application-input-controller--work-submission work)))))
            (application-world-before-turn application (first work))
            (case (first work)
              (:idle-compaction

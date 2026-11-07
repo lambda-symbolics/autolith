@@ -70,18 +70,19 @@
     (option list))
 (defun input-work-from-input (input)
   "Return queued work for INPUT, or NIL when INPUT has no effective content."
-  (let ((message (input-message input))
-        (text    (user-message-input-text input)))
-    (cond
-      ((or (input-lisp-p text)
-           (input-async-lisp-p text))
-       (list ':lisp (copy-seq text)))
-      (message
-       (list ':message message))
-      ((non-empty-string-p text)
-       (list ':command (copy-seq text)))
-      (t
-       nil))))
+  (let* ((message (input-message input))
+         (text    (user-message-input-text input))
+         (work    (cond
+                    ((or (input-lisp-p text)
+                         (input-async-lisp-p text))
+                     (list ':lisp (copy-seq text)))
+                    (message
+                     (list ':message message))
+                    ((non-empty-string-p text)
+                     (list ':command (copy-seq text))))))
+    (when work
+      (append work (when (user-message-input-submission input)
+                     (list :submission (user-message-input-submission input)))))))
 
 (-> input-value->form
     ((or string user-message-input))

@@ -358,7 +358,7 @@ fragments that providers interleave with empty content deltas."
 
 (-> acp-session--work-finished (acp-session list) null)
 (defun acp-session--work-finished (session fields)
-  "Close the open turn, and wake a prompt waiting for the channel to go idle."
+  "Close the open turn and settle only a matching editor submission."
   (let ((outcome (case (getf fields :outcome)
                    (:cancelled
                     ':cancelled)
@@ -368,6 +368,11 @@ fragments that providers interleave with empty content deltas."
                     ':end-turn)))
         (turn    nil))
     (with-lock-held ((acp-session-lock session))
+      (let ((submission (getf fields :submission)))
+        (when (and (acp-session-prompt-submission session)
+                   (equal (getf submission :id) (acp-session-prompt-submission session))
+                   (equal (getf submission :client) (acp-session-client-identifier session)))
+          (setf (acp-session-prompt-outcome session) outcome)))
       (when (member (getf fields :kind) *acp-turn-work-kinds*)
         (setf turn                               (acp-session-turn session)
               (acp-session-turn session)         nil
