@@ -928,7 +928,8 @@ forgotten again when no thread could start."
                                     :initial-command    (and (getf arguments :resume-command-p)
                                                              "(resume)")
                                     :recovery-diagnosis (getf arguments :recovery-diagnosis)
-                                    :resume-offer-p     (not (null (getf arguments :resume-command-p)))))
+                                    :resume-offer-p     (not (null (getf arguments :resume-command-p)))
+                                    :boot-screen-p      (not (getf arguments :switch-p))))
       (error (condition)
         (application--discard-connection-resources application
                                                    (application-tool-registry application)
@@ -944,11 +945,15 @@ forgotten again when no thread could start."
                                   (:resume-offer-p boolean)
                                   (:resume-p boolean)
                                   (:reconnect-id (option string))
-                                  (:notice (option string)))
+                                  (:notice (option string))
+                                  (:boot-screen-p boolean))
     null)
 (defun world-server--serve-host (server host &key initial-command recovery-diagnosis
-                                                  resume-offer-p resume-p reconnect-id notice)
-  "Start the thread serving HOST's application, serving it again after a checkpoint with RESUME-P."
+                                                  resume-offer-p resume-p reconnect-id notice
+                                                  (boot-screen-p t))
+  "Start the thread serving HOST's application, serving it again after a checkpoint with RESUME-P.
+
+Without BOOT-SCREEN-P the channel opens without the boot screen."
   (setf (world-host-thread host)
         (make-thread
          (lambda ()
@@ -958,7 +963,8 @@ forgotten again when no thread could start."
                                :resume-offer-p     resume-offer-p
                                :resume-p           resume-p
                                :reconnect-id       reconnect-id
-                               :notice             notice))
+                               :notice             notice
+                               :boot-screen-p      boot-screen-p))
          :name (format nil "Autolith channel ~A"
                        (conversation-identifier-display (world-host-channel host)))))
   nil)
@@ -983,17 +989,19 @@ itself so that threads those threads start inherit it too."
                                   (:resume-offer-p boolean)
                                   (:resume-p boolean)
                                   (:reconnect-id (option string))
-                                  (:notice (option string)))
+                                  (:notice (option string))
+                                  (:boot-screen-p boolean))
     null)
 (defun world-server--host (server host &key initial-command recovery-diagnosis resume-offer-p
-                                            resume-p reconnect-id notice)
+                                            resume-p reconnect-id notice (boot-screen-p t))
   "Serve HOST's application on this thread until its session ends.
 
 A launcher exit condition reaches the attached clients with its status, as a
 direct session's would; an update or rollback then stops the whole server,
 because the image is shared, while a fatal error ends this channel alone. A
 session that ends for a checkpoint leaves HOST paused, to be served again on
-another thread with RESUME-P, RECONNECT-ID for its clients and NOTICE."
+another thread with RESUME-P, RECONNECT-ID for its clients and NOTICE.
+Without BOOT-SCREEN-P the channel opens without the boot screen."
   (let* ((application                 (world-host-application host))
          (configuration               (application-configuration application))
          (bordeaux-threads:*default-special-bindings*
@@ -1020,6 +1028,7 @@ another thread with RESUME-P, RECONNECT-ID for its clients and NOTICE."
                           :hosted-p           t
                           :resume-p           resume-p
                           :notice             notice
+                          :boot-screen-p      boot-screen-p
                           :localgroup-identity
                           (and reconnect-id
                                (append (world-host-identity host)

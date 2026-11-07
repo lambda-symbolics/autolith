@@ -165,13 +165,18 @@ remaining selected revisions; interruption leaves them pending."
                   outcome))))))))))
 
 (-> application-startup-presentation
-    (application application-input-controller &key (:onboarding-p boolean)) keyword)
-(defun application-startup-presentation (application controller &key (onboarding-p t))
-  "Present pending onboarding on interactive startup, otherwise the usual boot."
+    (application application-input-controller &key (:onboarding-p boolean)
+                                                   (:boot-screen-p boolean))
+    keyword)
+(defun application-startup-presentation
+    (application controller &key (onboarding-p t) (boot-screen-p t))
+  "Present pending onboarding on interactive startup, otherwise the usual boot.
+
+Without BOOT-SCREEN-P the session skips both and only takes the screen."
   (let* ((ui            (application-ui application))
          (terminal      (terminal-ui-terminal ui))
          (configuration (application-configuration application))
-         (pending       (and onboarding-p (config :onboarding-p configuration)
+         (pending       (and onboarding-p boot-screen-p (config :onboarding-p configuration)
                              (onboarding-state-pending configuration
                                                        (onboarding-pages configuration)))))
     (when (and pending (typep terminal 'localgroup-terminal))
@@ -190,7 +195,7 @@ remaining selected revisions; interruption leaves them pending."
                      (not (application-input-controller-exit-requested-p controller)))
                 (application-onboard application :new-only-p t)
                 (terminal-ui-boot-sequence
-                 ui :screen-p     (config :boot-screen-p configuration)
+                 ui :screen-p     (and boot-screen-p (config :boot-screen-p configuration))
                  :duration        (config :boot-screen-seconds configuration)
                  :linger-p        (config :boot-screen-linger-p configuration)
                  :tip-seconds     (config :boot-screen-tip-seconds configuration)
