@@ -362,7 +362,10 @@ never retains the resulting credential after this call."
 (defun environment-api-key-credential-source--pathname (account-id)
   "Return the conventional reporting path for ACCOUNT-ID's environment source."
   (merge-pathnames
-   (format nil "~A-auth.sexp" account-id)
+   (format nil "~A-auth.sexp"
+           (if (uiop:string-prefix-p "api-key/" account-id)
+               (subseq account-id (length "api-key/"))
+               account-id))
    (merge-pathnames
     "autolith/"
     (environment-directory
@@ -403,7 +406,9 @@ never retains the resulting credential after this call."
             :account-id
             (if (typep bootstrap 'environment-api-key-credential-source)
                 (cl-rfc8628:environment-credential-source-account-id bootstrap)
-                (string-downcase (credential-manager-provider-label manager)))
+                (format nil "api-key/~A"
+                        (string-downcase
+                         (credential-manager-provider-label manager))))
             :expires-at    nil
             :source-path   (credential-source-pathname source)))))))
 

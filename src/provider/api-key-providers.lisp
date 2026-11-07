@@ -54,7 +54,7 @@ for the key, validates it when a probe exists, and saves it."
          ()
          (:default-initargs
           :environment-variable ,environment-var
-          :account-id ,account-label)
+          :account-id (format nil "api-key/~A" ,account-label))
          (:documentation
           ,(format nil "A read-only adapter loading the ~A API key from the environment." display-name)))
 
