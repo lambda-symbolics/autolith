@@ -207,6 +207,7 @@ the management REPL and Slynk, start with the server."
          (progn
            (setf (world-server-lease server) (world-server--lease-acquire bootstrapped))
            (world-compact-when-grown bootstrapped)
+           (world-server--reconcile bootstrapped)
            (localgroup-handoff-assert-startup-active)
            (world-server--runtime-start server :token token :created-at created-at)
            (localgroup-handoff-finish-startup nil)
@@ -216,6 +217,19 @@ the management REPL and Slynk, start with the server."
            server)
       (unless completed-p
         (world-server--shutdown server)))))
+
+(-> world-server--reconcile (configuration) null)
+(defun world-server--reconcile (configuration)
+  "Bring every conversation of CONFIGURATION into the world once, as the server starts.
+
+Afterwards each channel keeps its own conversation in step as it changes. A
+world that cannot be reconciled only warns: the world never blocks the server."
+  (handler-case (world-reconcile-sessions configuration)
+    (error (cause)
+      (warn 'world-session-warning
+            :pathname (configuration-world-sessions-path configuration)
+            :cause    cause)))
+  nil)
 
 (-> world-server-lock-pathname (configuration) pathname)
 (defun world-server-lock-pathname (configuration)
@@ -539,7 +553,7 @@ destination cannot take it."
            :message   "A move names the participant to move and the channel to move it into."
            :operation ':move))
   (let* ((configuration (world-server-configuration server))
-         (world         (values (world-reconcile-sessions configuration)))
+         (world         (world-load configuration))
          (agent         (world-server--designated-participant world participant ':move))
          (target        (channel-identifier (world-channel-designated world configuration channel)))
          (source-host   (and (participant-residence agent)
@@ -567,7 +581,7 @@ waits in its context file for the channel a later move brings it into."
            :message   "A dismissal names the agent to park."
            :operation ':park))
   (let* ((configuration (world-server-configuration server))
-         (world         (values (world-reconcile-sessions configuration)))
+         (world         (world-load configuration))
          (agent         (world-server--designated-participant world participant ':park))
          (residence     (participant-residence agent))
          (host          (and residence (world-server--find-host server residence)))
@@ -710,7 +724,7 @@ The caller waits for the host to publish its endpoint."
 (defun world-server--channel-workspace (server identifier)
   "Return the workspace channel IDENTIFIER records, or the server's own directory."
   (let* ((configuration (world-server-configuration server))
-         (world         (values (world-reconcile-sessions configuration)))
+         (world         (world-load configuration))
          (channel       (world-channel-find world identifier)))
     (if channel
         (channel-workspace channel)
@@ -725,7 +739,7 @@ touched is the newest write of the channel's conversation file; a hosted
 channel with no file yet was started just now and counts as the newest. The
 person's inbox is never a candidate: it is opened only by name."
   (let* ((configuration (world-server-configuration server))
-         (world         (values (world-reconcile-sessions configuration)))
+         (world         (world-load configuration))
          (hosts         (remove-if-not (lambda (host)
                                          (and (world-host-reserved-p host)
                                               (string= workspace (world-host-workspace host))))

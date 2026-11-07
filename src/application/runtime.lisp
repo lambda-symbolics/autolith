@@ -706,7 +706,11 @@ from its world."
           (setf listener
                 (lambda (channel payload)
                   (case channel
-                    ((:task-subagent-lifecycle  :task-subagent-progress
+                    (:task-subagent-lifecycle
+                     (application-world-sync-child application payload)
+                     (application--refresh-task-presentation
+                      application orchestrator))
+                    ((:task-subagent-progress
                       :tool-execution-lifecycle :tool-execution-progress)
                      (application--refresh-task-presentation
                       application orchestrator))
@@ -1284,7 +1288,7 @@ servers. Release acquired resources if construction fails."
                (application-connect-task-presentation application)
                (application--load-goal application)
                (application-publish-recovery-session application)
-               (application-world-sync application :all-p t)
+               (application-world-sync application)
                (telemetry--call-safely
                 (lambda () (telemetry-attach configuration)))
                (setf completed-p t)
@@ -4401,7 +4405,8 @@ model's calls in a turn."
            (handler-case
                (let ((title (application--conversation-title-generate application)))
                  (when title
-                   (conversation-set-title conversation title :source ':generated)))
+                   (conversation-set-title conversation title :source ':generated)
+                   (application-world-sync application)))
              (error ()
                nil))
         (conversation-title-refresh-release conversation))))

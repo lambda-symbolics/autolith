@@ -465,7 +465,7 @@
 
 (-> test-world-application-sync () null)
 (defun test-world-application-sync ()
-  "Test the application hook migrates sessions and tolerates a missing conversation."
+  "Test the server's start migrates every session, a host syncs its own, and a missing conversation is tolerated."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "b-hook" 1000)
     (let ((application (make-instance 'application
@@ -473,22 +473,23 @@
                                       :ui            (terminal-ui-create
                                                       :terminal (make-instance 'recording-terminal
                                                                                :columns 80)))))
-      (application-world-sync application :all-p t)
+      (world-server--reconcile configuration)
       (test-assert (world-channel-find (world-load configuration) "b-hook")
-                   "startup sync migrates persisted conversations")
+                   "the server's start migrates persisted conversations")
       (test-assert (handler-case (progn (application-world-sync application) t)
                      (warning () nil))
                    "sync without a conversation warns about nothing")
-      (world-tests--persisted-conversation configuration "b-other" 2000)
       (let ((hosted (make-instance 'application
                                    :configuration configuration
+                                   :conversation  (world-tests--persisted-conversation
+                                                   configuration "b-other" 2000)
                                    :ui            (terminal-ui-create
                                                    :terminal (make-instance 'recording-terminal
                                                                             :columns 80)))))
         (flet ((residence ()
                  "Return the channel the person lives in."
                  (participant-residence (world-human-participant (world-load configuration)))))
-          (application-world-sync hosted :all-p t)
+          (application-world-sync hosted)
           (test-assert (and (world-channel-find (world-load configuration) "b-other")
                             (string= (residence)
                                      (channel-identifier
@@ -569,6 +570,7 @@
   (with-test-configuration (configuration)
     (let ((first  (world-tests--persisted-conversation configuration "bfirst1" 1000))
           (second (world-tests--persisted-conversation configuration "bsecnd2" 2000)))
+      (world-server--reconcile configuration)
       (let ((listing (world-tests--read configuration first "list")))
         (test-assert (and (search "3 channels" listing)
                           (search "inbox" listing)
@@ -644,6 +646,7 @@
   "Test (channels) presents every channel with its residents."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "b-listed" 1000)
+    (world-server--reconcile configuration)
     (let* ((terminal    (make-instance 'recording-terminal :columns 80))
            (ui          (terminal-ui-create :terminal terminal))
            (application (make-instance 'application
@@ -1431,6 +1434,26 @@
                                            :agent-name        name)))
     (conversation-append-user-message conversation (format nil "work for ~A" parent))
     conversation))
+
+(-> test-world-child-sync () null)
+(defun test-world-child-sync ()
+  "Test a child that starts after the server's start gets its channel from its lifecycle event alone."
+  (with-test-configuration (configuration)
+    (let ((root (world-tests--persisted-conversation configuration "broot11" 1000)))
+      (world-server--reconcile configuration)
+      (world-tests--child-conversation configuration "exec-new"
+                                       :root "broot11" :parent "broot11" :name "helper" :created-at 1500)
+      (test-assert (null (world-channel-find (world-load configuration) "exec-new"))
+                   "a child that appears later is not in the world by itself")
+      (application-world-sync-child (make-instance 'application
+                                                   :configuration configuration
+                                                   :conversation  root)
+                                    (list :id "job-1" :root "broot11" :execution "exec-new"
+                                          :status ':started))
+      (let ((channel (world-channel-find (world-load configuration) "exec-new")))
+        (test-assert (and channel (equal (channel-parent channel) "broot11"))
+                     "the child's lifecycle event brings its channel in, nested under its parent"))))
+  nil)
 
 (-> test-world-agent-hierarchy () null)
 (defun test-world-agent-hierarchy ()

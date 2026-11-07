@@ -87,6 +87,7 @@
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (world-server--reconcile configuration)
     (let* ((clock    0)
            (statuses nil)
            (sidebar  (world-sidebar-create configuration :clock-function (lambda () clock))))
@@ -184,8 +185,8 @@
           (entries (list (list :kind ':workspace :name "w" :path "/w"))))
       (test-call-with-function-replacements
        (list (list 'world-sidebar--gather
-                   (lambda (panel now)
-                     (declare (ignore panel now))
+                   (lambda (panel)
+                     (declare (ignore panel))
                      (sb-thread:wait-on-semaphore gate)
                      entries)))
        (lambda ()

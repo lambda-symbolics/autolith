@@ -393,6 +393,7 @@
             (hosted    (getf (rest (world-server-tests--open entry workspace)) :session-id)))
        (world-tests--persisted-conversation
         (configuration-copy configuration :working-directory workspace) "blater1" 1000)
+       (world-server--reconcile configuration)
        (let ((dates (list (cons hosted 1000) (cons "blater1" 5000))))
          (test-call-with-function-replacements
           (list (list 'conversation-storage-write-date

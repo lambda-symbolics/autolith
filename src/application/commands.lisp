@@ -3078,7 +3078,7 @@ the world knows no such channel."
          (participant   (if second-p
                             (let ((designator (princ-to-string first)))
                               (or (world-participant-designated
-                                   (values (world-reconcile-sessions configuration))
+                                   (world-load configuration)
                                    designator)
                                   (error 'world-error
                                          :message    (format nil "No participant is named ~A." designator)
@@ -3153,7 +3153,7 @@ the world knows no such channel."
                    (conversation-identifier-display (getf answer :channel))
                    (let ((dropped (getf answer :dropped)))
                      (and (plusp dropped) dropped)))))
-        (let* ((world       (values (world-reconcile-sessions configuration)))
+        (let* ((world       (world-load configuration))
                (participant (or (world-participant-designated world (princ-to-string agent))
                                 (error 'world-error
                                        :message    (format nil "No participant is named ~A." agent)
@@ -3205,7 +3205,7 @@ the world knows no such channel."
          (server        (application-world-server application))
          (answer        (if server
                             (rest (world-server-dismiss server (princ-to-string agent)))
-                            (let* ((world       (values (world-reconcile-sessions configuration)))
+                            (let* ((world       (world-load configuration))
                                    (participant (or (world-participant-designated
                                                      world (princ-to-string agent))
                                                     (error 'world-error
