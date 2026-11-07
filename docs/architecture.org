@@ -483,9 +483,17 @@ compile and install --> checks --> replay script and manifest
   publication, so newer tracked code is never shadowed by a stale override
 - Checkpoints use =sbcl-generations=. Before the fork, Autolith quiesces
   work, clears credentials, detaches workers, and checks provenance
-- Windows cannot fork. Checkpoints and rollback are withheld there, and a
-  worker saves its image by exiting through =save-lisp-and-die= and
-  restarting from the saved core instead of forking a saver
+- Windows cannot fork. A checkpoint there saves the exact heap through
+  =save-lisp-and-die= and exits, and the stable Lisp launcher publishes the
+  saved core from the active image and boots it. The world server first
+  records itself in the heap, releases its leases, and leaves a marker naming
+  the launcher, so clients wait instead of starting a second server; the
+  booted heap takes the leases back and serves its paused channels again
+- Locks the saving thread held stay recorded in a saved heap, so each such
+  lock is freed when a saved heap boots
+- A worker saves its image the same way, by exiting through
+  =save-lisp-and-die= and restarting from the saved core instead of forking a
+  saver
 
 * Startup, update, and recovery
 
