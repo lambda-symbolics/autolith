@@ -516,6 +516,35 @@
     (test-assert (tool-result-success-p result) "channel resource reads succeed")
     (tool-result-content result)))
 
+(-> test-world-participant-availability () null)
+(defun test-world-participant-availability ()
+  "Test an agent is online exactly while a process serves its channel, and parked when it resides nowhere."
+  (flet ((participant (kind residence &optional (presence ':offline))
+           (make-instance 'participant
+                          :identifier "al-x" :kind kind :name "x" :residence residence
+                          :presence presence :created-at 1 :updated-at 1)))
+    (loop for (kind residence presence served expected)
+            in '((:agent "bserved" :offline ("bserved") "online")
+                 (:agent "bidle11" :offline ("bserved") "offline")
+                 (:agent nil       :offline ("bserved") "parked")
+                 (:human "binbox1" :present ()          "present"))
+          do (test-assert (string= (channel-resource--availability
+                                    (participant kind residence presence) served)
+                                   expected)
+                          (format nil "a ~(~A~) residing in ~A is ~A" kind residence expected))))
+  (with-test-configuration (configuration)
+    (let ((directory (localgroup-registry-directory configuration)))
+      (ensure-directories-exist directory)
+      (loop for (session-id pid) in (list (list "bserved" (current-process-id))
+                                          (list "bgone11" (world-restart-tests--ended-process-id)))
+            do (image-daemon:daemon-registry-publish
+                (localgroup-registry-pathname configuration session-id)
+                (list :localgroup-endpoint :version 1 :session-id session-id :pid pid
+                      :address "127.0.0.1" :port 4000 :token "token" :created-at 1)))
+      (test-assert (equal (channel-resource--served-channels configuration) '("bserved"))
+                   "a channel counts as served while the process of its endpoint lives")))
+  nil)
+
 (-> test-world-channel-resource () null)
 (defun test-world-channel-resource ()
   "Test channel: reads describe a channel and page its history."
