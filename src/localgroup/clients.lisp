@@ -212,6 +212,11 @@
     :initarg       :entry
     :reader        localgroup-client-connection-entry
     :documentation "The original authenticated endpoint entry used for this connection.")
+   (checkpoint-reconnect-id
+    :initform      nil
+    :accessor      localgroup-client-connection-checkpoint-reconnect-id
+    :type          (option string)
+    :documentation "The planned restart announced before this connection closes.")
    (attached
     :initarg       :attached
     :reader        localgroup-client-connection-attached
@@ -223,11 +228,27 @@
     :documentation "The thread reading events and replies."))
   (:documentation "A structured client's connection to one channel."))
 
+(-> localgroup-client--read-greeting (stream (option function)) list)
+(defun localgroup-client--read-greeting (stream cancelled-p)
+  "Read the required greeting boundedly, checking cancellation before it arrives."
+  (sb-sys:with-deadline (:seconds image-daemon:*daemon-connect-timeout-seconds*)
+    (when cancelled-p
+      (loop until (listen stream)
+            do (when (funcall cancelled-p)
+                 (error 'localgroup-error :message  "Client attachment was cancelled."
+                                         :operation ':client))
+               (sleep 0.01))
+      (when (funcall cancelled-p)
+        (error 'localgroup-error :message  "Client attachment was cancelled."
+                                :operation ':client)))
+    (daemon-read-response stream ':client)))
+
 (-> localgroup-client-connect
     (cons &key (:name string) (:event-function function) (:approves-p boolean)
-          (:after-sequence (option integer)))
+          (:after-sequence (option integer)) (:cancelled-p (option function)))
     localgroup-client-connection)
-(defun localgroup-client-connect (entry &key (name "client") event-function (approves-p t) after-sequence)
+(defun localgroup-client-connect (entry &key (name "client") event-function (approves-p t)
+                                           after-sequence cancelled-p)
   "Connect to the channel of localgroup endpoint ENTRY as a structured client NAME.
 
 EVENT-FUNCTION is called on the reader thread with each event, and with
@@ -240,7 +261,7 @@ does not leaves them to a terminal or another client."
     (multiple-value-setq (socket stream)
       (daemon-connect (localgroup--record-port record)))
     (handler-case
-        (progn
+        (sb-sys:with-deadline (:seconds image-daemon:*daemon-connect-timeout-seconds*)
           (daemon-write-packet stream
                                (list :localgroup-request
                                      :version   *daemon-protocol-version*
@@ -248,9 +269,9 @@ does not leaves them to a terminal or another client."
                                      :operation ':client
                                      :arguments (list :name name :approves-p approves-p
                                                       :after-sequence after-sequence)))
-          (let ((greeting (daemon-read-response stream ':client)))
+          (let ((greeting (localgroup-client--read-greeting stream cancelled-p)))
             (unless (eq (first greeting) ':attached)
-              (error 'localgroup-error
+              (error 'localgroup-client-rejected
                      :message    (or (getf (rest greeting) :message)
                                      "The channel did not accept the client.")
                      :operation  ':client
@@ -278,9 +299,10 @@ does not leaves them to a terminal or another client."
 Each call owns one pending reply entry, removed on every exit. Socket
 writes are serialized separately so blocked I/O cannot prevent teardown."
   (let ((identifier (with-lock-held ((localgroup-client-connection-lock connection))
-                      (when (localgroup-client-connection-closed-p connection)
+                      (when (or (localgroup-client-connection-closed-p connection)
+                                (localgroup-client-connection-checkpoint-reconnect-id connection))
                         (error 'localgroup-error
-                               :message   "The client connection is closed."
+                               :message   "The client connection is not accepting requests."
                                :operation ':client))
                       (let ((identifier (incf (localgroup-client-connection-next-identifier connection))))
                         (setf (gethash identifier (localgroup-client-connection-replies connection)) nil)
@@ -294,7 +316,11 @@ writes are serialized separately so blocked I/O cannot prevent teardown."
                    (finish-output (localgroup-client-connection-stream connection)))
                (error (condition)
                  (localgroup-client--disconnect connection)
-                 (error condition))))
+                (error 'localgroup-request-interrupted
+                       :message      (format nil "The request was interrupted during transport: ~A. Its execution outcome is unknown."
+                                             condition)
+                       :operation ':client :identifier identifier :command command
+                       :reconnect-id (localgroup-client-connection-checkpoint-reconnect-id connection)))))
            (with-lock-held ((localgroup-client-connection-lock connection))
              (loop
                (let ((reply (gethash identifier (localgroup-client-connection-replies connection))))
@@ -304,9 +330,10 @@ writes are serialized separately so blocked I/O cannot prevent teardown."
                       (error 'localgroup-error :message (getf (rest reply) :error) :operation ':client))
                     (return (rest reply)))
                    ((localgroup-client-connection-closed-p connection)
-                    (error 'localgroup-error
-                           :message   "The client connection closed before the reply arrived."
-                           :operation ':client))
+                    (error 'localgroup-request-interrupted
+                           :message      "The client connection closed before the reply arrived. The request's execution outcome is unknown."
+                           :operation ':client :identifier identifier :command command
+                           :reconnect-id (localgroup-client-connection-checkpoint-reconnect-id connection)))
                    (t
                     (condition-wait (localgroup-client-connection-condition-variable connection)
                                     (localgroup-client-connection-lock connection))))))))
@@ -338,8 +365,13 @@ writes are serialized separately so blocked I/O cannot prevent teardown."
                           (setf (gethash identifier replies) packet)
                           (sb-thread:condition-broadcast
                            (localgroup-client-connection-condition-variable connection)))))
-                    (when event-function
-                      (funcall event-function packet))))
+                    (progn
+                      (when (eq (first packet) ':checkpoint-reconnect)
+                        (with-lock-held ((localgroup-client-connection-lock connection))
+                          (setf (localgroup-client-connection-checkpoint-reconnect-id connection)
+                                (getf (rest packet) :id))))
+                      (when event-function
+                        (funcall event-function packet)))))
     (localgroup-client--disconnect connection)
     ; mallet:suppress no-ignore-errors -- the server may have closed the connection already
     (ignore-errors (sb-bsd-sockets:socket-close (localgroup-client-connection-socket connection)))

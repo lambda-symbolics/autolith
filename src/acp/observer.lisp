@@ -226,10 +226,10 @@
        (acp-session--work-finished session fields))
       (:state
        (acp-session--state session (getf fields :state)))
+      (:checkpoint-reconnect
+       (acp-session--checkpoint-reconnect session fields))
       (:closed
-       (with-lock-held ((acp-session-lock session))
-         (setf (acp-session-closed-p session) t)
-         (sb-thread:condition-broadcast (acp-session-condition-variable session))))))
+       (acp-session--connection-closed session))))
   nil)
 
 (-> acp-session--text (acp-session t) null)

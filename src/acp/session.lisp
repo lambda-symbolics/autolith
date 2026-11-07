@@ -36,6 +36,10 @@
     :initform      (make-lock "Autolith ACP service")
     :reader        acp-service-lock
     :documentation "The lock protecting session admission.")
+   (open-lock
+    :initform      (make-lock "Autolith ACP session setup")
+    :reader        acp-service-open-lock
+    :documentation "Serializes setup through the protocol library's registration.")
    (closed-p
     :initform      nil
     :accessor      acp-service-closed-p
@@ -63,6 +67,20 @@
     :initform      nil
     :accessor      acp-session-connection
     :documentation "The structured client connection to the channel.")
+   (reconnect-id
+    :initform      nil
+    :accessor      acp-session-reconnect-id
+    :type          (option string)
+    :documentation "The authenticated checkpoint transition awaiting a replacement endpoint.")
+   (reconnect-thread
+    :initform      nil
+    :accessor      acp-session-reconnect-thread
+    :documentation "The worker reconnecting this session, or NIL.")
+   (reconnect-failure
+    :initform      nil
+    :accessor      acp-session-reconnect-failure
+    :type          (option string)
+    :documentation "The reported reason a planned reconnect failed, or NIL.")
    (started-p
     :initarg       :started-p
     :initform      nil
@@ -195,10 +213,18 @@
 (-> acp-session-call (acp-session keyword &rest t) list)
 (defun acp-session-call (session command &rest arguments)
   "Send COMMAND with ARGUMENTS to SESSION's channel and return the reply's fields."
-  (let ((connection (acp-session-connection session)))
-    (unless (and connection (not (acp-session-closed-p session)))
-      (error 'agentcomms:acp-state-error :message "The session's channel is gone."))
+  (let ((connection (acp-session--await-connection session)))
     (handler-case (apply #'localgroup-client-call connection command arguments)
+      (localgroup-request-interrupted (condition)
+        (error 'acp-request-interrupted
+               :message (autolith-error-message condition)
+               :data    (agentcomms:json-object
+                         "outcome" "interrupted"
+                         "executionOutcome" "unknown"
+                         "requestId" (localgroup-request-interrupted-identifier condition)
+                         "command" (string-downcase
+                                    (symbol-name (localgroup-request-interrupted-command condition)))
+                         "reconnectId" (localgroup-request-interrupted-reconnect-id condition))))
       (localgroup-error (condition)
         (error 'agentcomms:acp-state-error :message (autolith-error-message condition))))))
 
@@ -223,28 +249,38 @@
 
 (-> acp-session-close (acp-session) null)
 (defun acp-session-close (session)
-  "Leave the channel, and close it when the server started it for this session and nobody else follows it."
-  (let ((connection nil))
+  "Leave the channel and cancel any planned reconnect before releasing its registration."
+  (let ((connection nil)
+        (reconnect  nil))
     (with-lock-held ((acp-session-lock session))
-      (unless (acp-session-closed-p session)
-        (setf (acp-session-closed-p session) t
-              connection                     (acp-session-connection session)))
+      (setf (acp-session-closed-p session) t
+            (acp-session-reconnect-id session) nil
+            connection (acp-session-connection session)
+            reconnect (acp-session-reconnect-thread session))
       (sb-thread:condition-broadcast (acp-session-condition-variable session)))
+    (acp-session--forget session)
     (when connection
-      (localgroup-client-close connection)
-      (when (acp-session-started-p session)
-        (let* ((configuration (acp-service-configuration (acp-session-service session)))
-               (world         (world-client-entry configuration)))
-          (when world
-            (handler-case
-                (localgroup-query-record world ':close
-                                         (list :channel           (acp-session-identifier session)
-                                               :unattached-only-p t))
-              (localgroup-error ()
-                nil)))))))
+      (localgroup-client-close connection))
+    (when (and reconnect (not (eq reconnect (current-thread))))
+      (join-thread reconnect))
+    (when (and connection (acp-session-started-p session))
+      (let* ((configuration (acp-service-configuration (acp-session-service session)))
+             (world         (world-client-entry configuration)))
+        (when world
+          (handler-case
+              (localgroup-query-record world ':close
+                                       (list :channel           (acp-session-identifier session)
+                                             :unattached-only-p t))
+            (localgroup-error ()
+              nil))))))
   nil)
 
 (define-condition acp-operation-busy (agentcomms:acp-method-error)
   ()
   (:default-initargs :code -32603 :message "Another primary operation is active.")
   (:documentation "The channel works on something that does not admit this operation now."))
+
+(define-condition acp-request-interrupted (agentcomms:acp-state-error agentcomms:acp-method-error)
+  ()
+  (:default-initargs :code -32603)
+  (:documentation "A channel request lost its reply; DATA identifies its unknown execution outcome."))
