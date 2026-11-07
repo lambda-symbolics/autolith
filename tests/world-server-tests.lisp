@@ -63,6 +63,58 @@
     (or (application-localgroup-session (world-host-application host))
         (error "Channel ~A has no session." identifier))))
 
+(-> test-world-server-cold-channels () null)
+(defun test-world-server-cold-channels ()
+  "Test a channel nobody uses unloads after the idle minutes, and stays while it is in use."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry      (world-client-entry configuration))
+            (identifier (getf (rest (world-server-tests--open entry (world-tests--workspace root "cold")))
+                              :session-id))
+            (host       (world-server--find-host server identifier))
+            (minute     (* 60 internal-time-units-per-second)))
+       (test-assert (task-tests--wait-until (lambda () (world-server--host-idle-p host)) 30)
+                    "a served channel nobody watches is idle")
+       (world-server--unload-cold-hosts server :now 0)
+       (world-server--unload-cold-hosts server :now (* 29 minute))
+       (test-assert (eq (world-server--find-host server identifier) host)
+                    "a channel idle for less than the idle minutes stays loaded")
+       (world-server--unload-cold-hosts server :now (* 31 minute))
+       (test-assert (task-tests--wait-until
+                     (lambda () (null (world-server--find-host server identifier))) 30)
+                    "a channel idle past the idle minutes is unloaded"))))
+  nil)
+
+(-> test-world-server-wake-channel () null)
+(defun test-world-server-wake-channel ()
+  "Test a message serves the unserved channel its agent resides in, and nothing else."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (declare (ignore root))
+     (world-tests--persisted-conversation configuration "bwake11" 1000)
+     (world-server--reconcile configuration)
+     (let ((started nil))
+       (test-call-with-function-replacements
+        (list (list 'world-server--start-host
+                    (lambda (candidate &key conversation-id directory arguments)
+                      (declare (ignore candidate directory))
+                      (push (list conversation-id (getf arguments :switch-p)) started)
+                      nil)))
+        (lambda ()
+          (flet ((wake (identifier)
+                   "Wake IDENTIFIER and wait for the server's main thread to act on it."
+                   (setf started nil)
+                   (funcall *world-message-unserved-function* identifier)
+                   (task-tests--wait-until (lambda () (null (world-server-jobs server))) 10)))
+            (wake "bwake11")
+            (test-assert (equal started '(("bwake11" t)))
+                         "a message to an agent's unserved channel serves it, without a boot screen")
+            (wake (world-tests--inbox configuration))
+            (test-assert (null started) "a message for the person in the inbox serves nothing")
+            (wake "bnone11")
+            (test-assert (null started) "an unknown channel serves nothing")))))))
+  nil)
+
 (-> test-world-server-hosting () null)
 (defun test-world-server-hosting ()
   "Test opening, sharing, closing and resuming channels through a world server."

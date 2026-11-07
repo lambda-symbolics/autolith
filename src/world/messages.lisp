@@ -22,6 +22,11 @@
 (defparameter *world-outbox-version* 1
   "The readable outbox format version.")
 
+(defvar *world-message-unserved-function* nil
+  "A function called with each channel a message reached that no process serves, or NIL.
+
+The world server sets it while it runs, so a message wakes the agent it is for.")
+
 (deftype world-delivery-kind ()
   "Why a delivery reached a channel: addressed to it, subscribed, mentioned, or a notice for the person residing there."
   '(member :post :subscription :mention :notice))
@@ -653,6 +658,10 @@ count."
               nil)))))
     (when (world-message--person-inbox-among-p configuration channel-identifiers)
       (application-world-notify-person configuration))
+    (when *world-message-unserved-function*
+      (dolist (channel-identifier channel-identifiers)
+        (unless (member channel-identifier reached :test #'string=)
+          (funcall *world-message-unserved-function* channel-identifier))))
     (nreverse reached)))
 
 (-> world-message--person-inbox-among-p (configuration list) boolean)

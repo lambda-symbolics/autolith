@@ -580,6 +580,15 @@ controller's exit reason."
                      input-controller)
                     (application-input-controller--start-reader
                      input-controller)
+                    ;; A channel served for a message, or opened while
+                    ;; messages waited, reads them now.
+                    (when hosted-p
+                      (handler-case (application-world-deliver application)
+                        (error (cause)
+                          (warn 'world-session-warning
+                                :pathname (configuration-world-path
+                                           (application-configuration application))
+                                :cause    cause))))
                     ;; Entering the interactive debugger would hang the raw
                     ;; terminal, so debugger entry becomes fatal recovery.
                     (let ((*checkpoint-thread-quiescer*
