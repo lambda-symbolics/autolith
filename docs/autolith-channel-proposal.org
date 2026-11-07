@@ -278,15 +278,18 @@ Client
 - A checkpoint waits until no agent in any channel is working and no job is
   running, and jobs that would start while it waits are held until it ends.
   (Decided 2026-11-05.)
+- On Windows, which cannot fork, a checkpoint restarts the whole world server
+  from its saved heap, and every channel resumes. While the server is gone, a
+  marker naming its launcher makes clients wait instead of starting a second
+  server. (Decided 2026-11-06.)
 - The world store appends each change to its log rather than rewriting it;
   rewrites happen only for repair and explicit compaction. (Decided 2026-11-05.)
 - Each channel has its own CWD, independent of the server's launch directory.
 
 * Implementation details left
 
-- A Windows exact-heap checkpoint is to restart the whole world server with
-  every channel, and clients reconnect. (Decided 2026-11-06.) Until that is
-  built and tried on Windows, the server refuses such checkpoints.
+- Checkpointing may need a new design now that one process hosts every
+  channel: a checkpoint pauses all of them, and on Windows restarts them all.
 - Message ordering, batching, deduplication, and self-message handling beyond
   the sharing and receipt rules above.
 - The exact mention syntax beyond the word boundary rule: escaping, quoted text
