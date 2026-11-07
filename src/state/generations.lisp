@@ -88,8 +88,13 @@ can still be listed and booted."
 
 (-> generation-git-commit (t) t)
 (defun generation-git-commit (generation)
-  "Return the clean source revision GENERATION represents."
+  "Return the source revision GENERATION represents."
   (getf (generation-metadata generation) :git-commit))
+
+(-> generation-dirty-p (t) boolean)
+(defun generation-dirty-p (generation)
+  "Return true when GENERATION was saved from a source tree with uncommitted changes."
+  (not (null (getf (generation-metadata generation) :dirty-p))))
 
 (-> generation-image-commit-identifier (t) (option string))
 (defun generation-image-commit-identifier (generation)
@@ -114,11 +119,15 @@ can still be listed and booted."
 
 (-> generation--metadata (configuration string &key (:git-commit (option string))
                                                     (:mutation-checker
-                                                     (option mutation-checker)))
+                                                     (option mutation-checker))
+                                                    (:dirty-p boolean))
     list)
 (defun generation--metadata
-    (configuration identifier &key git-commit mutation-checker)
+    (configuration identifier &key git-commit mutation-checker dirty-p)
   "Return the Autolith manifest properties for a new generation IDENTIFIER.
+
+DIRTY-P marks a generation saved from a source tree with uncommitted changes,
+which its recorded revision does not fully describe.
 
 Preparing the image commit and writing its replay script happen here, before any
 quiescing, because both touch the private history repository."
@@ -135,22 +144,24 @@ quiescing, because both touch the private history repository."
      reconstruction-pathname
      :generation-identifier identifier
      :commit                image-commit)
-    (list :reconstruction (namestring reconstruction-pathname)
-          :image-commit   (and image-commit (image-commit-identifier image-commit))
-          :mutation-history-commit
-          (and image-commit (image-commit-history-commit image-commit))
-          :git-commit     (or git-commit
-                              (source-revision
-                               (make-source-provenance
-                                (config :source-root configuration))))
-          :journal-position
-          (let ((journal (configuration-journal-path configuration)))
-            (if (probe-file journal)
-                (with-open-file (stream journal
-                                        :direction    ':input
-                                        :element-type '(unsigned-byte 8))
-                  (file-length stream))
-                0)))))
+    (list* :reconstruction (namestring reconstruction-pathname)
+           :image-commit   (and image-commit (image-commit-identifier image-commit))
+           :mutation-history-commit
+           (and image-commit (image-commit-history-commit image-commit))
+           :git-commit     (or git-commit
+                               (source-revision
+                                (make-source-provenance
+                                 (config :source-root configuration))))
+           :journal-position
+           (let ((journal (configuration-journal-path configuration)))
+             (if (probe-file journal)
+                 (with-open-file (stream journal
+                                         :direction    ':input
+                                         :element-type '(unsigned-byte 8))
+                   (file-length stream))
+                 0))
+           (when dirty-p
+             (list :dirty-p t)))))
 
 
 ;;;; -- Retained Generations --
@@ -362,12 +373,13 @@ between that process's exit and the boot of the saved core."
       (dolist (generation generations)
         (let ((health (generation-health generation)))
           (format stream
-                  "~A  ~A  source ~A~%  image ~A~%  history ~A~%  replay ~A~%"
+                  "~A  ~A  source ~A~:[~; (dirty)~]~%  image ~A~%  history ~A~%  replay ~A~%"
                   (generation-identifier generation)
                   (if (getf health :compatible)
                       "compatible"
                       (format nil "incompatible (~A)" (getf health :reason)))
                   (generation-git-commit generation)
+                  (generation-dirty-p generation)
                   (or (generation-image-commit-identifier generation) "base")
                   (or (generation-mutation-history-commit generation) "unavailable")
                   (if (generation-reconstruction-pathname generation)
@@ -413,12 +425,12 @@ persisted identity, in this process."
           (main (list "resume" identifier)))
         (main arguments))))
 
-(-> checkpoint--source-snapshot (configuration) string)
-(defun checkpoint--source-snapshot (configuration)
-  "Return the clean checked revision from CONFIGURATION's source tree."
+(-> checkpoint--source-snapshot (configuration &key (:allow-dirty-p boolean)) string)
+(defun checkpoint--source-snapshot (configuration &key allow-dirty-p)
+  "Return the checked revision of CONFIGURATION's source tree, which must be clean unless ALLOW-DIRTY-P."
   (let* ((source         (make-source-provenance (config :source-root configuration)))
          (clean-revision (lambda ()
-                           (unless (source-clean-p source)
+                           (unless (or allow-dirty-p (source-clean-p source))
                              (error 'checkpoint-error
                                     :message  "A checkpoint requires a clean source revision."
                                     :stage    ':validation
@@ -454,12 +466,12 @@ persisted identity, in this process."
                :pathname (config :source-root configuration)))
       after)))
 
-(-> checkpoint--revalidate-source (configuration string) null)
-(defun checkpoint--revalidate-source (configuration expected-commit)
-  "Require CONFIGURATION to remain clean at EXPECTED-COMMIT immediately before fork."
+(-> checkpoint--revalidate-source (configuration string &key (:allow-dirty-p boolean)) null)
+(defun checkpoint--revalidate-source (configuration expected-commit &key allow-dirty-p)
+  "Require CONFIGURATION to remain at EXPECTED-COMMIT immediately before fork, and clean unless ALLOW-DIRTY-P."
   (let* ((source (make-source-provenance (config :source-root configuration)))
          (commit (source-revision source)))
-    (unless (and (source-clean-p source)
+    (unless (and (or allow-dirty-p (source-clean-p source))
                  (string= commit expected-commit))
       (error 'checkpoint-error
              :message  "The source changed after checkpoint validation."
@@ -511,20 +523,22 @@ dropped and inherited worker descriptors detached before the image is saved."
   nil)
 
 (-> checkpoint-backend-create
-    (configuration t &key (:tool-registry (option tool-registry)))
+    (configuration t &key (:tool-registry (option tool-registry)) (:allow-dirty-p boolean))
     checkpoint-backend)
-(defun checkpoint-backend-create (configuration worker &key tool-registry)
+(defun checkpoint-backend-create (configuration worker &key tool-registry allow-dirty-p)
   "Return the checkpoint backend supported by this runtime.
 
 POSIX hosts save a forked copy while Windows saves and restarts the exact
 current heap under its stable launcher.  Both paths use the same validation,
-quiescence, metadata, and probe hooks."
+quiescence, metadata, and probe hooks. ALLOW-DIRTY-P lets the source tree have
+uncommitted changes; the generation then records that it is dirty."
   (unless (or (platform-supports-p *platform* ':forked-image-saver)
               (platform-supports-p *platform* ':restartable-image-saver))
     (error 'platform-capability-unavailable
            :capability ':forked-image-saver
            :message    "This host cannot save a checkpoint image."))
-  (let ((quiesced-runtime-tools nil))
+  (let ((quiesced-runtime-tools nil)
+        (dirty-p                nil))
     (with-generation-errors
       (funcall (if (platform-supports-p *platform* ':restartable-image-saver)
                    #'make-restart-checkpoint-backend
@@ -549,7 +563,10 @@ quiescence, metadata, and probe hooks."
                   :message  "A checkpoint cannot run inside a credential request scope."
                   :stage    ':validation
                   :pathname nil))
-         (checkpoint--source-snapshot configuration))
+         (prog1 (checkpoint--source-snapshot configuration :allow-dirty-p allow-dirty-p)
+           (setf dirty-p (and allow-dirty-p
+                              (not (source-clean-p
+                                    (make-source-provenance (config :source-root configuration))))))))
        :fork-guard-function
        (lambda (thunk)
          (checkpoint--call-with-fork-guard worker thunk))
@@ -558,7 +575,8 @@ quiescence, metadata, and probe hooks."
        ;; returned, because a close failure leaves this hook through a non-local
        ;; exit and the runtimes that did close still have to be resumed.
        (lambda (source-commit)
-         (checkpoint--revalidate-source configuration source-commit)
+         (checkpoint--revalidate-source configuration source-commit
+                                        :allow-dirty-p allow-dirty-p)
          (when tool-registry
            (multiple-value-bind (quiesced-tools close-failure)
                (tool-registry-quiesce-runtime-state tool-registry)
@@ -575,7 +593,8 @@ quiescence, metadata, and probe hooks."
        :metadata-function
        (lambda (identifier source-commit)
          (generation--metadata configuration identifier
-                               :git-commit source-commit))
+                               :git-commit source-commit
+                               :dirty-p    dirty-p))
        :prepare-function
        (lambda (generation)
          (checkpoint--prepare-saver worker generation))

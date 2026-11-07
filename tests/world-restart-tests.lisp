@@ -119,10 +119,11 @@ skips the repository check."
 (defmethod platform-supports-p :around (platform (capability (eql :restartable-image-saver)))
   (declare (ignore platform))
   t)
-(defun checkpoint--source-snapshot (configuration)
+(defun checkpoint--source-snapshot (configuration &key allow-dirty-p)
+  (declare (ignore allow-dirty-p))
   (source-revision (make-source-provenance (config :source-root configuration))))
-(defun checkpoint--revalidate-source (configuration commit)
-  (declare (ignore configuration commit))
+(defun checkpoint--revalidate-source (configuration commit &key allow-dirty-p)
+  (declare (ignore configuration commit allow-dirty-p))
   nil)" stream))
   (test-call-with-function-replacements
    (list (list 'platform-session-launch-command
