@@ -30,6 +30,17 @@
 (defvar *world-lock* (make-recursive-lock "Autolith world")
   "Serializes in-process world transactions.")
 
+(defvar *world-followers* (make-hash-table :test #'equal)
+  "This process's follower of each world log it reads, keyed by the log's namestring.
+
+A follower folds only what other processes appended since it last read, so a
+world read costs a file status and the new records, not the whole log.")
+
+(defvar *world-checked* (make-hash-table :test #'equal)
+  "The world last found free of dangling references, keyed like the followers.
+
+A world the follower returns again unchanged needs no second check.")
+
 (deftype participant-kind ()
   "Whether a person or an agent client operates a participant."
   '(member :human :agent))
@@ -496,13 +507,32 @@ becomes one hyphen, with no hyphen at either end."
          :pathname  (sexp-store:store-error-pathname cause)
          :operation (sexp-store:store-error-operation cause)))
 
+(-> world--follower (configuration) sexp-store:log-follower)
+(defun world--follower (configuration)
+  "Return this process's follower of CONFIGURATION's world log, made on first use.
+
+The caller holds *WORLD-LOCK*."
+  (let ((key (namestring (configuration-world-path configuration))))
+    (or (gethash key *world-followers*)
+        (setf (gethash key *world-followers*)
+              (sexp-store:log-follower-create (world--store configuration)
+                                              :copier #'world--copy)))))
+
 (-> world-load (configuration) world)
 (defun world-load (configuration)
-  "Return CONFIGURATION's complete world, checked for dangling references."
+  "Return CONFIGURATION's complete world, checked for dangling references.
+
+The world returned is never changed afterwards; a later change comes back as
+another world."
   (with-recursive-lock-held (*world-lock*)
     (handler-case
-        (world--check-integrity (configuration-world-path configuration)
-                                (sexp-store:store-read (world--store configuration)))
+        (let* ((pathname (configuration-world-path configuration))
+               (key      (namestring pathname))
+               (world    (sexp-store:log-follower-read (world--follower configuration))))
+          (unless (eq world (gethash key *world-checked*))
+            (world--check-integrity pathname world)
+            (setf (gethash key *world-checked*) world))
+          world)
       (sexp-store:store-error (cause)
         (world--store-error cause)))))
 
@@ -516,8 +546,8 @@ batch that would leave a dangling reference is refused whole."
   (let ((pathname (configuration-world-path configuration)))
     (with-recursive-lock-held (*world-lock*)
       (handler-case
-          (sexp-store:store-transact
-           (world--store configuration)
+          (sexp-store:log-follower-transact
+           (world--follower configuration)
            (lambda (world)
              (multiple-value-bind (records result) (funcall update world)
                (when records
