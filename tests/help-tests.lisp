@@ -37,8 +37,8 @@
            (tool     (application-operation-help application "test-operation.echo")))
       (test-assert (and (search "(new)" section) (not (search "(new)" command)))
                    "keywords choose sections while quoted symbols choose commands")
-      (test-assert (equal (application-operation-help application " ReSuMe ")
-                          (application-operation-help application 'resume))
+      (test-assert (equal (application-operation-help application " SwItCh ")
+                          (application-operation-help application 'switch))
                    "command subjects accept strings and ignore case and outer whitespace")
       (test-assert (equal (application-operation-help application "/usage")
                           (application-operation-help application 'status))
@@ -129,7 +129,7 @@
   (with-help-tests-application (application terminal)
     (let* ((conversation (application-conversation application))
            (before       (conversation-next-sequence conversation)))
-      (dolist (source '("(help)" "(help :workspace)" "(help 'resume)"
+      (dolist (source '("(help)" "(help :workspace)" "(help 'switch)"
                         "(help \"test-operation.echo\")" "(help 42)"
                         "(help \"definitely-unknown\")"))
         (recording-terminal-reset terminal)
@@ -149,7 +149,7 @@
                    "looking up a tool never invokes it")
       (dolist (case '(("(help)" :execute)
                       ("(help :workspace)" :execute)
-                      ("(help 'resume)" :execute)
+                      ("(help 'switch)" :execute)
                       ("(help \"test-operation.echo\")" :execute)
                       ("(help (read-line))" :hold)))
         (destructuring-bind (source expected) case

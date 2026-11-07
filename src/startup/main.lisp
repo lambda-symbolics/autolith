@@ -543,8 +543,6 @@ controller's exit reason."
                     (setf (application-recovery-startup-p application) nil)
                     (when initial-input
                       (terminal-ui-set-input ui initial-input))
-                    (setf (application-project-adaptation-offer-p application)
-                          (and resume-offer-p (not (null initial-command))))
                     (setf input-controller
                           (application-input-controller-create
                            application
@@ -1105,7 +1103,7 @@ state, including an empty list after successful or pristine startup."
              *active-application*
              :initial-command    (and resume-command-p
                                       (null effective-resume-id)
-                                      "(resume)")
+                                      "(switch)")
              :initial-input
              (if handoff-record
                  (localgroup-handoff-initial-input handoff-record)

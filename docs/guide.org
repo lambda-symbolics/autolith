@@ -886,7 +886,7 @@ Use =(help)= for a short overview. Choose a topic or look up one command:
 #+BEGIN_SRC lisp
 (help :conversations)
 (help :workspace)
-(help 'resume)
+(help 'switch)
 (help "lisp.eval")
 #+END_SRC
 
@@ -1419,9 +1419,8 @@ provider generation.
 Provider-generated refreshes are enabled by default. Use =(titles)=, =(titles t)=,
 or =(titles nil)= to inspect or change the durable global preference.
 
-=(resume)= displays titles in its picker. An explicit =(resume "ID")= accepts the
-stable conversation identifier or a part that identifies one conversation.
-Several matches are listed instead. The terminal status bar and local session
+=(switch)= displays titles in its picker. An explicit =(switch "ID")= accepts the
+stable conversation identifier or a part that identifies one channel. The terminal status bar and local session
 status show the title when one is available; otherwise they show the conversation
 ID.
 
@@ -1590,9 +1589,9 @@ sidebar is hidden automatically.
 
 Every channel the server hosts, like every directly running session,
 publishes a private authenticated local endpoint. Its session ID is the
-active conversation ID, shared with =resume= and stable across detach,
+active conversation ID, shared with =autolith resume= and stable across detach,
 restart and checkpoint quiescence. Selecting another conversation with
-=new=, =resume= or =fork= moves the endpoint to that conversation ID while
+=new= or =fork= moves the endpoint to that conversation ID while
 attached terminals continue using the same connection. Inspect endpoints
 with:
 
@@ -1615,7 +1614,7 @@ autolith resume
 With =--detached=, Autolith prints the full conversation ID and session PID,
 then exits without attaching. This works with closed stdin. Detached resume
 requires an ID. Without
-=--detached=, omit the ID to open the conversation picker. An exact canonical
+=--detached=, omit the ID to open the =(switch)= channel picker. An exact canonical
 or displayed ID wins; otherwise any part of an ID selects the one conversation
 containing it, without regard to case, and a part matching several reports
 every matching ID with its available title, workspace, time, and preview
@@ -1812,7 +1811,7 @@ unread. The sidebar counts it, and so does the modeline of every channel,
 as in =✉ 2 unread=, in plain mode too. Each notice ends with the form that goes
 where it was said, such as =(switch "b-6uouHJ")=; in fullscreen, clicking it
 runs it as if you had typed it. =(switch "inbox")= opens the inbox, which
-=(resume)= and the conversation picker never offer. Typing in the inbox
+the =(switch)= picker lists first. Typing in the inbox
 reaches no agent; =(tell "ID" "text")= writes to a channel from there.
 Messages you write elsewhere name the channel you wrote them in as their
 source. Messages wait in the channel's inbox under

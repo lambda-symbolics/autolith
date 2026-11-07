@@ -94,7 +94,7 @@
                       :page-down (:resize 60 18)
                       (:paste "(help :workspace)") :submit
                       (:paste "(help \"model\")") :submit
-                      (:paste "(help 'resume)") :submit
+                      (:paste "(help 'switch)") :submit
                       (:paste "/help not-a-topic") :submit
                       (:paste "(help (incf effects))") :submit
                       :home :kill-to-end (:paste "(help \"unfinished)") :submit
@@ -114,12 +114,12 @@
         (test-assert (eq outcome ':completed) "exploration ends with continue")
         (test-assert (equal ids '("help")) "help lesson acknowledges once")
         (test-assert (equal completed '("help")) "topic requests do not acknowledge pages"))
-      (test-assert (equal (reverse requests) '(nil :workspace "model" resume "not-a-topic" nil))
+      (test-assert (equal (reverse requests) '(nil :workspace "model" switch "not-a-topic" nil))
                    "only literal help requests reach the callback, once per request")
       (test-assert (zerop effects) "reader and nested forms have no effects")
       (test-assert (null (scripted-terminal-events terminal)) "invalid requests leave lesson active")
       (let ((output (clinedi:ansi-strip (recording-terminal-output terminal))))
-        (dolist (topic '("overview" "WORKSPACE" "model" "RESUME" "not-a-topic"))
+        (dolist (topic '("overview" "WORKSPACE" "model" "SWITCH" "not-a-topic"))
           (test-assert (search (format nil "Selected help: ~A" topic) output)
                        "each selected topic is presented")))
       (test-assert (string= "saved draft" (line-editor-text (terminal-ui-editor ui)))

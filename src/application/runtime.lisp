@@ -277,13 +277,7 @@ Clicking the rendered call's header inserts it into the composer.")
     :initform      nil
     :accessor      application-checkpoint-restart-request
     :type          (option cons)
-    :documentation "The pending exact-heap checkpoint scheduled after the current turn.")
-   (project-adaptation-offer-p
-    :initform nil
-    :accessor application-project-adaptation-offer-p
-    :type     boolean
-    :documentation
-    "Whether command-line resume should offer project adaptation notes."))
+    :documentation "The pending exact-heap checkpoint scheduled after the current turn."))
   (:documentation "The globally rooted logical state and reconnectable resources of Autolith."))
 
 

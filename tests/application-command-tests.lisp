@@ -500,7 +500,7 @@
       (case
        '(("/model" t)
          ("/effort high" nil)
-         ("/resume K-8vQ2mp" nil)
+         ("/switch K-8vQ2mp" nil)
          ("/compact" nil)))
     (destructuring-bind (input expected) case
       (let* ((invocation (application-command-invocation-parse input))
@@ -523,7 +523,7 @@
   (dolist
       (case
        '(("/help" (&optional topic))
-         ("/resume" (&optional (identifier nil identifier-supplied-p)))
+         ("/switch" (&optional (designator nil designator-p)))
          ("/cwd" (&optional pathname))
          ("/trace" (&optional (mode ':status)))
          ("/timestamps" (&optional (mode ':status)))
@@ -644,18 +644,14 @@
        (program-error ()
          t))
      "a built-in rejects arguments beyond its optional Lisp parameter")
-    (setf (application-project-adaptation-offer-p application) t)
     (let ((*application-command-interactive-p* t))
       (test-assert
        (eq (application--builtin-model-command application nil) ':continue)
        "an explicit NIL optional argument never invokes its picker"))
     (let ((*application-command-interactive-p* nil))
       (test-assert
-       (eq (application--builtin-resume-command application) ':continue)
-       "noninteractive omission remains nonmodal"))
-    (test-assert
-     (application-project-adaptation-offer-p application)
-     "nonmodal resume calls do not consume the interactive startup offer"))
+       (eq (application--builtin-switch-command application) ':continue)
+       "noninteractive omission remains nonmodal")))
   nil)
 
 (-> test-switch-command-direct () null)
@@ -685,11 +681,11 @@
             (lambda ()
               (application--builtin-switch-command application "switchtar")
               (test-assert (and (equal resumed '("switchtarget"))
-                                (search "Switched to" (first presented)))
-                           "a direct session resumes the channel a unique fragment names")
+                                (null presented))
+                           "a direct session resumes the channel a unique fragment names, without a line about it")
               (application--builtin-switch-command application "operation-surf")
               (test-assert (and (equal resumed '("switchtarget"))
-                                (search "already" (first presented)))
+                                (search "already" (terminal--spans-text (first presented))))
                            "the current channel is reported without a resume")
               (test-assert (handler-case
                                (progn (application--builtin-switch-command application "zzzz") nil)

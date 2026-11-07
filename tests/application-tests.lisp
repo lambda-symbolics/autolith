@@ -417,7 +417,7 @@
                               "(settings :boot-screen-seconds 2)"
                               "(settings :terminal-theme)")
                   ("/trace" "(trace t)" "(trace nil)" "(effort)")
-                  ("/help" "(help :workspace)" "(help 'resume)")
+                  ("/help" "(help :workspace)" "(help 'switch)")
                   ("/vault-store" "(setf (vault-contents 0) '(:message \"new task\"))")
                   ("/data.export" "(data.export pathname :workspace directory)")
                   ("/auth" "(auth \"chatgpt\" :device-code)" ":browser")))
@@ -4946,7 +4946,6 @@
                     ("/effort" :hold)
                     ("/status" :execute)
                     ("/compact" :hold)
-                    ("/resume" :hold)
                     ("/quit" :cancel)))
       (destructuring-bind (input expected) case
         (test-assert (eq (busy-action input) expected)
@@ -5080,8 +5079,8 @@
                  "the permission picker takes terminal ownership")
     (test-assert (terminal-owner-p "/model gpt-5.6-luna")
                  "explicit model changes own the terminal for the effort picker")
-    (test-assert (terminal-owner-p "/resume")
-                 "resume declares terminal ownership for its modal selector")
+    (test-assert (terminal-owner-p "/switch")
+                 "switch declares terminal ownership for its modal selector")
     (test-assert (not (terminal-owner-p "/compact"))
                  "nonmodal model commands retain responsive input")
     (test-assert (terminal-owner-p "/auth")
@@ -5981,8 +5980,8 @@
        (let ((*main-direct-start-p* t))
          (main-dispatch '("resume")))))
     (test-assert
-     (string= observed-initial-command "(resume)")
-     "plain command-line resume starts the canonical Lisp operation"))
+     (string= observed-initial-command "(switch)")
+     "plain command-line resume starts the channel picker"))
   (test-assert
    (string= (application--selected-conversation-id
              "explicit" "recovered")
@@ -6192,7 +6191,7 @@
            (recording-terminal-reset terminal)
            (setf (scripted-terminal-events terminal)
                  (list '(:insert "d") :escape))
-           (test-assert (null (application--pick-conversation application))
+           (test-assert (null (application--pick-channel application))
                         "escape cancels after refusing active deletion")
            (test-assert
              (and (conversation-storage-occupied-p
@@ -6224,7 +6223,7 @@
                        (declare (ignore root validate if-does-not-exist))
                        (error "simulated cleanup failure"))))
                (test-assert
-                (null (application--pick-conversation application))
+                (null (application--pick-channel application))
                 "cleanup failure returns to browsing until escape"))
              (test-assert
                (and (not (conversation-storage-occupied-p
@@ -6239,7 +6238,7 @@
                        :history-next
                        :submit
                        :escape))
-           (test-assert (null (application--pick-conversation application))
+           (test-assert (null (application--pick-channel application))
                         "keeping a conversation returns to the browse picker")
            (test-assert
             (conversation-storage-occupied-p
@@ -6258,7 +6257,7 @@
              (recording-terminal-reset terminal)
              (setf (scripted-terminal-events terminal)
                    (list :history-next '(:insert "d") :submit :escape))
-             (test-assert (null (application--pick-conversation application))
+             (test-assert (null (application--pick-channel application))
                           "deletion returns to browsing until escape")
              (test-assert
                (and (not (conversation-storage-occupied-p
