@@ -664,6 +664,7 @@
 
 (define-test-suite client-protocol
   test-client-protocol-channel
+  test-client-approval-terminal-arbitration
   test-client-protocol-disconnect
   test-client-protocol-packet-limit
   test-client-protocol-cursor-tail

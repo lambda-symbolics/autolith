@@ -91,7 +91,9 @@ approval is dismissed, the turn is cancelled, or nobody is left to answer."
                                                  (list :accept (second event)))))
                    (application--await-approval application approval)))
       (with-lock-held ((client-hub-lock hub))
-        (setf (client-hub-approval hub) nil))
+        (application--claim-approval hub approval choice)
+        (setf choice (channel-approval-answer approval)
+              (client-hub-approval hub) nil))
       (application-clients-publish application
                                    (list :approval-settled
                                          :id    (channel-approval-identifier approval)
@@ -128,10 +130,17 @@ takes nothing."
   (let ((hub (application-client-hub application)))
     (with-lock-held ((client-hub-lock hub))
       (let ((approval (client-hub-approval hub)))
-        (when (and approval
-                   (string= identifier (channel-approval-identifier approval))
-                   (null (channel-approval-answer approval))
-                   (member value (channel-approval-choices approval) :test #'string=))
-          (setf (channel-approval-answer approval) value)
-          (condition-notify (client-hub-condition-variable hub))
-          t)))))
+        (and approval
+             (string= identifier (channel-approval-identifier approval))
+             (application--claim-approval hub approval value))))))
+
+(-> application--claim-approval (client-hub channel-approval (option string)) boolean)
+(defun application--claim-approval (hub approval value)
+  "Claim APPROVAL for VALUE while holding HUB's lock, returning whether it won."
+  (when (and (eq approval (client-hub-approval hub))
+             (null (channel-approval-answer approval))
+             value
+             (member value (channel-approval-choices approval) :test #'string=))
+    (setf (channel-approval-answer approval) value)
+    (condition-notify (client-hub-condition-variable hub))
+    t))
