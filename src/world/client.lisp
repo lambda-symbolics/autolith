@@ -113,27 +113,34 @@ sharing one it already served."
                                               :deadline        deadline))
                (response
                  (handler-case
-                     (localgroup-query-record
-                      entry ':open
-                      (append (when channel
-                                (list :channel channel))
-                              (when directory
-                                (list :directory (namestring directory)))
-                              (when launch
-                                (list :launch launch))
-                              (when new-p
-                                (list :new-p t))
-                              (when images
-                                (list :images images))
-                              (when mcp-servers
-                                (list :mcp-servers mcp-servers))
-                              (list :permission-mode    permission-mode
-                                    :fullscreen-p       (not (null (config :fullscreen-p configuration)))
-                                    :resume-command-p   (not (null resume-command-p))
-                                    :recovery-diagnosis recovery-diagnosis
-                                    :rows               rows
-                                    :columns            columns
-                                    :styled-p           (not (null (terminal-environment-styling-p))))))
+                     ;; Wait for the answer instead of sending the open again.
+                     ;; The first open can be slow because it migrates every
+                     ;; conversation, and a second open could start another channel.
+                     (let ((image-daemon:*daemon-connect-timeout-seconds*
+                             (max image-daemon:*daemon-connect-timeout-seconds*
+                                  (/ (- deadline (get-internal-real-time))
+                                     internal-time-units-per-second))))
+                       (localgroup-query-record
+                        entry ':open
+                        (append (when channel
+                                  (list :channel channel))
+                                (when directory
+                                  (list :directory (namestring directory)))
+                                (when launch
+                                  (list :launch launch))
+                                (when new-p
+                                  (list :new-p t))
+                                (when images
+                                  (list :images images))
+                                (when mcp-servers
+                                  (list :mcp-servers mcp-servers))
+                                (list :permission-mode    permission-mode
+                                      :fullscreen-p       (not (null (config :fullscreen-p configuration)))
+                                      :resume-command-p   (not (null resume-command-p))
+                                      :recovery-diagnosis recovery-diagnosis
+                                      :rows               rows
+                                      :columns            columns
+                                      :styled-p           (not (null (terminal-environment-styling-p)))))))
                    (localgroup-error (condition)
                      ;; A checkpoint refuses opens until the channels resume,
                      ;; and drops connections while the endpoint is away.
