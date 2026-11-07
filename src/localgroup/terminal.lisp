@@ -23,6 +23,11 @@
     :accessor      localgroup-terminal-screen-cursor
     :type          list
     :documentation "The row, column and visibility of the cursor in the frame last sent.")
+   (screen-whole-p
+    :initform      nil
+    :accessor      localgroup-terminal-screen-whole-p
+    :type          boolean
+    :documentation "Whether the frame last sent asked clients to hide their side panels.")
    (screen-synced
     :initform      nil
     :accessor      localgroup-terminal-screen-synced
@@ -121,7 +126,8 @@ own once it reads the request, so the relay keeps serving until then."
           :rows             rows
           :cursor-row       cursor-row
           :cursor-column    cursor-column
-          :cursor-visible-p cursor-visible-p)))
+          :cursor-visible-p cursor-visible-p
+          :whole-screen-p   (localgroup-terminal-screen-whole-p terminal))))
 
 (defmethod terminal-screen-enter ((terminal localgroup-terminal))
   "Start sending frames to TERMINAL's clients, or enter the screen of its direct terminal."
@@ -150,7 +156,7 @@ own once it reads the request, so the relay keeps serving until then."
 
 (defmethod terminal-screen-paint
     ((terminal localgroup-terminal) painter rows
-     &key (cursor-row 0) (cursor-column 0) (cursor-visible-p t))
+     &key (cursor-row 0) (cursor-column 0) (cursor-visible-p t) whole-screen-p)
   "Send TERMINAL's clients the rows that changed, and a complete frame to those without one."
   (if (image-daemon:relay-direct-terminal terminal)
       (call-next-method)
@@ -164,7 +170,9 @@ own once it reads the request, so the relay keeps serving until then."
                (resized-p   (or (null previous)
                                 (/= height (length previous))
                                 (/= width (localgroup-terminal-screen-width terminal))))
-               (moved-p     (not (equal cursor (localgroup-terminal-screen-cursor terminal)))))
+               (moved-p     (not (equal cursor (localgroup-terminal-screen-cursor terminal))))
+               (whole-p     (not (null whole-screen-p)))
+               (hinted-p    (not (eq whole-p (localgroup-terminal-screen-whole-p terminal)))))
           (loop for row in rows
                 for index from 0 below height
                 do (setf (aref frame index) row))
@@ -175,6 +183,7 @@ own once it reads the request, so the relay keeps serving until then."
             (setf (localgroup-terminal-screen-frame terminal) frame
                   (localgroup-terminal-screen-width terminal) width
                   (localgroup-terminal-screen-cursor terminal) cursor
+                  (localgroup-terminal-screen-whole-p terminal) whole-p
                   (localgroup-terminal-screen-synced terminal)
                   (remove-if-not (lambda (attachment) (member attachment attachments))
                                  (localgroup-terminal-screen-synced terminal)))
@@ -187,7 +196,7 @@ own once it reads the request, so the relay keeps serving until then."
                        (not (member attachment (localgroup-terminal-screen-synced terminal))))
                    (image-daemon:attachment-send attachment complete)
                    (pushnew attachment (localgroup-terminal-screen-synced terminal)))
-                  ((or changed moved-p)
+                  ((or changed moved-p hinted-p)
                    (image-daemon:attachment-send attachment delta)))))))
         nil)))
 
