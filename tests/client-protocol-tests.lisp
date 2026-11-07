@@ -420,3 +420,47 @@
            (with-lock-held ((client-hub-lock hub)) (setf (client-hub-admitting-p hub) t))
            (when connection (localgroup-client-close connection)))))))
   nil)
+
+(-> test-client-approval-terminal-arbitration () null)
+(defun test-client-approval-terminal-arbitration ()
+  "Test terminal selections and editor answers share one first-answer-wins decision."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry       (world-client-entry configuration))
+            (channel     (getf (rest (world-server-tests--open entry (world-tests--workspace root "race")))
+                               :session-id))
+            (application (world-host-application (world-server--find-host server channel)))
+            (hub         (application-client-hub application))
+            (settled     nil))
+       (dolist (editor-choice '("deny" "once"))
+         (let ((terminal-choice (if (string= editor-choice "deny") "once" "deny")))
+           (test-call-with-function-replacements
+            (list
+             (list 'terminal-interactive-p (lambda (candidate)
+                                            (declare (ignore candidate))
+                                            t))
+             (list 'application-clients-publish
+                   (lambda (candidate event)
+                     (declare (ignore candidate))
+                     (when (eq (first event) ':approval-settled)
+                       (setf settled (getf (rest event) :value)))))
+             (list 'terminal-ui-select
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))
+                     ;; The editor answer lands after the picker last polled,
+                     ;; but before the terminal's independent return.
+                     (test-assert
+                      (application-answer-approval
+                       application (channel-approval-identifier (client-hub-approval hub)) editor-choice)
+                      "the editor's first answer is accepted")
+                     terminal-choice)))
+            (lambda ()
+              (test-assert
+               (equal editor-choice
+                      (application-select-approval
+                       application :kind ':command :title "race" :entry "race"
+                       :items '((:name "once") (:name "deny"))))
+               "the accepted editor answer wins over the terminal return")
+              (test-assert (equal settled editor-choice)
+                           "settlement reports the same winning answer"))))))))
+  nil)
