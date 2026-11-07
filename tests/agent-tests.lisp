@@ -1042,7 +1042,11 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
            (list
             (agent-steering-input-create
              :identifier "steering-persisted"
-             :content    "change direction")))
+             :content    "change direction")
+            (agent-steering-input-create
+             :identifier        "channel:steering-message"
+             :content           "[Message from agent other (al-other) to channel agent-steering, where you reside]"
+             :operation-request '(:operation "channel" :summary "hello"))))
          (persisted-identifiers nil)
          (statuses              nil))
     (unwind-protect
@@ -1068,7 +1072,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
            (agent-run-user-turn agent "start here" :observer observer)
            (test-assert
             (equal (nreverse (scripted-provider-input-counts provider))
-                   '(1 4))
+                   '(1 5))
             "steering follows the function call and correlated tool output")
            (let ((user-records
                    (loop for record in
@@ -1081,15 +1085,22 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
               (equal (mapcar (lambda (record)
                                (getf (rest record) :content))
                              user-records)
-                     '("start here" "change direction"))
-              "steering is durable ordinary user input")
+                     '("start here" "change direction"
+                       "[Message from agent other (al-other) to channel agent-steering, where you reside]"))
+              "steering is durable user input")
              (test-assert
               (string= (getf (rest (second user-records))
                              :pending-input-identifier)
                        "steering-persisted")
-              "identified steering records its pending provenance"))
+              "identified steering records its pending provenance")
+             (test-assert
+              (and (not (getf (rest (second user-records)) :automatic-p))
+                   (getf (rest (third user-records)) :automatic-p)
+                   (equal (getf (rest (third user-records)) :operation-request)
+                          '(:operation "channel" :summary "hello")))
+              "steering an operation generated is automatic input recording that operation"))
            (test-assert
-            (equal persisted-identifiers '("steering-persisted"))
+            (equal persisted-identifiers '("channel:steering-message" "steering-persisted"))
             "the observer acknowledges each steering append immediately")
            (test-assert (member :steering-applied statuses)
                         "the observer is notified after steering becomes durable"))
