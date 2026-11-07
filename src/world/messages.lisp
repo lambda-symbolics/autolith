@@ -326,11 +326,13 @@ whether to write."
                                                      (world-delivery--record (rest pair))))
                                              pairs))))))
 
-(-> world-outbox--transact (configuration string function) t)
-(defun world-outbox--transact (configuration identifier update)
-  "Apply UPDATE to the fresh pending copies of send IDENTIFIER and return its result."
+(-> world-outbox--transact
+    (configuration string function &key (:publish (option function))) t)
+(defun world-outbox--transact (configuration identifier update &key publish)
+  "Apply UPDATE to send IDENTIFIER's fresh pending copies, then PUBLISH under the same lock."
   (handler-case
-      (sexp-store:store-transact (world-outbox--store configuration identifier) update)
+      (sexp-store:store-transact (world-outbox--store configuration identifier) update
+                                 :publish publish)
     (sexp-store:store-error (cause)
       (world--store-error cause))))
 
@@ -359,50 +361,45 @@ whether to write."
         (mapcar #'pathname-name (uiop:directory-files directory "*.sexp"))
         nil)))
 
-(-> world-outbox--finish (configuration string string) null)
-(defun world-outbox--finish (configuration identifier channel-identifier)
-  "Drop the copy of send IDENTIFIER for CHANNEL-IDENTIFIER, and the record once none is left."
-  (let ((remaining (world-outbox--transact
-                    configuration identifier
-                    (lambda (current)
-                      (let ((rest (remove channel-identifier current
-                                          :key #'first :test #'string=)))
-                        (values rest rest t))))))
-    (unless remaining
-      (uiop:delete-file-if-exists (world-outbox-pathname configuration identifier))))
-  nil)
+(-> world-message--deliver (configuration string) (values list list))
+(defun world-message--deliver (configuration identifier)
+  "Deliver send IDENTIFIER's pending copies under its outbox lock.
 
-(-> world-message--deliver (configuration string list) (values list list))
-(defun world-message--deliver (configuration identifier pairs)
-  "Put each copy of send IDENTIFIER in PAIRS into its inbox, leaving refused ones in the outbox.
-
-Return the channels whose inbox append and outbox update completed, and
-(CHANNEL-ID . CONDITION) pairs for attempts that raised WORLD-ERROR.
-An inbox that holds the copy already keeps the one it has."
-  (let ((delivered nil)
-        (refused   nil))
-    (dolist (pair pairs)
-      (handler-case
-          (progn
-            (world-inbox-append configuration (first pair) (list (rest pair)))
-            (world-outbox--finish configuration identifier (first pair))
-            (push (first pair) delivered))
-        (world-error (condition)
-          (push (cons (first pair) condition) refused))))
-    (values (nreverse delivered) (nreverse refused))))
+Return the reached channels and (CHANNEL-ID . CONDITION) pairs for refused
+inbox appends. Retain refused copies for retry. Always read pending copies
+under the lock, so a stale resumer cannot repeat a completed send.
+The lock order is outbox then inbox; receipt handlers release the inbox
+lock before resuming sends."
+  (destructuring-bind (delivered refused)
+      (world-outbox--transact
+       configuration identifier
+       (lambda (pending)
+         (let ((delivered nil)
+               (refused   nil)
+               (kept      nil))
+           (dolist (pair pending)
+             (handler-case
+                 (progn
+                   (world-inbox-append configuration (first pair) (list (rest pair)))
+                   (push (first pair) delivered))
+               (world-error (condition)
+                 (push pair kept)
+                 (push (cons (first pair) condition) refused))))
+           (values (nreverse kept)
+                   (list (nreverse delivered) (nreverse refused))
+                   (not (null delivered)))))
+       :publish (lambda (pending)
+                  (unless pending
+                    (uiop:delete-file-if-exists (world-outbox-pathname configuration identifier)))))
+    (values delivered refused)))
 
 (-> world-message-resume (configuration &key (:notify-p boolean)) list)
 (defun world-message-resume (configuration &key (notify-p t))
   "Deliver the copies earlier sends left in the outbox and return the channels that received one.
 
 With NOTIFY-P, the process serving each of those channels is told to read."
-  (let ((reached nil))
-    (dolist (identifier (world-outbox-identifiers configuration))
-      (let ((pairs (world-outbox-pending configuration identifier)))
-        (if pairs
-            (setf reached (append reached
-                                  (world-message--deliver configuration identifier pairs)))
-            (uiop:delete-file-if-exists (world-outbox-pathname configuration identifier)))))
+  (let ((reached (loop for identifier in (world-outbox-identifiers configuration)
+                       append (world-message--deliver configuration identifier))))
     (when (and notify-p reached)
       (world-message-notify configuration reached))
     reached))
@@ -714,7 +711,7 @@ whose serving process was reached)."
       (when pairs
         (world-outbox-write configuration identifier pairs))
       (multiple-value-bind (delivered refused)
-          (world-message--deliver configuration identifier pairs)
+          (world-message--deliver configuration identifier)
         (list :id       identifier
               :channels delivered
               :pending  (mapcar #'first refused)
