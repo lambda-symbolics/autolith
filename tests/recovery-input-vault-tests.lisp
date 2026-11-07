@@ -390,9 +390,10 @@
                           :ui            ui))
          (image-pathname (merge-pathnames "queued-image.png" root))
          (image-input
-           (user-message-input-create
-            :text            ""
-            :image-pathnames (list image-pathname)))
+            (user-message-input-create
+             :text            ""
+             :image-pathnames (list image-pathname)
+             :submission      '(:id "input" :client "editor" :source "queue")))
          (vault-pathname
            (configuration-recovery-input-vault-path
             configuration (conversation-pathname conversation)))
@@ -478,6 +479,8 @@
                      (equal (user-message-input-image-pathnames
                              (second (first work)))
                             (list image-pathname))
+                     (equal (user-message-input-submission (second (first work)))
+                            (user-message-input-submission image-input))
                      (string= (second (second work)) "in-flight steering")
                      (string= (second (third work)) "queued steering")
                      (string= (second (fourth work)) "old follow-up")

@@ -16,10 +16,9 @@
       (agentcomms:acp-invalid-params "Input text exceeds the character limit."))
     (with-lock-held ((acp-session-lock session))
       (when (acp-session-closed-p session)
-        (error 'acp-extension-unavailable :reason "The session is closing."))
-      (unless steer-p
-        (setf (acp-session-sources session) (append (acp-session-sources session) (list "queue")))))
-    (let ((reply (acp-session-call session ':submit :text text :steer-p steer-p)))
+        (error 'acp-extension-unavailable :reason "The session is closing.")))
+    (let ((reply (acp-session-submit session text :steer-p steer-p
+                                     :source               (if steer-p "steering" "queue"))))
       (agentcomms:json-object "accepted" t
                               "delivery" (if (and steer-p (getf reply :busy-p)) "steering" "queued")))))
 

@@ -115,16 +115,11 @@
     :initform      nil
     :accessor      acp-session-turn
     :documentation "The running turn as (EPOCH . SOURCE), or NIL.")
-   (sources
-    :initform      nil
-    :accessor      acp-session-sources
-    :type          list
-    :documentation "The sources of messages this session submitted and the channel has not started yet, oldest first.")
-   (own-prompts
-    :initform      nil
-    :accessor      acp-session-own-prompts
-    :type          list
-    :documentation "Texts of prompts the editor already shows, so their records are not shown twice.")
+   (client-identifier
+    :initform      (make-identifier)
+    :reader        acp-session-client-identifier
+    :type          string
+    :documentation "The submitting editor identity, distinct from other clients of this channel.")
    (turn-sequence
     :initform      0
     :accessor      acp-session-turn-sequence
@@ -182,6 +177,14 @@
     (handler-case (apply #'localgroup-client-call connection command arguments)
       (localgroup-error (condition)
         (error 'agentcomms:acp-state-error :message (autolith-error-message condition))))))
+
+(-> acp-session-submit (acp-session string &key (:source string) (:steer-p boolean)) list)
+(defun acp-session-submit (session text &key (source "prompt") steer-p)
+  "Submit TEXT with its editor identity and turn SOURCE, returning the channel reply."
+  (acp-session-call session ':submit :text text :steer-p steer-p
+                    :submission (list :id     (make-identifier)
+                                      :client (acp-session-client-identifier session)
+                                      :source source)))
 
 (-> acp-session-cancel (acp-session) null)
 (defun acp-session-cancel (session)

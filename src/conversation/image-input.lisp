@@ -8,6 +8,14 @@
 (defgeneric user-message-input-image-pathnames (input)
   (:documentation "Return the absolute local image pathnames attached to user INPUT."))
 
+(defgeneric user-message-input-submission (input)
+  (:documentation "Return portable submission provenance for user INPUT, or NIL."))
+
+(defmethod user-message-input-submission ((input string))
+  "Plain string INPUT has no submission provenance."
+  (declare (ignore input))
+  nil)
+
 (defclass user-message-input ()
   ((text
     :initarg       :text
@@ -19,7 +27,13 @@
     :initform      nil
     :reader        user-message-input-image-pathnames
     :type          list
-    :documentation "Absolute local image pathnames attached to this submission."))
+    :documentation "Absolute local image pathnames attached to this submission.")
+   (submission
+    :initarg       :submission
+    :initform      nil
+    :reader        user-message-input-submission
+    :type          list
+    :documentation "Portable submission identifier, client identity, and source."))
   (:documentation "One user submission containing text and local image attachments."))
 
 (defmethod user-message-input-text ((input string))
@@ -31,10 +45,10 @@
   (declare (ignore input)))
 
 (-> user-message-input-create
-    (&key (:text string) (:image-pathnames list))
+    (&key (:text string) (:image-pathnames list) (:submission list))
     user-message-input)
-(defun user-message-input-create (&key (text "") image-pathnames)
-  "Create one validated user submission from TEXT and IMAGE-PATHNAMES."
+(defun user-message-input-create (&key (text "") image-pathnames submission)
+  "Create validated user input with optional portable SUBMISSION provenance."
   (unless (or (non-empty-string-p text) image-pathnames)
     (error 'configuration-error
            :message "A user submission requires text or an image."))
@@ -44,9 +58,16 @@
   (unless (every #'uiop:absolute-pathname-p image-pathnames)
     (error 'configuration-error
            :message "Every attached image pathname must be absolute."))
+  (when submission
+    (unless (and (= (length submission) 6)
+                 (non-empty-string-p (getf submission :id))
+                 (non-empty-string-p (getf submission :client))
+                 (member (getf submission :source) '("prompt" "queue" "steering") :test #'equal))
+      (error 'configuration-error :message "Invalid user submission provenance.")))
   (make-instance 'user-message-input
                  :text            text
-                 :image-pathnames (copy-list image-pathnames)))
+                 :image-pathnames (copy-list image-pathnames)
+                 :submission      (copy-tree submission)))
 
 (defgeneric user-message-input-copy (input)
   (:documentation "Return a detached copy of user INPUT."))
@@ -58,9 +79,10 @@
 (defmethod user-message-input-copy ((input user-message-input))
   "Return a submission with copies of INPUT's text and image pathname list."
   (make-instance 'user-message-input
-                 :text (copy-seq (user-message-input-text input))
+                 :text       (copy-seq (user-message-input-text input))
                  :image-pathnames
-                 (copy-list (user-message-input-image-pathnames input))))
+                 (copy-list (user-message-input-image-pathnames input))
+                 :submission (copy-tree (user-message-input-submission input))))
 
 
 ;;;; -- Prepared Attachments --
