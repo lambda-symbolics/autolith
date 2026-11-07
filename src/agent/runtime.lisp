@@ -82,7 +82,13 @@
     :initarg       :content
     :reader        agent-steering-input-content
     :type          (or string user-message-input)
-    :documentation "The user message to append at the next tool boundary."))
+    :documentation "The user message to append at the next tool boundary.")
+   (operation-request
+    :initarg       :operation-request
+    :initform      nil
+    :reader        agent-steering-input-operation-request
+    :type          (option list)
+    :documentation "The operation that generated this message, such as a channel delivery, or NIL for the person's own input."))
   (:documentation "One identified steering message awaiting durable conversation append."))
 
 (defclass agent ()
@@ -399,13 +405,18 @@ needs the few most recent calls to recognize an oscillation."
 
 (-> agent-steering-input-create
     (&key (:identifier non-empty-string)
-          (:content (or string user-message-input)))
+          (:content (or string user-message-input))
+          (:operation-request (option list)))
     agent-steering-input)
-(defun agent-steering-input-create (&key identifier content)
-  "Create one identified steering message carrying CONTENT."
+(defun agent-steering-input-create (&key identifier content operation-request)
+  "Create one identified steering message carrying CONTENT.
+
+OPERATION-REQUEST names the operation that generated it; the message is then
+recorded as automatic input that the transcript shows as that operation."
   (make-instance 'agent-steering-input
-                 :identifier identifier
-                 :content    content))
+                 :identifier        identifier
+                 :content           content
+                 :operation-request operation-request))
 
 (-> callback-agent-observer-create
     (&key
@@ -1469,7 +1480,10 @@ tool registry reaches the very next provider request."
                   entry)))
              (identifier
                (and (typep entry 'agent-steering-input)
-                    (agent-steering-input-identifier entry))))
+                    (agent-steering-input-identifier entry)))
+             (request
+               (and (typep entry 'agent-steering-input)
+                    (agent-steering-input-operation-request entry))))
         (unless (or (and (stringp message) (non-empty-string-p message))
                     (and (typep message 'user-message-input)
                          (or (non-empty-string-p
@@ -1482,7 +1496,9 @@ tool registry reaches the very next provider request."
         (conversation-append-user-message
          conversation
          message
-         :pending-input-identifier identifier)
+         :pending-input-identifier identifier
+         :automatic-p              (not (null request))
+         :operation-request        request)
         (when identifier
           (agent-observer-steering-persisted observer identifier))
         (skill-record-steering-input message)))

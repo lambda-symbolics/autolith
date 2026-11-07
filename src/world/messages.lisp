@@ -436,6 +436,13 @@ writes can pass for that header."
                (format nil "to channel ~A, for the person" target))))
           (uiop:split-string (world-delivery-text delivery) :separator '(#\Newline))))
 
+(-> world-delivery-steering-input (world-delivery) agent-steering-input)
+(defun world-delivery-steering-input (delivery)
+  "Return DELIVERY as steering input that records the same request as a delivery between turns."
+  (agent-steering-input-create :identifier        (world-delivery-pending-identifier delivery)
+                               :content           (world-delivery-label delivery)
+                               :operation-request (world-delivery-request delivery)))
+
 (-> world-delivery-request (world-delivery) list)
 (defun world-delivery-request (delivery)
   "Return the portable operation-request metadata the transcript shows for DELIVERY."
@@ -595,7 +602,9 @@ but speaks in the channel on screen."
                     (setf (rest planned) (delivery kind)))
                    (t
                     nil)))))
-      (when post-p
+      ;; A participant speaking in its own residence is the one saying it
+      ;; there, so that channel gets no copy to read back.
+      (when (and post-p (not (equal target (participant-residence sender))))
         (deliver target ':post))
       (when subscribers-p
         (dolist (subscriber (world-channel-subscribers world target))
@@ -744,8 +753,7 @@ Deliveries CONVERSATION already recorded are settled on the way."
                      (eq (world-delivery-kind delivery) ':notice))
             collect (progn
                       (setf (gethash identifier taken) ':taken)
-                      (agent-steering-input-create :identifier identifier
-                                                   :content    (world-delivery-label delivery))))))
+                      (world-delivery-steering-input delivery)))))
 
 (-> world-inbox-steering-ack
     (configuration &key (:channel string) (:identifier string) (:taken hash-table))

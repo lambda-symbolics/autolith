@@ -659,8 +659,8 @@
                                                             (conversation-identifier-display
                                                              (participant-identifier first-agent)))
                                           :notify-p nil)))
-          (test-assert (equal (getf result :channels) '("bsecnd2" "bfirst1"))
-                       "a mention reaches the mentioned participant's residence")
+          (test-assert (equal (getf result :channels) '("bfirst1"))
+                       "a mention reaches the mentioned participant's residence, and a post to the sender's own residence gets no copy")
           (let ((mention (second (world-inbox-deliveries configuration "bfirst1"))))
             (test-assert (and (eq (world-delivery-kind mention) ':mention)
                               (equal (world-delivery-mentions mention)
@@ -1413,15 +1413,15 @@
                                            :text     text
                                            :notify-p nil)
                        :channels))))
-        (test-assert (equal (reached "@parent done") '("exec-two" "exec-one"))
+        (test-assert (equal (reached "@parent done") '("exec-one"))
                      "@parent reaches the sender's parent agent")
         (world-park-agent configuration planner)
-        (test-assert (equal (reached "@parent done again") '("exec-two" "broot11"))
+        (test-assert (equal (reached "@parent done again") '("broot11"))
                      "with the parent parked, @parent reaches the grandparent")
         (world-park-agent configuration root)
         (test-assert (equal (reached "@Parent anyone?")
-                            (list "exec-two" (participant-residence (world-human-participant
-                                                                     (world-load configuration)))))
+                            (list (participant-residence (world-human-participant
+                                                          (world-load configuration)))))
                      "with every ancestor agent parked, @parent reaches the person")
         (test-assert (handler-case
                          (progn (world-participant-rename configuration (participant-identifier human) "parent")
