@@ -735,7 +735,33 @@
                           (= 1 (count "crash11" (world-inbox-deliveries configuration "bsecnd2")
                                       :key #'world-delivery-identifier :test #'string=))
                           (null (world-outbox-identifiers configuration)))
-                     "the inbox that had the copy keeps one, the other gets one, the record is gone"))))
+                     "the inbox that had the copy keeps one, the other gets one, the record is gone")
+        (world-inbox-settle configuration "bfirst1" '("crash11"))
+        (world-outbox-write configuration "resume1"
+                            (list (cons "bfirst1" (delivery "resume1" "bfirst1"))))
+        (let ((deliver  #'world-message--deliver)
+              (raced-p  nil)
+              (received (conversation-load-by-id configuration "bfirst1")))
+          (test-call-with-function-replacements
+           (list (list 'world-message--deliver
+                       (lambda (&rest arguments)
+                         ;; Another resumer completes and the recipient records
+                         ;; its receipt before this resumer attempts delivery.
+                         (unless raced-p
+                           (setf raced-p t)
+                           (world-message-resume configuration :notify-p nil)
+                           (let ((copy (first (world-inbox-deliveries configuration "bfirst1"))))
+                             (conversation-append-user-message
+                              received (world-delivery-label copy)
+                              :pending-input-identifier (world-delivery-pending-identifier copy)
+                              :automatic-p              t)
+                             (world-inbox-settle configuration "bfirst1" '("resume1"))))
+                         (apply deliver arguments))))
+           (lambda () (world-message-resume configuration :notify-p nil)))
+          (test-assert (and raced-p
+                            (null (world-inbox-deliveries configuration "bfirst1"))
+                            (null (world-outbox-pending configuration "resume1")))
+                       "a stale resumer cannot put a received copy back in the inbox")))))
   nil)
 
 (-> test-world-channel-tools () null)
