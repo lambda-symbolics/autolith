@@ -580,10 +580,9 @@ nothing; so does no match."
 (-> world-participant-named-p (world string &key (:except (option string))) boolean)
 (defun world-participant-named-p (world name &key except)
   "Return true when a participant of WORLD other than EXCEPT is named NAME, ignoring case."
-  (not (null (find-if (lambda (participant)
-                        (and (not (equal (participant-identifier participant) except))
-                             (string-equal (participant-name participant) name)))
-                      (world-participants world)))))
+  (loop for participant being the hash-values of (world--participant-table world)
+        thereis (and (not (equal (participant-identifier participant) except))
+                     (string-equal (participant-name participant) name))))
 
 (-> world-handle-suffixed (string (integer 1)) string)
 (defun world-handle-suffixed (base index)
@@ -653,50 +652,67 @@ anything else is resolved as a fragment through WORLD-CHANNEL-RESOLVE."
               (and (= (funcall updated-at left) (funcall updated-at right))
                    (string< (funcall identifier left) (funcall identifier right)))))))
 
+(-> world--participants-where (world function) list)
+(defun world--participants-where (world predicate)
+  "Return WORLD's participants satisfying PREDICATE, most recently changed first.
+
+Only the matches get sorted, not every participant."
+  (world--newest-first
+   (loop for participant being the hash-values of (world--participant-table world)
+         when (funcall predicate participant)
+           collect participant)
+   #'participant-updated-at #'participant-identifier))
+
+(-> world--channels-where (world function) list)
+(defun world--channels-where (world predicate)
+  "Return WORLD's channels satisfying PREDICATE, most recently changed first.
+
+Only the matches get sorted, not every channel."
+  (world--newest-first
+   (loop for channel being the hash-values of (world--channel-table world)
+         when (funcall predicate channel)
+           collect channel)
+   #'channel-updated-at #'channel-identifier))
+
 (-> world-participants (world) list)
 (defun world-participants (world)
   "Return WORLD's participants, most recently changed first."
-  (world--newest-first
-   (loop for participant being the hash-values of (world--participant-table world)
-         collect participant)
-   #'participant-updated-at #'participant-identifier))
+  (world--participants-where world (constantly t)))
 
 (-> world-channels (world) list)
 (defun world-channels (world)
   "Return WORLD's channels, most recently changed first."
-  (world--newest-first
-   (loop for channel being the hash-values of (world--channel-table world)
-         collect channel)
-   #'channel-updated-at #'channel-identifier))
+  (world--channels-where world (constantly t)))
 
 (-> world-channel-residents (world string) list)
 (defun world-channel-residents (world channel-identifier)
   "Return the participants residing in CHANNEL-IDENTIFIER, most recently changed first."
-  (remove-if-not (lambda (participant)
-                   (equal (participant-residence participant) channel-identifier))
-                 (world-participants world)))
+  (world--participants-where world
+                             (lambda (participant)
+                               (equal (participant-residence participant) channel-identifier))))
 
 (-> world-channel-subscribers (world string) list)
 (defun world-channel-subscribers (world channel-identifier)
   "Return the participants subscribed to CHANNEL-IDENTIFIER, most recently changed first."
-  (remove-if-not (lambda (participant)
-                   (member channel-identifier (participant-subscriptions participant)
-                           :test #'string=))
-                 (world-participants world)))
+  (world--participants-where world
+                             (lambda (participant)
+                               (not (null (member channel-identifier
+                                                  (participant-subscriptions participant)
+                                                  :test #'string=))))))
 
 (-> world-channel-children (world string) list)
 (defun world-channel-children (world channel-identifier)
   "Return the channels nested directly under CHANNEL-IDENTIFIER."
-  (remove-if-not (lambda (channel)
-                   (equal (channel-parent channel) channel-identifier))
-                 (world-channels world)))
+  (world--channels-where world
+                         (lambda (channel)
+                           (equal (channel-parent channel) channel-identifier))))
 
 (-> world-participant-children (world string) list)
 (defun world-participant-children (world participant-identifier)
   "Return the participants whose parent is PARTICIPANT-IDENTIFIER."
-  (remove-if-not (lambda (participant)
-                   (equal (participant-parent participant) participant-identifier))
-                 (world-participants world)))
+  (world--participants-where world
+                             (lambda (participant)
+                               (equal (participant-parent participant) participant-identifier))))
 
 (-> world-participant-descendants (world string) list)
 (defun world-participant-descendants (world participant-identifier)
@@ -727,9 +743,9 @@ anything else is resolved as a fragment through WORLD-CHANNEL-RESOLVE."
 (-> world-human-participant (world) (option participant))
 (defun world-human-participant (world)
   "Return WORLD's oldest human participant, or NIL."
-  (first (sort (remove-if-not (lambda (participant)
-                                (eq (participant-kind participant) ':human))
-                              (world-participants world))
+  (first (sort (world--participants-where world
+                                         (lambda (participant)
+                                           (eq (participant-kind participant) ':human)))
                #'< :key #'participant-created-at)))
 
 
@@ -1084,10 +1100,10 @@ agent still resides there."
 (-> world-parked-agents (world) list)
 (defun world-parked-agents (world)
   "Return WORLD's parked agents, oldest first."
-  (sort (remove-if-not (lambda (participant)
-                         (and (eq (participant-kind participant) ':agent)
-                              (null (participant-residence participant))))
-                       (copy-list (world-participants world)))
+  (sort (world--participants-where world
+                                   (lambda (participant)
+                                     (and (eq (participant-kind participant) ':agent)
+                                          (null (participant-residence participant)))))
         #'< :key #'participant-created-at))
 
 (-> world-participant-subscribe (configuration string string &key (:now timestamp)) participant)
