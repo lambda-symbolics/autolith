@@ -416,15 +416,32 @@ its agent, serves it again. Nothing is unloaded while a checkpoint runs."
             (setf (world-host-idle-since host) nil)))))
   nil)
 
-(-> world-server-stop (world-server) null)
-(defun world-server-stop (server)
-  "Ask every channel of SERVER to end and let the main thread exit after the last one."
+(-> world-server-stop (world-server &key (:reason (option string))) null)
+(defun world-server-stop (server &key reason)
+  "Ask every channel of SERVER to end and let the main thread exit after the last one.
+
+REASON, when given, is what each attached terminal is told before it lets go."
   (let ((hosts (with-lock-held ((world-server-lock server))
                  (setf (world-server-stopping-p server) t)
                  (copy-list (world-server-hosts server)))))
     (dolist (host hosts)
+      (when reason
+        (world-server--tell-attached host reason))
       (world-server--close-host host))
     (world-server--wake server))
+  nil)
+
+(-> world-server--tell-attached (world-host string) null)
+(defun world-server--tell-attached (host reason)
+  "End HOST's attached terminals with REASON as a notice line, rendered for those terminals."
+  (let* ((application (world-host-application host))
+         (ui          (application-ui application)))
+    (localgroup-finish-attachments
+     application
+     :status  0
+     :message (if ui
+                  (terminal--render-spans (terminal-ui-terminal ui) (application-notice-line reason))
+                  (format nil "· ~A" reason))))
   nil)
 
 (-> world-server--shutdown (world-server) null)
@@ -510,7 +527,7 @@ its agent, serves it again. Nothing is unloaded while a checkpoint runs."
      (world-server-person-unread-changed server)
      (list :ok :operation ':person-unread))
     (:stop
-     (world-server-stop server)
+     (world-server-stop server :reason "world server stopped by autolith lg stop")
      (list :ok :operation ':stop :session-id *world-server-identifier*))
     (otherwise
      (list :error :message (format nil "Unknown world operation ~S." operation)))))
