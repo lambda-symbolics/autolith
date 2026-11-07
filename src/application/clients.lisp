@@ -76,6 +76,18 @@
     :accessor      client-hub-clients
     :type          list
     :documentation "The structured clients attached to the channel.")
+   (admitting-p
+    :initform      t
+    :accessor      client-hub-admitting-p
+    :documentation "Whether new structured attachments may join this running channel.")
+   (event-sequence
+    :initform      0
+    :accessor      client-hub-event-sequence
+    :documentation "The last allocated channel event cursor, guarded by the hub lock.")
+   (event-journal
+    :initform      (make-deque)
+    :reader        client-hub-event-journal
+    :documentation "The bounded chronological tail of sequenced channel events.")
    (condition-variable
     :initform      (make-condition-variable :name "Autolith channel approvals")
     :reader        client-hub-condition-variable
@@ -104,6 +116,30 @@
 A client that falls this far behind is disconnected; it reconnects and reads
 the channel's state and history again.")
 
+(defparameter *channel-client-journal-limit* 10000
+  "Maximum channel events retained for cursor-based reconnection.")
+
+(-> channel-client--queue-event (channel-client list) boolean)
+(defun channel-client--queue-event (client event)
+  "Queue EVENT without closing CLIENT; return whether its queue overflowed."
+  (with-lock-held ((channel-client-lock client))
+    (cond
+      ((channel-client-closed-p client)
+       nil)
+      ((>= (deque-count (channel-client-events client)) *channel-client-queue-limit*)
+       t)
+      (t
+       (deque-push-back (channel-client-events client) event)
+       (condition-notify (channel-client-condition-variable client))
+       nil))))
+
+(-> application-clients--record-sequence (application) integer)
+(defun application-clients--record-sequence (application)
+  "Return the last durable sequence of APPLICATION's current conversation."
+  (if (and (slot-boundp application 'conversation) (application-conversation application))
+      (1- (conversation-next-sequence (application-conversation application)))
+      0))
+
 
 ;;;; -- Publishing --
 
@@ -126,27 +162,73 @@ the channel's state and history again.")
 
 (-> application-clients-publish (application list) null)
 (defun application-clients-publish (application event)
-  "Queue EVENT, a portable plist, for every structured client of APPLICATION's channel."
-  (let ((clients (application-clients application)))
-    (when clients
-      (let ((portable (client-portable event)))
-        (dolist (client clients)
-          (channel-client-enqueue client portable)))))
+  "Sequence and retain EVENT, then queue it for every subscriber in that same order."
+  (let ((hub      (application-client-hub application))
+        (overflow nil))
+    (with-lock-held ((client-hub-lock hub))
+      (let ((portable (client-portable
+                       (append event
+                               (list :sequence        (incf (client-hub-event-sequence hub))
+                                     :record-sequence (application-clients--record-sequence application))))))
+        (deque-push-back (client-hub-event-journal hub) portable)
+        (loop while (> (deque-count (client-hub-event-journal hub)) *channel-client-journal-limit*)
+              do (deque-pop-front (client-hub-event-journal hub)))
+        (dolist (client (client-hub-clients hub))
+          (when (channel-client--queue-event client portable)
+            (push client overflow)))))
+    (dolist (client overflow)
+      (channel-client-close client)))
   nil)
 
-(-> application-clients-add (application channel-client) null)
-(defun application-clients-add (application client)
-  "Attach CLIENT to APPLICATION's channel and start writing its events."
-  (with-lock-held ((channel-client-lock client))
-    (unless (channel-client-closed-p client)
-      (let ((hub (application-client-hub application)))
-        (setf (channel-client-hub client) hub)
-        (with-lock-held ((client-hub-lock hub))
-          (push client (client-hub-clients hub))))
-      (setf (channel-client-writer-thread client)
-            (make-thread (lambda () (channel-client--write-events client))
-                         :name (format nil "Autolith ~A client writer" (channel-client-name client))))))
-  (application-clients--follow-conversation application)
+(-> application-clients-add
+    (application channel-client &key (:attached list) (:after-sequence t)) null)
+(defun application-clients-add (application client &key attached after-sequence)
+  "Atomically attach CLIENT after its greeting and any retained cursor tail.
+
+The greeting contains the event watermark and durable replay boundary. A
+cursor outside the retained tail is refused rather than skipping events."
+  (unless (or (null after-sequence) (typep after-sequence '(integer 0 *)))
+    (error 'localgroup-error :operation ':client
+           :message                     "A channel event cursor must be a nonnegative integer."))
+  (let* ((hub          (application-client-hub application))
+         (conversation (and (slot-boundp application 'conversation) (application-conversation application))))
+    (flet ((subscribe ()
+             (with-lock-held ((client-hub-lock hub))
+               (unless (client-hub-admitting-p hub)
+                 (error 'localgroup-error :operation ':client :retry-p t
+                        :message "The channel is restarting; retry attachment after it resumes."))
+               (let* ((sequence (client-hub-event-sequence hub))
+                      (events   (deque->list (client-hub-event-journal hub)))
+                      (oldest   (if events (getf (rest (first events)) :sequence) (1+ sequence))))
+                 (when (and after-sequence
+                            (not (<= (1- oldest) after-sequence sequence)))
+                   (error 'localgroup-error :operation ':client
+                          :message                     "The channel event cursor has expired or is ahead of the channel."))
+                 (when attached
+                   (when (channel-client--queue-event
+                          client (client-portable
+                                  (append attached
+                                          (list :sequence        sequence
+                                                :record-sequence (application-clients--record-sequence application)))))
+                     (error 'localgroup-error :operation ':client :message "The client greeting queue is full.")))
+                 (dolist (event events)
+                   (when (and after-sequence (> (getf (rest event) :sequence) after-sequence))
+                     (when (channel-client--queue-event client event)
+                       (error 'localgroup-error :operation ':client :message "The retained event tail exceeds the client queue."))))
+                 (with-lock-held ((channel-client-lock client))
+                   (unless (channel-client-closed-p client)
+                     (setf (channel-client-hub client) hub)
+                     (push client (client-hub-clients hub))))))))
+      (if conversation
+          (with-recursive-lock-held ((conversation-append-lock conversation))
+            (application-clients--follow-conversation application)
+            (subscribe))
+          (subscribe)))
+    (with-lock-held ((channel-client-lock client))
+      (unless (channel-client-closed-p client)
+        (setf (channel-client-writer-thread client)
+              (make-thread (lambda () (channel-client--write-events client))
+                           :name (format nil "Autolith ~A client writer" (channel-client-name client)))))))
   nil)
 
 (-> application-clients--follow-conversation (application) null)

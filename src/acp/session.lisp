@@ -78,6 +78,30 @@
     :initform      (make-lock "Autolith ACP session")
     :reader        acp-session-lock
     :documentation "The lock protecting prompt, turn and translation state.")
+   (event-lock
+    :initform      (make-lock "Autolith ACP event delivery")
+    :reader        acp-session-event-lock
+    :documentation "Serializes replay, buffered attachment events and live delivery.")
+   (attaching-p
+    :initform      nil
+    :accessor      acp-session-attaching-p
+    :documentation "Whether incoming events wait for the initial history replay.")
+   (attachment-events
+    :initform      (make-deque)
+    :reader        acp-session-attachment-events
+    :documentation "Events received after subscription while initial history is replayed.")
+   (event-sequence
+    :initform      0
+    :accessor      acp-session-event-sequence
+    :documentation "The cursor of the last completely processed channel event.")
+   (replay-boundary
+    :initform      0
+    :accessor      acp-session-replay-boundary
+    :documentation "The durable record watermark already delivered by initial replay.")
+   (catch-up-p
+    :initform      nil
+    :accessor      acp-session-catch-up-p
+    :documentation "Whether an already running provider response uses durable record projection until its next request.")
    (condition-variable
     :initform      (make-condition-variable :name "Autolith ACP session")
     :reader        acp-session-condition-variable
