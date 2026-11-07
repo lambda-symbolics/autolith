@@ -82,7 +82,7 @@ subsequent events after its bounded history snapshot."
                 session (localgroup-client-connection-attached (acp-session-connection session))
                 :replay-p (not (null identifier)))
                (with-lock-held ((acp-service-lock service))
-                 (when (acp-service-closed-p service)
+                 (when (or (acp-service-closed-p service) (acp-session-closed-p session))
                    (error 'agentcomms:acp-connection-closed))
                  (setf (gethash channel (acp-service-sessions service)) session
                        completed-p                                      t))
@@ -303,8 +303,6 @@ the failure to the editor."
   "Leave the session's channel."
   (declare (ignore params))
   (acp-session-close (acp-service--session service session-id))
-  (with-lock-held ((acp-service-lock service))
-    (remhash session-id (acp-service-sessions service)))
   nil)
 
 (defmethod agentcomms:peer-connection-closed :before ((service acp-service) connection reason)
@@ -354,16 +352,32 @@ its way, answers with a typed :CONDITION outcome; a closed service refuses."
                                  :condition-type (string-downcase (symbol-name (type-of condition))))))))))
 
 (defmethod agentcomms:peer-handle-request :around ((service acp-service) connection method &key params)
-  "Keep diagnostics off the protocol stream in every inbound handler thread."
-  (declare (ignore params))
+  "Keep diagnostics off stdout and reconcile transport failure during session setup."
   (let* ((*standard-output* *error-output*) (*trace-output* *error-output*)
          (*standard-input* (make-string-input-stream ""))
          (*terminal-io*    (make-two-way-stream *standard-input* *error-output*))
-         (*query-io* *terminal-io*) (*debug-io* *terminal-io*))
-    (handler-case (call-next-method)
-      (authentication-error ()
-        (error 'agentcomms:acp-method-error :code -32000
-               :message                           "Provider authentication required. Configure credentials before starting ACP.")))))
+         (*query-io* *terminal-io*) (*debug-io* *terminal-io*)
+         (opening-p        (member method '("session/new" "session/load") :test #'string=)))
+    (flet ((handle-request ()
+             (handler-case
+                 (let ((response (call-next-method)))
+                   (when opening-p
+                     (let ((identifier (agentcomms:json-get
+                                        (if (string= method "session/new") response params) "sessionId")))
+                       (with-lock-held ((acp-service-lock service))
+                         (let ((session (gethash identifier (acp-service-sessions service))))
+                           (unless (and session (not (acp-session-closed-p session))
+                                        (not (acp-service-closed-p service)))
+                             ;; Setup may have lost its socket before the library registered it.
+                             (agentcomms::agent--forget-session service identifier)
+                             (error 'agentcomms:acp-connection-closed))))))
+                   response)
+               (authentication-error ()
+                 (error 'agentcomms:acp-method-error :code -32000
+                        :message                           "Provider authentication required. Configure credentials before starting ACP.")))))
+      (if opening-p
+          (with-lock-held ((acp-service-open-lock service)) (handle-request))
+          (handle-request)))))
 
 (-> acp-service-close (acp-service) null)
 (defun acp-service-close (service)

@@ -55,6 +55,11 @@
     :initform      (make-deque)
     :reader        channel-client-events
     :documentation "Events queued for the writer thread, oldest first.")
+   (final-event
+    :initform      nil
+    :accessor      channel-client-final-event
+    :type          (option list)
+    :documentation "The final event to write after queued output before closing admission.")
    (closed-p
     :initform      nil
     :accessor      channel-client-closed-p
@@ -124,7 +129,7 @@ the channel's state and history again.")
   "Queue EVENT without closing CLIENT; return whether its queue overflowed."
   (with-lock-held ((channel-client-lock client))
     (cond
-      ((channel-client-closed-p client)
+      ((or (channel-client-closed-p client) (channel-client-final-event client))
        nil)
       ((>= (deque-count (channel-client-events client)) *channel-client-queue-limit*)
        t)
@@ -341,7 +346,7 @@ channel that stops before running it refuses it."
 (defun channel-client-enqueue (client event)
   "Queue EVENT for CLIENT, disconnecting a client that fell too far behind."
   (when (with-lock-held ((channel-client-lock client))
-          (unless (channel-client-closed-p client)
+          (unless (or (channel-client-closed-p client) (channel-client-final-event client))
             (if (>= (deque-count (channel-client-events client)) *channel-client-queue-limit*)
                 t
                 (progn
@@ -349,6 +354,27 @@ channel that stops before running it refuses it."
                   (condition-notify (channel-client-condition-variable client))
                   nil))))
     (channel-client-close client))
+  nil)
+
+(-> channel-client-finish (channel-client list) null)
+(defun channel-client-finish (client event)
+  "Stop admitting output to CLIENT and deliver EVENT after its queue drains.
+
+Call outside hub and queue locks. A blocked writer gets one second to drain
+before transport shutdown wakes it."
+  (with-lock-held ((channel-client-lock client))
+    (unless (or (channel-client-closed-p client) (channel-client-final-event client))
+      (setf (channel-client-final-event client) event)
+      (condition-notify (channel-client-condition-variable client))))
+  (let ((writer (channel-client-writer-thread client)))
+    (when (and writer (not (eq writer (current-thread))))
+      (sb-thread:join-thread writer :timeout 1 :default nil))
+    (channel-client-close client)
+    (when (and writer (not (eq writer (current-thread))))
+      (sb-thread:join-thread writer :timeout 1 :default nil)
+      (when (thread-alive-p writer)
+        (error 'localgroup-error :message  "The structured client writer did not stop for checkpoint."
+                                :operation ':checkpoint))))
   nil)
 
 (-> channel-client-close (channel-client) null)
@@ -383,6 +409,8 @@ while holding the queue or hub lock."
          (return nil))
         ((not (deque-empty-p (channel-client-events client)))
          (return (deque-pop-front (channel-client-events client))))
+        ((channel-client-final-event client)
+         (return (channel-client-final-event client)))
         (t
          (condition-wait (channel-client-condition-variable client)
                          (channel-client-lock client)))))))
@@ -394,7 +422,9 @@ while holding the queue or hub lock."
        (handler-case
            (loop for event = (channel-client--next-event client)
                  while event
-                 do (channel-client--write-event client event))
+                do (channel-client--write-event client event)
+                   (when (eq event (channel-client-final-event client))
+                     (return)))
          (error ()
            nil))
     (channel-client-close client))
@@ -410,7 +440,9 @@ while holding the queue or hub lock."
                     (if (eq (first event) ':reply)
                         (list :reply :id (getf (rest event) :id)
                               :error "The reply exceeded the packet size limit.")
-                        (list :omitted :kind (first event))))))))
+                        (list :omitted         :kind (first event)
+                              :sequence        (getf (rest event) :sequence)
+                              :record-sequence (getf (rest event) :record-sequence))))))))
     (write-string frame (channel-client-stream client))
     (finish-output (channel-client-stream client)))
   nil)

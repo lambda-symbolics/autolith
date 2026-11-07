@@ -2,12 +2,34 @@
 
 ;;;; -- Localgroup Checkpoint Quiescence --
 
+(-> localgroup--finish-checkpoint-clients (application string) null)
+(defun localgroup--finish-checkpoint-clients (application reconnect-id)
+  "Drain structured clients through one cursor boundary before a planned restart."
+  (let ((hub     (application-client-hub application))
+        (clients nil)
+        (event   nil))
+    (with-lock-held ((client-hub-lock hub))
+      (setf (client-hub-admitting-p hub) nil
+            clients (copy-list (client-hub-clients hub))
+            event (list :checkpoint-reconnect :id reconnect-id
+                        :sequence             (client-hub-event-sequence hub)
+                        :pending-requests     ':interrupted))
+      (dolist (client clients)
+        (with-lock-held ((channel-client-lock client))
+          (unless (or (channel-client-closed-p client) (channel-client-final-event client))
+            (setf (channel-client-final-event client) event)
+            (condition-notify (channel-client-condition-variable client))))))
+    (dolist (client clients)
+      (channel-client-finish client event)))
+  nil)
+
 (-> localgroup--finish-checkpoint-attachments (localgroup-session string) null)
 (defun localgroup--finish-checkpoint-attachments (session reconnect-id)
   "Deliver a checkpoint transition after queued output to every attached client."
   (let ((terminal         (terminal-ui-terminal (application-ui (localgroup-session-application session))))
         (attachments      nil)
         (history-position 0))
+    (localgroup--finish-checkpoint-clients (localgroup-session-application session) reconnect-id)
     (unless (typep terminal 'localgroup-terminal)
       (return-from localgroup--finish-checkpoint-attachments nil))
     (with-lock-held ((image-daemon:daemon-runtime-lock session))

@@ -1882,6 +1882,17 @@
   test-acp-session-live-and-replayed-tool-identities
   test-acp-session-replay-metadata-and-tool-statuses
   test-acp-session-flushes-thoughts-on-prompt-exit
+  test-acp-session-checkpoint-reconnect
+  test-acp-session-disconnected-registration-reload
+  test-acp-session-reconnect-failure
+  test-acp-session-close-during-reconnect
+  test-localgroup-checkpoint-interrupted-request
+  test-acp-session-close-during-greeting
+  test-acp-session-close-preserves-replacement
+  test-acp-session-consecutive-checkpoint-race
+  test-acp-session-setup-disconnection
+  test-acp-request-interrupted-wire-data
+  test-channel-client-checkpoint-blocked-writer
   test-acp-extension-portable-values
   test-acp-extension-wire-state-and-authority
   test-acp-extension-notification-order
