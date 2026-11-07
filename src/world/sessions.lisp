@@ -327,20 +327,6 @@ value lists the conversation identifiers whose mappings end."
                "Return the human participant, or NIL before one exists."
                (world-human-participant preview))
 
-             (inbox-p (change)
-               "Return true when CHANGE's conversation is the person's inbox."
-               (world-session--inbox-header-p (getf change :header)))
-
-             (title-of (change)
-               "Return the channel title of CHANGE's conversation; the inbox is always called inbox."
-               (if (inbox-p change)
-                   *world-inbox-designator*
-                   (world-session--title (getf change :identity) (getf change :header))))
-
-             (created-at (change)
-               "Return the creation time CHANGE's conversation header records."
-               (getf (rest (getf change :header)) :created-at))
-
              (parent-of (change)
                "Return the conversation of the agent that created CHANGE's, or NIL for a top-level one.
 
@@ -350,156 +336,6 @@ or whose parent is gone, falls back to its root."
                  (if (and (non-empty-string-p parent) (world-channel-find preview parent))
                      parent
                      (getf change :root))))
-
-             (parent-agent (change)
-               "Return the agent of CHANGE's parent conversation, or NIL for a top-level one or an unknown parent."
-               (let ((parent (parent-of change)))
-                 (and parent
-                      (world-channel-find preview parent)
-                      (world-session--mapped-participant
-                       preview
-                       (find parent (append planned mappings)
-                             :key #'world-session-mapping-conversation :test #'string=)
-                       parent))))
-
-             (ensure-human (change)
-               "Create the human participant at home in CHANGE's channel when none exists."
-               (or (human)
-                   (let* ((header     (getf change :header))
-                          (identifier (world--generate-identifier preview now))
-                          (channel    (make-instance 'channel
-                                                     :identifier (getf change :id)
-                                                     :owner      identifier
-                                                     :workspace  (world-session--workspace
-                                                                  configuration header)
-                                                     :title      (title-of change)
-                                                     :inbox-p    (inbox-p change)
-                                                     :created-at (created-at change)
-                                                     :updated-at (max now (created-at change))))
-                          (person     (make-instance 'participant
-                                                     :identifier identifier
-                                                     :kind       ':human
-                                                     :name       *world-human-name*
-                                                     :residence  (getf change :id)
-                                                     :presence   ':present
-                                                     :created-at now
-                                                     :updated-at now)))
-                     (emit (world--channel-record channel))
-                     (emit (world--participant-record person))
-                     person)))
-
-             (ensure-channel (change owner)
-               "Create or refresh CHANGE's channel, owned by OWNER when created.
-
-A child agent's channel nests under its parent's channel and belongs to the
-parent agent while that agent exists. A channel planned before its parent's
-was known gets that ancestry once the parent appears."
-               (let* ((header    (getf change :header))
-                      (existing  (world-channel-find preview (getf change :id)))
-                      (workspace (world-session--workspace configuration header))
-                      (title     (title-of change))
-                      (parent    (let ((parent (parent-of change)))
-                                   (and parent (world-channel-find preview parent) parent)))
-                      (keeper    (participant-identifier (or (parent-agent change) owner))))
-                 (cond
-                   ((null existing)
-                    (emit (world--channel-record
-                           (make-instance 'channel
-                                          :identifier (getf change :id)
-                                          :parent     parent
-                                          :owner      keeper
-                                          :workspace  workspace
-                                          :title      title
-                                          :inbox-p    (inbox-p change)
-                                          :created-at (created-at change)
-                                          :updated-at (max now (created-at change))))))
-                   ((or (not (string= (channel-workspace existing) workspace))
-                        (not (equal (channel-title existing) title))
-                        (and parent (null (channel-parent existing))))
-                    (let ((adopted-p (and parent (null (channel-parent existing)))))
-                      (emit (world--channel-record
-                             (world--copy-channel existing
-                                                  :workspace  workspace
-                                                  :title      title
-                                                  :parent     (if adopted-p parent (channel-parent existing))
-                                                  :owner      (if adopted-p keeper (channel-owner existing))
-                                                  :updated-at (max now (channel-updated-at
-                                                                        existing))))))))))
-
-             (ensure-agent (change owner)
-               "Create or refresh CHANGE's agent participant under OWNER and return its identifier.
-
-A child agent is named as its parent named it and belongs to its parent
-agent. One migrated before its parent was known gets that parent when its
-channel gets its ancestry."
-               (let* ((header      (getf change :header))
-                      (settings    (world-session--settings header))
-                      (mapping     (getf change :mapping))
-                      (existing    (world-session--mapped-participant
-                                    preview mapping (getf change :id)))
-                      (parent      (parent-agent change))
-                      (adopted-p   (let ((before (world-channel-find world (getf change :id))))
-                                     (and before parent (null (channel-parent before)))))
-                      ;; The inbox, a channel whose agent moved away, or one
-                      ;; left without an agent on purpose, gets no invented
-                      ;; agent; only
-                      ;; a mapping whose agent is gone from the world is
-                      ;; repaired with a new one.
-                      (agentless-p (and mapping
-                                        (null existing)
-                                        (or (null (world-session-mapping-participant mapping))
-                                            (world-participant-find
-                                             preview (world-session-mapping-participant mapping))))))
-                 (cond
-                   ((or agentless-p (inbox-p change))
-                    nil)
-                   ((null existing)
-                    (let ((agent (make-instance 'participant
-                                                :identifier (world--generate-identifier preview now)
-                                                :kind       ':agent
-                                                :name       (world-unique-handle
-                                                             preview
-                                                             (if (parent-of change)
-                                                                 (world-handle-base
-                                                                  (or (getf (rest header) :agent-name) "")
-                                                                  :fallback *world-task-name*)
-                                                                 (world-session--handle-base
-                                                                  (world-session--workspace
-                                                                   configuration header))))
-                                                :parent     (participant-identifier
-                                                             (or parent owner))
-                                                :residence  (getf change :id)
-                                                :settings   settings
-                                                :created-at (created-at change)
-                                                :updated-at (max now (created-at change)))))
-                      (emit (world--participant-record agent))
-                      (participant-identifier agent)))
-                   ;; An agent's settings are its own once it exists: the
-                   ;; header only says what the conversation began with, and
-                   ;; an agent moved in brings its own.
-                   ((and adopted-p
-                         (not (equal (participant-parent existing)
-                                     (participant-identifier parent))))
-                    (emit (world--participant-record
-                           (world--copy-participant existing
-                                                    :parent     (participant-identifier parent)
-                                                    :updated-at (max now (participant-updated-at
-                                                                          existing)))))
-                    (participant-identifier existing))
-                   (t
-                    (participant-identifier existing)))))
-
-             (settle-human (change)
-               "Keep the person resident in CHANGE's channel when it is the inbox."
-               (let ((person (human)))
-                 (when (and person
-                            (inbox-p change)
-                            (not (equal (participant-residence person) (getf change :id))))
-                   (emit (world--participant-record
-                          (world--copy-participant
-                           person
-                           :residence  (getf change :id)
-                           :updated-at (max now (participant-updated-at person))))))))
 
              (retire (mapping)
                "Delete MAPPING's participant with its descendants; its channel ends in the sweep.
@@ -564,18 +400,108 @@ parent is never left behind its retired children."
       (dolist (change (stable-sort (copy-list changes) #'<
                                    :key (lambda (change)
                                           (cond
-                                            ((inbox-p change)
+                                            ((world-session--inbox-header-p (getf change :header))
                                              -2)
                                             ((parent-of change)
-                                             (created-at change))
+                                             (getf (rest (getf change :header)) :created-at))
                                             (t
                                              -1)))))
-        (let ((owner (ensure-human change)))
-          (ensure-channel change owner)
-          (settle-human change)
+        (let* ((identifier (getf change :id))
+               (header     (getf change :header))
+               (created-at (getf (rest header) :created-at))
+               (inbox-p    (world-session--inbox-header-p header))
+               (workspace  (world-session--workspace configuration header))
+               (title      (if inbox-p
+                               *world-inbox-designator*
+                               (world-session--title (getf change :identity) header)))
+               (parent-id  (parent-of change))
+               (parent     (and parent-id (world-channel-find preview parent-id)))
+               (ancestor   (and parent
+                                (world-session--mapped-participant
+                                 preview
+                                 (find parent-id (append planned mappings)
+                                       :key #'world-session-mapping-conversation :test #'string=)
+                                 parent-id)))
+               (owner      (or (human)
+                               (make-instance 'participant
+                                              :identifier (world--generate-identifier preview now)
+                                              :kind       ':human
+                                              :name       *world-human-name*
+                                              :residence  identifier
+                                              :presence   ':present
+                                              :created-at now
+                                              :updated-at now)))
+               (channel    (world-channel-find preview identifier))
+               (adopted-p  (and channel parent (null (channel-parent channel))))
+               (keeper     (participant-identifier (or ancestor owner)))
+               (mapping    (getf change :mapping))
+               (existing   (world-session--mapped-participant preview mapping identifier)))
+          (cond
+            ((null channel)
+             (emit (world--channel-record
+                    (make-instance 'channel
+                                   :identifier identifier
+                                   :parent     (and parent parent-id)
+                                   :owner      keeper
+                                   :workspace  workspace
+                                   :title      title
+                                   :inbox-p    inbox-p
+                                   :created-at created-at
+                                   :updated-at (max now created-at)))))
+            ((or (not (string= (channel-workspace channel) workspace))
+                 (not (equal (channel-title channel) title))
+                 adopted-p)
+             (emit (world--channel-record
+                    (world--copy-channel channel
+                                         :workspace  workspace
+                                         :title      title
+                                         :parent     (if adopted-p parent-id (channel-parent channel))
+                                         :owner      (if adopted-p keeper (channel-owner channel))
+                                         :updated-at (max now (channel-updated-at channel)))))))
+          (cond
+            ((null (human))
+             (emit (world--participant-record owner)))
+            ((and inbox-p (not (equal (participant-residence owner) identifier)))
+             (emit (world--participant-record
+                    (world--copy-participant owner
+                                             :residence  identifier
+                                             :updated-at (max now (participant-updated-at owner)))))))
+          ;; A mapping deliberately without an agent, or whose agent moved
+          ;; away, stays without one. Only a deleted agent is recreated.
+          (unless (or inbox-p
+                      (and mapping (null existing)
+                           (or (null (world-session-mapping-participant mapping))
+                               (world-participant-find preview (world-session-mapping-participant mapping)))))
+            (cond
+              ((null existing)
+               (setf existing
+                     (make-instance 'participant
+                                    :identifier (world--generate-identifier preview now)
+                                    :kind       ':agent
+                                    :name       (world-unique-handle
+                                                 preview
+                                                 (if parent-id
+                                                     (world-handle-base (or (getf (rest header) :agent-name) "")
+                                                                        :fallback *world-task-name*)
+                                                     (world-session--handle-base workspace)))
+                                    :parent     keeper
+                                    :residence  identifier
+                                    :settings   (world-session--settings header)
+                                    :created-at created-at
+                                    :updated-at (max now created-at)))
+               (emit (world--participant-record existing)))
+              ;; Existing agents keep their settings. Adopt a late parent's
+              ;; ancestry only when adopting its channel in the same pass.
+              ((and adopted-p ancestor
+                    (not (equal (participant-parent existing) keeper)))
+               (emit (world--participant-record
+                      (world--copy-participant existing
+                                               :parent     keeper
+                                               :updated-at (max now (participant-updated-at existing))))))))
           (push (make-instance 'world-session-mapping
-                               :conversation (getf change :id)
-                               :participant  (ensure-agent change owner)
+                               :conversation identifier
+                               :participant  (and (not inbox-p) existing
+                                                  (participant-identifier existing))
                                :token        (getf change :token))
                 planned)))
       (dolist (mapping vanished)
