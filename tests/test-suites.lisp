@@ -1558,6 +1558,7 @@
 
 (define-test-suite session-cli
   test-cli-resume-prefixes
+  test-cli-startup-failure-line
   test-cli-detached-dispatch
   test-cli-detached-receipt-cleanup
   test-cli-world-client-start

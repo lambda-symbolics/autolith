@@ -74,7 +74,7 @@ other."
                (error condition)))))
         ((>= (get-internal-real-time) deadline)
          (error 'localgroup-error
-                :message   "The world server holds the world but did not answer in time."
+                :message   "World server response timeout"
                 :operation ':open))
         (t
          (sleep 0.25))))))

@@ -724,9 +724,9 @@ active application's terminal, plain when that terminal is not styled."
       (provider-authentication-provider configuration selection)
       (provider-create configuration)))
 
-(-> main--authentication-output-styled-p (stream) boolean)
-(defun main--authentication-output-styled-p (stream)
-  "Return true when command-line authentication may style output to STREAM."
+(-> main--output-styled-p (stream) boolean)
+(defun main--output-styled-p (stream)
+  "Return true when command-line output to STREAM may be styled."
   (and (interactive-stream-p stream)
        (terminal-environment-styling-p)))
 
@@ -805,7 +805,7 @@ dependencies."
     (flet ((authenticate ()
              (let ((*api-key-input-file-descriptor* (terminal-standard-input-file-descriptor))
                    (*api-key-output-styled-p*
-                     (main--authentication-output-styled-p *standard-output*)))
+                     (main--output-styled-p *standard-output*)))
                (format t "~&~A~%"
                        (provider-authenticate-with-method
                         provider method :stream *standard-output* :open-browser-p t))
@@ -1873,6 +1873,17 @@ variables for later user and child consumers are restored here."
         (platform-unsetenv value-name)
         (platform-unsetenv state-name))))
   nil)
+(-> main--startup-failure-line (string stream) string)
+(defun main--startup-failure-line (message stream)
+  "Return the line saying Autolith could not start because of MESSAGE.
+
+The line is colored as a failure when STREAM is a terminal that allows color."
+  (let ((line     (format nil "! Autolith could not start: ~A" message))
+        (sequence (and (main--output-styled-p stream)
+                       (terminal-style-sequence ':failure))))
+    (if sequence
+        (concatenate 'string sequence line *terminal-style-reset*)
+        line)))
 
 (-> main (list) null)
 (defun main (arguments)
@@ -1881,8 +1892,9 @@ variables for later user and child consumers are restored here."
   (handler-case
       (main-dispatch arguments)
     ((or autolith-error cl-llm-provider-api:provider-api-error) (condition)
-      (format *error-output* "Autolith could not start: ~A~%"
-              (main--startup-error-text condition))
+      (format *error-output* "~A~%"
+              (main--startup-failure-line (main--startup-error-text condition)
+                                          *error-output*))
       (uiop:quit 64))
     ;; Ctrl-C outside the raw-mode terminal interface ends the command, after
     ;; unwinding its cleanup, with the shell's interrupt status.
