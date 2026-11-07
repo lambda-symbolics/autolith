@@ -623,6 +623,15 @@ Ordinary native defaults remain lazy and follow the current environment."
   :group                     :process
   :documentation             "Whether mutation-capable active-image tools are disabled.")
 
+(define-setting :channel-idle-minutes (real-setting)
+  :label                              "Idle channel unloading"
+  :group                              :process
+  :documentation                      "Minutes a channel stays loaded in the world server once no terminal shows it and nothing runs or waits in it; its history then leaves memory until it is opened or messaged again."
+  :scope                              :durable
+  :minimum                            1
+  :maximum                            10080
+  :default                            30)
+
 (define-setting :management-repl-enabled-p (boolean-setting)
   :label                                   "Management REPL"
   :group                                   :management

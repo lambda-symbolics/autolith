@@ -17,6 +17,9 @@
 (defparameter *world-server-open-timeout-seconds* 60
   "How long an open waits for its channel's endpoint before it fails.")
 
+(defparameter *world-server-sweep-seconds* 60
+  "How often the server looks for channels gone cold.")
+
 (defclass world-host ()
   ((application
     :initarg       :application
@@ -57,7 +60,12 @@
     :initform      nil
     :accessor      world-host-quiesced-tools
     :type          list
-    :documentation "The tool runtimes a checkpoint closed in this channel, restarted when it is served again."))
+    :documentation "The tool runtimes a checkpoint closed in this channel, restarted when it is served again.")
+   (idle-since
+    :initform      nil
+    :accessor      world-host-idle-since
+    :type          (option real)
+    :documentation "The internal real time the server first found the channel idle, or NIL while it is in use."))
   (:documentation "One channel's application and the thread serving it.
 
 A host paused for a checkpoint keeps its application; its thread ended so
@@ -208,6 +216,8 @@ the management REPL and Slynk, start with the server."
            (setf (world-server-lease server) (world-server--lease-acquire bootstrapped))
            (world-compact-when-grown bootstrapped)
            (world-server--reconcile bootstrapped)
+           (setf *world-message-unserved-function*
+                 (lambda (identifier) (world-server-wake-channel server identifier)))
            (localgroup-handoff-assert-startup-active)
            (world-server--runtime-start server :token token :created-at created-at)
            (localgroup-handoff-finish-startup nil)
@@ -315,21 +325,96 @@ a hosted session asked the process to exit with, or NIL."
   "Run SERVER's main-thread jobs until it is stopped and its last channel has ended.
 
 Return the launcher status a hosted session asked for, or NIL."
-  (let ((lock (world-server-lock server)))
+  (let* ((lock     (world-server-lock server))
+         (interval (* *world-server-sweep-seconds* internal-time-units-per-second))
+         (due      (+ (get-internal-real-time) interval))
+         (sweep    (lambda ()
+                     (setf due (+ (get-internal-real-time) interval))
+                     (world-server--unload-cold-hosts server))))
     (loop
       (let ((job (with-lock-held (lock)
                    (loop
-                     (cond
-                       ((world-server-jobs server)
-                        (return (pop (world-server-jobs server))))
-                       ((and (world-server-stopping-p server)
-                             (null (world-server-hosts server)))
-                        (return nil))
-                       (t
-                        (condition-wait (world-server-condition-variable server) lock)))))))
+                     (let ((left (- due (get-internal-real-time))))
+                       (cond
+                         ((world-server-jobs server)
+                          (return (pop (world-server-jobs server))))
+                         ((and (world-server-stopping-p server)
+                               (null (world-server-hosts server)))
+                          (return nil))
+                         ((<= left 0)
+                          (return sweep))
+                         (t
+                          (condition-wait (world-server-condition-variable server) lock
+                                          :timeout (/ left internal-time-units-per-second)))))))))
         (if job
             (funcall job)
             (return (world-server-exit-status server)))))))
+
+(-> world-server-wake-channel (world-server string) null)
+(defun world-server-wake-channel (server identifier)
+  "Serve channel IDENTIFIER without a terminal, so its agent reads the message that just reached it.
+
+Nothing happens when nobody resides there, when it is the person's inbox, or
+when a host serves it already. The channel goes cold again once it has been
+idle long enough. A channel that cannot be served keeps its message waiting."
+  (world-server--enqueue
+   server
+   (lambda ()
+     (handler-case
+         (with-lock-held ((world-server-open-lock server))
+           (let* ((configuration (world-server-configuration server))
+                  (world         (world-load configuration))
+                  (channel       (world-channel-find world identifier)))
+             (when (and channel
+                        (not (channel-inbox-p channel))
+                        (find ':agent (world-channel-residents world identifier)
+                              :key #'participant-kind)
+                        (null (world-server--find-host server identifier))
+                        (not (world-server-stopping-p server))
+                        (not (world-server-checkpointing-p server)))
+               (world-server--start-host
+                server
+                :conversation-id identifier
+                :directory       (channel-workspace channel)
+                :arguments       (list :switch-p     t
+                                       :fullscreen-p (not (null (config :fullscreen-p configuration))))))))
+       (error (condition)
+         (format *error-output* "~&World server could not serve channel ~A for its message: ~A~%"
+                 (conversation-identifier-display identifier) condition)))))
+  nil)
+
+(-> world-server--host-idle-p (world-host) boolean)
+(defun world-server--host-idle-p (host)
+  "Return true while HOST's channel is served, no terminal shows it, and nothing runs or waits in it."
+  (let* ((application  (world-host-application host))
+         (controller   (application-input-controller application))
+         (orchestrator (application--task-orchestrator application)))
+    (and (world-host-ready-p host)
+         (not (world-host-paused-p host))
+         (null (world-host-exit-reason host))
+         (not (application-terminal-attached-p application))
+         (not (and controller (application-input-controller-busy-p controller)))
+         (not (and orchestrator (plusp (task-orchestrator-active-count orchestrator)))))))
+
+(-> world-server--unload-cold-hosts (world-server &key (:now real)) null)
+(defun world-server--unload-cold-hosts (server &key (now (get-internal-real-time)))
+  "Close every channel of SERVER that stayed idle the configured minutes, and note those just gone idle.
+
+A closed channel leaves memory with its history; opening it, or a message to
+its agent, serves it again. Nothing is unloaded while a checkpoint runs."
+  (unless (world-server-checkpointing-p server)
+    (let ((limit (* 60 (config :channel-idle-minutes (world-server-configuration server))
+                    internal-time-units-per-second)))
+      (dolist (host (world-server--hosts server))
+        (if (world-server--host-idle-p host)
+            (let ((since (world-host-idle-since host)))
+              (cond
+                ((null since)
+                 (setf (world-host-idle-since host) now))
+                ((>= (- now since) limit)
+                 (world-server--close-host host))))
+            (setf (world-host-idle-since host) nil)))))
+  nil)
 
 (-> world-server-stop (world-server) null)
 (defun world-server-stop (server)
@@ -345,6 +430,7 @@ Return the launcher status a hosted session asked for, or NIL."
 (-> world-server--shutdown (world-server) null)
 (defun world-server--shutdown (server)
   "Stop SERVER's endpoint and the process services after its channels ended."
+  (setf *world-message-unserved-function* nil)
   (world-server-stop server)
   (dolist (host (world-server--hosts server))
     (let ((thread (world-host-thread host)))

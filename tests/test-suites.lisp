@@ -667,6 +667,8 @@
   test-world-compaction)
 
 (define-test-suite world-server
+  test-world-server-cold-channels
+  test-world-server-wake-channel
   test-world-server-hosting
   test-world-server-checkpoint-quiescence
   test-world-server-restart-marker
