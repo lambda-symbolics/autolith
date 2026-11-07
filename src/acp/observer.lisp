@@ -145,7 +145,62 @@
 
 (-> acp-session-event (acp-session list) null)
 (defun acp-session-event (session event)
-  "Present one channel EVENT to the editor."
+  "Buffer events during initial replay, otherwise deliver each cursor exactly once."
+  (with-lock-held ((acp-session-event-lock session))
+    (if (acp-session-attaching-p session)
+        (deque-push-back (acp-session-attachment-events session) event)
+        (acp-session--consume-event session event)))
+  nil)
+
+(-> acp-session--consume-event (acp-session list) null)
+(defun acp-session--consume-event (session event)
+  "Deliver EVENT under the event lock and advance its cursor only after processing."
+  (let* ((fields   (rest event))
+         (sequence (getf fields :sequence)))
+    (unless (and (not (eq (first event) ':checkpoint-reconnect))
+                 sequence (<= sequence (acp-session-event-sequence session)))
+      (cond
+        ((eq (first event) ':record)
+         (let* ((record          (getf fields :record))
+                (record-sequence (getf (rest record) :seq)))
+           (when (or (null record-sequence)
+                     (> record-sequence (acp-session-replay-boundary session)))
+             (if (acp-session-catch-up-p session)
+                 (acp-session--catch-up-record session record)
+                 (acp-session--dispatch-event session event)))))
+        ((and (acp-session-catch-up-p session)
+              (or (member (first event) '(:text :reasoning))
+                  (and (eq (first event) ':status)
+                       (member (getf fields :status)
+                               '(:assistant-response-persisted :tool-call-started :tool-call-completed)))))
+         nil)
+        (t
+         (when (or (eq (first event) ':work-started)
+                   (and (eq (first event) ':status)
+                        (eq (getf fields :status) ':provider-request-started)))
+           (setf (acp-session-catch-up-p session) nil))
+         (acp-session--dispatch-event session event)))
+      (when (and sequence (not (eq (first event) ':checkpoint-reconnect)))
+        (setf (acp-session-event-sequence session) sequence))))
+  nil)
+
+(-> acp-session--catch-up-record (acp-session list) null)
+(defun acp-session--catch-up-record (session record)
+  "Project durable transcript records for a provider request already running at attachment."
+  (if (and (eq (first record) ':message) (eq (getf (rest record) :role) ':user))
+      (progn
+        (when (integerp (getf (rest record) :seq))
+          (setf (acp-session-turn-sequence session) (getf (rest record) :seq)))
+        (acp-session--record session record))
+      (let ((update (acp-replay--record-update record (acp-session-turn-sequence session))))
+        (when update
+          (with-lock-held ((acp-session-lock session))
+            (acp-session--send session update)))))
+  nil)
+
+(-> acp-session--dispatch-event (acp-session list) null)
+(defun acp-session--dispatch-event (session event)
+  "Present one admitted channel EVENT to the editor."
   (let ((fields (rest event)))
     (case (first event)
       (:text

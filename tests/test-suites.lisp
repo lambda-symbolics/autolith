@@ -702,6 +702,7 @@
   test-client-protocol-channel
   test-client-protocol-disconnect
   test-client-protocol-packet-limit
+  test-client-protocol-cursor-tail
   test-client-protocol-write-failure)
 
 (define-test-suite world-sidebar
@@ -1871,6 +1872,7 @@
 (define-test-suite acp
   test-acp-observer-tool-title-previews
   test-acp-observer-submission-provenance
+  test-acp-attachment-history-boundary
   test-acp-session-wire-new-prompt-replay-close
   test-acp-session-submission-sources
   test-acp-session-cancel-blocked-provider-and-reuse

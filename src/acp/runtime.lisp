@@ -30,8 +30,8 @@
   "Open the channel of IDENTIFIER, or a new one for CWD, in the world server and return its session.
 
 The editor's MCP-SERVERS join the tools of a channel the server starts for
-this session. A loaded session replays its history before it follows the
-channel's live events, so the two never interleave."
+this session. A loaded session subscribes before replay and drains the
+subsequent events after its bounded history snapshot."
   (when (>= (hash-table-count (acp-service-sessions service)) *acp-session-maximum-count*)
     (error 'agentcomms:acp-state-error :message "The live session limit is reached."))
   (when (and identifier (gethash identifier (acp-service-sessions service)))
@@ -67,8 +67,7 @@ channel's live events, so the two never interleave."
              (progn
                (when (and identifier (not (equal identifier channel)))
                  (agentcomms:acp-invalid-params "Use the canonical conversation identifier."))
-               (when identifier
-                 (acp-session-replay session))
+               (acp-session-begin-attachment session)
                (let ((connection (localgroup-client-connect
                                   (localgroup--find-record configuration channel)
                                   :name           "acp"
@@ -79,6 +78,9 @@ channel's live events, so the two never interleave."
                                    :permission-mode)))
                    (when (keywordp mode)
                      (setf (acp-session-mode session) mode))))
+               (acp-session-finish-attachment
+                session (localgroup-client-connection-attached (acp-session-connection session))
+                :replay-p (not (null identifier)))
                (with-lock-held ((acp-service-lock service))
                  (when (acp-service-closed-p service)
                    (error 'agentcomms:acp-connection-closed))
@@ -139,30 +141,66 @@ channel's live events, so the two never interleave."
            :content    (list (agentcomms:acp-tool-call-content
                               (agentcomms:acp-text-content output))))))))))
 
-(-> acp-replay-map-updates (conversation function) null)
-(defun acp-replay-map-updates (conversation function)
-  "Call FUNCTION on chronological updates with durable turn-qualified tool identities."
+(-> acp-replay-map-updates
+    (conversation function &key (:through-sequence (option integer))) (values null integer))
+(defun acp-replay-map-updates (conversation function &key through-sequence)
+  "Call FUNCTION on updates through the durable watermark and return NIL and the last turn sequence."
   (let ((turn-sequence 0))
     (conversation-replay--map-records
      conversation
      (lambda (record)
-       (when (and (eq (first record) ':message)
-                  (eq (getf (rest record) :role) ':user))
-         (setf turn-sequence (getf (rest record) :seq)))
-       (let ((update (acp-replay--record-update record turn-sequence)))
-         (when update (funcall function update))))))
-  nil)
+       (when (or (null through-sequence) (<= (getf (rest record) :seq) through-sequence))
+         (when (and (eq (first record) ':message)
+                    (eq (getf (rest record) :role) ':user))
+           (setf turn-sequence (getf (rest record) :seq)))
+         (let ((update (acp-replay--record-update record turn-sequence)))
+           (when update (funcall function update))))))
+    (values nil turn-sequence)))
 
-(-> acp-session-replay (acp-session) null)
-(defun acp-session-replay (session)
-  "Replay the channel's durable messages, reasoning, calls and results, then its plan."
+(-> acp-session-replay (acp-session &key (:through-sequence (option integer))) null)
+(defun acp-session-replay (session &key through-sequence)
+  "Replay durable history through THROUGH-SEQUENCE, then the channel's current plan."
   (let ((conversation (conversation-replay-load (acp-session-configuration session)
                                                 (acp-session-identifier session))))
     (with-lock-held ((acp-session-lock session))
-      (acp-replay-map-updates conversation
-                              (lambda (update) (acp-session--send session update)))
+      (setf (acp-session-turn-sequence session)
+            (nth-value 1 (acp-replay-map-updates
+                          conversation (lambda (update) (acp-session--send session update))
+                          :through-sequence through-sequence)))
       (acp-session--plan session)))
   (acp-session-flush session)
+  nil)
+
+(-> acp-session-begin-attachment (acp-session) integer)
+(defun acp-session-begin-attachment (session)
+  "Buffer incoming callbacks until the connection is installed; return its processed cursor."
+  (with-lock-held ((acp-session-event-lock session))
+    (setf (acp-session-attaching-p session) t)
+    (acp-session-event-sequence session)))
+
+(-> acp-session-drain-events (acp-session) null)
+(defun acp-session-drain-events (session)
+  "Deliver buffered callbacks in order before admitting live delivery."
+  (with-lock-held ((acp-session-event-lock session))
+    (loop until (deque-empty-p (acp-session-attachment-events session))
+          do (acp-session--consume-event session (deque-pop-front (acp-session-attachment-events session))))
+    (setf (acp-session-attaching-p session) nil))
+  nil)
+
+(-> acp-session-finish-attachment (acp-session list &key (:replay-p boolean)) null)
+(defun acp-session-finish-attachment (session greeting &key replay-p)
+  "Replay through GREETING's watermark, then deliver buffered later events before going live."
+  (let ((sequence (getf (rest greeting) :sequence))
+        (boundary (getf (rest greeting) :record-sequence)))
+    (unless (and (integerp sequence) (integerp boundary))
+      (error 'agentcomms:acp-state-error :message "The channel did not provide an attachment cursor."))
+    (setf (acp-session-replay-boundary session) boundary
+          (acp-session-catch-up-p session) t)
+    (when replay-p
+      (acp-session-replay session :through-sequence boundary))
+    (with-lock-held ((acp-session-event-lock session))
+      (setf (acp-session-event-sequence session) sequence))
+    (acp-session-drain-events session))
   nil)
 
 (defmethod agentcomms:agent-load-session
