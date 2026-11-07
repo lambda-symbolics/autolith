@@ -244,51 +244,20 @@ well, since the steer persists first and the queued turn then skips."
 (-> application-world-mention-function (configuration) function)
 (defun application-world-mention-function (configuration)
   "Return a function completing @ participant names from CONFIGURATION's world as it is."
-  (let ((cache nil))
-    (lambda (token)
-      (setf cache (world--cached configuration cache))
-      (world-mention-completion-entries (rest cache) token))))
+  (lambda (token)
+    (world-mention-completion-entries (world-presented configuration) token)))
 
-(-> world--source-token (configuration) list)
-(defun world--source-token (configuration)
-  "Return what identifies the content of CONFIGURATION's world log: its write date and size.
-
-The size tells two writes within one second apart. An absent log is the
-empty token."
-  (let ((pathname (configuration-world-path configuration)))
-    (if (probe-file pathname)
-        (list (file-write-date pathname)
-              (with-open-file (stream pathname :element-type '(unsigned-byte 8))
-                (file-length stream)))
-        nil)))
-
-(-> world--cached (configuration (option cons)) cons)
-(defun world--cached (configuration cache)
-  "Return CACHE, a (TOKEN . WORLD) pair, while its token is the log's, else a fresh pair.
-
-The token is read before and after the world, for up to three attempts.
-On the third attempt, the world is returned with the final token even if
-the before and after tokens differ. A world that cannot be read presents
-as empty."
-  (let ((token (world--source-token configuration)))
-    (if (and cache (equal (first cache) token))
-        cache
-        (loop for attempt from 1 to 3
-              for before = token then after
-              for world = (handler-case (world-load configuration)
-                            (autolith-error ()
-                              (make-instance 'world)))
-              for after = (world--source-token configuration)
-              when (or (equal before after) (= attempt 3))
-                return (cons after world)))))
+(-> world-presented (configuration) world)
+(defun world-presented (configuration)
+  "Return CONFIGURATION's world for presentation: as it is, or empty when it cannot be read."
+  (handler-case (world-load configuration)
+    (autolith-error ()
+      (make-instance 'world))))
 
 (-> application-world (application) world)
 (defun application-world (application)
-  "Return the world as APPLICATION last read it for presentation, rereading it when its log token changes."
-  (let ((cache (world--cached (application-configuration application)
-                              (application-world-cache application))))
-    (setf (application-world-cache application) cache)
-    (rest cache)))
+  "Return APPLICATION's world for presentation, empty when it cannot be read."
+  (world-presented (application-configuration application)))
 
 (-> application-agent-name (application) string)
 (defun application-agent-name (application)

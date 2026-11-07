@@ -75,11 +75,6 @@
     :reader        world-sidebar-clock-function
     :type          function
     :documentation "Returns the internal real time, replaceable by tests.")
-   (world-cache
-    :initform      nil
-    :accessor      world-sidebar-world-cache
-    :type          (option cons)
-    :documentation "The (TOKEN . WORLD) the sidebar read last, read again only once the world log changed.")
    (lock
     :initform      (make-lock "Autolith world sidebar")
     :reader        world-sidebar-lock
@@ -270,8 +265,7 @@ A world that cannot be read shows as empty rather than ending the client."
             (progn
               (setf (world-sidebar-reconciled-at sidebar) now)
               (values (world-reconcile-sessions configuration)))
-            (rest (setf (world-sidebar-world-cache sidebar)
-                        (world--cached configuration (world-sidebar-world-cache sidebar)))))
+            (world-load configuration))
       (autolith-error ()
         (make-instance 'world)))))
 

@@ -41,11 +41,6 @@ Clicking the rendered call's header inserts it into the composer.")
     :accessor      application-world-human
     :type          (option string)
     :documentation "The human participant's identifier once the world has one.")
-   (world-cache
-    :initform      nil
-    :accessor      application-world-cache
-    :type          (option cons)
-    :documentation "The world as last read for presentation, with the source token it was read at.")
    (conversation
     :initarg       :conversation
     :accessor      application-conversation

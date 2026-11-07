@@ -1109,7 +1109,7 @@
 
 (-> test-world-presentation-cache () null)
 (defun test-world-presentation-cache ()
-  "Test the presentation world follows every change to the log, even within one second."
+  "Test presentation follows every change to the log, even within one second, and folds no record twice."
   (with-test-configuration (configuration)
     (world-tests--persisted-conversation configuration "bfirst1" 1000)
     (world-tests--persisted-conversation configuration "bsecnd2" 2000)
@@ -1120,26 +1120,28 @@
                                          :configuration configuration
                                          :ui            (terminal-ui-create :terminal terminal)))
              (identifier  (participant-identifier first-agent))
-             (loads       0))
+             (folds       0))
         (flet ((name ()
                  "Return the agent's name as the application presents it."
                  (participant-name (world-participant-find (application-world application)
                                                            identifier))))
+          (name)
           (test-call-with-function-replacements
-           (list (list 'world-load
-                       (let ((load (symbol-function 'world-load)))
-                         (lambda (candidate)
-                           (incf loads)
-                           (funcall load candidate)))))
+           (list (list 'world--reduce-record
+                       (let ((reduce (symbol-function 'world--reduce-record)))
+                         (lambda (pathname world record)
+                           (incf folds)
+                           (funcall reduce pathname world record)))))
            (lambda ()
              (name)
-             (name)
-             (test-assert (= loads 1) "an unchanged log is read once")
+             (test-assert (zerop folds) "reading an unchanged log folds nothing")
              (world-participant-rename configuration identifier "first-name")
              (world-participant-rename configuration identifier "second-name")
              (test-assert (string= (name) "second-name")
                           "two renames in one second both reach presentation")
-             (test-assert (= loads 2) "a changed log is read again once"))))))
+             (setf folds 0)
+             (name)
+             (test-assert (zerop folds) "this process's own changes are not folded again"))))))
     nil))
 
 (-> test-world-mention-highlighting () null)
