@@ -227,7 +227,8 @@ Native model keys must equal each record's =id=. Optional =canonical_model_id=
 values also enter the exact membership set. IDs are printable ASCII, 1 through
 256 characters. AL rejects malformed or empty catalogs, schema mismatches, more
 than 100,000 model entries or unique IDs, and bodies larger than 16 MiB.
-Requests refuse redirects and have a ten-second process deadline. AL publishes
+Requests refuse redirects, ask for a gzip-compressed body, and have a
+ten-second process deadline. AL publishes
 validated caches atomically. Revocation, shutdown and checkpoint quiescence
 stop and join fetch work and the idle timer; results from an old consent epoch cannot publish.
 
