@@ -653,11 +653,12 @@ participant and, once empty, their channel. A world that has anything in it
 gets the person's inbox: the first reconciliation without one examines every
 conversation and creates an inbox conversation when none is found."
   (with-recursive-lock-held (*world-sessions-lock*)
-    (let* ((mappings   (world-session-mappings configuration))
-           ;; A world without an inbox is examined whole, so the inbox is
-           ;; found, or made, before anything else is mapped.
-           (all-p      (or (not identities-p)
-                           (null (world-inbox-channel (world-load configuration)))))
+    (let* ((discovery (world-load configuration))
+           (mappings  (world-session-mappings configuration))
+           ;; Discover against one snapshot; WORLD--TRANSACT reloads under
+           ;; the store lock before planning any records.
+           (all-p     (or (not identities-p)
+                          (null (world-inbox-channel discovery))))
            (identities (if all-p
                            (append (conversation-list configuration)
                                    (conversation-task-identities configuration))
@@ -665,20 +666,19 @@ conversation and creates an inbox conversation when none is found."
       (multiple-value-bind (changes vanished)
           (flet ((changes (identities)
                    "Return the changes and vanished mappings among IDENTITIES."
-                   (let ((world (world-load configuration)))
-                     (world-session--changes identities mappings
-                                             :all-p    all-p
-                                             :orphan-p (lambda (identifier root root-requested-p)
-                                                         (let ((channel (world-channel-find world identifier)))
-                                                           (and channel
-                                                                (null (channel-parent channel))
-                                                                (or root-requested-p
-                                                                    (world-channel-find world root))
-                                                                t)))))))
+                   (world-session--changes identities mappings
+                                           :all-p    all-p
+                                           :orphan-p (lambda (identifier root root-requested-p)
+                                                       (let ((channel (world-channel-find discovery identifier)))
+                                                         (and channel
+                                                              (null (channel-parent channel))
+                                                              (or root-requested-p
+                                                                  (world-channel-find discovery root))
+                                                              t))))))
             (multiple-value-bind (changes vanished) (changes identities)
               (if (and all-p
-                       (or changes (world-human-participant (world-load configuration)))
-                       (null (world-inbox-channel (world-load configuration)))
+                       (or changes (world-human-participant discovery))
+                       (null (world-inbox-channel discovery))
                        (notany (lambda (change)
                                  (world-session--inbox-header-p (getf change :header)))
                                changes))
@@ -688,8 +688,8 @@ conversation and creates an inbox conversation when none is found."
           (setf vanished nil))
         (if (and (null changes)
                  (null vanished)
-                 (not (world-session--duplicate-names-p (world-load configuration))))
-            (values (world-load configuration) 0)
+                 (not (world-session--duplicate-names-p discovery)))
+            (values discovery 0)
             (let ((updated nil) (ended nil))
               (let ((committed
                       (nth-value 1
