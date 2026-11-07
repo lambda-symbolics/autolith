@@ -1271,6 +1271,128 @@ nested workers and accepts only compact, content-free phase descriptions."))
                "arguments" skeleton-arguments)))
      :code ':missing-required-arguments)))
 
+(-> tool--declared-argument-names (tool) (values list boolean))
+(defun tool--declared-argument-names (tool)
+  "Return declared names and whether TOOL has a simple closed object schema."
+  (let ((schema (tool-parameters tool)))
+    (multiple-value-bind (additional present-p)
+        (gethash "additionalProperties" schema)
+      (let ((closed-p (and present-p (json-false-p additional)
+                           (not (json-get schema "patternProperties"))))
+            (names    '()))
+        (when closed-p
+          (let ((properties (json-get schema "properties")))
+            (when (json-object-p properties)
+              (maphash (lambda (name value)
+                         (declare (ignore value))
+                         (push name names))
+                       properties))))
+        (values names closed-p)))))
+
+(-> tool--argument-distance (string string) number)
+(defun tool--argument-distance (left right)
+  "Return the Levenshtein distance between LEFT and RIGHT."
+  (let* ((left  (string-downcase left))
+         (right (string-downcase right))
+         (width (1+ (length right)))
+         (row   (make-array width
+                           :initial-contents
+                           (loop for index below width collect index))))
+    (loop for left-index from 1 to (length left)
+          for left-character = (char left (1- left-index))
+          do (let ((previous (aref row 0)))
+               (setf (aref row 0) left-index)
+               (loop for right-index from 1 to (length right)
+                     for right-character = (char right (1- right-index))
+                     do (let ((above (aref row right-index)))
+                          (setf (aref row right-index)
+                                (min (1+ (aref row right-index))
+                                     (1+ (aref row (1- right-index)))
+                                     (+ previous
+                                        (if (char= left-character right-character)
+                                            0
+                                            1))))
+                          (setf previous above)))))
+    (aref row (length right))))
+
+(-> tool--closest-argument-name (string list) (option string))
+(defun tool--closest-argument-name (name candidates)
+  "Return the candidate nearest NAME when the spelling is plausibly a slip."
+  (let ((closest          nil)
+        (closest-distance most-positive-fixnum))
+    (dolist (candidate candidates closest)
+      (let ((distance (tool--argument-distance name candidate)))
+        (when (< distance closest-distance)
+          (setf closest          candidate
+                closest-distance distance))))
+    (when (and closest
+               (<= closest-distance
+                   (min 3 (max 1 (floor (length name) 3)))))
+      closest)))
+
+(-> tool--unknown-argument-names (tool json-object) list)
+(defun tool--unknown-argument-names (tool arguments)
+  "Return the sorted argument names TOOL's schema does not declare."
+  (multiple-value-bind (declared closed-p) (tool--declared-argument-names tool)
+    (when closed-p
+      (let ((unknown '()))
+        (maphash
+         (lambda (name value)
+           (declare (ignore value))
+           (unless (or (member name declared :test #'string=)
+                       (and (tool-correction-metadata-p tool)
+                            (string= name "corrects_previous")))
+             (push name unknown)))
+         arguments)
+        (sort unknown #'string<)))))
+
+(-> tool--unknown-arguments-result (tool json-object list) tool-result)
+(defun tool--unknown-arguments-result (tool arguments unknown-names)
+  "Return a mechanics result naming UNKNOWN-NAMES and their closest declarations."
+  (let* ((declared    (tool--declared-argument-names tool))
+         (suggestions (make-hash-table :test #'equal))
+         (skeleton    (json-object))
+         (reports     '()))
+    (dolist (name unknown-names)
+      (let ((suggestion (tool--closest-argument-name name declared)))
+        (setf (gethash name suggestions) suggestion)
+        (push (if suggestion
+                  (format nil "~A (did you mean ~A?)" name suggestion)
+                  name)
+              reports)))
+    (maphash (lambda (name value)
+               (setf (gethash name skeleton) value))
+             arguments)
+    (maphash (lambda (name suggestion)
+               (when (and suggestion
+                          (not (nth-value 1 (gethash suggestion skeleton)))
+                          (= 1 (loop for candidate being the hash-values of suggestions
+                                     count (equal candidate suggestion))))
+                 (remhash name skeleton)
+                 (setf (gethash suggestion skeleton) (gethash name arguments))))
+             suggestions)
+    (tool-mechanics
+     (format nil
+             "Tool ~A was not executed because it received unknown arguments: ~{~A~^, ~}.~%Call skeleton: ~A"
+             (tool-canonical-name tool)
+             (nreverse reports)
+             (json-encode
+              (json-object
+               "namespace" (tool-namespace tool)
+               "name" (tool-name tool)
+               "arguments" skeleton)))
+     :code ':unknown-arguments)))
+
+(-> tool--argument-problem (tool json-object) (option tool-result))
+(defun tool--argument-problem (tool arguments)
+  "Return a mechanics result for unusable ARGUMENTS, or NIL when they fit."
+  (or (let ((unknown (tool--unknown-argument-names tool arguments)))
+        (and unknown
+             (tool--unknown-arguments-result tool arguments unknown)))
+      (let ((missing (tool--missing-required-names tool arguments)))
+        (and missing
+             (tool--missing-arguments-result tool arguments missing)))))
+
 (-> tool-registry-execute-call
     (tool-registry json-object tool-context)
     tool-result)
@@ -1326,11 +1448,9 @@ signals with the candidate canonical names."
                        :message   (format nil "Arguments for ~A are not a JSON object."
                                           canonical-name)
                        :tool-name canonical-name))
-              (let ((missing-names
-                      (tool--missing-required-names tool arguments)))
-                (if missing-names
-                    (tool--missing-arguments-result
-                     tool arguments missing-names)
+              (let ((problem (tool--argument-problem tool arguments)))
+                (if problem
+                    problem
                     (progn
                       (when (tool-correction-metadata-p tool)
                         (multiple-value-bind (value present-p) (gethash "corrects_previous" arguments)

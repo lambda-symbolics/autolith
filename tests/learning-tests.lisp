@@ -520,7 +520,7 @@
          (instance (make-instance 'learning-tests--scripted-tool
                                   :namespace (subseq tool 0 dot) :name (subseq tool (1+ dot))
                                   :description "A scripted tool."
-                                  :parameters  (tool-object-schema (json-object) nil)
+                                  :parameters  (json-object "type" "object" "additionalProperties" t)
                                   :respond     respond)))
     (tool-registry-register registry instance)
     instance))

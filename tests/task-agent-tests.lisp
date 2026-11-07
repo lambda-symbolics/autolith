@@ -876,7 +876,8 @@
                    "{\"status\":\"success\",\"text\":\" \\t\\n \"}")
                   ("unknown-field"
                    nil
-                   "{\"status\":\"success\",\"text\":\"done\",\"legacy\":true}")
+                   "{\"status\":\"success\",\"text\":\"done\",\"legacy\":true}"
+                   :unknown-arguments)
                   ("failed-with-data"
                    nil
                    "{\"status\":\"failed\",\"error\":\"blocked\",\"data\":false}")
@@ -895,7 +896,7 @@
                   ("non-string-text"
                    nil
                    "{\"status\":\"success\",\"text\":null}")))
-             (destructuring-bind (name output arguments) case
+             (destructuring-bind (name output arguments &optional (expected-code ':invalid-yield)) case
                (let* ((definition
                         (task-agent-definition-create
                          :name         name
@@ -910,7 +911,7 @@
                         (task-tests--execute-yield fixture arguments)))
                  (test-assert
                   (and (not (tool-result-success-p result))
-                       (eq (tool-result-error-code result) ':invalid-yield)
+                       (eq (tool-result-error-code result) expected-code)
                        (not
                         (task-completion-called-p
                          (getf fixture :completion))))

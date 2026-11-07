@@ -112,7 +112,9 @@
        (tool-registry-register
         registry (make-instance 'task-yield-tool :namespace "yield" :name "submit"
                                 :description "Test terminal yield."
-                                :parameters  (tool-object-schema (json-object) nil)))
+                                :parameters  (tool-object-schema
+                                              (json-object "status" (tool-string-property "Yield status."))
+                                              '("status"))))
        (unwind-protect
             (let* ((bodies (test-telemetry-hooks--capture
                             configuration (lambda () (agent-run-user-turn agent "Exercise failures."))))

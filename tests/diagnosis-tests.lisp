@@ -50,7 +50,7 @@
                                   :name        (format nil "~A_3d4e5f" (subseq tool (1+ dot)))
                                   :display     tool
                                   :description "A scripted tool with a wire name."
-                                  :parameters  (tool-object-schema (json-object) nil)
+                                  :parameters  (json-object "type" "object" "additionalProperties" t)
                                   :respond     respond)))
     (tool-registry-register registry instance)
     instance))

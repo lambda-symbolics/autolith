@@ -143,7 +143,8 @@ Return what FUNCTION returns."
                                 :headers      '(("Content-Type" . "application/json"))
                                 :content      "{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":1}}"
                                 :force-string t
-                                :keep-alive   nil)
+                                :keep-alive   nil
+                                :proxy        nil)
                 (test-assert (eql 200 status) "initialize answers 200")
                 (test-assert (gethash "acp-connection-id" headers) "initialize names the connection")
                 (test-assert (search "\"autolith\"" body) "the agent answers initialize")))))))))
