@@ -149,7 +149,7 @@
                                 (sb-thread:signal-semaphore closed))))))
               (client     (first (application-clients application)))
               (healthy    (localgroup-client-connect entry :name "healthy" :approves-p nil))
-              (write      #'daemon-write-packet)
+              (write      #'channel-client--write-event)
               (wait       #'condition-wait)
               (hub        (application-client-hub application))
               (choice     :unanswered)
@@ -162,16 +162,17 @@
                         (when (eq condition-variable (client-hub-condition-variable hub))
                           (sb-thread:signal-semaphore waiting))
                         (funcall wait condition-variable lock :timeout timeout)))
-                (list 'daemon-write-packet
-                      (lambda (stream event)
-                        (if (and (eq stream (channel-client-stream client))
+                (list 'channel-client--write-event
+                      (lambda (recipient event)
+                        (if (and (eq recipient client)
                                  (eq (first event) ':test-failure))
                             (progn
                               (sb-thread:signal-semaphore writing)
                               (when (eq failure ':overflow)
                                 (sb-thread:wait-on-semaphore release :timeout 10))
-                              (error 'end-of-file :stream stream))
-                            (funcall write stream event)))))
+                              (error 'image-daemon:daemon-error
+                                     :message "Injected transport failure." :operation ':write-packet))
+                            (funcall write recipient event)))))
                (lambda ()
                  (setf asker
                        (make-thread
@@ -213,4 +214,64 @@
            (localgroup-client-close healthy)
            (when asker
              (join-thread asker)))))))
+  nil)
+
+(-> test-client-protocol-packet-limit () null)
+(defun test-client-protocol-packet-limit ()
+  "Test oversized replies fail their own call and unsolicited events report omission."
+  (client-protocol-tests--call
+   (lambda (application entry)
+     (let* ((omitted    (sb-thread:make-semaphore))
+            (completed  (sb-thread:make-semaphore))
+            (notice     nil)
+            (failure    nil)
+            (caller     nil)
+            (connection (localgroup-client-connect
+                         entry :approves-p nil
+                         :event-function
+                         (lambda (event)
+                           (when (eq (first event) ':omitted)
+                             (setf notice event)
+                             (sb-thread:signal-semaphore omitted)))))
+            (command    #'localgroup--client-command)
+            (frame      #'image-daemon:daemon-packet-string))
+       (unwind-protect
+            (test-call-with-function-replacements
+             (list
+              (list 'image-daemon:daemon-packet-string
+                    (lambda (packet)
+                      (let ((image-daemon:*daemon-packet-character-limit* 8192))
+                        (funcall frame packet))))
+              (list 'localgroup--client-command
+                    (lambda (session operation arguments)
+                      (if (eq operation ':oversized)
+                          (list :data (make-string 32768 :initial-element #\x))
+                          (funcall command session operation arguments)))))
+             (lambda ()
+               (setf caller
+                     (make-thread
+                      (lambda ()
+                        (unwind-protect
+                             (handler-case (localgroup-client-call connection ':oversized)
+                               (localgroup-error (condition)
+                                 (setf failure condition)))
+                          (sb-thread:signal-semaphore completed)))
+                      :name "oversized reply caller"))
+               (test-assert (sb-thread:wait-on-semaphore completed :timeout 10)
+                            "an oversized reply settles its correlated request")
+               (test-assert (and failure (< (length (autolith-error-message failure)) 1000))
+                            "the caller receives a bounded localgroup error")
+               (test-assert (getf (localgroup-client-call connection ':state) :state)
+                            "the next request succeeds on the same connection")
+               (application-clients-publish
+                application (list :text :delta (make-string 32768 :initial-element #\x)))
+               (test-assert (sb-thread:wait-on-semaphore omitted :timeout 10)
+                            "an oversized unsolicited event reports omission")
+               (test-assert (eq (getf (rest notice) :kind) ':text)
+                            "the omission names the event kind")
+               (test-assert (zerop (hash-table-count (localgroup-client-connection-replies connection)))
+                            "settled calls leave no retained replies")))
+         (localgroup-client-close connection)
+         (when caller
+           (join-thread caller))))))
   nil)

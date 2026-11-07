@@ -307,19 +307,30 @@ while holding the queue or hub lock."
 
 (-> channel-client--write-events (channel-client) null)
 (defun channel-client--write-events (client)
-  "Write CLIENT's queued events to its connection until it closes or the connection fails.
+  "Write queued events until CLIENT closes or its transport fails."
+  (unwind-protect
+       (handler-case
+           (loop for event = (channel-client--next-event client)
+                 while event
+                 do (channel-client--write-event client event))
+         (error ()
+           nil))
+    (channel-client-close client))
+  nil)
 
-An event too large for one packet is replaced by a notice naming its kind, so
-the client knows something was left out."
-  (handler-case
-      (loop for event = (channel-client--next-event client)
-            while event
-            do (handler-case (daemon-write-packet (channel-client-stream client) event)
+(-> channel-client--write-event (channel-client list) null)
+(defun channel-client--write-event (client event)
+  "Write EVENT, replacing oversized replies with errors and other events with notices."
+  (let ((frame (handler-case (image-daemon:daemon-packet-string event)
                  (image-daemon:daemon-error ()
-                   (daemon-write-packet (channel-client-stream client)
-                                        (list :omitted :kind (first event))))))
-    (error ()
-      (channel-client-close client)))
+                   ;; Framing precedes I/O, so this cannot be a transport failure.
+                   (image-daemon:daemon-packet-string
+                    (if (eq (first event) ':reply)
+                        (list :reply :id (getf (rest event) :id)
+                              :error "The reply exceeded the packet size limit.")
+                        (list :omitted :kind (first event))))))))
+    (write-string frame (channel-client-stream client))
+    (finish-output (channel-client-stream client)))
   nil)
 
 
