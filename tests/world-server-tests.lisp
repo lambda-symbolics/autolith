@@ -461,6 +461,16 @@
           ("(print \")\")~%after" ("(print \")\")" "after"))
           ("(list ; a comment )~%  3)" ("(list ; a comment )
   3)"))
+          ("(list #| ) #| nested |# |#~%  3)~%next"
+           ("(list #| ) #| nested |# |#
+  3)" "next"))
+          ("(list |)|~%  3)~%next" ("(list |)|
+  3)" "next"))
+          ("two forms (on one line)~%next" ("two forms (on one line)" "next"))
+          ("(one) (two)~%next" ("(one) (two)" "next"))
+          (")~%next" (")" "next"))
+          ("#.(error \"Read-time evaluation\")~%next"
+           ("#.(error \"Read-time evaluation\")" "next"))
           ("(unfinished~%" ("(unfinished")))
         do (let ((stream (make-string-input-stream (format nil input)))
                  (found  nil))

@@ -160,40 +160,6 @@ sharing one it already served."
 ;;; until the form closes. The channel runs each submission to its end before
 ;;; the next, and the transcript goes to standard output as plain text.
 
-(-> world-client--form-open-p (string) boolean)
-(defun world-client--form-open-p (text)
-  "Return true when TEXT opens more parentheses than it closes, outside strings and comments."
-  (let ((depth     0)
-        (string-p  nil)
-        (escaped-p nil)
-        (comment-p nil))
-    (loop for character across text
-          do (cond
-               (escaped-p
-                (setf escaped-p nil))
-               (comment-p
-                (when (char= character #\Newline)
-                  (setf comment-p nil)))
-               (string-p
-                (case character
-                  (#\\
-                   (setf escaped-p t))
-                  (#\"
-                   (setf string-p nil))))
-               (t
-                (case character
-                  (#\\
-                   (setf escaped-p t))
-                  (#\"
-                   (setf string-p t))
-                  (#\;
-                   (setf comment-p t))
-                  (#\(
-                   (incf depth))
-                  (#\)
-                   (decf depth))))))
-    (or string-p (plusp depth))))
-
 (-> world-client--next-submission (stream) (option string))
 (defun world-client--next-submission (stream)
   "Read the next submission from STREAM, or return NIL at its end.
@@ -209,7 +175,7 @@ after it until the form closes or the input ends."
          nil)
         (t
          (let ((text line))
-           (loop while (world-client--form-open-p text)
+            (loop while (application-lisp-input-incomplete-p text)
                  do (let ((next (read-line stream nil nil)))
                       (unless next
                         (return))
