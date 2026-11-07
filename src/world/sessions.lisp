@@ -19,6 +19,11 @@
 (defparameter *world-human-name* "user"
   "The name of the one human participant a world starts with.")
 
+(defparameter *world-human-identifier* "user"
+  "The identifier of the one human participant a world starts with.
+
+It is fixed, so every migration gives the person the same identifier.")
+
 (defparameter *world-agent-name* "autolith"
   "The handle base of a migrated session's agent when its workspace name yields none.
 
@@ -306,6 +311,14 @@ name it."
           (push mapping vanished))))
     (values (nreverse changes) (nreverse vanished))))
 
+(-> world-session--agent-identifier (string) string)
+(defun world-session--agent-identifier (conversation-identifier)
+  "Return the identifier of the agent a migration makes for CONVERSATION-IDENTIFIER.
+
+It comes from the conversation, so migrating twice gives the same agent, and
+there is no limit on how many conversations migrate per second."
+  (concatenate 'string "al-" conversation-identifier))
+
 (-> world-session--plan
     (configuration world &key (:changes list) (:vanished list) (:mappings list)
                               (:now timestamp))
@@ -428,7 +441,7 @@ parent is never left behind its retired children."
                                  parent-id)))
                (owner      (or (human)
                                (make-instance 'participant
-                                              :identifier (world--generate-identifier preview now)
+                                              :identifier *world-human-identifier*
                                               :kind       ':human
                                               :name       *world-human-name*
                                               :residence  identifier
@@ -478,22 +491,27 @@ parent is never left behind its retired children."
                                (world-participant-find preview (world-session-mapping-participant mapping)))))
             (cond
               ((null existing)
-               (setf existing
-                     (make-instance 'participant
-                                    :identifier (world--generate-identifier preview now)
-                                    :kind       ':agent
-                                    :name       (world-unique-handle
-                                                 preview
-                                                 (if parent-id
-                                                     (world-handle-base (or (getf (rest header) :agent-name) "")
-                                                                        :fallback *world-task-name*)
-                                                     (world-session--handle-base workspace)))
-                                    :parent     keeper
-                                    :residence  identifier
-                                    :settings   (world-session--settings header)
-                                    :created-at created-at
-                                    :updated-at (max now created-at)))
-               (emit (world--participant-record existing)))
+               (let ((agent-id (world-session--agent-identifier identifier)))
+                 ;; If an earlier migration made this agent but its mapping
+                 ;; got lost, reuse the agent.
+                 (setf existing (and (null mapping) (world-participant-find preview agent-id)))
+                 (unless existing
+                   (setf existing
+                         (make-instance 'participant
+                                        :identifier agent-id
+                                        :kind       ':agent
+                                        :name       (world-unique-handle
+                                                     preview
+                                                     (if parent-id
+                                                         (world-handle-base (or (getf (rest header) :agent-name) "")
+                                                                            :fallback *world-task-name*)
+                                                         (world-session--handle-base workspace)))
+                                        :parent     keeper
+                                        :residence  identifier
+                                        :settings   (world-session--settings header)
+                                        :created-at created-at
+                                        :updated-at (max now created-at)))
+                   (emit (world--participant-record existing)))))
               ;; Existing agents keep their settings. Adopt a late parent's
               ;; ancestry only when adopting its channel in the same pass.
               ((and adopted-p ancestor

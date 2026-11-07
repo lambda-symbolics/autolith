@@ -397,6 +397,35 @@
                            "the retired mapping is removed")))))))
   nil)
 
+(-> test-world-session-bulk-migration () null)
+(defun test-world-session-bulk-migration ()
+  "Test many conversations migrate in one second and a repeated migration names the same participants."
+  (with-test-configuration (configuration)
+    (let ((identifiers (loop for index below 70
+                             collect (format nil "bulk~2,'0D" index))))
+      (dolist (identifier identifiers)
+        (world-tests--persisted-conversation configuration identifier 1000))
+      (flet ((participants ()
+               (sort (mapcar #'participant-identifier
+                             (world-participants (world-load configuration)))
+                     #'string<)))
+        (let ((expected (sort (cons *world-human-identifier*
+                                    (mapcar #'world-session--agent-identifier identifiers))
+                              #'string<)))
+          (multiple-value-bind (world count) (world-reconcile-sessions configuration :now 2000)
+            (declare (ignore world))
+            (test-assert (= count 71)
+                         "seventy conversations and the inbox migrate within one second"))
+          (test-assert (equal (participants) expected)
+                       "the person is user and each agent is named after its conversation")
+          (delete-file (configuration-world-sessions-path configuration))
+          (world-reconcile-sessions configuration :now 2001)
+          (test-assert (equal (participants) expected)
+                       "a migration that lost its mappings takes back the same participants")
+          (test-assert (= (length (world-tests--mapped configuration)) 70)
+                       "the repeated migration maps every conversation again")))))
+  nil)
+
 (-> test-world-session-mapping-transactions () null)
 (defun test-world-session-mapping-transactions ()
   "Test remapping one session preserves another writer's concurrent remap."
