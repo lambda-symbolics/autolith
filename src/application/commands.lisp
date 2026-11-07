@@ -1765,22 +1765,38 @@ INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT to TERMINAL-UI-SELECT."
          :argument    nil
          :description "return to the conversation list")))
 
-(-> application--pick-conversation (application) (option string))
-(defun application--pick-conversation (application)
-  "Pick a saved conversation, with d-delete and a confirmation step."
-  (let* ((browse-title "resume conversation")
+(-> application--channel-items (application) list)
+(defun application--channel-items (application)
+  "Return picker items for every channel: the person's inbox first, then each conversation's channel."
+  (let* ((world   (handler-case (application-world application)
+                    (autolith-error ()
+                      nil)))
+         (inbox   (and world (world-inbox-channel world)))
+         (current (conversation-identifier (application-conversation application))))
+    (append (when (and inbox (not (string= (channel-identifier inbox) current)))
+              (list (list :name        *world-inbox-designator*
+                          :value       (channel-identifier inbox)
+                          :argument    nil
+                          :group       "inbox"
+                          :description "messages for you")))
+            (application--conversation-items application))))
+
+(-> application--pick-channel (application) (option string))
+(defun application--pick-channel (application)
+  "Pick a channel to switch to, with d-delete of a conversation and a confirmation step."
+  (let* ((browse-title "switch channel")
          (browse-hint  "enter selects, d deletes, esc cancels")
          (confirm-hint "enter confirms, esc returns")
          (mode         ':browse)
          (pending      nil)
-         (browse-items (application--conversation-items application))
+         (browse-items (application--channel-items application))
          (current-identifier
            (conversation-identifier
             (application-conversation application))))
     (labels ((refresh-items ()
                "Reload browse items from disk."
                (setf browse-items
-                     (application--conversation-items application)))
+                     (application--channel-items application)))
 
              (selected-item (selector)
                "Return SELECTOR's currently highlighted item, or NIL."
@@ -1807,7 +1823,7 @@ INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT to TERMINAL-UI-SELECT."
                    (list ':cancel)))
 
              (on-event (event selector)
-               "Handle delete confirmation inside the resume picker."
+               "Handle delete confirmation inside the channel picker."
                (ecase mode
                  (:browse
                   (cond
@@ -1884,8 +1900,8 @@ INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT to TERMINAL-UI-SELECT."
        :hint          browse-hint
        :initial-value current-identifier
        :on-event      #'on-event
-       :usage         "Usage: (resume \"ID\")"
-       :empty-notice  "No saved conversations exist."))))
+       :usage         "Usage: (switch \"ID\")"
+       :empty-notice  "No other channels exist."))))
 
 (-> application--pick-model (application &key (:provider (option string))) (values (option string) (option string)))
 (defun application--pick-model (application &key provider)
@@ -2952,7 +2968,7 @@ The current value and its source sit in aligned columns of their own."
     (:name              "/help"
      :argument          "[TOPIC]"
      :description       "browse help or look up a command"
-     :tip               "Use `(help :workspace)` for a section or `(help 'resume)` for a command."
+     :tip               "Use `(help :workspace)` for a section or `(help 'switch)` for a command."
      :busy-behavior     :execute
      :terminal-behavior :shared
      :callable          t)
@@ -2985,35 +3001,6 @@ The current value and its source sit in aligned columns of their own."
              (application-conversation application)))))
   ':continue)
 
-(define-application-command application--builtin-resume-command
-    (:name              "/resume"
-     :argument          "[ID]"
-     :description       "pick a saved conversation to resume"
-     :tip               "returns to a saved conversation from this workspace or another one."
-     :busy-behavior     :hold
-     :terminal-behavior :exclusive-without-arguments
-     :callable          t)
-    (application &optional (identifier nil identifier-supplied-p))
-  (let* ((picker-p
-           (and *application-command-interactive-p*
-                (not identifier-supplied-p)))
-         (startup-offer-p
-           (application-project-adaptation-offer-p application))
-         (identifier
-           (if identifier-supplied-p
-               identifier
-               (and picker-p (application--pick-conversation application)))))
-    (when (or identifier picker-p)
-      (setf (application-project-adaptation-offer-p application) nil))
-    (when identifier
-      (application-resume-conversation
-       application
-       (application-world-channel-identifier application identifier))
-      (application-render-records application)
-      (when startup-offer-p
-        (application-maybe-offer-project-adaptation application))))
-  ':continue)
-
 (-> application--switch-target (application string) string)
 (defun application--switch-target (application designator)
   "Return the identifier of the channel DESIGNATOR names, among the world's channels or the running sessions.
@@ -3034,19 +3021,27 @@ the world knows no such channel."
 
 (define-application-command application--builtin-switch-command
     (:name              "/switch"
-     :argument          "ID"
+     :argument          "[ID]"
      :description       "move this terminal to another channel"
-     :tip               "takes a channel ID or a unique fragment of one; the channel you leave keeps running."
+     :tip               "takes a channel ID or a unique fragment of one, or picks one without; the channel you leave keeps running."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
+     :terminal-behavior :exclusive-without-arguments
      :callable          t)
-    (application designator)
-  (let* ((identifier (application--switch-target application (princ-to-string designator)))
-         (display    (conversation-identifier-display identifier))
-         (current    (conversation-identifier (application-conversation application)))
-         (terminal   (terminal-ui-terminal (application-ui application)))
-         (controller (application-input-controller application)))
+    (application &optional (designator nil designator-p))
+  (let* ((designator (if designator-p
+                         designator
+                         (and *application-command-interactive-p*
+                              (application--pick-channel application))))
+         (identifier (and designator
+                          (application--switch-target application (princ-to-string designator))))
+         (display    (and identifier (conversation-identifier-display identifier)))
+         (current    (and identifier
+                          (conversation-identifier (application-conversation application))))
+         (terminal   (and identifier (terminal-ui-terminal (application-ui application))))
+         (controller (and identifier (application-input-controller application))))
     (cond
+      ((null identifier)
+       nil)
       ((string= identifier current)
        (application-present application
                             (application-notice-line (format nil "already in channel ~A" display))))

@@ -926,7 +926,7 @@ forgotten again when no thread could start."
           (application-world-adopt-pending-context application)
           (world-server--serve-host server host
                                     :initial-command    (and (getf arguments :resume-command-p)
-                                                             "(resume)")
+                                                             "(switch)")
                                     :recovery-diagnosis (getf arguments :recovery-diagnosis)
                                     :resume-offer-p     (not (null (getf arguments :resume-command-p)))
                                     :boot-screen-p      (not (getf arguments :switch-p))))
