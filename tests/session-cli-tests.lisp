@@ -426,8 +426,8 @@
                              "the client attaches to the channel the server opened")
                 record))
         (list 'localgroup-attach-record
-              (lambda (attach-configuration entry mode &key panel)
-                (declare (ignore attach-configuration panel))
+              (lambda (attach-configuration entry mode &key panel screen)
+                (declare (ignore attach-configuration panel screen))
                 (push (list (rest entry) mode) attached)
                 (when attach-error (error attach-error))
                 (when switch-to

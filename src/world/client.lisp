@@ -84,17 +84,20 @@ other."
                         (:permission-mode keyword) (:immutable-p boolean)
                         (:pristine-p boolean) (:resume-command-p boolean)
                         (:recovery-diagnosis (option string)) (:launch list) (:new-p boolean)
-                        (:images list) (:mcp-servers list))
+                        (:images list) (:mcp-servers list) (:switch-p boolean))
     (values string boolean))
 (defun world-client-open
     (configuration &key directory channel (permission-mode ':ask) immutable-p pristine-p
-                        resume-command-p recovery-diagnosis launch new-p images mcp-servers)
+                        resume-command-p recovery-diagnosis launch new-p images mcp-servers
+                        switch-p)
   "Open CHANNEL, or a channel for DIRECTORY, in CONFIGURATION's world server.
 
 NEW-P opens a new channel for DIRECTORY instead of its latest one. IMAGES,
 absolute namestrings of local images, become the opened channel's composer
 draft. MCP-SERVERS, an editor's server declarations in portable form, join
-the tools of a channel that starts for this open.
+the tools of a channel that starts for this open. SWITCH-P says a terminal
+moves here from another channel, so a channel that starts for it skips the
+boot screen.
 The first client starts the server; later ones find it running. LAUNCH is
 the plist of launch options this start stated explicitly; a new channel
 takes them, and a channel already served refuses the ones it cannot change.
@@ -134,6 +137,8 @@ sharing one it already served."
                                   (list :images images))
                                 (when mcp-servers
                                   (list :mcp-servers mcp-servers))
+                                (when switch-p
+                                  (list :switch-p t))
                                 (list :permission-mode    permission-mode
                                       :fullscreen-p       (not (null (config :fullscreen-p configuration)))
                                       :resume-command-p   (not (null resume-command-p))

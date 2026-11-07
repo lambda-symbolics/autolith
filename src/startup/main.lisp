@@ -408,12 +408,13 @@ checkpoint work."
                       (:ready-function (option function))
                       (:resume-p boolean)
                       (:localgroup-identity list)
-                      (:notice (option string)))
+                      (:notice (option string))
+                      (:boot-screen-p boolean))
     (option keyword))
 (defun application-serve
     (application &key initial-command initial-input recovery-diagnosis
                       resume-offer-p hosted-p quiescer ready-function
-                      resume-p localgroup-identity notice)
+                      resume-p localgroup-identity notice (boot-screen-p t))
   "Serve APPLICATION's session on this thread until it exits, then release its resources.
 
 A direct session owns its process: APPLICATION-RUN wraps this function with
@@ -430,7 +431,9 @@ stops, so its thread can end for the fork, and the same application is
 served again with RESUME-P, which skips the startup presentation and
 recovery, LOCALGROUP-IDENTITY, the :TOKEN, :CREATED-AT and
 :CHECKPOINT-RECONNECT-ID its clients wait for, and NOTICE, presented once
-the session shows again. Return the controller's exit reason."
+the session shows again. Without BOOT-SCREEN-P the session opens without
+the boot screen, as for a terminal that switched to it. Return the
+controller's exit reason."
   (let* ((ui                     (application-ui application))
          (worker                 (application-worker application))
          (input-controller       nil)
@@ -569,7 +572,8 @@ the session shows again. Return the controller's exit reason."
                           (application-present application notice))
                         (application-startup-presentation
                          application input-controller
-                         :onboarding-p (null recovery-diagnosis)))
+                         :onboarding-p  (null recovery-diagnosis)
+                         :boot-screen-p boot-screen-p))
                     (unless hosted-p
                       (management-repl-start application)
                       (slynk-start (application-configuration application)
@@ -1241,8 +1245,9 @@ Return T once the terminal's channel lets it go. A channel that asks the
 terminal to switch is left running, and the terminal attaches to the channel
 it named, opening it in the server first without this start's launch
 options; when that channel refuses the open or the terminal's attachment,
-the terminal attaches to the one it left. One sidebar of the world follows
-the terminal from channel to channel."
+the terminal attaches to the one it left. One screen, with one sidebar of
+the world, follows the terminal from channel to channel, so a switch never
+gives the terminal back in between."
   (multiple-value-bind (session-id started-p)
       (main--open-world-channel configuration
                                 :permission-mode    permission-mode
@@ -1253,7 +1258,8 @@ the terminal from channel to channel."
                                 :recovery-diagnosis recovery-diagnosis
                                 :launch             launch
                                 :images             images)
-    (let ((panel (world-sidebar-create configuration)))
+    (let* ((panel  (world-sidebar-create configuration))
+           (screen (localgroup-client-screen-create :panel panel)))
       (world-sidebar-start panel)
       (unwind-protect
            (loop
@@ -1277,7 +1283,9 @@ the terminal from channel to channel."
                        (handler-case
                            (progn
                              (setf (world-sidebar-current panel) session-id)
-                             (localgroup-attach-record configuration record ':control :panel panel))
+                             (localgroup-attach-record configuration record ':control
+                                                       :panel  panel
+                                                       :screen screen))
                          (localgroup-error (condition)
                            (close-started)
                            ;; A switch whose channel refuses this terminal, as
@@ -1311,7 +1319,8 @@ the terminal from channel to channel."
                                               :channel         (getf (rest exit) :session-id)
                                               :permission-mode permission-mode
                                               :immutable-p     immutable-p
-                                              :pristine-p      pristine-p))
+                                              :pristine-p      pristine-p
+                                              :switch-p        t))
                          (setf origin left))
                      (localgroup-error (condition)
                        (format *error-output* "~&Autolith: could not switch to ~A: ~A~%"
@@ -1324,6 +1333,7 @@ the terminal from channel to channel."
                 (t
                  (localgroup-relay-exit configuration exit ':control)
                  (return t)))))
+        (localgroup-client-screen-release screen)
         (world-sidebar-stop panel)))))
 
 (-> main--session-options () list)

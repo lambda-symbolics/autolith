@@ -486,12 +486,14 @@ HEADER-P renders field labels rather than status values."
 (defun localgroup--attach-terminal-loop (socket-stream terminal mode &key socket screen)
   "Relay terminal I/O; return an application exit, a checkpoint transition or a switch request.
 
-SCREEN paints the session's frames and its own side panel on TERMINAL. A
-(:SWITCH :SESSION-ID ID) result asks the caller to attach to channel ID
-instead; this attachment has ended by then."
-  (let ((output    (make-mode-tracking-output-stream *standard-output*))
-        (screen    (or screen (localgroup-screen-create :terminal terminal)))
-        (reconnect nil))
+SCREEN paints the session's frames and its own side panel on TERMINAL, and
+stays open for the caller; without it the loop paints on a screen of its own
+and closes it. A (:SWITCH :SESSION-ID ID) result asks the caller to attach to
+channel ID instead; this attachment has ended by then."
+  (let* ((output    (make-mode-tracking-output-stream *standard-output*))
+         (owned-p   (null screen))
+         (screen    (or screen (localgroup-screen-create :terminal terminal)))
+         (reconnect nil))
     (unwind-protect
          (let ((exit
                  (image-daemon:daemon-attach-client-run
@@ -530,7 +532,8 @@ instead; this attachment has ended by then."
                           (list :rows rows :columns columns
                                 :styled-p (terminal-environment-styling-p)))))))))
            (or reconnect exit))
-      (localgroup-screen-close screen)
+      (when owned-p
+        (localgroup-screen-close screen))
       (mode-tracking-output-stream-restore output))))
 
 (-> localgroup--wait-for-handoff-entry
@@ -608,49 +611,68 @@ loses a subscription race to another checkpoint."
       (sleep 0.05))))
 
 (-> localgroup-attach-record
-    ((option configuration) cons keyword &key (:panel t))
+    ((option configuration) cons keyword &key (:panel t) (:screen (option localgroup-screen)))
     (option list))
-(defun localgroup-attach-record (configuration entry mode &key panel)
+(defun localgroup-attach-record (configuration entry mode &key panel screen)
   "Attach the terminal, following explicit checkpoint transitions in the same mode.
 
-PANEL, when given, is composed beside a fullscreen session's frames. Return
-an application exit plist, a (:SWITCH :SESSION-ID ID) request from the
-session, or NIL after a detach or connection loss."
+PANEL, when given, is composed beside a fullscreen session's frames. SCREEN,
+from LOCALGROUP-CLIENT-SCREEN-CREATE, is the client's screen to paint on; the
+caller keeps it after this attachment ends, so a terminal moving to another
+channel keeps its screen. Without SCREEN the attachment makes its own and
+gives the terminal back at the end. Return an application exit plist, a
+(:SWITCH :SESSION-ID ID) request from the session, or NIL after a detach or
+connection loss."
   (let ((history-position nil))
     (loop
       (let ((result (localgroup--attach-record-once configuration entry mode
                                                    :history-position history-position
-                                                   :panel            panel)))
+                                                   :panel            panel
+                                                   :screen           screen)))
         (unless (eq (first result) ':checkpoint-reconnect)
           (return result))
         (setf entry (localgroup--wait-for-checkpoint-entry entry (getf (rest result) :id)
                                                            :configuration configuration)
               history-position (getf (rest result) :history-position))))))
 
+(-> localgroup-client-screen-create (&key (:panel t)) localgroup-screen)
+(defun localgroup-client-screen-create (&key panel)
+  "Return a screen on a new terminal for this process's standard input and output, with PANEL beside the session."
+  (multiple-value-bind (rows columns)
+      (terminal-current-size)
+    (localgroup-screen-create
+     :terminal (stream-terminal-create
+                :rows                  rows
+                :columns               columns
+                :input-file-descriptor (terminal-standard-input-file-descriptor))
+     :panel    panel)))
+
+(-> localgroup-client-screen-release (localgroup-screen) null)
+(defun localgroup-client-screen-release (screen)
+  "Give back the terminal SCREEN painted on: leave its screen, then restore its input mode."
+  (localgroup-screen-close screen)
+  ; mallet:suppress no-ignore-errors -- best-effort terminal release during unwinding
+  (ignore-errors (terminal-stop (localgroup-screen-terminal screen)))
+  nil)
+
 (-> localgroup--attach-record-once
-    ((option configuration) cons keyword &key (:history-position (option integer)) (:panel t))
+    ((option configuration) cons keyword
+     &key (:history-position (option integer)) (:panel t) (:screen (option localgroup-screen)))
     (option list))
-(defun localgroup--attach-record-once (configuration entry mode &key history-position panel)
+(defun localgroup--attach-record-once (configuration entry mode &key history-position panel screen)
   "Run one attachment and release terminal ownership before any reconnect.
 
-The session gets the part of the terminal left beside PANEL as its size."
+The session gets the part of the terminal left beside PANEL as its size. A
+SCREEN the caller lends stays the caller's to release."
   (let* ((record        (rest entry))
+         (owned-p       (null screen))
+         (screen        (or screen (localgroup-client-screen-create :panel panel)))
+         (terminal      (localgroup-screen-terminal screen))
          (socket        nil)
          (socket-stream nil)
-         (terminal      nil)
-         (screen        nil)
          (resize-watch  nil))
     (unwind-protect
         (progn
-         (multiple-value-bind (rows columns)
-             (terminal-current-size)
-           (setf terminal
-                 (stream-terminal-create
-                  :rows                  rows
-                  :columns               columns
-                  :input-file-descriptor (terminal-standard-input-file-descriptor))
-                 screen
-                 (localgroup-screen-create :terminal terminal :panel panel)))
          (unless (terminal--terminal-mode-or-nil terminal)
            (error 'localgroup-error :message
                   "localgroup attach requires an interactive terminal." :operation
@@ -685,10 +707,15 @@ The session gets the part of the terminal left beside PANEL as its size."
                                             :token   token
                                             :old-pid old-pid)
                                            ':control
-                                           :panel panel))))
+                                           :panel  panel
+                                           :screen (and (not owned-p) screen)))))
             ((and response (eq (first response) ':attached))
              (let ((history (getf (rest response) :history)))
-               (when (stringp history)
+               ;; A screen still showing the last channel's frames gets this
+               ;; channel's first frame next; streamed history would only
+               ;; scribble over it.
+               (when (and (stringp history)
+                          (not (localgroup-screen-active-p screen)))
                  (write-string history *standard-output*
                                :start (if history-position
                                           (min (length history)
@@ -714,9 +741,8 @@ The session gets the part of the terminal left beside PANEL as its size."
       (when resize-watch
         (platform-unwatch-terminal-resize *platform* resize-watch))
       ;; Cleanup is best-effort so it never masks the attachment outcome.
-      (when terminal
-        ; mallet:suppress no-ignore-errors -- best-effort terminal release during unwinding
-        (ignore-errors (terminal-stop terminal)))
+      (when owned-p
+        (localgroup-client-screen-release screen))
       (when socket-stream
         ; mallet:suppress no-ignore-errors -- best-effort stream close during unwinding
         (ignore-errors (close socket-stream)))
