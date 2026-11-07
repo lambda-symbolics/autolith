@@ -636,6 +636,9 @@ boot therefore leaves the generation identity available to recovery."
   (autolith-script-setenv "AUTOLITH_RESTART_POINTER"
                           (uiop:native-namestring
                            (launcher-context-restart-pointer context)))
+  ;; This launcher outlives a process that saves its heap for a restart and
+  ;; boots the saved core, so it names the restart's supervisor.
+  (autolith-script-setenv "AUTOLITH_LAUNCHER_PID" (princ-to-string (sb-posix:getpid)))
   nil)
 
 (defun launcher-delete-pointers (context)
