@@ -500,9 +500,6 @@ second reports whether shutdown was prepared."
     (when pending-publication
       (application-input-controller--publish-pending-publication
        controller pending-publication nil))
-    (when (and prepared-p (member reason '(:quit :localgroup-kill)))
-      (application-peer-messages-close
-       (application-input-controller-application controller)))
     (values active-p prepared-p)))
 
 (-> application-input-controller--defer-lisp-submission-p
@@ -1560,17 +1557,10 @@ work receive steering as soon as possible instead of as follow-ups."
                 (lambda ()
                   (append
                    (application-input-controller--take-steering controller)
-                   (peer-message-take-context
-                    (application-peer-messages--actor
-                     (application-input-controller-application controller)))
                    (application-world-steering-take
                     (application-input-controller-application controller))))
                 (lambda (identifier)
-                  (or (peer-message-ack-context
-                       (application-peer-messages--actor
-                        (application-input-controller-application controller))
-                       identifier)
-                      (application-world-steering-ack
+                  (or (application-world-steering-ack
                        (application-input-controller-application controller)
                        identifier)
                       (application-input-controller--acknowledge-steering
@@ -3906,13 +3896,10 @@ however it ended."
                        (lambda ()
                          (append
                           (application-input-controller--take-steering controller)
-                          (peer-message-take-context (application-peer-messages--actor application))
                           (application-world-steering-take application)))
                        :steering-persisted-function
                        (lambda (identifier)
-                         (or (peer-message-ack-context
-                              (application-peer-messages--actor application) identifier)
-                             (application-world-steering-ack application identifier)
+                         (or (application-world-steering-ack application identifier)
                              (application-input-controller--acknowledge-steering
                               controller identifier)))
                        :user-message-persisted-function

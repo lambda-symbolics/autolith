@@ -556,7 +556,6 @@ controller's exit reason."
                            :start-reader-p nil))
                     (unless resume-p
                       (application-mission-schedules-recover application :startup-p t)
-                      (application-peer-messages-recover application)
                       (application-recovery-input-vault-present-startup-warning
                        application)
                       (application-present-generation-health-warning

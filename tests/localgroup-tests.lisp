@@ -61,6 +61,27 @@
                                (list :mode mode :rows 31 :columns 91 :styled-p styled-p)))
     (values socket stream (test-localgroup--read-packet stream))))
 
+(-> test-localgroup-message-dispatch () null)
+(defun test-localgroup-message-dispatch ()
+  "Test daemon messages reach a channel's inbox or its mission events, and nothing else is accepted."
+  (with-test-configuration (configuration)
+    (let ((application (make-instance 'application
+                                      :configuration configuration
+                                      :conversation  (conversation-create configuration :identifier "bself11"))))
+      (flet ((rejected-p (envelope)
+               "Return true when ENVELOPE is rejected as a daemon message."
+               (handler-case (progn (localgroup--message-dispatch application envelope) nil)
+                 (image-daemon:daemon-message-error ()
+                   t))))
+        (test-assert (equal (localgroup--message-dispatch application (list :action ':channel :id "m1"))
+                            '(:ok :queued 0))
+                     "a channel notice delivers the inbox, empty before the conversation persists")
+        (test-assert (rejected-p (list :action ':event :id "e1" :receiver "bother11" :payload "tick"))
+                     "a mission event for another conversation is rejected")
+        (test-assert (rejected-p (list :action ':send :id "p1" :receiver "bself11" :payload "hello"))
+                     "a message of any other kind is rejected"))))
+  nil)
+
 (-> test-localgroup-orphan-reconciliation () null)
 (defun test-localgroup-orphan-reconciliation ()
   "Verify server and client startup reconcile their configured registry root."

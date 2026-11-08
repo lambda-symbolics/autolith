@@ -1966,7 +1966,6 @@ loop, so compaction ahead of the user message shares the turn's budget."
           (storm-state                  (agent-tool-storm-state-create))
           (tool-rounds                  0)
           (tool-calls                   0)
-          (first-request-p              t)
           (maximum-output-tokens        nil)
           (next-request-details         nil))
      (declare (special *task-unfinished-work-agent*))
@@ -1976,12 +1975,6 @@ loop, so compaction ahead of the user message shares the turn's budget."
          (mcp-tool-registry-refresh
           (agent-tool-registry agent)
           :only-dirty-p t))
-       (when first-request-p
-         (agent--persist-steering-input
-          agent observer
-          :messages       (peer-message-take-context agent)
-          :request-number (1+ request-number))
-         (setf first-request-p nil))
        (when (agent-should-compact-p agent)
          (setf recovery-used-p t)
          (multiple-value-bind (compaction-requests details)

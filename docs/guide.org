@@ -3101,46 +3101,6 @@ A failed or interrupted revival consumes its claim and records an uncertain
 outcome for explicit inspection. When you resume a conversation, you see this
 inventory for a decision. Resuming does not replay the work.
 
-** Granted peer messages
-
-The primary owner establishes directional communication with =peer.grant=.
-Supply an immutable grant =id=, =sender= and =receiver= as primary-visible job
-IDs or =primary=. For example, these arguments grant one child permission to send
-coordination data to the primary:
-
-#+BEGIN_SRC json
-{"id":"build-report","sender":"CHILD-JOB-ID","receiver":"primary","context":true}
-#+END_SRC
-
-Each participating actor uses =peer.discover= to inspect its current grants and
-exact endpoint identities. Call =peer.send= with a stable message =id=, the
-receiver's endpoint ID from discovery, and =text= of 1 to 8192 characters.
-The sender is the actual executing actor. =peer.receive= claims incoming work
-and returns a delivery token; use =peer.ack= with =id= and =token= after handling
-it. =peer.wait= waits for incoming work or a named message acknowledgment, with
-=timeout= bounded to five seconds. =peer.inspect= returns scoped metadata pages
-or the payload and recovery token for an exact message =id=.
-
-With =context: true= on the grant, receive coordination data at the existing
-safe steering boundary. Acknowledgment follows durable persistence of that
-input. Peer text is coordination data, not additional tool or execution authority.
-Children need their ordinary role permission for each =peer= tool; grants do
-not expose parent or sibling job-control operations.
-
-Cross-session communication requires paired explicit grants on both sessions.
-Set =remote-session= and =direction= (=outgoing= or =incoming=); name a remote
-child with both =remote-job= and =remote-execution=, or omit both for its primary.
-Transport uses authenticated local daemon discovery. =peer.revoke= durably
-revokes a grant. Endpoints include exact execution identity, so a replacement
-child does not inherit its predecessor's grant.
-
-Grants and messages restore with the session; interrupted deliveries become
-uncertain. Keep the same stable message ID when transport completion is unknown.
-Only the primary may call =peer.resolve= with =id=, current =token= and =action=
-=acknowledge=, =retry= or =cancel=; retry requires a current grant. Final session
-finish closes its mailbox, while transient daemon handoff preserves delivery
-state.
-
 ** Engineering task artifacts
 
 Select the bundled =engineering= role or give a native role =:output :engineering=.

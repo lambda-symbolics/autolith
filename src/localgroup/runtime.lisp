@@ -668,6 +668,31 @@ last controlling client vanishes."
         (setf (application-localgroup-session application) nil)
         (when session (image-daemon:daemon-runtime-stop session))))))
 
+(-> localgroup--message-dispatch (application list) t)
+(defun localgroup--message-dispatch (application envelope)
+  "Answer one daemon message for APPLICATION: a channel's new inbox, or a mission event for its conversation.
+
+Any other message is rejected, as a request this process has no use for."
+  (case (getf envelope :action)
+    (:channel
+     (list :ok :queued (application-world-deliver application)))
+    (:event
+     (unless (and (equal (getf envelope :receiver)
+                         (conversation-identifier (application-conversation application)))
+                  (stringp (getf envelope :payload)))
+       (localgroup--reject-message ':event-scope))
+     (application-mission-schedule-event application (getf envelope :payload) (getf envelope :id)))
+    (otherwise
+     (localgroup--reject-message ':unsupported))))
+
+(-> localgroup--reject-message (keyword) nil)
+(defun localgroup--reject-message (reason)
+  "Reject a daemon message for REASON without echoing its payload."
+  (error 'image-daemon:daemon-message-error
+         :reason    reason
+         :operation ':message
+         :message   (format nil "Daemon message rejected: ~(~A~)." reason)))
+
 (-> localgroup--handle-request
     (localgroup-session list &key (:socket t) (:stream t))
     null)
@@ -683,9 +708,8 @@ last controlling client vanishes."
       session request :stream stream
       :dispatcher
       (lambda (envelope &key cancelled-p)
-        (application-peer-message-dispatch
-         (localgroup-session-application session)
-         envelope :cancelled-p cancelled-p))
+        (declare (ignore cancelled-p))
+        (localgroup--message-dispatch (localgroup-session-application session) envelope))
       :character-limit 32768 :request-timeout 2))
     (otherwise
      (let* ((response (localgroup--dispatch-request session request))

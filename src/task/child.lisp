@@ -780,15 +780,13 @@ the root's cache key. Siblings with matching prefixes still share one key."
            :steering-callback
            (lambda ()
              (append (task-job-take-steering job)
-                     (peer-message-take-context child)
                      (world-inbox-steering-take configuration
                                                 :channel      (conversation-identifier conversation)
                                                 :conversation conversation
                                                 :taken        taken)))
            :steering-persisted-callback
            (lambda (identifier)
-             (or (peer-message-ack-context child identifier)
-                 (world-inbox-steering-ack configuration
+             (or (world-inbox-steering-ack configuration
                                            :channel    (conversation-identifier conversation)
                                            :identifier identifier
                                            :taken      taken)
