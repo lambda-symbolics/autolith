@@ -1636,8 +1636,7 @@ Otherwise, change the permission mode inside the conversation with
 Control a session with the following commands:
 
 #+BEGIN_SRC sh
-autolith lg tell   "message"
-autolith lg tell   SESSION-ID "message"
+autolith lg tell   CHANNEL "message"
 autolith lg pause  [SESSION-ID]
 autolith lg attach [SESSION-ID]
 autolith lg attach [SESSION-ID] --read-only
@@ -1654,7 +1653,9 @@ example =b=, =b-6=, =uouh= or =6UOU= for =b-6uouHJ=. A full ID in either form
 takes priority. If a part matches more than one session, the error lists the
 matching IDs and nothing happens; give a longer part.
 
-Use =tell= to send input to a session and resume it if paused.
+Use =tell= to send a channel a message as you would with =(tell)=; a channel
+nobody serves is served for its agent to read it. It needs a running world
+server, which =autolith lg start= starts in the background.
 =pause= cancels active work and holds queued primary work.
 =kill= requests graceful shutdown.
 

@@ -854,28 +854,6 @@ controlling terminal."
      (localgroup--run-status
       :sexp-p (not (null (getopt command ':sexp)))))))
 
-(-> localgroup--tell-command () clingon:command)
-(defun localgroup--tell-command ()
-  "Return the localgroup tell sub-command definition."
-  (make-command
-   :name        "tell"
-   :description "queue one message for a detached session"
-   :usage       "[SESSION-ID] MESSAGE"
-   :handler
-   (lambda (command)
-     (let ((arguments (command-arguments command)))
-       (unless (member (length arguments) '(1 2))
-         (error 'localgroup-error
-                :message   "localgroup tell requires MESSAGE, or SESSION-ID and exactly one quoted message argument."
-                :operation ':arguments))
-       (let* ((configuration (localgroup--client-configuration))
-              (session-id    (when (= (length arguments) 2) (first arguments)))
-              (message       (if session-id (second arguments) (first arguments)))
-              (entry         (localgroup--session-record configuration session-id)))
-         (localgroup--print-response
-          (localgroup-query-record entry ':tell (list :message message))
-          *standard-output*))))))
-
 (-> localgroup--attach-command () clingon:command)
 (defun localgroup--attach-command ()
   "Return the localgroup attach sub-command definition."
@@ -988,7 +966,7 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
    :description "inspect and control detached Autolith sessions"
    :sub-commands
    (list (localgroup--status-command)
-         (localgroup--tell-command)
+         (world-client--tell-command)
          (localgroup--attach-command)
          (localgroup--operation-command
           "detach" "detach a session from its terminal" ':detach)
@@ -996,6 +974,7 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
           "pause" "pause a detached session" ':pause)
          (localgroup--operation-command
           "kill" "terminate a detached session" ':kill)
+         (world-client--start-command)
          (world-client--stop-command))
    :handler
    (lambda (command)

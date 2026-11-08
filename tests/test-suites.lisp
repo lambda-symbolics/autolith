@@ -673,6 +673,7 @@
   test-world-server-stop-reason
   test-world-server-status-line
   test-world-server-new-channel
+  test-world-server-tell
   test-world-server-hosting
   test-world-server-checkpoint-quiescence
   test-world-server-restart-marker

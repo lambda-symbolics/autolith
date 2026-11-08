@@ -526,11 +526,34 @@ REASON, when given, is what each attached terminal is told before it lets go."
     (:person-unread
      (world-server-person-unread-changed server)
      (list :ok :operation ':person-unread))
+    (:tell
+     (world-server-tell server (getf arguments :channel) (getf arguments :text)))
     (:stop
      (world-server-stop server :reason "world server stopped by autolith lg stop")
      (list :ok :operation ':stop :session-id *world-server-identifier*))
     (otherwise
      (list :error :message (format nil "Unknown world operation ~S." operation)))))
+
+(-> world-server-tell (world-server t t) list)
+(defun world-server-tell (server channel text)
+  "Send TEXT to CHANNEL as the person, as (tell) does, and answer with the channel it reached.
+
+A channel nobody serves is served for its agent to read the message."
+  (unless (and (stringp channel) (stringp text))
+    (error 'world-error
+           :message   "A tell names the channel and the message."
+           :operation ':tell))
+  (let* ((configuration (world-server-configuration server))
+         (world         (world-load configuration))
+         (person        (or (world-human-participant world)
+                            (error 'world-error
+                                   :message   "No person is in the world yet."
+                                   :operation ':tell)))
+         (target        (channel-identifier (world-channel-designated world configuration channel))))
+    (world-message-send configuration :sender  (participant-identifier person)
+                                      :channel target
+                                      :text    text)
+    (list :ok :operation ':tell :channel target)))
 
 (-> world-server-status (world-server) list)
 (defun world-server-status (server)

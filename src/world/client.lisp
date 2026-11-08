@@ -23,16 +23,19 @@ Records of dead processes are removed on the way."
 
 (-> world-client-start-server
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
-                        (:pristine-p boolean))
+                        (:pristine-p boolean) (:attach-expected-p boolean))
     cons)
 (defun world-client-start-server
-    (configuration &key (permission-mode ':ask) immutable-p pristine-p)
-  "Start CONFIGURATION's world server and return its endpoint entry."
+    (configuration &key (permission-mode ':ask) immutable-p pristine-p (attach-expected-p t))
+  "Start CONFIGURATION's world server and return its endpoint entry.
+
+Without ATTACH-EXPECTED-P no terminal is about to attach, as for lg start."
   (localgroup-handoff-spawn-fresh configuration
-                                  :permission-mode permission-mode
-                                  :immutable-p     immutable-p
-                                  :pristine-p      pristine-p
-                                  :world-p         t)
+                                  :permission-mode   permission-mode
+                                  :immutable-p       immutable-p
+                                  :pristine-p        pristine-p
+                                  :attach-expected-p attach-expected-p
+                                  :world-p           t)
   (or (world-client-entry configuration)
       (error 'localgroup-error
              :message   "The world server started but its endpoint does not answer."
@@ -319,6 +322,52 @@ Nothing is written while no server runs."
                                       (getf (rest status) :stopping-p))))
          (localgroup--status-output-styled-p stream)))))
   nil)
+
+(-> world-client--start-command () clingon:command)
+(defun world-client--start-command ()
+  "Return the localgroup start sub-command, starting the world server in the background."
+  (make-command
+   :name        "start"
+   :description "start the world server in the background"
+   :handler
+   (lambda (command)
+     (when (command-arguments command)
+       (error 'localgroup-error
+              :message   "localgroup start accepts no arguments."
+              :operation ':arguments))
+     (let ((configuration (localgroup--client-configuration)))
+       (unless (world-client-entry configuration)
+         (world-client-start-server configuration :attach-expected-p nil))
+       (world-client-print-server configuration *standard-output*)))))
+
+(-> world-client--tell-command () clingon:command)
+(defun world-client--tell-command ()
+  "Return the localgroup tell sub-command, sending a channel a message as the person."
+  (make-command
+   :name        "tell"
+   :description "send a channel a message, as you would with (tell)"
+   :usage       "CHANNEL MESSAGE"
+   :handler
+   (lambda (command)
+     (let ((arguments (command-arguments command)))
+       (unless (= (length arguments) 2)
+         (error 'localgroup-error
+                :message   "localgroup tell takes the channel and one quoted message."
+                :operation ':arguments))
+       (let* ((configuration (localgroup--client-configuration))
+              (entry         (or (world-client-entry configuration)
+                                 (error 'localgroup-error
+                                        :message   "No world server is running; start it with autolith lg start."
+                                        :operation ':tell)))
+              (answer        (rest (localgroup-query-record
+                                    entry ':tell (list :channel (first arguments)
+                                                       :text    (second arguments))))))
+         (localgroup--write-styled-line
+          *standard-output*
+          (list (terminal-span ':notice
+                               (format nil "· sent to ~A"
+                                       (conversation-identifier-display (getf answer :channel)))))
+          (localgroup--status-output-styled-p *standard-output*)))))))
 
 (-> world-client--stop-command () clingon:command)
 (defun world-client--stop-command ()
