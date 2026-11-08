@@ -458,29 +458,6 @@ fill a row. A background-filled row ends with a reset."
         (concatenate 'string rendered *terminal-style-reset*)
         rendered)))
 
-(-> terminal-ui--lisp-draft-p (string) boolean)
-(defun terminal-ui--lisp-draft-p (text)
-  "Return true when TEXT begins with explicit Common Lisp input."
-  (and (plusp (length text))
-       (char= #\( (char text 0))))
-
-(-> terminal-ui--async-lisp-prefix-length (string) (option (integer 2)))
-(defun terminal-ui--async-lisp-prefix-length (text)
-  "Return the length of TEXT's async Lisp prefix, or NIL when absent."
-  (when (and (> (length text) 1)
-             (char= #\? (char text 0))
-             (find (char text 1) '(#\Space #\Tab #\Newline #\Return #\Page)))
-    (or (position-if-not
-         (lambda (character)
-           (find character '(#\Space #\Tab #\Newline #\Return #\Page)))
-         text :start 1)
-        (length text))))
-
-(-> terminal-ui--async-lisp-draft-p (string) boolean)
-(defun terminal-ui--async-lisp-draft-p (text)
-  "Return true when TEXT begins with a question-mark Lisp draft prefix."
-  (not (null (terminal-ui--async-lisp-prefix-length text))))
-
 (-> terminal-ui--prompt-spans (string boolean boolean) (values string list))
 (defun terminal-ui--prompt-spans (prompt lisp-draft-p async-lisp-draft-p)
   "Return PROMPT's visible text and styled spans for the current input mode."
@@ -521,11 +498,11 @@ the draft is exact."
          (explicit-lisp-p    (terminal-ui-lisp-input-p ui))
          (async-prefix-length
            (and (not explicit-lisp-p)
-                (terminal-ui--async-lisp-prefix-length raw-content)))
+                (input-async-lisp-prefix-length raw-content)))
          (async-lisp-draft-p (not (null async-prefix-length)))
          (lisp-draft-p
            (not (null (or explicit-lisp-p
-                          (terminal-ui--lisp-draft-p raw-content)))))
+                          (input-lisp-p raw-content)))))
          (key                (list raw-content (line-editor-cursor editor)
                                    (terminal-columns (terminal-ui-terminal ui))
                                    lisp-draft-p async-lisp-draft-p
@@ -551,7 +528,7 @@ the draft is exact."
          (raw-content     (line-editor-text editor))
          (async-prefix-length
            (and async-lisp-draft-p
-                (terminal-ui--async-lisp-prefix-length raw-content)))
+                (input-async-lisp-prefix-length raw-content)))
          (display-content (if async-prefix-length
                               (subseq raw-content async-prefix-length)
                               raw-content))

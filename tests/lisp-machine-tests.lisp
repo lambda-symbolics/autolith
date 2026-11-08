@@ -696,17 +696,17 @@
 (defun test-application-lisp-input-routing ()
   "Test exact Lisp classification, multiline continuation, queues, and execution."
   (test-assert
-   (and (null (application--message-input "(values 1 2)"))
-        (equal (application-input-controller--input-work "(values 1 2)")
+   (and (null (input-message "(values 1 2)"))
+        (equal (input-work-from-input "(values 1 2)")
                '(:lisp "(values 1 2)"))
         (equal
-         (application-input-controller--restore-work-item
-          (application-input-controller--pending-work-entry-form
+         (input-work-from-form
+          (input-work->form
            '(:lisp "(values 1 2)")))
          '(:lisp "(values 1 2)")))
    "explicit Lisp stays outside model routing and survives pending persistence")
   (test-assert
-   (string= (application--message-input " (values 1 2)")
+   (string= (input-message " (values 1 2)")
             " (values 1 2)")
    "leading whitespace preserves prose routing")
   (multiple-value-bind (application root)

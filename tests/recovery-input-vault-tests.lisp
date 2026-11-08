@@ -420,7 +420,7 @@
                     (list :identifier "active-image"
                           :work
                           (list ':message
-                                (application-input--pending-form image-input)))
+                                (input-value->form image-input)))
                     :steering-in-flight
                     '((:identifier "flight" :input "in-flight steering"))
                     :steering    '("queued steering")
@@ -464,11 +464,11 @@
                (snapshot-read pending-pathname)
              (let* ((state
                       (and complete-p
-                           (application-input-controller--pending-state
+                           (input-state-from-form
                             pending-form (conversation-identifier conversation))))
                     (filtered
                       (and state
-                           (application-input-controller--pending-state-filter-persisted
+                           (input-state-filter-persisted
                             state conversation)))
                     (work (and filtered (getf filtered :work-items))))
                (test-assert

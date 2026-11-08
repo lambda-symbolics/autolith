@@ -357,7 +357,7 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
   "Return ordered controller work for command-line and recovery startup behavior."
   (cond
     (initial-command
-     (list (list (if (terminal-ui--lisp-draft-p initial-command)
+     (list (list (if (input-lisp-p initial-command)
                      ':lisp
                      ':command)
                  initial-command)))

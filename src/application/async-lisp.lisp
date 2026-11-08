@@ -116,7 +116,7 @@
 
 Persist the submission before starting it. Capture its conversation and identifier
 so completion enters the originating session even after a session switch."
-  (let* ((prefix       (terminal-ui--async-lisp-prefix-length source))
+  (let* ((prefix       (input-async-lisp-prefix-length source))
          (conversation (application-conversation application))
          (orchestrator (application--task-orchestrator application))
          (form-source  (and prefix (subseq source prefix))))

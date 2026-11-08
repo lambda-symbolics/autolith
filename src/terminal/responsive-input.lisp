@@ -505,69 +505,17 @@ second reports whether shutdown was prepared."
        (application-input-controller-application controller)))
     (values active-p prepared-p)))
 
-(-> application--message-input
-    ((or string user-message-input))
-    (option (or string user-message-input)))
-(defun application--message-input (input)
-  "Return INPUT's model message, or NIL for empty, Lisp, or slash input."
-  (let ((text (user-message-input-text input)))
-    (cond
-      ((and (not (non-empty-string-p text))
-            (null (user-message-input-image-pathnames input)))
-       nil)
-      ((uiop:string-prefix-p "//" text)
-       (etypecase input
-         (string
-          (subseq text 1))
-         (user-message-input
-          (user-message-input-create
-           :text            (subseq text 1)
-           :image-pathnames (user-message-input-image-pathnames input)))))
-      ((or (terminal-ui--lisp-draft-p text)
-           (terminal-ui--async-lisp-draft-p text))
-       nil)
-      ((uiop:string-prefix-p "/" text)
-       nil)
-      (t
-       (user-message-input-copy input)))))
-
-(-> application-input-controller--follow-up-work-p (t) boolean)
-(defun application-input-controller--follow-up-work-p (work)
-  "Return true for editable queued messages, commands, or interactive or scheduled Lisp."
-  (and (consp work)
-       (member (first work) '(:message :command :lisp :native-lisp) :test #'eq)
-       (consp (rest work))
-       (typep (second work) '(or string user-message-input))))
-
-(-> application-input-controller--input-work
-    ((or string user-message-input))
-    (option list))
-(defun application-input-controller--input-work (input)
-  "Return queued work for INPUT, or NIL when INPUT has no effective content."
-  (let ((message (application--message-input input))
-        (text    (user-message-input-text input)))
-    (cond
-      ((or (terminal-ui--lisp-draft-p text)
-           (terminal-ui--async-lisp-draft-p text))
-       (list ':lisp (copy-seq text)))
-      (message
-       (list ':message message))
-      ((non-empty-string-p text)
-       (list ':command (copy-seq text)))
-      (t
-       nil))))
-
 (-> application-input-controller--defer-lisp-submission-p
     (application-input-controller (or string user-message-input))
     boolean)
 (defun application-input-controller--defer-lisp-submission-p (controller input)
   "Continue incomplete Lisp INPUT or reject its image attachments in place."
   (let* ((text    (user-message-input-text input))
-         (async-p (terminal-ui--async-lisp-draft-p text))
+         (async-p (input-async-lisp-p text))
          (source  (if async-p
-                      (subseq text (terminal-ui--async-lisp-prefix-length text))
+                      (subseq text (input-async-lisp-prefix-length text))
                       text)))
-    (when (or async-p (terminal-ui--lisp-draft-p text))
+    (when (or async-p (input-lisp-p text))
       (let* ((application
                (application-input-controller-application controller))
              (ui (application-ui application)))
@@ -639,400 +587,6 @@ lock."
             (application-input-controller-steering-promotion-prefix-count controller))))
     (if key (getf state key) state)))
 
-(-> application-input--pending-form
-    ((or string user-message-input))
-    (or string list))
-(defun application-input--pending-form (input)
-  "Return a portable durable form for pending user INPUT."
-  (etypecase input
-    (string
-     (copy-seq input))
-    (user-message-input
-     (list :user-message-input
-           :version 1
-           :text (copy-seq (user-message-input-text input))
-           :image-pathnames
-           (mapcar #'namestring
-                   (user-message-input-image-pathnames input))))))
-
-(-> application-input--restore-pending-form
-    (t)
-    (option (or string user-message-input)))
-(defun application-input--restore-pending-form (form)
-  "Return validated pending input restored from durable FORM."
-  (cond
-    ((stringp form)
-     (copy-seq form))
-    ((and (listp form)
-          (eq (first form) ':user-message-input)
-          (= (or (getf (rest form) :version) 0) 1))
-     (let ((text        (getf (rest form) :text))
-           (image-names (getf (rest form) :image-pathnames)))
-       (when (and (stringp text)
-                  (listp image-names)
-                  (every #'stringp image-names))
-         (handler-case
-             (let ((image-pathnames (mapcar #'pathname image-names)))
-               (when (every #'uiop:absolute-pathname-p image-pathnames)
-                 (user-message-input-create
-                  :text            (copy-seq text)
-                  :image-pathnames image-pathnames)))
-           (error ()
-             nil)))))
-    (t
-     nil)))
-
-(-> application-input-controller--pending-work-entry-form
-    (list)
-    (option list))
-(defun application-input-controller--pending-work-entry-form (work)
-  "Return the durable form for one restorable WORK item."
-  (when (application-input-controller--follow-up-work-p work)
-    (list (first work)
-          (application-input--pending-form (second work)))))
-
-(-> application-input-controller--pending-work-form (list) list)
-(defun application-input-controller--pending-work-form (work-items)
-  "Return durable forms for WORK-ITEMS that can be restored after restart."
-  (remove nil
-          (mapcar #'application-input-controller--pending-work-entry-form
-                  work-items)))
-
-(-> application-input-controller--restore-work-item (t) (option list))
-(defun application-input-controller--restore-work-item (form)
-  "Return one validated in-memory work item restored from durable FORM."
-  (when (and (listp form)
-             (member (first form) '(:message :command :lisp :native-lisp) :test #'eq))
-    (let ((input (application-input--restore-pending-form (second form))))
-      (when input
-        (list (first form) input)))))
-
-(-> application-input-controller--pending-steering-entry-form
-    (agent-steering-input)
-    list)
-(defun application-input-controller--pending-steering-entry-form (entry)
-  "Return the durable form for identified in-flight steering ENTRY."
-  (list :identifier (copy-seq (agent-steering-input-identifier entry))
-        :input      (application-input--pending-form
-                     (agent-steering-input-content entry))))
-
-(-> application-input-controller--restore-steering-entry
-    (t)
-    (option agent-steering-input))
-(defun application-input-controller--restore-steering-entry (form)
-  "Return one validated identified steering entry restored from FORM."
-  (when (listp form)
-    (let ((identifier (getf form :identifier))
-          (input      (application-input--restore-pending-form (getf form :input))))
-      (when (and (non-empty-string-p identifier) input)
-        (agent-steering-input-create
-         :identifier (copy-seq identifier)
-         :content    input)))))
-
-(-> application-input-controller--native-entry-p (t) boolean)
-(defun application-input-controller--native-entry-p (form)
-  "Return true for a finite native work entry containing unevaluated source."
-  (and (proper-list-p form)
-       (= (length form) 2)
-       (eq (first form) ':native-lisp)
-       (stringp (second form))))
-
-(-> application-input-controller--restore-native-state (list string) (option list))
-(defun application-input-controller--restore-native-state (form conversation-identifier)
-  "Validate additive native metadata and decode its merged historical v2 view."
-  (block restore
-    (unless (record-check form :tag ':pending-inputs :versions '(2)
-                          :keyword-keys-p t)
-      (return-from restore nil))
-    (let* ((properties (rest form))
-           (native     (getf properties :native-work))
-           (work       (getf properties :work))
-           (active     (getf properties :active-work)))
-      (unless (and
-               (record-check
-                native :properties-p t :allow-other-keys nil :maximum-length 6
-                :fields '((:indicator :active-work :required t)
-                          (:indicator :items :required t)
-                          (:indicator :steering-promotion-prefix-count :required t)))
-               (proper-list-p work)
-               (every (lambda (entry)
-                        (and (proper-list-p entry)
-                             (= (length entry) 2)
-                             (member (first entry) '(:message :command :lisp))))
-                      work)
-               (or (null active)
-                   (and (record-check
-                         active :properties-p t :allow-other-keys nil :maximum-length 4
-                         :fields '((:indicator :identifier :required t)
-                                   (:indicator :work :required t)))
-                        (proper-list-p (getf active :work))
-                        (= (length (getf active :work)) 2)
-                        (member (first (getf active :work)) '(:message :command :lisp)))))
-        (return-from restore nil))
-      (let* ((native-active (getf native :active-work))
-             (items         (getf native :items))
-             (prefix        (getf native :steering-promotion-prefix-count))
-             (compat-prefix (getf properties :steering-promotion-prefix-count 0)))
-        (unless (and (proper-list-p items)
-                     (or native-active items)
-                     (not (and native-active active))
-                     (or (null native-active)
-                         (and (record-check
-                               native-active :properties-p t :allow-other-keys nil
-                               :maximum-length 4
-                               :fields         '((:indicator :identifier :required t)
-                                                 (:indicator :work :required t)))
-                              (non-empty-string-p (getf native-active :identifier))
-                              (application-input-controller--native-entry-p
-                               (getf native-active :work))))
-                     (typep prefix '(integer 0))
-                     (typep compat-prefix '(integer 0)))
-          (return-from restore nil))
-        (let ((total         (+ (length work) (length items)))
-              (previous      -1)
-              (native-prefix 0))
-          (unless (<= prefix total)
-            (return-from restore nil))
-          (dolist (item items)
-            (unless (and
-                     (record-check
-                      item :properties-p t :allow-other-keys nil :maximum-length 4
-                      :fields '((:indicator :position :required t)
-                                (:indicator :work :required t)))
-                     (typep (getf item :position) '(integer 0))
-                     (< previous (getf item :position) total)
-                     (application-input-controller--native-entry-p (getf item :work)))
-              (return-from restore nil))
-            (setf previous (getf item :position))
-            (when (< previous prefix)
-              (incf native-prefix)))
-          (unless (= compat-prefix (- prefix native-prefix))
-            (return-from restore nil))
-          (let ((merged
-                  (loop for position below total
-                        collect (if (and items (= position (getf (first items) :position)))
-                                    (getf (pop items) :work)
-                                    (pop work))))
-                (inline (copy-list properties)))
-            (remf inline :native-work)
-            (setf (getf inline :active-work) (or native-active active)
-                  (getf inline :work) merged
-                  (getf inline :steering-promotion-prefix-count) prefix)
-            (application-input-controller--pending-state
-             (cons ':pending-inputs inline) conversation-identifier)))))))
-
-(-> application-input-controller--pending-state
-    (list string)
-    (option list))
-(defun application-input-controller--pending-state (form conversation-identifier)
-  "Return normalized validated pending state from durable FORM."
-  ;; Check the outer spine before any GETF, including circular extension records.
-  (unless (record-check form :tag ':pending-inputs :allow-duplicate-keys t)
-    (return-from application-input-controller--pending-state nil))
-  (when (record-property-present-p form ':native-work)
-    (return-from application-input-controller--pending-state
-      (application-input-controller--restore-native-state form conversation-identifier)))
-  (when (and (listp form)
-             (eq (first form) ':pending-inputs)
-             (stringp (getf (rest form) :conversation-id))
-             (string= (getf (rest form) :conversation-id)
-                      conversation-identifier))
-    (let ((version (or (getf (rest form) :version) 0)))
-      (case version
-        (1
-         (let* ((steering-forms (getf (rest form) :steering))
-                (work-forms     (getf (rest form) :work))
-                (steering
-                  (and (listp steering-forms)
-                       (mapcar #'application-input--restore-pending-form
-                               steering-forms)))
-                (work
-                  (and (listp work-forms)
-                       (mapcar #'application-input-controller--restore-work-item
-                               work-forms))))
-           (when (and (listp steering-forms)
-                      (listp work-forms)
-                      (every #'identity steering)
-                      (every #'identity work))
-             (list :snapshot-identifier             (make-identifier)
-                   :active-work                     nil
-                   :active-work-identifier          nil
-                   :steering-in-flight-items        nil
-                   :steering-items                  steering
-                   :work-items                      work
-                   :vault-capture-identifiers       nil
-                   :steering-promotion-prefix-count 0
-                   :legacy-p                        t))))
-        (2
-         (let* ((snapshot-identifier
-                  (getf (rest form) :snapshot-identifier))
-                (active-form     (getf (rest form) :active-work))
-                (active-work
-                  (and active-form
-                       (application-input-controller--restore-work-item
-                        (getf active-form :work))))
-                (active-work-identifier
-                  (and active-form (getf active-form :identifier)))
-                (in-flight-forms (getf (rest form) :steering-in-flight))
-                (in-flight
-                  (and (listp in-flight-forms)
-                       (mapcar
-                        #'application-input-controller--restore-steering-entry
-                        in-flight-forms)))
-                (steering-forms  (getf (rest form) :steering))
-                (steering
-                  (and (listp steering-forms)
-                       (mapcar #'application-input--restore-pending-form
-                               steering-forms)))
-                (work-forms      (getf (rest form) :work))
-                (work
-                  (and (listp work-forms)
-                       (mapcar #'application-input-controller--restore-work-item
-                               work-forms)))
-                (vault-capture-identifiers
-                  (or (getf (rest form) :vault-capture-identifiers) nil))
-                (steering-promotion-prefix-count
-                  (or (getf (rest form) :steering-promotion-prefix-count) 0)))
-           (when (and (non-empty-string-p snapshot-identifier)
-                      (or (null active-form)
-                          (and (non-empty-string-p active-work-identifier)
-                               active-work))
-                      (listp in-flight-forms)
-                      (every #'identity in-flight)
-                      (listp steering-forms)
-                      (every #'identity steering)
-                      (listp work-forms)
-                      (every #'identity work)
-                      (listp vault-capture-identifiers)
-                      (every #'non-empty-string-p vault-capture-identifiers)
-                      (= (length vault-capture-identifiers)
-                         (length
-                          (remove-duplicates vault-capture-identifiers
-                                             :test #'string=)))
-                      (typep steering-promotion-prefix-count '(integer 0))
-                      (<= steering-promotion-prefix-count (length work)))
-             (list :snapshot-identifier      (copy-seq snapshot-identifier)
-                   :active-work              active-work
-                   :active-work-identifier
-                   (and active-work-identifier
-                        (copy-seq active-work-identifier))
-                   :steering-in-flight-items in-flight
-                   :steering-items           steering
-                   :work-items               work
-                   :vault-capture-identifiers
-                   (mapcar #'copy-seq vault-capture-identifiers)
-                   :steering-promotion-prefix-count
-                   steering-promotion-prefix-count
-                   :legacy-p                 nil))))
-        (otherwise
-         nil)))))
-
-(-> application-input-controller--pending-state-input-count (list) (integer 0))
-(defun application-input-controller--pending-state-input-count (state)
-  "Return the number of accepted user inputs represented by pending STATE."
-  (+ (if (getf state :active-work) 1 0)
-     (length (getf state :steering-in-flight-items))
-     (length (getf state :steering-items))
-     (length (getf state :work-items))))
-
-(-> application-input-controller--pending-state-filter-persisted
-    (list conversation)
-    list)
-(defun application-input-controller--pending-state-filter-persisted
-    (state conversation)
-  "Return STATE after removing input already durable in CONVERSATION."
-  (let* ((persisted-identifiers
-           (conversation-pending-input-identifiers conversation))
-         (active-work            (getf state :active-work))
-         (active-work-identifier (getf state :active-work-identifier))
-         (active-survives-p
-           (and active-work
-                (not
-                 (member active-work-identifier
-                         persisted-identifiers
-                         :test #'string=))))
-         (in-flight
-           (remove-if
-            (lambda (entry)
-              (member (agent-steering-input-identifier entry)
-                      persisted-identifiers
-                      :test #'string=))
-            (getf state :steering-in-flight-items)))
-         (steering               (getf state :steering-items))
-         (work                   (getf state :work-items))
-         (steering-promotion-prefix-count
-           (min (getf state :steering-promotion-prefix-count)
-                (length work)))
-         (promoted-work
-           (append
-            (mapcar (lambda (entry)
-                      (list ':message (agent-steering-input-content entry)))
-                    in-flight)
-            (mapcar (lambda (input)
-                      (list ':message input))
-                    steering))))
-    (list :snapshot-identifier      (getf state :snapshot-identifier)
-          :active-work              (and active-survives-p active-work)
-          :active-work-identifier
-          (and active-survives-p active-work-identifier)
-          :steering-in-flight-items (and active-survives-p in-flight)
-          :steering-items           (and active-survives-p steering)
-          :work-items
-          (if active-survives-p
-              work
-              (append (subseq work 0 steering-promotion-prefix-count)
-                      promoted-work
-                      (nthcdr steering-promotion-prefix-count work)))
-          :vault-capture-identifiers
-          (getf state :vault-capture-identifiers)
-          :steering-promotion-prefix-count
-          (if active-survives-p steering-promotion-prefix-count 0)
-          :legacy-p                 (getf state :legacy-p))))
-
-(-> application-input-controller--pending-state-form (list string) list)
-(defun application-input-controller--pending-state-form
-    (state conversation-identifier)
-  "Return the version-two durable form for normalized pending STATE."
-  ;; Keep this split until snapshots shared with pre-0.67.9 images are retired.
-  (let* ((active-work            (getf state :active-work))
-         (active-work-identifier (getf state :active-work-identifier))
-         (active-form
-           (and active-work active-work-identifier
-                (list :identifier active-work-identifier
-                      :work       (application-input-controller--pending-work-entry-form active-work))))
-         (work-items             (getf state :work-items))
-         (work                   (application-input-controller--pending-work-form work-items))
-         (prefix
-           (count-if #'application-input-controller--follow-up-work-p
-                     (subseq work-items 0
-                             (or (getf state :steering-promotion-prefix-count) 0))))
-         (native-active          (and (eq (first active-work) ':native-lisp) active-form))
-         (native-items
-           (loop for entry in work for position from 0
-                 when (eq (first entry) ':native-lisp)
-                   collect (list :position position :work entry)))
-         (form
-           (list :pending-inputs      :version 2
-                 :snapshot-identifier (getf state :snapshot-identifier)
-                 :conversation-id     conversation-identifier
-                 :active-work         (unless native-active active-form)
-                 :steering-in-flight
-                 (mapcar #'application-input-controller--pending-steering-entry-form
-                         (getf state :steering-in-flight-items))
-                 :steering            (mapcar #'application-input--pending-form (getf state :steering-items))
-                 :work                (remove ':native-lisp work :key #'first)
-                 :vault-capture-identifiers
-                 (mapcar #'copy-seq (getf state :vault-capture-identifiers))
-                 :steering-promotion-prefix-count
-                 (count-if (lambda (entry) (not (eq (first entry) ':native-lisp)))
-                           (subseq work 0 prefix)))))
-    (if (or native-active native-items)
-        (append form
-                (list :native-work
-                      (list :active-work native-active :items native-items
-                            :steering-promotion-prefix-count prefix)))
-        form)))
-
 (-> application-input-controller--next-publication-generation-locked
     (application-input-controller)
     (integer 1))
@@ -1103,10 +657,10 @@ The caller must hold CONTROLLER's lock."
                          (make-identifier)))))
               (setf (getf state :snapshot-identifier) snapshot-identifier)
               (let* ((form
-                       (application-input-controller--pending-state-form
+                       (input-state->form
                         state conversation-identifier))
                      (detached-state
-                       (application-input-controller--pending-state
+                       (input-state-from-form
                         form conversation-identifier)))
                 (list :generation   generation
                       :application  application
@@ -1270,11 +824,11 @@ The caller must hold CONTROLLER's publication lock."
                   (snapshot-read source-pathname)
                 (let* ((state
                          (and complete-p
-                              (application-input-controller--pending-state
+                              (input-state-from-form
                                form (conversation-identifier conversation))))
                        (filtered-state
                          (and state
-                              (application-input-controller--pending-state-filter-persisted
+                              (input-state-filter-persisted
                                state conversation))))
                   (when filtered-state
                     (let* ((active-work         (getf filtered-state :active-work))
@@ -1594,7 +1148,7 @@ user's input history, pending follow-ups, or recovery vault."
     boolean)
 (defun application-input-controller--queue-input (controller input)
   "Queue INPUT, restoring a recalled follow-up to its virtual FIFO position."
-  (let ((work      (application-input-controller--input-work input))
+  (let ((work      (input-work-from-input input))
         (queued-p  nil)
         (resumed-p nil))
     (when work
@@ -2241,9 +1795,9 @@ reaches the very next provider request."
     (when inputs
       (dolist (input inputs)
         (cond
-          ((terminal-ui--async-lisp-draft-p input)
+          ((input-async-lisp-p input)
            (application-run-async-lisp-input application input))
-          ((terminal-ui--lisp-draft-p input)
+          ((input-lisp-p input)
            (application-run-lisp-input application input :interactive-p nil))
           (t
            (application--run-command-input application input :interactive-p nil))))
@@ -2468,11 +2022,11 @@ atomic across active-turn completion races. Registered nonconflicting operations
 may execute immediately; other Lisp waits for the idle boundary."
   (let* ((application
            (application-input-controller-application controller))
-         (message      (application--message-input input))
+         (message      (input-message input))
          (text         (user-message-input-text input))
-         (lisp-input-p (terminal-ui--lisp-draft-p text))
-         (async-p      (terminal-ui--async-lisp-draft-p text))
-         (work         (application-input-controller--input-work input))
+         (lisp-input-p (input-lisp-p text))
+         (async-p      (input-async-lisp-p text))
+         (work         (input-work-from-input input))
          (invocation
            (and (null message)
                 (not lisp-input-p)
@@ -2596,7 +2150,7 @@ may execute immediately; other Lisp waits for the idle boundary."
     (or (not (null (member text
                           '("/vault" "/vault-restore" "/vault-discard" "/vault-store")
                           :test #'string=)))
-        (and (terminal-ui--lisp-draft-p text)
+        (and (input-lisp-p text)
              (handler-case
                  (let* ((*package* (find-package '#:autolith))
                         (form      (self-read-form text :read-eval nil)))
@@ -2648,9 +2202,9 @@ may execute immediately; other Lisp waits for the idle boundary."
   "Route submitted INPUT to canonical prompt, local Lisp, or command policy."
   (let* ((application
            (application-input-controller-application controller))
-         (message (application--message-input input))
+         (message (input-message input))
          (text    (user-message-input-text input))
-         (async-p (terminal-ui--async-lisp-draft-p text)))
+         (async-p (input-async-lisp-p text)))
     (cond
       (async-p
        (when (application-input-controller--submission-storage-ready-p
@@ -2665,7 +2219,7 @@ may execute immediately; other Lisp waits for the idle boundary."
        nil)
       (t
        (cond
-         ((terminal-ui--lisp-draft-p text)
+         ((input-lisp-p text)
           (application-localgroup-resume application)
           (if (application-input-controller-busy-p controller)
               (ecase (application-input-controller--lisp-active-turn-action
@@ -2726,9 +2280,9 @@ may execute immediately; other Lisp waits for the idle boundary."
   "Queue terminal INPUT as post-turn work through canonical prompt when prose."
   (let* ((application (application-input-controller-application controller))
          (text        (user-message-input-text input))
-         (message     (application--message-input input)))
+         (message     (input-message input)))
     (cond
-      ((terminal-ui--async-lisp-draft-p text)
+      ((input-async-lisp-p text)
        (when (application-input-controller--submission-storage-ready-p controller input)
          (application-localgroup-resume application)
          (application-run-async-lisp-input application text)))
@@ -2754,7 +2308,7 @@ may execute immediately; other Lisp waits for the idle boundary."
                  (application-input-controller-work-items controller))
                (index
                  (deque-position-if
-                  #'application-input-controller--follow-up-work-p
+                  #'input-work-editable-p
                   work-items
                   :from-end t)))
           (when index
@@ -2784,7 +2338,7 @@ may execute immediately; other Lisp waits for the idle boundary."
     boolean)
 (defun application-input-controller--cycle-follow-up (controller input)
   "Move CONTROLLER's recalled draft to the previous queued follow-up, wrapping."
-  (let ((current-work    (application-input-controller--input-work input))
+  (let ((current-work    (input-work-from-input input))
         (selected-work   nil)
         (steering-inputs nil)
         (queued-inputs   nil))
@@ -2800,12 +2354,12 @@ may execute immediately; other Lisp waits for the idle boundary."
                    (selected-index
                      (or
                       (deque-position-if
-                       #'application-input-controller--follow-up-work-p
+                       #'input-work-editable-p
                        work-items
                        :end      current-position
                        :from-end t)
                       (deque-position-if
-                       #'application-input-controller--follow-up-work-p
+                       #'input-work-editable-p
                        work-items
                        :start    current-position
                        :from-end t))))
@@ -4256,7 +3810,7 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
               (application-run-lisp-input application (second work) :interactive-p nil)))
             (:lisp
              (let ((result
-                     (if (terminal-ui--async-lisp-draft-p (second work))
+                     (if (input-async-lisp-p (second work))
                          (application-run-async-lisp-input application (second work))
                          (application-run-lisp-input application (second work)))))
                (application-input-controller--record-prompt-result

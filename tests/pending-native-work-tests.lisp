@@ -17,11 +17,11 @@
 (defun test-pending-native--call-old (function)
   "Call FUNCTION with the complete 0.67.8 decoder, work reader and writer."
   (test-call-with-function-replacements
-   (list (list 'application-input-controller--pending-state
+   (list (list 'input-state-from-form
                #'test-pending-native--old-state)
-         (list 'application-input-controller--restore-work-item
+         (list 'input-work-from-form
                #'test-pending-native--old-work)
-         (list 'application-input-controller--pending-state-form
+         (list 'input-state->form
                #'test-pending-native--old-form))
    function))
 
@@ -49,12 +49,12 @@
       (loop for prefix from 0 to (length work)
             do (let* ((state    (test-pending-native--state
                                  :work work :active active :prefix prefix))
-                      (form     (application-input-controller--pending-state-form state "c"))
-                      (current  (application-input-controller--pending-state form "c"))
+                      (form     (input-state->form state "c"))
+                      (current  (input-state-from-form form "c"))
                       (ordinary (remove ':native-lisp work :key #'first))
                       (old      (test-pending-native--call-old
                                  (lambda ()
-                                   (application-input-controller--pending-state form "c")))))
+                                   (input-state-from-form form "c")))))
                  (test-assert current "current writer output is valid before downgrade")
                  (test-assert
                   (equal (test-pending-native--projection current)
@@ -88,7 +88,7 @@
 (-> test-pending-native-work-form-rejections () null)
 (defun test-pending-native-work-form-rejections ()
   "Test finite strict extension records, conflicts, positions and prefix projection."
-  (test-assert (application-input-controller--pending-state
+  (test-assert (input-state-from-form
                 (test-pending-native--extended-form) "c")
                "valid proposed format is accepted before malformed controls")
   (dolist (extension
@@ -125,7 +125,7 @@
               :steering-promotion-prefix-count 0 :items nil)))
     (let ((form (copy-tree (test-pending-native--extended-form))))
       (setf (getf (rest form) :native-work) extension)
-      (test-assert (null (application-input-controller--pending-state form "c"))
+      (test-assert (null (input-state-from-form form "c"))
                    "malformed native metadata rejects the entire snapshot")))
   nil)
 
@@ -135,7 +135,7 @@
   (WHEN
       (AND (LISTP FORM)
            (MEMBER (FIRST FORM) '(:MESSAGE :COMMAND :LISP) :TEST #'EQ))
-    (LET ((INPUT (APPLICATION-INPUT--RESTORE-PENDING-FORM (SECOND FORM))))
+    (LET ((INPUT (input-value-from-form (SECOND FORM))))
       (WHEN INPUT (LIST (FIRST FORM) INPUT)))))
 
 (-> TEST-PENDING-NATIVE--OLD-STATE (LIST STRING) (OPTION LIST))
@@ -153,11 +153,11 @@
                 (WORK-FORMS     (GETF (REST FORM) :WORK))
                 (STEERING
                  (AND (LISTP STEERING-FORMS)
-                      (MAPCAR #'APPLICATION-INPUT--RESTORE-PENDING-FORM
+                      (MAPCAR #'input-value-from-form
                               STEERING-FORMS)))
                 (WORK
                  (AND (LISTP WORK-FORMS)
-                      (MAPCAR #'APPLICATION-INPUT-CONTROLLER--RESTORE-WORK-ITEM
+                      (MAPCAR #'input-work-from-form
                               WORK-FORMS))))
            (WHEN
                (AND (LISTP STEERING-FORMS) (LISTP WORK-FORMS)
@@ -172,7 +172,7 @@
                 (ACTIVE-FORM         (GETF (REST FORM) :ACTIVE-WORK))
                 (ACTIVE-WORK
                  (AND ACTIVE-FORM
-                      (APPLICATION-INPUT-CONTROLLER--RESTORE-WORK-ITEM
+                      (input-work-from-form
                        (GETF ACTIVE-FORM :WORK))))
                 (ACTIVE-WORK-IDENTIFIER
                  (AND ACTIVE-FORM (GETF ACTIVE-FORM :IDENTIFIER)))
@@ -180,17 +180,17 @@
                 (IN-FLIGHT
                  (AND (LISTP IN-FLIGHT-FORMS)
                       (MAPCAR
-                       #'APPLICATION-INPUT-CONTROLLER--RESTORE-STEERING-ENTRY
+                       #'input-steering-from-form
                        IN-FLIGHT-FORMS)))
                 (STEERING-FORMS      (GETF (REST FORM) :STEERING))
                 (STEERING
                  (AND (LISTP STEERING-FORMS)
-                      (MAPCAR #'APPLICATION-INPUT--RESTORE-PENDING-FORM
+                      (MAPCAR #'input-value-from-form
                               STEERING-FORMS)))
                 (WORK-FORMS          (GETF (REST FORM) :WORK))
                 (WORK
                  (AND (LISTP WORK-FORMS)
-                      (MAPCAR #'APPLICATION-INPUT-CONTROLLER--RESTORE-WORK-ITEM
+                      (MAPCAR #'input-work-from-form
                               WORK-FORMS)))
                 (VAULT-CAPTURE-IDENTIFIERS
                  (OR (GETF (REST FORM) :VAULT-CAPTURE-IDENTIFIERS) NIL))
@@ -241,7 +241,7 @@
                              (test-pending-native--state
                               :active (if native-active-p '(:native-lisp "active-native") '(:message "active"))
                               :work '((:native-lisp "head") (:message "keep") (:native-lisp "tail")) :prefix 1)))
-           (form         (application-input-controller--pending-state-form state "c"))
+           (form         (input-state->form state "c"))
            (controller   nil))
       (conversation-append-user-message conversation "seed")
       (snapshot-write (if legacy-p legacy path) form)
@@ -282,7 +282,7 @@
                  "in-flight steering moves to steering unless promoted by the existing filter")
                 (multiple-value-bind (saved complete-p) (snapshot-read path)
                   (test-assert complete-p "initial controller publication keeps ordinary inputs")
-                  (test-assert (application-input-controller--pending-state saved "c")
+                  (test-assert (input-state-from-form saved "c")
                                "published output is accepted by the current reader"))))
              (when legacy-p
                (test-assert (if (and old-p empty-p) (probe-file legacy) (not (probe-file legacy)))
@@ -312,7 +312,7 @@
            (form         (test-pending-native--extended-form)))
       (snapshot-write path form)
       (test-assert (second (multiple-value-list (snapshot-read path))) "vault fixture writes correctly")
-      (test-assert (application-recovery-input-vault--pending-form-shape-p form)
+      (test-assert (input-state-form-shape-p form)
                    "strict vault shape accepts the proposed additive section")
       (application-recovery-input-vault-import application)
       (let ((captures (application-recovery-input-vault-captures application)))
@@ -325,8 +325,8 @@
         (let* ((state    (test-pending-native--state
                           :active active :work '((:message "keep") (:native-lisp "never")) :prefix 1))
                (capture  (append (list :id "capture" :captured-at 1) state))
-               (saved    (application-recovery-input-vault--capture-form capture "c"))
-               (restored (application-recovery-input-vault--capture-from-form saved "c" path))
+               (saved    (application-recovery-input-vault--capture-form capture))
+               (restored (application-recovery-input-vault--capture-from-form saved path))
                (other    (copy-tree state)))
           (setf (getf state :vault-capture-identifiers) nil)
           (test-assert restored "candidate capture writer output decodes after restart")
@@ -357,7 +357,7 @@
          (setf (getf native :items) (list cycle)))
         (:source
          (setf (getf (first (getf native :items)) :work) cycle)))
-      (test-assert (null (application-input-controller--pending-state form "c"))
+      (test-assert (null (input-state-from-form form "c"))
                    "circular extension structures reject without traversal hangs")))
   (dolist (kind '(:duplicate :conflict :inline :improper :wrong-conversation))
     (let ((form (copy-tree (test-pending-native--extended-form))))
@@ -374,16 +374,16 @@
          (setf (getf (rest form) :native-work) '(:items . :bad)))
         (:wrong-conversation
          (setf (getf (rest form) :conversation-id) "other")))
-      (test-assert (null (application-input-controller--pending-state form "c"))
+      (test-assert (null (input-state-from-form form "c"))
                    "conflicting and wrong-identity extensions reject")))
   (test-assert
-   (equal (getf (application-input-controller--pending-state
+   (equal (getf (input-state-from-form
                  '(:pending-inputs :version 1 :conversation-id "c" :steering ("s")
                    :work ((:message "m"))) "c") :work-items)
           '((:message "m")))
    "v1 restore keeps its historical behavior")
   (test-assert
-   (equal (getf (application-input-controller--pending-state
+   (equal (getf (input-state-from-form
                  '(:pending-inputs :version 2 :snapshot-identifier "old" :conversation-id "c"
                    :active-work (:identifier "id" :work (:native-lisp "old-active"))
                    :steering-in-flight nil :steering nil :work ((:native-lisp "old-inline"))) "c")
@@ -405,7 +405,7 @@
             (state         (list :snapshot-identifier             "acp-native"
                                  :work-items                      '((:native-lisp "never") (:message "keep"))
                                  :steering-promotion-prefix-count 0))
-            (form          (application-input-controller--pending-state-form state identifier)))
+            (form          (input-state->form state identifier)))
        (snapshot-write path form)
        (test-assert (null (acp-input--validate-storage application)) "ACP accepts candidate storage")
        (let ((controller (acp-input-initialize session)))
@@ -437,16 +437,16 @@
           conversation-identifier :active-work
           (and active-work active-work-identifier
                (list :identifier active-work-identifier :work
-                     (application-input-controller--pending-work-entry-form
+                     (input-work->form
                       active-work)))
           :steering-in-flight
-          (mapcar #'application-input-controller--pending-steering-entry-form
+          (mapcar #'input-steering->form
                   (getf state :steering-in-flight-items))
           :steering
-          (mapcar #'application-input--pending-form
+          (mapcar #'input-value->form
                   (getf state :steering-items))
           :work
-          (application-input-controller--pending-work-form
+          (input-work-list->forms
            (getf state :work-items))
           :vault-capture-identifiers
           (mapcar #'copy-seq (getf state :vault-capture-identifiers))
@@ -458,8 +458,8 @@
   "Test serialized FIFO indices, persisted native identity, and foreign legacy input."
   (let* ((state   (test-pending-native--state
                    :work '((:ignored "omit") (:native-lisp "native") (:message "keep")) :prefix 2))
-         (form    (application-input-controller--pending-state-form state "c"))
-         (decoded (application-input-controller--pending-state form "c")))
+         (form    (input-state->form state "c"))
+         (decoded (input-state-from-form form "c")))
     (test-assert (equal (getf decoded :work-items) '((:native-lisp "native") (:message "keep")))
                  "native positions index only the writer's restorable FIFO")
     (test-assert (= (getf decoded :steering-promotion-prefix-count) 1)
@@ -470,12 +470,12 @@
            (conversation (application-conversation application))
            (state        (test-pending-native--state :active '(:native-lisp "active")
                                                       :work '((:message "keep")) :prefix 1))
-           (form         (application-input-controller--pending-state-form state "c"))
+           (form         (input-state->form state "c"))
            (legacy       (configuration-legacy-pending-inputs-path configuration)))
       (conversation-append-user-message conversation "already committed"
                                         :pending-input-identifier "active-id")
-      (let ((filtered (application-input-controller--pending-state-filter-persisted
-                       (application-input-controller--pending-state form "c") conversation)))
+      (let ((filtered (input-state-filter-persisted
+                       (input-state-from-form form "c") conversation)))
         (test-assert (null (getf filtered :active-work))
                      "restored native active identity is filtered after durable acknowledgement"))
       (setf (getf (rest form) :conversation-id) "foreign")
@@ -490,8 +490,8 @@
       (let* ((capture  '(:id "native-only" :captured-at 1
                          :active-work (:native-lisp "only-active") :active-work-identifier "native-id"
                          :work-items nil :steering-promotion-prefix-count 0))
-             (saved    (application-recovery-input-vault--capture-form capture "c"))
-             (restored (application-recovery-input-vault--capture-from-form saved "c" legacy)))
+             (saved    (application-recovery-input-vault--capture-form capture))
+             (restored (application-recovery-input-vault--capture-from-form saved legacy)))
         (test-assert (and (equal (getf restored :active-work) '(:native-lisp "only-active"))
                           (equal (getf restored :active-work-identifier) "native-id")
                           (null (getf restored :work-items)))
@@ -511,6 +511,6 @@
       (let ((capture '(:id "capture" :captured-at 1 :active-work nil
                        :steering-in-flight nil :steering nil :work ((:message "keep"))
                        :native-work nil)))
-        (test-assert (null (application-recovery-input-vault--capture-from-form capture "c" legacy))
+        (test-assert (null (application-recovery-input-vault--capture-from-form capture legacy))
                      "capture reconstruction preserves present NIL metadata for rejection"))))
   nil)

@@ -17,7 +17,7 @@
                               (conversation-identifier conversation)
                               (and (consp form) (getf (rest form) :conversation-id)))))
           (unless (and complete-p (stringp identifier)
-                       (application-input-controller--pending-state form identifier))
+                       (input-state-from-form form identifier))
             (error 'agentcomms:acp-state-error
                    :message "Pending input storage needs recovery in the terminal interface."))))))
   nil)

@@ -143,16 +143,16 @@
 (defun test-application-async-lisp-routing ()
   "Test async classification, multiline input, busy routing, and recalled work consumption."
   (dolist (source '("? *package*" "? (values 1 2)"))
-    (test-assert (null (application--message-input source))
+    (test-assert (null (input-message source))
                  "async Lisp bypasses ordinary model prompt routing")
     (test-assert
-     (equal (application-input-controller--restore-work-item
-             (application-input-controller--pending-work-entry-form
-              (application-input-controller--input-work source)))
+     (equal (input-work-from-form
+             (input-work->form
+              (input-work-from-input source)))
             (list ':lisp source))
      "async input retains its exact prefix through pending-work serialization"))
   (dolist (source '("??" "?text" "?" " ? *package*"))
-    (test-assert (equal source (application--message-input source))
+    (test-assert (equal source (input-message source))
                  "only an initial question mark followed by whitespace selects async Lisp"))
   (async-lisp-tests--call-with-application
    (lambda (application)

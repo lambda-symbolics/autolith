@@ -31,7 +31,7 @@
     (when (and represented state)
       (pushnew represented (getf state :vault-capture-identifiers) :test #'equal)
       (setf (getf publication :form)
-            (application-input-controller--pending-state-form
+            (input-state->form
              state (conversation-identifier
                     (application-conversation (application-input-controller-application controller))))))
     publication))
@@ -62,7 +62,7 @@ copy before reconstructing input. No filesystem I/O holds the controller lock."
             (application-recovery-input-vault--signal
              (application-recovery-input-vault--pending-path application) ':store
              :message "Resolve the existing vault storage failure before storing queued input."))
-          (unless (every #'application-input-controller--follow-up-work-p
+          (unless (every #'input-work-editable-p
                          (deque->list (application-input-controller-work-items controller)))
             (application-recovery-input-vault--signal
              (application-recovery-input-vault--pending-path application) ':store
@@ -85,7 +85,7 @@ copy before reconstructing input. No filesystem I/O holds the controller lock."
             (when (plusp count)
               (pushnew identifier (getf state :vault-capture-identifiers) :test #'equal)
               (setf (getf publication :form)
-                    (application-input-controller--pending-state-form
+                    (input-state->form
                      state (conversation-identifier (application-conversation application)))
                     (application-input-controller-follow-up-edit-index controller) nil
                     (application-input-controller-follow-up-edit-work controller) nil
@@ -194,8 +194,8 @@ SETF of this place to publish a replacement, rather than mutating a returned lis
                              (typep (second entry) '(or string user-message-input))
                              (or (eq (first entry) ':message) (stringp (second entry))))
                   (invalid))
-                (or (application-input-controller--restore-work-item
-                     (application-input-controller--pending-work-entry-form entry))
+                (or (input-work-from-form
+                     (input-work->form entry))
                     (invalid)))
               value))))
 

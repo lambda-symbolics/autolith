@@ -1857,6 +1857,9 @@
   test-mission-inference-unknown-usage-policy-review
   test-job-completion-controller-unknown-usage-policy)
 
+(define-test-suite input-work
+  test-input-work-payload-codec)
+
 (define-test-suite compaction-recovery
   test-compaction-recovery-image-projection
   test-compaction-recovery-recent-images
