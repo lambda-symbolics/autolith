@@ -2984,24 +2984,39 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-new-command
     (:name              "/new"
      :argument          nil
-     :description       "start a new conversation"
-     :tip               "starts fresh without deleting the current conversation."
+     :description       "open a new channel in this workspace"
+     :tip               "opens a new channel and moves this terminal there; the channel you leave keeps running."
      :busy-behavior     :hold
      :terminal-behavior :shared
      :callable          t)
     (application)
-  (application-install-conversation
-   application
-   (conversation-create (application-configuration application)))
-  (let ((ui (application-ui application)))
-    (when ui
-      (terminal-ui-reset-transcript ui)))
-  (application-present
-   application
-   (format nil "Started conversation ~A."
-           (conversation-identifier-display
-            (conversation-identifier
-             (application-conversation application)))))
+  (let ((configuration (application-configuration application))
+        (terminal      (terminal-ui-terminal (application-ui application))))
+    (if (and (application-hosted-p application) (typep terminal 'localgroup-terminal))
+        ;; A hosted channel keeps its conversation and its agent; the new
+        ;; conversation is a channel of its own, and the terminal goes there.
+        (let* ((identifier (getf (rest (world-server-open
+                                        (application-world-server application)
+                                        (list :directory    (namestring (config :working-directory configuration))
+                                              :new-p        t
+                                              :switch-p     t
+                                              :fullscreen-p (not (null (config :fullscreen-p configuration))))))
+                                 :session-id))
+               (display    (conversation-identifier-display identifier)))
+          (unless (localgroup-terminal-switch-controller terminal identifier)
+            (application-present
+             application
+             (application-notice-line (format nil "new channel ~A opened; (switch ~S) goes there"
+                                              display display)))))
+        (progn
+          (application-install-conversation application (conversation-create configuration))
+          (terminal-ui-reset-transcript (application-ui application))
+          (application-present
+           application
+           (application-notice-line
+            (format nil "started conversation ~A"
+                    (conversation-identifier-display
+                     (conversation-identifier (application-conversation application)))))))))
   ':continue)
 
 (-> application--switch-target (application string) string)
