@@ -1499,12 +1499,16 @@
 
 (-> test-world-agent-children () null)
 (defun test-world-agent-children ()
-  "Test an agent's children are the channels nested in its own, counted once."
+  "Test an agent's children are the channels nested in its own, counted once, and its channel lists them."
   (with-test-configuration (configuration)
     (let ((root (world-tests--persisted-conversation configuration "broot11" 1000)))
       (world-tests--child-conversation configuration "bkid11" :root "broot11" :parent "broot11"
-                                                             :name "helper" :created-at 1500)
+                                                             :name "helper" :role "scout" :created-at 1500)
       (world-reconcile-sessions configuration :now 2000)
+      (let ((text (world-tests--read configuration root "current")))
+        (test-assert (and (search "Children, 1 of the 32" text)
+                          (search "helper (scout) channel bkid11, idle" text))
+                     "the parent's channel lists each child with its role, channel and state"))
       (let ((agent        (agent-create :configuration configuration
                                         :provider      (make-instance 'model-provider)
                                         :conversation  root
