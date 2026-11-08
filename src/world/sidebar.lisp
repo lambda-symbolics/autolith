@@ -54,6 +54,11 @@
     :reader        world-sidebar-toggled
     :type          hash-table
     :documentation "The tree nodes the person opened or closed, as :OPEN or :CLOSED, workspaces by path and channels by identifier.")
+   (pathnames
+    :initform      (make-hash-table :test #'equal)
+    :reader        world-sidebar-pathnames
+    :type          hash-table
+    :documentation "Conversation identity pathnames by channel, found once: finding a child's searches every task directory.")
    (actions
     :initform      #()
     :accessor      world-sidebar-actions
@@ -257,7 +262,7 @@ The choice stays when the terminal moves to another channel."
          (statuses      (world-sidebar--statuses sidebar))
          (world         (world-presented configuration)))
     (list :inbox    (world-inbox-channel world)
-          :channels (world-sidebar--channels configuration world statuses)
+          :channels (world-sidebar--channels sidebar world statuses)
           :names    (world-sidebar--names world)
           :statuses statuses
           :pending  (world-sidebar--pending configuration))))
@@ -270,8 +275,8 @@ The choice stays when the terminal moves to another channel."
                   (participant-residence participant))
           collect (cons (participant-residence participant) (participant-name participant))))
 
-(-> world-sidebar--channels (configuration world list) list)
-(defun world-sidebar--channels (configuration world statuses)
+(-> world-sidebar--channels (world-sidebar world list) list)
+(defun world-sidebar--channels (sidebar world statuses)
   "Return WORLD's channels but the inbox, and the hosted ones STATUSES report beyond them, the latest touched first.
 
 Latest touched is the newest write of a channel's conversation file. A hosted
@@ -299,11 +304,18 @@ first, and belongs to the workspace its status names."
              (append (mapcar (lambda (channel) (cons now channel)) fresh)
                      (mapcar (lambda (channel)
                                (cons (conversation-storage-write-date
-                                      (conversation-pathname-for-id configuration
-                                                                    (channel-identifier channel)))
+                                      (world-sidebar--pathname sidebar (channel-identifier channel)))
                                      channel))
                              (remove-if #'channel-inbox-p (world-channels world))))
              #'> :key #'first))))
+
+(-> world-sidebar--pathname (world-sidebar string) pathname)
+(defun world-sidebar--pathname (sidebar identifier)
+  "Return the identity pathname of channel IDENTIFIER's conversation, found once per sidebar."
+  (let ((pathnames (world-sidebar-pathnames sidebar)))
+    (or (gethash identifier pathnames)
+        (setf (gethash identifier pathnames)
+              (conversation-pathname-for-id (world-sidebar-configuration sidebar) identifier)))))
 
 (-> world-sidebar--statuses (world-sidebar) list)
 (defun world-sidebar--statuses (sidebar)

@@ -228,6 +228,29 @@
                             "the inbox comes first, once, counting the messages waiting there"))))))))
   nil)
 
+(-> test-world-sidebar-finds-conversations-once () null)
+(defun test-world-sidebar-finds-conversations-once ()
+  "Test the sidebar finds each channel's conversation once, however often it gathers."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (world-server--reconcile configuration)
+    (let ((sidebar (world-sidebar-create configuration))
+          (find    (symbol-function 'conversation-pathname-for-id))
+          (found   nil))
+      (test-call-with-function-replacements
+       (list (list 'world-sidebar--statuses (lambda (candidate) (declare (ignore candidate)) nil))
+             (list 'conversation-pathname-for-id
+                   (lambda (candidate identifier)
+                     (push identifier found)
+                     (funcall find candidate identifier))))
+       (lambda ()
+         (dotimes (index 3)
+           (world-sidebar--gather sidebar))))
+      (test-assert (equal (sort (copy-list found) #'string<) '("bfirst1" "bsecnd2"))
+                   "three gathers look each channel's conversation up once")))
+  nil)
+
 (-> test-world-sidebar-gathers-apart () null)
 (defun test-world-sidebar-gathers-apart ()
   "Test a started sidebar refreshes without waiting for a slow gather, then shows what it gathered."
