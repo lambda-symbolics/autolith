@@ -60,7 +60,7 @@
                    :call-id         (tool-context-call-id context)
                    :result-digest   (memory-source-text-digest output)
                    :output-digest   (memory-source-text-digest (tool-result-content result))
-                   :retained-length (min 8000 (length output))
+                   :retained-length (bounded-string-prefix-length (length output))
                    :content-object  content-object
                    :observed-at     observed-at)))
           result)

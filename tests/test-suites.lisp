@@ -350,6 +350,7 @@
   test-model-environment-validation
   test-text-line-splitting
   test-make-identifier
+  test-bounded-string-limit
   test-configuration-source-platform-reading)
 
 (define-test-suite fullscreen
