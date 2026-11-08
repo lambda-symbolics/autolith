@@ -1446,10 +1446,10 @@
         (let ((application (make-instance 'application
                                           :configuration configuration
                                           :conversation  (conversation-load-by-id configuration "bfirst1"))))
-          (test-assert (notany (lambda (item) (search (conversation-identifier-display inbox)
-                                                      (princ-to-string item)))
-                               (application--conversation-items application))
-                       "the resume picker leaves the inbox out")
+          (let ((items (application--channel-items application)))
+            (test-assert (and (= 1 (count inbox items :key (lambda (item) (getf item :value)) :test #'equal))
+                              (equal (getf (first items) :name) *world-inbox-designator*))
+                         "the switch picker offers the inbox once, first and by name"))
           (world-participant-subscribe configuration (participant-identifier first-agent) "bsecnd2")
           (test-assert (and (application-world-send application :channel "bsecnd2" :text "status?")
                             (let ((copy (find "bsecnd2" (world-inbox-deliveries configuration "bfirst1")
@@ -1495,6 +1495,17 @@
     (test-assert (handler-case (progn (conversation-load-by-id configuration "bnone11") nil)
                    (conversation-error () t))
                  "an unknown identifier still does not exist"))
+  nil)
+
+(-> test-world-tell-prefill () null)
+(defun test-world-tell-prefill ()
+  "Test (tell CHANNEL) without a message leaves the call in the input, the cursor where the message goes."
+  (let* ((application (application-tests--ui-application :columns 60))
+         (editor      (terminal-ui-editor (application-ui application))))
+    (application--builtin-tell-command application "bhere1")
+    (test-assert (and (string= (line-editor-text editor) "(tell \"bhere1\" \"\")")
+                      (= (line-editor-cursor editor) (- (length (line-editor-text editor)) 2)))
+                 "the input holds the call with the cursor inside its empty message"))
   nil)
 
 (-> test-world-channel-designation-and-list () null)

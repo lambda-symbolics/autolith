@@ -3626,6 +3626,14 @@ thread."
     (terminal-ui--paint-live ui))
   ui)
 
+(-> terminal-ui-edit-input (terminal-ui t) terminal-ui)
+(defun terminal-ui-edit-input (ui event)
+  "Apply editor EVENT, such as :LEFT, to UI's editable input and repaint."
+  (with-terminal-ui-locked (ui)
+    (line-editor-handle-event (terminal-ui-editor ui) event)
+    (terminal-ui--paint-live ui))
+  ui)
+
 (-> terminal-ui-insert-input (terminal-ui string) terminal-ui)
 (defun terminal-ui-insert-input (ui text)
   "Insert TEXT into UI's editable input at its cursor, as a paste would, and repaint."
