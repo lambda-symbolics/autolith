@@ -3670,11 +3670,15 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           (agent-loop-error-request-number condition)))))
 
 (-> application--call-with-model-error-handling
-    (application function &key (:fatal-agent-loop-errors-p boolean))
+    (application function &key (:fatal-agent-loop-errors-p boolean)
+                               (:record-turn-aborted-p boolean))
     keyword)
 (defun application--call-with-model-error-handling
-    (application function &key (fatal-agent-loop-errors-p t))
-  "Run model work under the expected, cancellation, and fatal condition boundary."
+    (application function &key (fatal-agent-loop-errors-p t) (record-turn-aborted-p t))
+  "Run model work under the expected, cancellation, and fatal condition boundary.
+
+Maintenance callers disable RECORD-TURN-ABORTED-P because they do not own a
+user model turn, while retaining cancellation and error presentation."
   (let* ((conversation        (application-conversation application))
          (turn-start-sequence (conversation-next-sequence conversation))
          (signal-backtrace    nil))
@@ -3690,18 +3694,20 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
             (funcall function)
             ':continue))
       (application-turn-cancelled (condition)
-        (application--record-turn-aborted
-         application condition
-         :turn-start-sequence turn-start-sequence
-         :reason              ':cancelled)
+        (when record-turn-aborted-p
+          (application--record-turn-aborted
+           application condition
+           :turn-start-sequence turn-start-sequence
+           :reason              ':cancelled))
         (error condition))
       (application-input-failed (condition)
         (error condition))
       (agent-loop-error (condition)
-        (application--record-turn-aborted
-         application condition
-         :turn-start-sequence turn-start-sequence
-         :reason              ':agent-loop)
+        (when record-turn-aborted-p
+          (application--record-turn-aborted
+           application condition
+           :turn-start-sequence turn-start-sequence
+           :reason              ':agent-loop))
         (if fatal-agent-loop-errors-p
             (application-raise-fatal
              application condition signal-backtrace)
@@ -3713,10 +3719,11 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
        (condition)
        (application-raise-fatal application condition signal-backtrace))
       ((or autolith-error cl-llm-provider-api:provider-api-error) (condition)
-        (application--record-turn-aborted
-         application condition
-         :turn-start-sequence turn-start-sequence
-         :reason              ':application-error)
+        (when record-turn-aborted-p
+          (application--record-turn-aborted
+           application condition
+           :turn-start-sequence turn-start-sequence
+           :reason              ':application-error))
         (application-handle-expected-error application condition)
         ':failed)
       (serious-condition (condition)

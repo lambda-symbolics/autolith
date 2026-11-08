@@ -182,7 +182,8 @@ Neither successful nor failed compaction can rearm this opportunity."
          (application-present
           application
           (list (terminal-span ':hint "· compacting idle history before estimated cache expiry")))
-         (application-compact application)))))
+         (application-compact application))
+       :record-turn-aborted-p nil)))
   nil)
 
 (-> application-idle-compaction-wake (application) null)

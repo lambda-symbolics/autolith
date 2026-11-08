@@ -441,20 +441,22 @@ as ordinary controller admission, without recursively locking the session."
          (lambda (take acknowledge)
            (flet ((pending-operations (owner)
                     (application-input-controller--apply-pending-commands controller :agent owner)))
-             (application--run-turn
-              application
-              (if (some (lambda (notice) (eq (getf notice :kind) ':cancellation-warning)) notices)
-                  *application-job-cancellation-continuation-prompt*
-                  *application-job-completion-continuation-prompt*)
-              :continuation-p              t
-              :steering-function           take
-              :steering-persisted-function acknowledge
-              :pending-operations-function #'pending-operations)
-             (application--run-goal-continuations
-              application
-              :steering-function           take
-              :steering-persisted-function acknowledge
-              :pending-operations-function #'pending-operations)))))))
+             (unless (eq ':failed
+                         (nth-value 1
+                                    (application--run-turn
+                                     application
+                                     (if (some (lambda (notice) (eq (getf notice :kind) ':cancellation-warning)) notices)
+                                         *application-job-cancellation-continuation-prompt*
+                                         *application-job-completion-continuation-prompt*)
+                                     :continuation-p              t
+                                     :steering-function           take
+                                     :steering-persisted-function acknowledge
+                                     :pending-operations-function #'pending-operations)))
+               (application--run-goal-continuations
+                application
+                :steering-function           take
+                :steering-persisted-function acknowledge
+                :pending-operations-function #'pending-operations))))))))
   nil)
 
 (-> application-job-completions-connect (application) null)

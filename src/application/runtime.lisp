@@ -4506,6 +4506,12 @@ model's calls in a turn."
 (-> application-present-context-refusal (application provider-context-budget-error) null)
 (defun application-present-context-refusal (application condition)
   "Persist a local context refusal as informational output, without a failed provider turn."
+  (let ((controller (application-input-controller application)))
+    (when controller
+      (with-lock-held ((application-input-controller-lock controller))
+        (when (application-input-controller-turn-cancellation-p controller)
+          (error 'application-turn-cancelled))
+        (setf (application-input-controller-queued-work-paused-p controller) t))))
   (application-side-status-present
    application "context admission"
    (list (terminal-span
