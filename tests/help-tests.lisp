@@ -33,7 +33,7 @@
   (with-help-tests-application (application terminal)
     (let* ((overview (application-operation-help application))
            (section  (application-operation-help application ':channels))
-           (command  (application-operation-help application 'channels))
+           (command  (application-operation-help application 'switch))
            (tool     (application-operation-help application "test-operation.echo")))
       (test-assert (and (search "(new)" section) (not (search "(new)" command)))
                    "keywords choose sections while quoted symbols choose commands")
