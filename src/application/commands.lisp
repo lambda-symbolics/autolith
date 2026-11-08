@@ -1792,7 +1792,7 @@ searches every task directory."
                                pending)
                           (handler-case
                               (let ((removed (channel-remove (application-configuration application)
-                                                             (getf pending :value)
+                                                             (list (getf pending :value))
                                                              :tool-name "(switch)")))
                                 (application-present
                                  application

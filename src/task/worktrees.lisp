@@ -461,6 +461,39 @@ a successful child is downgraded rather than claiming an absent artifact."
         (task-tool-result (bounded-string (task--write-readable-sexp answer :pretty-p t)
                                           :limit *task-tool-content-limit*) answer)))))
 
+(-> task-worktree-discard (configuration string) null)
+(defun task-worktree-discard (configuration channel)
+  "Discard the isolated worktree of child CHANNEL, edits included, when it has one.
+
+The child is being removed, so nothing of its checkout is left to integrate:
+Git forgets the worktree and its directory goes. A checkout Git no longer
+knows is deleted all the same."
+  (let* ((pathname (conversation-task-pathname-for-id configuration channel))
+         (record   (and pathname
+                        (merge-pathnames "worktree.sexp" (uiop:pathname-directory-pathname pathname))))
+         (metadata (and record (probe-file record) (snapshot-read record))))
+    (when metadata
+      (with-lock-held (*task-worktree-lock*)
+        (let* ((checkout (pathname (getf metadata :path)))
+               ;; Removing a child is the authority: these Git commands only take
+          ;; apart Autolith's own checkout of it.
+               (manager  (task-worktree--manager
+                               configuration (constantly ':full-access)
+                               :writable-roots (cons (uiop:pathname-parent-directory-pathname checkout)
+                                                     (task-worktree--git-admin-roots
+                                                      (pathname (getf metadata :source)))))))
+          (handler-case
+              (cl-worktree:cleanup-worktree manager (task-worktree--find-handle manager metadata)
+                                            :owner         (getf metadata :owner)
+                                            :discard-dirty t)
+            (task-worktree-error ()
+              ;; Git no longer knows the worktree; its directory still goes.
+              nil))
+          (platform-delete-directory-tree *platform* (uiop:pathname-parent-directory-pathname checkout)
+                                          :validate          t
+                                          :if-does-not-exist ':ignore)))))
+  nil)
+
 (-> task-worktree-register-tool (tool-registry task-orchestrator) tool-registry)
 (defun task-worktree-register-tool (registry orchestrator)
   "Register the primary parent's explicit engineering artifact lifecycle operation."
