@@ -129,7 +129,7 @@ Several matches are reported together and select nothing."
                                            (localgroup--record-session-id (rest entry))))))
     (cond ((null matches)
            (error 'localgroup-error
-                  :message    (format nil "No running localgroup session matches ~S." session-id)
+                  :message    (format nil "No hosted channel matches ~S." session-id)
                   :operation  ':discover
                   :session-id session-id))
           ((rest matches)
@@ -413,11 +413,11 @@ HEADER-P renders field labels rather than status values."
   (if (null statuses)
       (localgroup--write-styled-line
        stream
-       (list (terminal-span ':notice "No local Autolith sessions are running."))
+       (list (terminal-span ':dim "· ") (terminal-span ':plain "no channels are hosted"))
        styled-p)
       (let* ((columns (max 4 columns))
              (fields  (localgroup--status-table-fields columns))
-             (title   "Local Autolith sessions"))
+             (title   "Hosted channels"))
         (localgroup--write-styled-line
          stream
          (list (terminal-span ':brand (layout-fit-text title columns)))
@@ -466,18 +466,27 @@ HEADER-P renders field labels rather than status values."
 (-> localgroup--print-response (list stream &key (:styled-p boolean)) null)
 (defun localgroup--print-response
     (response stream &key (styled-p (localgroup--status-output-styled-p stream)))
-  "Print one concise successful localgroup RESPONSE."
-  (localgroup--write-styled-line
-   stream
-   (list (terminal-span ':success
-                        (format nil "~(~A~) requested for localgroup session "
-                                (getf (rest response) :operation)))
-         (terminal-span
-          ':code
-          (session-identifier-display
-           (getf (rest response) :session-id)))
-         (terminal-span ':plain "."))
-   styled-p)
+  "Print one concise successful localgroup RESPONSE as a notice line."
+  (let ((operation (getf (rest response) :operation))
+        (channel   (session-identifier-display (getf (rest response) :session-id))))
+    (localgroup--write-styled-line
+     stream
+     (if (eq operation ':stop)
+         (list (terminal-span ':dim "· ")
+               (terminal-span ':plain "the world server stops, with every channel it hosts"))
+         (list (terminal-span ':dim "· ")
+               (terminal-span ':plain "channel ")
+               (terminal-span ':code channel)
+               (terminal-span ':plain (case operation
+                                        (:detach
+                                         " detaches from its terminal")
+                                        (:pause
+                                         " pauses")
+                                        (:kill
+                                         " closes")
+                                        (otherwise
+                                         (format nil ": ~(~A~) requested" operation))))))
+     styled-p))
   nil)
 
 (-> localgroup--attach-terminal-loop
@@ -836,11 +845,11 @@ controlling terminal."
       (let ((records (localgroup--reachable-records configuration)))
         (cond ((null records)
                (error 'localgroup-error
-                      :message   "No reachable localgroup session is running."
+                      :message   "No channel is hosted."
                       :operation ':discover))
               ((rest records)
                (error 'localgroup-error
-                      :message   (format nil "Multiple reachable localgroup sessions are running; provide a session identifier: ~{~A~^, ~}."
+                      :message   (format nil "Several channels are hosted; name one: ~{~A~^, ~}."
                                          (sort (mapcar (lambda (entry)
                                                          (session-identifier-display
                                                           (localgroup--record-session-id (rest entry))))
@@ -855,7 +864,7 @@ controlling terminal."
   "Return the localgroup status sub-command definition."
   (make-command
    :name        "status"
-   :description "list detached Autolith sessions"
+   :description "show the world server and the channels it hosts"
    :options     (list (make-option ':flag
                                    :long-name   "sexp"
                                    :key         ':sexp
@@ -874,7 +883,7 @@ controlling terminal."
   "Return the localgroup attach sub-command definition."
   (make-command
    :name        "attach"
-   :description "attach this terminal to a detached session"
+   :description "attach this terminal to a hosted channel"
    :usage       "[SESSION-ID]"
    :options     (list (make-option ':flag
                                    :long-name   "read-only"
@@ -1005,17 +1014,17 @@ going away."
   (make-command
    :name        "localgroup"
    :aliases     '("lg")
-   :description "inspect and control detached Autolith sessions"
+   :description "inspect and control the world server and the channels it hosts"
    :sub-commands
    (list (localgroup--status-command)
          (world-client--tell-command)
          (localgroup--attach-command)
          (localgroup--operation-command
-          "detach" "detach a session from its terminal" ':detach)
+          "detach" "detach a hosted channel from its terminal" ':detach)
          (localgroup--operation-command
-          "pause" "pause a detached session" ':pause)
+          "pause" "pause a hosted channel" ':pause)
          (localgroup--operation-command
-          "kill" "terminate a detached session" ':kill)
+          "kill" "close a hosted channel" ':kill)
          (world-client--start-command)
          (world-client--stop-command))
    :handler
