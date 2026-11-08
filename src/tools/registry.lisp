@@ -1120,6 +1120,30 @@ RETAIN lists runtime identities another registry shares and still owns."
    (tool-registry-tool-map registry))
   registry)
 
+(-> tool-registry-restrict (tool-registry function &key (:retain list)) tool-registry)
+(defun tool-registry-restrict (registry predicate &key retain)
+  "Keep only the tools of REGISTRY that satisfy PREDICATE, and return REGISTRY.
+
+A runtime only removed tools used is closed, since the registry no longer
+reaches it to close it later. Runtimes in RETAIN belong to another registry
+and stay open."
+  (let ((before (tool-registry--runtime-representatives registry)))
+    (tool-registry-delete-if registry (complement predicate))
+    (let ((kept (mapcar #'tool-runtime-identity
+                        (tool-registry--runtime-representatives registry))))
+      (multiple-value-bind (closed failure)
+          (tool-registry--attempt-runtime-operation
+           (remove-if (lambda (tool)
+                        (let ((identity (tool-runtime-identity tool)))
+                          (or (member identity kept :test #'eq)
+                              (member identity retain :test #'eq))))
+                      before)
+           #'tool-runtime-close)
+        (declare (ignore closed))
+        (when failure
+          (error failure)))))
+  registry)
+
 (-> tool-registry-find (tool-registry string string) (option tool))
 (defun tool-registry-find (registry namespace name)
   "Return the tool named NAMESPACE.NAME from REGISTRY, or NIL."

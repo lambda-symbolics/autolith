@@ -652,6 +652,7 @@
   test-world-child-participants
   test-world-child-sync
   test-world-child-loadable
+  test-world-child-role
   test-world-placing-needs-server
   test-world-agent-hierarchy
   test-world-parent-mention
@@ -1142,6 +1143,7 @@
 
 (define-test-suite tool
   test-tool-registry
+  test-tool-registry-restrict
   test-tool-result-overflow
   test-workspace-tools
   test-workspace-tool-outside-paths)

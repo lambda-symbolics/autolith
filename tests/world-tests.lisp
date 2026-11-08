@@ -1497,6 +1497,37 @@
                  "an unknown identifier still does not exist"))
   nil)
 
+(-> test-world-child-role () null)
+(defun test-world-child-role ()
+  "Test a child's own channel serves it in its role, and a session refuses to swap in a conversation of another role."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "broot11" 1000)
+    (let* ((child    (world-tests--child-conversation configuration "brole11"
+                                                      :root "broot11" :parent "broot11" :name "looker"
+                                                      :role "scout" :created-at 1500))
+           (roled    (application--configuration-for-conversation configuration child))
+           (registry (application--create-tool-registry roled)))
+      (unwind-protect
+           (progn
+             (test-assert (string= (config :child-role roled) "scout")
+                          "a child's conversation puts its channel in the child's role")
+             (test-assert (search "Stay read-only" (system-prompt roled))
+                          "the channel's prompt carries the role's instructions")
+             (test-assert (and (tool-registry-find registry "resource" "read")
+                               (tool-registry-find registry "search" "content"))
+                          "the channel keeps the tools the role grants")
+             (test-assert (notany (lambda (name)
+                                    (tool-registry-find registry (first name) (second name)))
+                                  '(("resource" "edit") ("shell" "run") ("self" "status") ("child" "spawn")))
+                          "the channel drops the tools the role lacks, and a role that spawns nobody cannot spawn"))
+        (tool-registry-close-runtime-state registry))
+      (let ((application (make-instance 'application :configuration configuration)))
+        (test-assert (handler-case (progn (application--check-same-role application child) nil)
+                       (application-role-change-error ()
+                         t))
+                     "a session in no role refuses to swap in a child's conversation in place"))))
+  nil)
+
 (-> test-world-placing-needs-server () null)
 (defun test-world-placing-needs-server ()
   "Test a session apart from the world server refuses to move or park agents."
