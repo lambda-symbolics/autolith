@@ -75,20 +75,22 @@ a user-local init.lisp change, or a private image commit.
 - Removal condition: discard the override after installing an equivalent
   tracked search limit or scheme-specific tool description.
 
-** Isolated patches beside unrelated edits
+** Isolated patches beside unrelated untracked files
 
-- Problem: isolated patch checks required an entirely clean integration target,
-  blocking nonoverlapping patches in a workspace with preserved user edits.
-- Behavior: require cleanliness only for affected paths reported by Git; retain
-  busy-operation checks and Git's index/worktree applicability checks.
-- Scope and location: private =cl-worktree:check-patch= definition, image commit
-  =bc75abac-fc67-40b7-9148-cbfe76206c78=, private Git
-  =19b44556b18fb0a7f2fa1d56c25319a6464d3a5a=.
-- Verification: actual =task.worktree= check/apply preserved unrelated edits and
-  rejected changed patch paths. NUL-delimited rename and literal path checks
-  passed, as did clean-process private replay.
-- Removal condition: replace the override after installing equivalent upstream
-  =cl-worktree= integration behavior.
+- Problem: isolated patch checks rejected unrelated untracked files, blocking
+  integration beside a preserved user-owned audit document.
+- Behavior: allow unrelated untracked files during patch checks; require clean
+  tracked files and index. Retain busy-operation and Git applicability checks.
+- Scope and location: private =cl-worktree::%clean=,
+  =cl-worktree::%integration-ready= and =cl-worktree:check-patch= definitions,
+  image commit =347280ab-967a-4f68-83ab-7dc34be2b279=, private Git
+  =5873596819e8a4e9ff301f07e1a3922d40dc3063=.
+- Verification: Git-backed assertions and actual =task.worktree= check/apply
+  preserved unrelated untracked files. Tracked/staged edits, destination
+  collisions and busy Git operations were refused. Default readiness was
+  strict; clean-process private replay passed.
+- Removal condition: discard these overrides after installing equivalent
+  upstream =cl-worktree= patch integration behavior.
 
 ** Native paths in file observations
 
