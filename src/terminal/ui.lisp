@@ -2585,14 +2585,16 @@ other entry ends with its own blank row."
      nil)))
 
 (-> terminal-ui--finalized-content
-    (terminal-ui (or string list))
-    (values string string))
-(defun terminal-ui--finalized-content (ui entry)
+    (terminal-ui (or string list) &key (:separation-entry (or string list)))
+    (values string string list))
+(defun terminal-ui--finalized-content (ui entry &key (separation-entry entry))
   "Return finalized ENTRY as plain text, styled text, and click regions.
 
-Compact calls, handoffs, successes, multi-row calls, and annotations end with
-one newline; other entries include a blank separator row. Regions index the
-plain text. This formatter does not change UI."
+SEPARATION-ENTRY supplies the semantic spacing identity when ENTRY is a
+recolored tool invocation with an optional outcome body. Compact calls,
+handoffs, successes, multi-row calls, and annotations end with one newline;
+other entries include a blank separator row. Regions index the plain text.
+This formatter does not change UI."
   (let* ((terminal (terminal-ui-terminal ui))
          (spans    (if (stringp entry)
                        (list (terminal-span ':plain entry))
@@ -2604,7 +2606,7 @@ plain text. This formatter does not change UI."
                  (char= (char plain (1- (length plain))) #\Newline))
       (setf plain (concatenate 'string plain (string #\Newline))
             display (concatenate 'string display (string #\Newline))))
-    (if (terminal-ui--separation-group entry)
+    (if (terminal-ui--separation-group separation-entry)
         (values plain display regions)
         (values (concatenate 'string plain (string #\Newline))
                 (concatenate 'string display (string #\Newline))

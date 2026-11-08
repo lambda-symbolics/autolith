@@ -79,7 +79,8 @@
                 (terminal-ui-fullscreen--record-entry
                  entry (getf metadata :state)
                  (when (getf metadata :retain-output-p) (getf metadata :body)))
-                entry))
+                entry)
+         :separation-entry entry)
       (when (eq (getf metadata :kind) ':call)
         (terminal-ui-fullscreen--index-record
          ui (list :identifier identifier :entry entry :prefix prefix :tag (list identifier)
@@ -109,7 +110,7 @@
     ;; Install the new immutable index value before replacement can evict its chunk.
     (terminal-ui-fullscreen--index-record ui next)
     (multiple-value-bind (text display regions)
-        (terminal-ui--finalized-content ui entry)
+        (terminal-ui--finalized-content ui entry :separation-entry (getf record :entry))
       (if (clinedi:transcript-viewport-replace
            (fullscreen-terminal-ui-viewport ui) (getf record :tag)
            :text    (concatenate 'string prefix text)
