@@ -3538,7 +3538,7 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-tasks-command
     (:name              "/tasks"
-     :argument          "[list|get|transcript|send|cancel|revive|abandon] [ID] [ARGUMENTS]"
+     :argument          "[list|get|transcript|cancel|revive|abandon] [ID] [ARGUMENTS]"
      :description       "inspect task lineage, artifacts and explicit recovery"
      :tip               "shows compact activity and routes steering through ordinary job authority."
      :busy-behavior     :inspect
