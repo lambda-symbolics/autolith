@@ -552,7 +552,6 @@
            (server    (make-instance 'world-server
                                      :configuration            configuration
                                      :permission-mode          ':ask
-                                     :pristine-p               nil
                                      :mutation-replay-failures nil))
            (dates     (list (cons "bolder1" 5000) (cons "bnewer2" 4000))))
       (test-call-with-function-replacements

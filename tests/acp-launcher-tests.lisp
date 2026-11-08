@@ -140,7 +140,7 @@
                 :arguments (list "--noinform" "--no-sysinit" "--no-userinit" "--script"
                                  (namestring (asdf:system-relative-pathname
                                               :autolith "script/launcher.lisp"))
-                                 "--from-source" "--pristine" "acp")
+                                 "--from-source" "acp")
                 :directory root)))
          (test-assert
           (equal "autolith" (agentcomms:json-get
@@ -150,6 +150,15 @@
           (agentcomms:acp-capability-enabled-p
            (agentcomms:json-get result "agentCapabilities") "loadSession")
           "the subprocess advertises durable session loading")))))
+  nil)
+
+(-> test-acp-pristine-refused () null)
+(defun test-acp-pristine-refused ()
+  "Test ACP refuses a pristine start, since its channels live in the world server, which never runs pristine."
+  (test-assert (handler-case (progn (main-dispatch '("--pristine" "acp")) nil)
+                 (configuration-error (condition)
+                   (search "never runs pristine" (autolith-error-message condition))))
+               "a pristine ACP start is refused with the reason")
   nil)
 
 (-> test-acp-launcher-failure-keeps-stdout-clean () null)

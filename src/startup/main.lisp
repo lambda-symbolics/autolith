@@ -1015,8 +1015,7 @@ state, including an empty list after successful or pristine startup."
     (when (and handoff-record (getf (rest handoff-record) :world-p))
       (let* ((*localgroup-startup-record* handoff-record)
              (status                      (world-server-run configuration
-                                                            :permission-mode permission-mode
-                                                            :pristine-p      pristine-p)))
+                                                            :permission-mode permission-mode)))
         (when status
           (uiop:quit status)))
       (return-from main--start-session nil))
@@ -1046,19 +1045,14 @@ state, including an empty list after successful or pristine startup."
               (application--command-sandbox-unavailable-message))
       (force-output *error-output*))
     (when (and (main--client-session-p
-                :handoff-record           handoff-record
-                :resume-requested-p       effective-resume-requested-p
-                :resume-id                effective-resume-id
-                :recovery-conversation-id recovery-conversation-id
-                :recovery-diagnosis       recovery-diagnosis
-                :pristine-p               pristine-p
-                :simulate-crash-p         (not (null (getopt* command ':simulate-crash))))
+                :handoff-record   handoff-record
+                :pristine-p       pristine-p
+                :simulate-crash-p (not (null (getopt* command ':simulate-crash))))
                (if (main--interactive-input-p)
                    (main--run-world-client
                     configuration
                     :permission-mode    permission-mode
                     :immutable-p        immutable-p
-                    :pristine-p         pristine-p
                     :conversation-id    (or effective-resume-id recovery-conversation-id)
                     :resume-command-p   (and effective-resume-requested-p
                                              (null effective-resume-id))
@@ -1126,18 +1120,9 @@ state, including an empty list after successful or pristine startup."
   nil)
 
 (-> main--client-session-p
-    (&key (:handoff-record (option list))
-          (:resume-requested-p boolean)
-          (:resume-id (option string))
-          (:recovery-conversation-id (option string))
-          (:recovery-diagnosis t)
-          (:pristine-p boolean)
-          (:simulate-crash-p boolean))
+    (&key (:handoff-record (option list)) (:pristine-p boolean) (:simulate-crash-p boolean))
     boolean)
-(defun main--client-session-p
-    (&key handoff-record resume-requested-p resume-id
-          recovery-conversation-id recovery-diagnosis
-          pristine-p simulate-crash-p)
+(defun main--client-session-p (&key handoff-record pristine-p simulate-crash-p)
   "Return true when this start should open a channel in the world server and attach.
 
 A client-first start keeps this terminal a thin relay whose detach is
@@ -1146,8 +1131,6 @@ startup images, the session after authentication and input piped from
 another program take it too. Replacements, crash simulation, hosts without
 detached sessions, and a booted generation's resume, under
 *MAIN-DIRECT-START-P*, keep the direct path."
-  (declare (ignore resume-requested-p resume-id
-                   recovery-conversation-id recovery-diagnosis))
   (and (null handoff-record)
        (not pristine-p)
        (not simulate-crash-p)
@@ -1162,7 +1145,6 @@ detached sessions, and a booted generation's resume, under
 
 (-> main--open-world-channel
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
-                        (:pristine-p boolean)
                         (:conversation-id (option string))
                         (:resume-command-p boolean)
                         (:recovery-diagnosis (option string))
@@ -1171,7 +1153,7 @@ detached sessions, and a booted generation's resume, under
                         (:images list))
     (values string boolean))
 (defun main--open-world-channel
-    (configuration &key (permission-mode ':ask) immutable-p pristine-p conversation-id
+    (configuration &key (permission-mode ':ask) immutable-p conversation-id
                         resume-command-p recovery-diagnosis launch new-p images)
   "Open this terminal's channel in the world server and return its session identifier.
 
@@ -1187,7 +1169,6 @@ the reason; no session runs in this terminal's own process instead."
                          :channel            conversation-id
                          :permission-mode    permission-mode
                          :immutable-p        immutable-p
-                         :pristine-p         pristine-p
                          :resume-command-p   resume-command-p
                          :recovery-diagnosis recovery-diagnosis
                          :launch             launch
@@ -1242,7 +1223,6 @@ request it conflicts with from one that says nothing."
 
 (-> main--run-world-client
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
-                        (:pristine-p boolean)
                         (:conversation-id (option string))
                         (:resume-command-p boolean)
                         (:recovery-diagnosis (option string))
@@ -1250,7 +1230,7 @@ request it conflicts with from one that says nothing."
                         (:images list))
     boolean)
 (defun main--run-world-client
-    (configuration &key (permission-mode ':ask) immutable-p pristine-p conversation-id
+    (configuration &key (permission-mode ':ask) immutable-p conversation-id
                         resume-command-p recovery-diagnosis launch images)
   "Serve this terminal as a client of the world server until its channel lets it go.
 
@@ -1266,7 +1246,6 @@ gives the terminal back in between."
       (main--open-world-channel configuration
                                 :permission-mode    permission-mode
                                 :immutable-p        immutable-p
-                                :pristine-p         pristine-p
                                 :conversation-id    conversation-id
                                 :resume-command-p   resume-command-p
                                 :recovery-diagnosis recovery-diagnosis
@@ -1332,7 +1311,6 @@ gives the terminal back in between."
                                               :channel         (getf (rest exit) :session-id)
                                               :permission-mode permission-mode
                                               :immutable-p     immutable-p
-                                              :pristine-p      pristine-p
                                               :switch-p        t))
                          (setf origin left))
                      (localgroup-error (condition)
@@ -1751,16 +1729,14 @@ secure: traffic is unencrypted, so put a TLS proxy in front."
                       :description "the bearer token remote clients must present"))
    :handler
    (lambda (command)
-     (let* ((endpoint        (main--acp-endpoint command))
-            (pristine-p      (not (null (getopt* command ':pristine))))
-            (configuration
-              (configuration-create
-               :immutable-p                 pristine-p
-               :defer-provider-validation-p t))
-            (permission-mode (or (getopt* command ':permissions) ':ask)))
+     (when (getopt* command ':pristine)
+       (error 'configuration-error
+              :message "ACP opens channels in the world server, which never runs pristine; start a pristine rescue session with autolith resume --pristine."))
+     (let ((endpoint        (main--acp-endpoint command))
+           (configuration   (configuration-create :defer-provider-validation-p t))
+           (permission-mode (or (getopt* command ':permissions) ':ask)))
        (acp-run configuration
                 :permission-mode permission-mode
-                :pristine-p      pristine-p
                 :endpoint        endpoint)))))
 
 (-> main--top-level-command () clingon:command)

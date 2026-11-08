@@ -82,11 +82,6 @@ the process could fork, and a new thread serves the application again."))
     :reader        world-server-permission-mode
     :type          (member :ask :auto :sandboxed :full-access)
     :documentation "The permission mode a channel opens with unless its client chooses one.")
-   (pristine-p
-    :initarg       :pristine-p
-    :reader        world-server-pristine-p
-    :type          boolean
-    :documentation "Whether the server boots tracked source without private mutations.")
    (mutation-replay-failures
     :initarg       :mutation-replay-failures
     :reader        world-server-mutation-replay-failures
@@ -189,26 +184,24 @@ the process could fork, and a new thread serves the application again."))
 
 (-> world-server-create
     (configuration &key (:permission-mode (member :ask :auto :sandboxed :full-access))
-                        (:pristine-p boolean) (:token (option string))
-                        (:created-at (option integer)))
+                        (:token (option string)) (:created-at (option integer)))
     world-server)
 (defun world-server-create
-    (configuration &key (permission-mode ':ask) pristine-p token created-at)
+    (configuration &key (permission-mode ':ask) token created-at)
   "Prepare this process as CONFIGURATION's world server and publish its endpoint.
 
 TOKEN and CREATED-AT name the endpoint the client that started this process
 waits for; without them the endpoint gets fresh ones. The process services,
-the management REPL and Slynk, start with the server."
-  (let* ((failures     (application--prepare-process configuration
-                                                     :pristine-p pristine-p))
+the management REPL and Slynk, start with the server. The server never runs
+pristine: a pristine rescue session runs apart from it."
+  (let* ((failures     (application--prepare-process configuration :pristine-p nil))
          (bootstrapped (with-extension-registry-transaction
                          (application--load-extension-configuration
-                          configuration :pristine-p pristine-p)
+                          configuration :pristine-p nil)
                          (provider-bootstrap-configuration configuration)))
          (server       (make-instance 'world-server
                                       :configuration            bootstrapped
                                       :permission-mode          permission-mode
-                                      :pristine-p               pristine-p
                                       :mutation-replay-failures failures))
          (completed-p  nil))
     (unwind-protect
@@ -300,10 +293,9 @@ instead of starting a second server."
   nil)
 
 (-> world-server-run
-    (configuration &key (:permission-mode (member :ask :auto :sandboxed :full-access))
-                        (:pristine-p boolean))
+    (configuration &key (:permission-mode (member :ask :auto :sandboxed :full-access)))
     (option integer))
-(defun world-server-run (configuration &key (permission-mode ':ask) pristine-p)
+(defun world-server-run (configuration &key (permission-mode ':ask))
   "Serve CONFIGURATION's world from this process until it is stopped.
 
 The endpoint takes the token of the startup handoff this process was
@@ -313,7 +305,6 @@ a hosted session asked the process to exit with, or NIL."
                               (rest *localgroup-startup-record*)))
          (server         (world-server-create configuration
                                               :permission-mode permission-mode
-                                              :pristine-p      pristine-p
                                               :token           (getf startup-values :token)
                                               :created-at      (getf startup-values :created-at))))
     (unwind-protect
@@ -1045,7 +1036,6 @@ forgotten again when no thread could start."
                          :permission-mode          (world-server--permission-mode
                                                     server (or (getf launch :permission-mode)
                                                                (getf arguments :permission-mode)))
-                         :pristine-p               (world-server-pristine-p server)
                          :mutation-replay-failures (world-server-mutation-replay-failures server)
                          :relay-presentation       (list :rows     (getf arguments :rows)
                                                          :columns  (getf arguments :columns)
