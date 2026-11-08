@@ -1045,7 +1045,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
              :content    "change direction")
             (agent-steering-input-create
              :identifier        "channel:steering-message"
-             :content           "[Message from agent other (al-other) to channel agent-steering, where you reside]"
+             :content           "[Message from @other (al-other) to channel agent-steering, where you reside]"
              :operation-request '(:operation "channel" :summary "hello"))))
          (persisted-identifiers nil)
          (statuses              nil))
@@ -1086,7 +1086,7 @@ REASONING-CONTEXT is the retention mode its response metadata reports."
                                (getf (rest record) :content))
                              user-records)
                      '("start here" "change direction"
-                       "[Message from agent other (al-other) to channel agent-steering, where you reside]"))
+                       "[Message from @other (al-other) to channel agent-steering, where you reside]"))
               "steering is durable user input")
              (test-assert
               (string= (getf (rest (second user-records))
