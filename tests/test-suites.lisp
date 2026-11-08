@@ -665,6 +665,7 @@
   test-world-child-sync
   test-world-child-loadable
   test-world-child-role
+  test-world-agent-children
   test-world-placing-needs-server
   test-world-agent-hierarchy
   test-world-parent-mention
@@ -1419,6 +1420,7 @@
 (define-test-suite task-scheduler
   test-task-child-identity
   test-task-child-channel-lease
+  test-task-children-limit
   test-task-default-detachment
   test-task-running-cancellation
   test-task-runtime-deadline

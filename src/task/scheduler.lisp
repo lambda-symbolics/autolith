@@ -698,6 +698,33 @@ zero outside hurry-up mode."
          :identifier (job-identifier parent-job)
          :reason     (or (job-cancellation-reason parent-job) :shutdown)))
 
+(-> task-agent-children (task-orchestrator agent) list)
+(defun task-agent-children (orchestrator agent)
+  "Return the channel identifiers of AGENT's children: the channels nested in its own, and the runs not there yet.
+
+A child enters the world once its conversation persists, so ORCHESTRATOR's
+live runs for AGENT count too."
+  (let* ((channel  (conversation-identifier (agent-conversation agent)))
+         (children (mapcar #'channel-identifier
+                           (world-channel-children (world-load (agent-configuration agent)) channel))))
+    (dolist (job (task-orchestrator-list-jobs orchestrator))
+      (when (and (typep job 'task-job)
+                 (eq (task-job-parent-agent job) agent)
+                 (not (job-terminal-p job)))
+        (pushnew (task-job-execution-identifier job) children :test #'string=)))
+    children))
+
+(-> task-orchestrator--check-children-limit (task-orchestrator agent (integer 0)) null)
+(defun task-orchestrator--check-children-limit (orchestrator agent count)
+  "Refuse COUNT new children when AGENT would then have more than *TASK-CHILDREN-MAXIMUM*."
+  (let ((children (length (task-agent-children orchestrator agent))))
+    (when (> (+ children count) *task-children-maximum*)
+      (error 'task-error
+             :message   (format nil "You have ~D of the ~D children an agent may have, so ~D more do not fit. Send new work to a child with the right role through its channel (channel:current lists your children), or remove one with child.remove."
+                                children *task-children-maximum* count)
+             :tool-name "child.spawn")))
+  nil)
+
 (-> task-orchestrator-start-jobs
     (task-orchestrator agent list
      &key (:parent-call-id (option string))
@@ -719,6 +746,7 @@ that check atomic with cascading cancellation."
       (when (or (job-cancellation-requested-p parent-job)
                 (job-terminal-p parent-job))
         (task-orchestrator--refuse-cancelled-parent parent-job))))
+  (task-orchestrator--check-children-limit orchestrator parent-agent (length entries))
   (let* ((mission-context
            (let ((context (mission--agent-context parent-agent)))
              ;; Refuse new work before consuming any session or pool identity.
