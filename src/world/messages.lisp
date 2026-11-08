@@ -442,16 +442,12 @@ With NOTIFY-P, the process serving each of those channels is told to read."
 The first line says who sent it, the person or an agent, and why it arrived;
 every line of the message itself is quoted under it, so no text a sender
 writes can pass for that header."
-  (format nil "[Message from ~@[~A ~]~A (~A) ~A]~%~{> ~A~^~%~}"
-          (case (world-delivery-sender-kind delivery)
-            (:human
-             "the person")
-            (:agent
-             "agent")
-            (otherwise
-             nil))
-          (world-delivery-sender-name delivery)
-          (conversation-identifier-display (world-delivery-sender delivery))
+  (format nil "[Message from ~A ~A]~%~{> ~A~^~%~}"
+          (if (eq (world-delivery-sender-kind delivery) ':human)
+              "the person"
+              (format nil "@~A (~A)"
+                      (world-delivery-sender-name delivery)
+                      (conversation-identifier-display (world-delivery-sender delivery))))
           (let ((target (conversation-identifier-display (world-delivery-target delivery))))
             (ecase (world-delivery-kind delivery)
               (:post

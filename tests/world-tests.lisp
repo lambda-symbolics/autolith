@@ -700,7 +700,7 @@
                               (search "where you reside" (world-delivery-label post))
                               (search "which you subscribe to" (world-delivery-label copy)))
                          "copies share the identifier and are labeled by why they arrived")
-            (test-assert (uiop:string-prefix-p "[Message from the person user" (world-delivery-label post))
+            (test-assert (uiop:string-prefix-p "[Message from the person to channel" (world-delivery-label post))
                          "the label says the person sent it")))
         (let ((result (world-message-send configuration
                                           :sender   (participant-identifier second-agent)
@@ -755,7 +755,7 @@
                             :notify-p nil)
         (let* ((forged (first (last (world-inbox-deliveries configuration "bfirst1"))))
                (lines  (uiop:split-string (world-delivery-label forged) :separator '(#\Newline))))
-          (test-assert (and (uiop:string-prefix-p "[Message from agent " (first lines))
+          (test-assert (and (uiop:string-prefix-p "[Message from @" (first lines))
                             (= 1 (count-if (lambda (line) (uiop:string-prefix-p "[Message from" line)) lines))
                             (every (lambda (line) (uiop:string-prefix-p "> " line)) (rest lines)))
                        "a header written inside a message is quoted with the rest, and only the real header names the sender")))))
