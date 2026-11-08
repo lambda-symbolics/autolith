@@ -646,6 +646,7 @@
   test-world-agent-children
   test-world-channel-designation-and-list
   test-world-tell-prefill
+  test-world-prune-empty-conversations
   test-world-child-lifecycle
   test-world-placing-needs-server
   test-world-agent-hierarchy
