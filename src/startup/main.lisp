@@ -323,9 +323,9 @@ the terminal wraps the semantic spans for both inline and fullscreen tips."
   (prog1 (terminal-ui-read-event ui)
     (terminal-ui-refresh-size ui #'application-pending-terminal-size)))
 
-(-> application--present-resume-instruction (application) boolean)
-(defun application--present-resume-instruction (application)
-  "Present APPLICATION's exact resume command when its conversation is durable.
+(-> application--present-open-instruction (application) boolean)
+(defun application--present-open-instruction (application)
+  "Present the command that opens APPLICATION's channel again when its conversation is durable.
 
 A detached session's relay closes before the terminal UI unwinds, so there the
 instruction is the relay's exit message, which the attached client prints after
@@ -336,11 +336,11 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
     (if (conversation-persisted-p conversation)
         (let* ((ui    (application-ui application))
                (spans (list
-                       (terminal-span ':dim "To resume this conversation, run:")
+                       (terminal-span ':dim "To open this channel again, run:")
                        (terminal-span ':plain (string #\Newline))
                        (terminal-span ':code
                                       (format nil "  ~A"
-                                              (application--resume-command application))))))
+                                              (application--open-command application))))))
           (unless (localgroup-finish-attachments
                    application
                    :status  0
@@ -353,7 +353,7 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
     ((option string) (option string) boolean)
     list)
 (defun application--initial-work-items
-    (initial-command recovery-diagnosis resume-offer-p)
+    (initial-command recovery-diagnosis adaptation-offer-p)
   "Return ordered controller work for command-line and recovery startup behavior."
   (cond
     (initial-command
@@ -363,7 +363,7 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                  initial-command)))
     (recovery-diagnosis
      (list (list ':recovery-diagnosis recovery-diagnosis)))
-    (resume-offer-p
+    (adaptation-offer-p
      (list (list ':project-adaptation-offer)))
     (t
      nil)))
@@ -402,7 +402,7 @@ checkpoint work."
     (application &key (:initial-command (option string))
                       (:initial-input (option user-message-input))
                       (:recovery-diagnosis (option string))
-                      (:resume-offer-p boolean)
+                      (:adaptation-offer-p boolean)
                       (:hosted-p boolean)
                       (:quiescer (option function))
                       (:ready-function (option function))
@@ -413,7 +413,7 @@ checkpoint work."
     (option keyword))
 (defun application-serve
     (application &key initial-command initial-input recovery-diagnosis
-                      resume-offer-p hosted-p quiescer ready-function
+                      adaptation-offer-p hosted-p quiescer ready-function
                       resume-p localgroup-identity notice (boot-screen-p t))
   "Serve APPLICATION's session on this thread until it exits, then release its resources.
 
@@ -549,7 +549,7 @@ controller's exit reason."
                            (application--initial-work-items
                             initial-command
                             recovery-diagnosis
-                            resume-offer-p)
+                            adaptation-offer-p)
                            :load-pending-p (not recovery-startup-p)
                            :pending-persistence-enabled-p
                            recovery-input-storage-ready-p
@@ -633,7 +633,7 @@ controller's exit reason."
                     (setf exit-reason
                           (application-input-controller-exit-reason input-controller))
                     (when (eq exit-reason ':interrupt)
-                      (application--present-resume-instruction application)))
+                      (application--present-open-instruction application)))
                (finish-shutdown)))
         (finish-shutdown)))
     exit-reason))
@@ -642,11 +642,11 @@ controller's exit reason."
     (application &key (:initial-command (option string))
                       (:initial-input (option user-message-input))
                       (:recovery-diagnosis (option string))
-                      (:resume-offer-p boolean))
+                      (:adaptation-offer-p boolean))
     null)
 (defun application-run
     (application &key initial-command initial-input recovery-diagnosis
-                      resume-offer-p)
+                      adaptation-offer-p)
   "Run APPLICATION as this process's direct session, always restoring the terminal.
 
 The kernel's resize signal is watched for the session's lifetime; everything
@@ -661,7 +661,7 @@ else about the session is APPLICATION-SERVE's."
                             :initial-command    initial-command
                             :initial-input      initial-input
                             :recovery-diagnosis recovery-diagnosis
-                            :resume-offer-p     resume-offer-p)
+                            :adaptation-offer-p adaptation-offer-p)
       (platform-unwatch-terminal-resize *platform* resize-watch)))
   nil)
 
@@ -911,19 +911,19 @@ state, including an empty list after successful or pristine startup."
 
 (-> main--start-session
     (clingon:command
-     &key (:resume-requested-p boolean)
-          (:resume-id (option string))
+     &key (:open-requested-p boolean)
+          (:open-id (option string))
           (:authenticate-p boolean)
           (:authentication-selection (option string))
           (:authentication-method (option keyword)))
     null)
 (defun main--start-session
-    (command &key resume-requested-p resume-id authenticate-p
+    (command &key open-requested-p open-id authenticate-p
                   authentication-selection authentication-method)
   "Start one interactive Autolith session from COMMAND's parsed options."
   (main--register-local-source-trees)
-  (main--validate-detached-options command :resume-requested-p resume-requested-p
-                                          :resume-id           resume-id)
+  (main--validate-detached-options command :open-requested-p open-requested-p
+                                          :open-id           open-id)
   (let* ((detached-p               (not (null (getopt* command ':detached))))
          (pristine-p               (not (null (getopt* command ':pristine))))
          (immutable-p              (or pristine-p
@@ -967,14 +967,14 @@ state, including an empty list after successful or pristine startup."
          (fresh-handoff-p
            (and handoff-record
                 (getf (rest handoff-record) :fresh-conversation-p)))
-         (effective-resume-requested-p
-           (and (null handoff-record) resume-requested-p))
-         (effective-resume-id
+         (effective-open-requested-p
+           (and (null handoff-record) open-requested-p))
+         (effective-open-id
            (cond
              (handoff-record
               (getf (rest handoff-record) :conversation-id))
-             (resume-id
-              (main-resolve-conversation configuration resume-id))))
+             (open-id
+              (main-resolve-conversation configuration open-id))))
          (recovery-state
            (if (or handoff-record detached-p)
                (list nil nil)
@@ -985,13 +985,13 @@ state, including an empty list after successful or pristine startup."
            (if handoff-record
                (getf (rest handoff-record) :recovery-diagnosis)
                (and (not detached-p)
-                    (null effective-resume-id)
+                    (null effective-open-id)
                     (application-recovery-diagnosis-prompt configuration))))
-         (resume-command-p
+         (pick-channel-p
            (or (and handoff-record
-                    (getf (rest handoff-record) :resume-command-p))
-               (and effective-resume-requested-p
-                    (or (not (null effective-resume-id))
+                    (getf (rest handoff-record) :pick-channel-p))
+               (and effective-open-requested-p
+                    (or (not (null effective-open-id))
                         (and (null recovery-conversation-id)
                              (null recovery-diagnosis))))))
          (image-state-loaded-p
@@ -1018,8 +1018,8 @@ state, including an empty list after successful or pristine startup."
           (uiop:quit status)))
       (return-from main--start-session nil))
     (unless handoff-record
-      (let ((record (and effective-resume-id
-                         (main--live-conversation-record configuration effective-resume-id))))
+      (let ((record (and effective-open-id
+                         (main--live-conversation-record configuration effective-open-id))))
         (when record
           (main--validate-live-options command)
           (if detached-p
@@ -1033,7 +1033,7 @@ state, including an empty list after successful or pristine startup."
                             :permission-mode permission-mode
                             :immutable-p     immutable-p
                             :pristine-p      pristine-p
-                            :conversation-id effective-resume-id
+                            :conversation-id effective-open-id
                             :launch          (main--launch-options
                                               command :permission-mode permission-mode))
       (return-from main--start-session nil))
@@ -1051,9 +1051,9 @@ state, including an empty list after successful or pristine startup."
                     configuration
                     :permission-mode    permission-mode
                     :immutable-p        immutable-p
-                    :conversation-id    (or effective-resume-id recovery-conversation-id)
-                    :resume-command-p   (and effective-resume-requested-p
-                                             (null effective-resume-id))
+                    :conversation-id    (or effective-open-id recovery-conversation-id)
+                    :pick-channel-p     (and effective-open-requested-p
+                                               (null effective-open-id))
                     :recovery-diagnosis recovery-diagnosis
                     :launch             (main--launch-options
                                          command :permission-mode permission-mode)
@@ -1061,7 +1061,7 @@ state, including an empty list after successful or pristine startup."
                    (progn
                      (world-client-run-script
                       configuration
-                      :conversation-id (or effective-resume-id recovery-conversation-id)
+                      :conversation-id (or effective-open-id recovery-conversation-id)
                       :permission-mode permission-mode
                       :immutable-p     immutable-p
                       :launch          (main--launch-options command :permission-mode permission-mode))
@@ -1071,7 +1071,7 @@ state, including an empty list after successful or pristine startup."
       (setf *active-application*
             (apply #'main--connect-application
                    :configuration        configuration
-                   :conversation-id      effective-resume-id
+                   :conversation-id      effective-open-id
                    :immutable-p          immutable-p
                    :pristine-p           pristine-p
                    :permission-mode      permission-mode
@@ -1102,15 +1102,15 @@ state, including an empty list after successful or pristine startup."
                                                               :details details)))))
             (application-run
              *active-application*
-             :initial-command    (and resume-command-p
-                                      (null effective-resume-id)
+             :initial-command    (and pick-channel-p
+                                      (null effective-open-id)
                                       "(switch)")
              :initial-input
              (if handoff-record
                  (localgroup-handoff-initial-input handoff-record)
                  (main--initial-image-input image-values))
              :recovery-diagnosis recovery-diagnosis
-             :resume-offer-p     resume-command-p))
+             :adaptation-offer-p pick-channel-p))
         (main-launcher-exit-condition (condition)
           (multiple-value-bind (status message) (main--launcher-exit-text condition)
             (format *error-output* "~A~%" message)
@@ -1144,7 +1144,7 @@ detached sessions, and a booted generation's resume, under
 (-> main--open-world-channel
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:conversation-id (option string))
-                        (:resume-command-p boolean)
+                        (:pick-channel-p boolean)
                         (:recovery-diagnosis (option string))
                         (:launch list)
                         (:new-p boolean)
@@ -1152,7 +1152,7 @@ detached sessions, and a booted generation's resume, under
     (values string boolean))
 (defun main--open-world-channel
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        resume-command-p recovery-diagnosis launch new-p images)
+                        pick-channel-p recovery-diagnosis launch new-p images)
   "Open this terminal's channel in the world server and return its session identifier.
 
 CONVERSATION-ID opens that channel; otherwise the launch directory selects
@@ -1167,7 +1167,7 @@ the reason; no session runs in this terminal's own process instead."
                          :channel            conversation-id
                          :permission-mode    permission-mode
                          :immutable-p        immutable-p
-                         :resume-command-p   resume-command-p
+                         :pick-channel-p     pick-channel-p
                          :recovery-diagnosis recovery-diagnosis
                          :launch             launch
                          :new-p              new-p
@@ -1222,14 +1222,14 @@ request it conflicts with from one that says nothing."
 (-> main--run-world-client
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:conversation-id (option string))
-                        (:resume-command-p boolean)
+                        (:pick-channel-p boolean)
                         (:recovery-diagnosis (option string))
                         (:launch list)
                         (:images list))
     boolean)
 (defun main--run-world-client
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        resume-command-p recovery-diagnosis launch images)
+                        pick-channel-p recovery-diagnosis launch images)
   "Serve this terminal as a client of the world server until its channel lets it go.
 
 IMAGES, absolute image namestrings, become the channel's composer draft.
@@ -1245,7 +1245,7 @@ gives the terminal back in between."
                                 :permission-mode    permission-mode
                                 :immutable-p        immutable-p
                                 :conversation-id    conversation-id
-                                :resume-command-p   resume-command-p
+                                :pick-channel-p     pick-channel-p
                                 :recovery-diagnosis recovery-diagnosis
                                 :launch             launch
                                 :images             images)
@@ -1422,19 +1422,19 @@ gives the terminal back in between."
       (and (non-empty-string-p candidate)
            candidate))))
 
-(-> main--resume-command () clingon:command)
-(defun main--resume-command ()
-  "Return the resume sub-command definition."
+(-> main--open-command () clingon:command)
+(defun main--open-command ()
+  "Return the open sub-command definition."
   (make-command
-   :name        "resume"
-   :description "resume a saved conversation, or pick one interactively"
+   :name        "open"
+   :description "open a channel in this terminal, or pick one"
    :usage       "[ID] [--detached]"
    :handler
    (lambda (command)
      (main--start-session
       command
-      :resume-requested-p t
-       :resume-id         (progn
+      :open-requested-p t
+       :open-id         (progn
                             (main--single-selection command "conversation ID")
                             (first (command-arguments command)))))))
 
@@ -1520,8 +1520,8 @@ gives the terminal back in between."
                  :identifier (getopt* command ':fork-id))))
          (main--start-session
           command
-          :resume-requested-p t
-          :resume-id          (conversation-identifier fork)))))))
+          :open-requested-p t
+          :open-id          (conversation-identifier fork)))))))
 
 (-> main--auth-command () clingon:command)
 (defun main--auth-command ()
@@ -1751,7 +1751,7 @@ both update the packaged installation and exit without starting a session.
 autolith uninstall removes the installation and keeps user data."
    :version      *autolith-version*
    :options      (main--session-options)
-   :sub-commands (list (main--resume-command)
+   :sub-commands (list (main--open-command)
                        (main--replay-command)
                        (main--tool-failures-command)
                        (main--fork-command)
@@ -1803,10 +1803,10 @@ autolith uninstall removes the installation and keeps user data."
                  (format *error-output* "~&~A~%" condition)
                  (uiop:quit 64)))))
        (when (and (getopt* command ':detached)
-                  (not (member (command-name command) '("autolith" "resume")
+                  (not (member (command-name command) '("autolith" "open")
                                :test #'string=)))
          (error 'configuration-error
-                :message "--detached is supported only for a new session or resume PREFIX."))
+                :message "--detached is supported only for a new channel or autolith open ID."))
        (funcall (command-handler command) command))))
   nil)
 

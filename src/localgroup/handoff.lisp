@@ -135,7 +135,7 @@
        :validate  ,(lambda (value) (typep value 'boolean)))
       (:indicator :attach-expected-p
        :validate  ,(lambda (value) (typep value 'boolean)))
-      (:indicator :resume-command-p
+      (:indicator :pick-channel-p
        :validate  ,(lambda (value) (typep value 'boolean)))
       (:indicator :styled-p
        :validate  ,(lambda (value) (typep value 'boolean)))
@@ -401,7 +401,7 @@ before any shell is involved."
 (-> localgroup-handoff-spawn-fresh
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:conversation-id (option string))
-                        (:resume-command-p boolean)
+                        (:pick-channel-p boolean)
                         (:recovery-diagnosis t)
                         (:attach-expected-p boolean)
                         (:ready-function (option function))
@@ -410,7 +410,7 @@ before any shell is involved."
     string)
 (defun localgroup-handoff-spawn-fresh
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        resume-command-p recovery-diagnosis pristine-p
+                        pick-channel-p recovery-diagnosis pristine-p
                         (attach-expected-p t) ready-function world-p)
   "Launch a detached session and return its ready identifier.
 
@@ -440,8 +440,8 @@ ownership. A nonlocal exit from it cancels the launch."
                    :world-p              (not (null world-p))
                    :attach-expected-p    (not (null attach-expected-p))
                    :fresh-conversation-p (and (null conversation-id)
-                                              (not resume-command-p))
-                   :resume-command-p     (not (null resume-command-p))
+                                              (not pick-channel-p))
+                   :pick-channel-p       (not (null pick-channel-p))
                    :old-pid              (current-process-id)
                    :replacement-pid      nil
                    :conversation-id      conversation-id

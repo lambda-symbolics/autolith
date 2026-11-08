@@ -120,7 +120,7 @@
                (string= (user-message-input-text restored) "draft survives"))
               "handoff records preserve durable conversation identity and draft")
              (dolist (properties '((:token "duplicate") (:unknown t)
-                                   (:rows 0) (:resume-command-p :invalid)))
+                                   (:rows 0) (:pick-channel-p :invalid)))
                (snapshot-write handoff-pathname
                                (append (localgroup-handoff--disk-record record)
                                        properties))
@@ -553,7 +553,7 @@
                        (string= (getf (rest record) :launch-id) launched-id))
                   "a fresh spawn records terminal presentation and session state")))
              (localgroup-handoff-spawn-fresh configuration
-                                             :conversation-id   "resume-id"
+                                             :conversation-id   "open-id"
                                              :attach-expected-p nil)
              (let ((record (localgroup-handoff--read
                             configuration (second (first launches)))))

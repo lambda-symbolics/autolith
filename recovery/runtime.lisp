@@ -738,7 +738,7 @@ The validator applies recovery's stricter checks to each manifest."
     (recovery-context list)
     list)
 (defun recovery-normalize-forwarded-arguments (context arguments)
-  "Return restart-safe application ARGUMENTS with an explicit resume ID resolved."
+  "Return restart-safe application ARGUMENTS with the channel ID of an explicit open resolved."
   (let ((normalized nil)
         (remaining  arguments))
     (loop while remaining
@@ -753,7 +753,7 @@ The validator applies recovery's stricter checks to each manifest."
     (setf normalized (nreverse normalized))
     (loop for remaining on normalized
           when (and (stringp (first remaining))
-                    (string= (first remaining) "resume")
+                    (string= (first remaining) "open")
                     (rest remaining)
                     (stringp (second remaining))
                     (plusp (length (second remaining)))

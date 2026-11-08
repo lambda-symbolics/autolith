@@ -1546,7 +1546,7 @@
   test-localgroup-checkpoint-reconnect-boundaries
   test-localgroup-detached-terminal-lifecycle
   test-localgroup-session-exit-relay
-  test-localgroup-resume-instruction-relay
+  test-localgroup-open-instruction-relay
   test-localgroup-relay-exit
   test-localgroup-relay-frames
   test-localgroup-screen-paints-frames
@@ -1623,7 +1623,7 @@
   test-session-titles-command
   test-hurry-up-mode
   test-command-permission-modes
-  test-interrupt-resume-instruction
+  test-interrupt-open-instruction
   test-repeated-interrupt-forces-exit
   test-forced-exit-without-durable-conversation
   test-graceful-shutdown-retains-interrupt-escape

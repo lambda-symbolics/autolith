@@ -2,11 +2,11 @@
 
 ;;;; -- CLI Conversation Selection --
 
-(-> main--resume-match-description
+(-> main--open-match-description
     (string &key (:pathname (option pathname)) (:status list))
     string)
-(defun main--resume-match-description (identifier &key pathname status)
-  "Return an actionable identifier and available context for one resume match."
+(defun main--open-match-description (identifier &key pathname status)
+  "Return an actionable identifier and available context for one channel matching what autolith open was given."
   (let* ((metadata  (and pathname (conversation-picker-metadata-find pathname)))
          (header    (and pathname (conversation-peek-header pathname)))
          (title     (or (getf status :conversation-title)
@@ -53,7 +53,7 @@ metadata."
                       fragment
                       (loop for identifier in (sort (copy-list matches) #'string<)
                             collect
-                            (main--resume-match-description
+                            (main--open-match-description
                              identifier
                              :pathname (find identifier pathnames
                                              :key #'pathname-name :test #'string=)
@@ -68,14 +68,14 @@ metadata."
 ;;;; -- Explicit Detached Starts --
 
 (-> main--validate-detached-options
-    (clingon:command &key (:resume-requested-p boolean) (:resume-id (option string)))
+    (clingon:command &key (:open-requested-p boolean) (:open-id (option string)))
     null)
-(defun main--validate-detached-options (command &key resume-requested-p resume-id)
+(defun main--validate-detached-options (command &key open-requested-p open-id)
   "Reject unattended starts which require interactive startup input."
   (when (getopt* command ':detached)
-    (when (and resume-requested-p (not (non-empty-string-p resume-id)))
+    (when (and open-requested-p (not (non-empty-string-p open-id)))
       (error 'configuration-error
-             :message "Detached resume requires a conversation ID: autolith resume ID --detached."))
+             :message "A detached open needs a channel: autolith open ID --detached."))
     (dolist (option '(:images :simulate-crash :localgroup-handoff))
       (when (getopt* command option)
         (error 'configuration-error

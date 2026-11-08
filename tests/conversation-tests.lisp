@@ -2003,7 +2003,7 @@ process without releasing the lease, exercising kernel cleanup."
             (lambda ()
               (multiple-value-bind (exit output)
                   (test-run-program-with-environment
-                   (active-image-process-command configuration '("--pristine" "resume" "K8vQ2mp"))
+                   (active-image-process-command configuration '("--pristine" "open" "K8vQ2mp"))
                    (loop for (name key) in '(("XDG_CONFIG_HOME" :config-root)
                                              ("XDG_DATA_HOME" :data-root)
                                              ("XDG_STATE_HOME" :state-root)

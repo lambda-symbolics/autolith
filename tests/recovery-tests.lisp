@@ -230,27 +230,27 @@ exit 64
             (string= (recovery-conversation-identifier-resolve context unmapped)
                      unmapped)
             "recovery leaves an unmapped legacy UUID unchanged")
-           (let ((arguments (list "--immutable" "resume" legacy)))
+           (let ((arguments (list "--immutable" "open" legacy)))
              (test-assert
               (equal (recovery-normalize-forwarded-arguments context arguments)
-                     (list "--immutable" "resume" current))
-              "recovery canonicalizes forwarded resume identifiers")
+                     (list "--immutable" "open" current))
+              "recovery canonicalizes the channel identifiers autolith open forwards")
              (test-assert
               (string= (third arguments) legacy)
               "recovery does not mutate the caller's forwarded arguments"))
            (let ((arguments
                    (list "--permissions" "full"
                          "--localgroup-handoff" "/state/consumed.sexp"
-                         "resume" legacy)))
+                         "open" legacy)))
              (test-assert
               (equal (recovery-normalize-forwarded-arguments context arguments)
-                     (list "--permissions" "full" "resume" current))
+                     (list "--permissions" "full" "open" current))
               "recovery removes consumed localgroup handoff arguments")
              (test-assert
               (equal arguments
                      (list "--permissions" "full"
                            "--localgroup-handoff" "/state/consumed.sexp"
-                           "resume" legacy))
+                           "open" legacy))
               "handoff removal does not mutate the caller's arguments"))
            (recovery-tests--write-form
             migration-pathname

@@ -81,13 +81,13 @@ other."
 (-> world-client-open
     (configuration &key (:directory (or null string pathname)) (:channel (option string))
                         (:permission-mode keyword) (:immutable-p boolean)
-                        (:resume-command-p boolean)
+                        (:pick-channel-p boolean)
                         (:recovery-diagnosis (option string)) (:launch list) (:new-p boolean)
                         (:images list) (:mcp-servers list) (:switch-p boolean))
     (values string boolean))
 (defun world-client-open
     (configuration &key directory channel (permission-mode ':ask) immutable-p
-                        resume-command-p recovery-diagnosis launch new-p images mcp-servers
+                        pick-channel-p recovery-diagnosis launch new-p images mcp-servers
                         switch-p)
   "Open CHANNEL, or a channel for DIRECTORY, in CONFIGURATION's world server.
 
@@ -139,7 +139,7 @@ sharing one it already served."
                                   (list :switch-p t))
                                 (list :permission-mode    permission-mode
                                       :fullscreen-p       (not (null (config :fullscreen-p configuration)))
-                                      :resume-command-p   (not (null resume-command-p))
+                                      :pick-channel-p     (not (null pick-channel-p))
                                       :recovery-diagnosis recovery-diagnosis
                                       :rows               rows
                                       :columns            columns

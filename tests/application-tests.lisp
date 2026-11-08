@@ -1042,8 +1042,8 @@
                      "session permission modes with a workspace sandbox"))
   nil)
 
-(-> test-interrupt-resume-instruction () null)
-(defun test-interrupt-resume-instruction ()
+(-> test-interrupt-open-instruction () null)
+(defun test-interrupt-open-instruction ()
   "Test that Ctrl-C exits with an exact command only for durable conversations."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration)))
@@ -1071,12 +1071,12 @@
                                                :identifier "discard-this")))
              (conversation-append-user-message durable "keep this conversation")
              (let ((output (interrupt-application durable)))
-               (test-assert (search "To resume this conversation, run:" output)
+               (test-assert (search "To open this channel again, run:" output)
                             "Ctrl-C explains how to resume a durable conversation")
-               (test-assert (search "autolith resume resume-this" output)
+               (test-assert (search "autolith open resume-this" output)
                             "the Ctrl-C instruction carries the exact resume command"))
              (let ((output (interrupt-application empty)))
-               (test-assert (not (search "autolith resume" output))
+               (test-assert (not (search "autolith open" output))
                             "Ctrl-C gives no resume command for an empty conversation")
                (test-assert
                 (not (conversation-storage-occupied-p
@@ -1140,7 +1140,7 @@
                  output)
                 "forced interruption explains the active cancellation window")
                (test-assert
-                (search "autolith resume force-resume" output)
+                (search "autolith open force-resume" output)
                 "forced cancellation carries the exact resume command"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
@@ -1174,7 +1174,7 @@
           "Ctrl-C pressed twice within 2.5 seconds; forcing Autolith to exit."
           output)
          "forced interruption still explains why Autolith exits")
-        (test-assert (not (search "autolith resume" output))
+        (test-assert (not (search "autolith open" output))
                      "an unsaved conversation produces no resume command"))))
   nil)
 
@@ -1740,7 +1740,7 @@
                           "the active reader preserves draft text while cancelling")
              (test-assert
               (not
-               (search "To resume this conversation, run:" output-before-exit))
+               (search "To open this channel again, run:" output-before-exit))
               "active-turn cancellation never prints a resume command")
              (test-assert
               (not
@@ -6014,7 +6014,7 @@
          (setf observed-initial-command initial-command))))
      (lambda ()
        (let ((*main-direct-start-p* t))
-         (main-dispatch '("resume")))))
+         (main-dispatch '("open")))))
     (test-assert
      (string= observed-initial-command "(switch)")
      "plain command-line resume starts the channel picker"))
@@ -6075,7 +6075,7 @@
          (observed-conversation-id    :unset)
          (observed-initial-command    :unset)
          (observed-recovery-diagnosis :unset)
-         (observed-resume-offer-p     :unset)
+         (observed-adaptation-offer-p :unset)
          (reconnect-failure-p         nil)
          (*active-application*        (make-instance 'application)))
     (unwind-protect
@@ -6107,20 +6107,20 @@
             'application-run
             (lambda (application
                      &key initial-command initial-input recovery-diagnosis
-                          resume-offer-p)
+                          adaptation-offer-p)
               (declare (ignore application initial-input))
               (setf observed-initial-command initial-command
                     observed-recovery-diagnosis recovery-diagnosis
-                    observed-resume-offer-p resume-offer-p))))
+                    observed-adaptation-offer-p adaptation-offer-p))))
           (lambda ()
             (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
                             "recovered")
-            (main-dispatch '("resume"))
+            (main-dispatch '("open"))
             (test-assert
              (and (null observed-conversation-id)
                   (null observed-initial-command)
                   (string= observed-recovery-diagnosis "diagnose")
-                  (null observed-resume-offer-p))
+                  (null observed-adaptation-offer-p))
              "automatic recovery ignores a replayed bare resume picker request")
             (test-assert
              (null (uiop:getenv "AUTOLITH_RECOVERY_CONVERSATION_ID"))
@@ -6128,15 +6128,15 @@
             (setf observed-conversation-id :unset
                   observed-initial-command :unset
                   observed-recovery-diagnosis :unset
-                  observed-resume-offer-p :unset)
+                  observed-adaptation-offer-p :unset)
             (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
                             "recovered")
-            (main-dispatch '("resume" "explicit"))
+            (main-dispatch '("open" "explicit"))
             (test-assert
              (and (string= observed-conversation-id "explicit")
                   (null observed-initial-command)
                   (null observed-recovery-diagnosis)
-                  observed-resume-offer-p)
+                  observed-adaptation-offer-p)
              "an explicit recovered resume still overrides crash reconnection")
             (setf reconnect-failure-p t)
             (platform-setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
@@ -6144,7 +6144,7 @@
             (test-assert
              (handler-case
                  (progn
-                   (main-dispatch '("resume"))
+                   (main-dispatch '("open"))
                    nil)
                (simple-error ()
                  t))

@@ -314,10 +314,10 @@
   (input-pump-wake (application-input-controller-input-pump controller))
   nil)
 
-(-> application--resume-command (application) string)
-(defun application--resume-command (application)
-  "Return the shell command that resumes APPLICATION's exact conversation."
-  (format nil "autolith resume ~A"
+(-> application--open-command (application) string)
+(defun application--open-command (application)
+  "Return the shell command that opens APPLICATION's channel again."
+  (format nil "autolith open ~A"
           (uiop:escape-shell-token
            (conversation-identifier-display
             (conversation-identifier
@@ -361,12 +361,12 @@ resume command that reopens the conversation the run leaves behind."
          (conversation
            (and (slot-boundp application 'conversation)
                 (application-conversation application)))
-         (resume-command
+         (open-command
            (and conversation
                 (conversation-persisted-p conversation)
-                (application--resume-command application))))
+                (application--open-command application))))
     (format nil
-            "~%~A~%~@[To resume this conversation, run:~%  ~A~%~]"
+            "~%~A~%~@[To open this channel again, run:~%  ~A~%~]"
             (case reason
               (:turn-cancellation
                (application-input-controller--forced-exit-text))
@@ -376,7 +376,7 @@ resume command that reopens the conversation the run leaves behind."
                "A localgroup kill request is stopping Autolith.")
               (otherwise
                "Ctrl-C pressed during shutdown; forcing Autolith to exit."))
-            resume-command)))
+            open-command)))
 
 (-> application-input-controller--show-interrupt-hint
     (application-input-controller real)
