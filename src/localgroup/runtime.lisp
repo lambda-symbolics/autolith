@@ -500,7 +500,13 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
                  (localgroup--note-controller-attached session)
                  ;; A terminal now controls this channel: that is the
                  ;; person's choice of channel, committed only here.
-                 (application-world-attached application))
+                 (application-world-attached application)
+                 ;; A terminal sent back here after a failed switch says why.
+                 (let ((notice (getf arguments :notice)))
+                   (when (stringp notice)
+                     (application-present
+                      application
+                      (application-failure-line (bounded-string notice :limit 500))))))
                (image-daemon:relay-read-attachment
                 terminal attachment :event-validator #'localgroup--terminal-event-p))
           (let ((controlled-p (image-daemon:relay-detach terminal attachment)))

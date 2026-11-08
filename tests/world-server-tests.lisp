@@ -1070,7 +1070,8 @@
     (let ((opens     nil)
           (attaches  nil)
           (refuse-p  nil)
-          (rejects-p nil))
+          (rejects-p nil)
+          (notices   nil))
       (flet ((run ()
                "Run the client loop for a terminal started with launch options, switching once."
                (setf opens nil attaches nil)
@@ -1085,9 +1086,11 @@
                                 (declare (ignore candidate))
                                 (list session-id)))
                         (list 'localgroup-attach-record
-                              (lambda (candidate record mode &rest arguments)
-                                (declare (ignore candidate mode arguments))
+                              (lambda (candidate record mode &key panel screen notice)
+                                (declare (ignore candidate mode panel screen))
                                 (push (first record) attaches)
+                                (when notice
+                                  (push notice notices))
                                 (cond
                                   ((= (incf calls) 1)
                                    (list ':switch :session-id "bsecnd2"))
@@ -1126,13 +1129,16 @@
                      "the terminal attaches to the channel it switched to")
         (setf refuse-p t)
         (run)
-        (test-assert (equal (reverse attaches) '("bfirst1" "bfirst1"))
-                     "a channel that refuses the switch leaves the terminal in the channel it came from")
+        (test-assert (and (equal (reverse attaches) '("bfirst1" "bfirst1"))
+                          (search "could not switch to b-secnd2" (first notices)))
+                     "a channel that refuses the switch leaves the terminal in the channel it came from, told why")
+        (setf notices nil)
         (setf refuse-p  nil
               rejects-p t)
         (run)
-        (test-assert (equal (reverse attaches) '("bfirst1" "bsecnd2" "bfirst1"))
-                     "a channel that opens but rejects the terminal's attachment returns it to the channel it came from"))))
+        (test-assert (and (equal (reverse attaches) '("bfirst1" "bsecnd2" "bfirst1"))
+                          (search "Another terminal controls" (first notices)))
+                     "a channel that opens but rejects the terminal's attachment returns it to the channel it came from, told why"))))
   nil)
 
 (-> test-world-client-refusal-ends-start () null)

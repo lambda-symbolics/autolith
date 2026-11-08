@@ -611,16 +611,18 @@ loses a subscription race to another checkpoint."
       (sleep 0.05))))
 
 (-> localgroup-attach-record
-    ((option configuration) cons keyword &key (:panel t) (:screen (option localgroup-screen)))
+    ((option configuration) cons keyword
+     &key (:panel t) (:screen (option localgroup-screen)) (:notice (option string)))
     (option list))
-(defun localgroup-attach-record (configuration entry mode &key panel screen)
+(defun localgroup-attach-record (configuration entry mode &key panel screen notice)
   "Attach the terminal, following explicit checkpoint transitions in the same mode.
 
 PANEL, when given, is composed beside a fullscreen session's frames. SCREEN,
 from LOCALGROUP-CLIENT-SCREEN-CREATE, is the client's screen to paint on; the
 caller keeps it after this attachment ends, so a terminal moving to another
 channel keeps its screen. Without SCREEN the attachment makes its own and
-gives the terminal back at the end. Return an application exit plist, a
+gives the terminal back at the end. NOTICE, when given, is a failure the
+session shows once this terminal is attached, such as why a switch failed. Return an application exit plist, a
 (:SWITCH :SESSION-ID ID) request from the session, or NIL after a detach or
 connection loss."
   (let ((history-position nil))
@@ -628,7 +630,8 @@ connection loss."
       (let ((result (localgroup--attach-record-once configuration entry mode
                                                    :history-position history-position
                                                    :panel            panel
-                                                   :screen           screen)))
+                                                   :screen           screen
+                                                   :notice           (shiftf notice nil))))
         (unless (eq (first result) ':checkpoint-reconnect)
           (return result))
         (setf entry (localgroup--wait-for-checkpoint-entry entry (getf (rest result) :id)
@@ -657,9 +660,11 @@ connection loss."
 
 (-> localgroup--attach-record-once
     ((option configuration) cons keyword
-     &key (:history-position (option integer)) (:panel t) (:screen (option localgroup-screen)))
+     &key (:history-position (option integer)) (:panel t) (:screen (option localgroup-screen))
+          (:notice (option string)))
     (option list))
-(defun localgroup--attach-record-once (configuration entry mode &key history-position panel screen)
+(defun localgroup--attach-record-once (configuration entry mode
+                                       &key history-position panel screen notice)
   "Run one attachment and release terminal ownership before any reconnect.
 
 The session gets the part of the terminal left beside PANEL as its size. A
@@ -685,8 +690,11 @@ SCREEN the caller lends stays the caller's to release."
                                       *daemon-protocol-version* :token
                                       (localgroup--record-token record) :operation ':attach
                                       :arguments
-                                      (list :mode mode :rows rows :columns columns
-                                            :styled-p (terminal-environment-styling-p)))))
+                                      (append
+                                       (list :mode mode :rows rows :columns columns
+                                             :styled-p (terminal-environment-styling-p))
+                                       (when notice
+                                         (list :notice notice))))))
          (let ((response (daemon-read-response socket-stream ':attach)))
            (cond
             ((and response (eq (first response) ':handoff))
