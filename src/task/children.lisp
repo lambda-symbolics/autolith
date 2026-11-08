@@ -58,10 +58,11 @@
   (multiple-value-bind (channel agent)
       (task-child--find context (tool-argument arguments "child" :required t) "child.compact")
     (task-child--call-with-lease
-     context channel "child.compact"
+     context channel
      (lambda ()
        (agent-compact-conversation (task-child--agent tool context channel)
-                                   (make-instance 'agent-observer))))
+                                   (make-instance 'agent-observer)))
+     :tool-name "child.compact")
     (tool-success (format nil "Compacted @~A's history." (participant-name agent)))))
 
 (defmethod tool-execute ((tool child-reset-tool) (context tool-context) arguments)
@@ -71,9 +72,10 @@
   (multiple-value-bind (channel agent)
       (task-child--find context (tool-argument arguments "child" :required t) "child.reset")
     (task-child--call-with-lease
-     context channel "child.reset"
+     context channel
      (lambda ()
-       (task-child--reset-history (tool-context-configuration context) channel)))
+       (task-child--reset-history (tool-context-configuration context) channel))
+     :tool-name "child.reset")
     (tool-success (format nil "Cleared @~A's history; its name, role and channel stay."
                           (participant-name agent)))))
 
@@ -163,8 +165,8 @@ its parent."
                               designator)
            :tool-name tool-name)))
 
-(-> task-child--call-with-lease (tool-context string string function) null)
-(defun task-child--call-with-lease (context channel tool-name function)
+(-> task-child--call-with-lease (tool-context string function &key (:tool-name string)) null)
+(defun task-child--call-with-lease (context channel function &key tool-name)
   "Call FUNCTION holding the conversation lease of child CHANNEL, and refuse TOOL-NAME while the child is busy."
   (let ((lease (handler-case (conversation-lease-acquire (tool-context-configuration context) channel)
                  (conversation-in-use ()
