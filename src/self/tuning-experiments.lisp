@@ -128,68 +128,80 @@
                 (getf properties :criterion))
        t))
 
-(-> tuning-experiment-list (configuration) list)
-(defun tuning-experiment-list (configuration)
-  "Reconstruct tuning experiments from CONFIGURATION's append-only journal."
+(-> tuning-experiment--query (configuration &key (:open-only boolean)) list)
+(defun tuning-experiment--query (configuration &key open-only)
+  "Reduce experiment lifecycles in journal order.
+OPEN-ONLY retains one experiment and completed identity markers, rather than
+reconstructing all historical experiment objects."
   (let ((experiments     (make-hash-table :test #'equal))
         (order           nil)
         (open-experiment nil))
-    (dolist (record (mutation-journal-read-records configuration))
-      (when (tuning-experiment--journal-record-p record)
-        (unless (tuning-experiment--record-valid-p record)
-          (error 'source-mutation-error
-                 :message   "A tuning experiment journal record is invalid."
-                 :tool-name "self.status"
-                 :pathname  (configuration-journal-path configuration)))
-        (let* ((properties (rest record))
-               (identifier (getf properties :id))
-               (verdict    (getf properties :result))
-               (existing   (gethash identifier experiments)))
-          (if (eq verdict :open)
-              (progn
-                (when (or existing open-experiment)
-                  (error 'source-mutation-error
-                         :message
-                         "The mutation journal contains overlapping tuning experiments."
-                         :tool-name "self.status"
-                         :pathname  (configuration-journal-path configuration)))
-                (let ((experiment
-                        (make-instance
-                         'tuning-experiment
-                         :identifier          identifier
-                         :mutation-identifier (getf properties :mutation)
-                         :mutation-kind       (getf properties :mutation-kind)
-                         :mutation-target     (getf properties :target)
-                         :hypothesis          (getf properties :hypothesis)
-                         :criterion           (getf properties :criterion)
-                         :verdict             ':open)))
-                  (setf (gethash identifier experiments) experiment
-                        open-experiment experiment
-                        order (nconc order (list identifier)))))
-              (progn
-                (unless (and existing
-                             (tuning-experiment-open-p existing)
-                             (eq existing open-experiment)
-                             (tuning-experiment--record-matches-p
-                              existing properties))
-                  (error 'source-mutation-error
-                         :message
-                         "A tuning experiment journal transition is invalid."
-                         :tool-name "self.status"
-                         :pathname  (configuration-journal-path configuration)))
-                (setf (tuning-experiment-verdict existing) verdict
-                      (tuning-experiment-observation existing)
-                      (getf properties :observation))
-                (unless (eq verdict :too-early)
-                  (setf open-experiment nil)))))))
-    (loop for identifier in order
-          collect (gethash identifier experiments))))
+    (mutation-journal-query
+     configuration
+     (lambda (record)
+       (when (tuning-experiment--journal-record-p record)
+         (unless (tuning-experiment--record-valid-p record)
+           (error 'source-mutation-error
+                  :message   "A tuning experiment journal record is invalid."
+                  :tool-name "self.status"
+                  :pathname  (configuration-journal-path configuration)))
+         (let* ((properties (rest record))
+                (identifier (getf properties :id))
+                (verdict    (getf properties :result))
+                (existing   (gethash identifier experiments)))
+           (if (eq verdict :open)
+               (progn
+                 (when (or existing open-experiment)
+                   (error 'source-mutation-error
+                          :message
+                          "The mutation journal contains overlapping tuning experiments."
+                          :tool-name "self.status"
+                          :pathname  (configuration-journal-path configuration)))
+                 (let ((experiment
+                         (make-instance
+                          'tuning-experiment
+                          :identifier          identifier
+                          :mutation-identifier (getf properties :mutation)
+                          :mutation-kind       (getf properties :mutation-kind)
+                          :mutation-target     (getf properties :target)
+                          :hypothesis          (getf properties :hypothesis)
+                          :criterion           (getf properties :criterion)
+                          :verdict             ':open)))
+                   (setf (gethash identifier experiments) experiment
+                         open-experiment experiment)
+                   (unless open-only (push identifier order))))
+               (progn
+                 (unless (and existing
+                              (eq existing open-experiment)
+                              (tuning-experiment-open-p existing)
+                              (tuning-experiment--record-matches-p
+                               existing properties))
+                   (error 'source-mutation-error
+                          :message
+                          "A tuning experiment journal transition is invalid."
+                          :tool-name "self.status"
+                          :pathname  (configuration-journal-path configuration)))
+                 (setf (tuning-experiment-verdict existing) verdict
+                       (tuning-experiment-observation existing)
+                       (getf properties :observation))
+                 (unless (eq verdict :too-early)
+                   (when open-only
+                     (setf (gethash identifier experiments) t))
+                   (setf open-experiment nil))))))))
+    (if open-only
+        (when open-experiment (list open-experiment))
+        (loop for identifier in (nreverse order)
+              collect (gethash identifier experiments)))))
+
+(-> tuning-experiment-list (configuration) list)
+(defun tuning-experiment-list (configuration)
+  "Return experiments in first-appearance order after validating their lifecycles."
+  (tuning-experiment--query configuration))
 
 (-> tuning-experiment-open (configuration) (option tuning-experiment))
 (defun tuning-experiment-open (configuration)
   "Return CONFIGURATION's sole open tuning experiment, when present."
-  (find-if #'tuning-experiment-open-p
-           (tuning-experiment-list configuration)))
+  (first (tuning-experiment--query configuration :open-only t)))
 
 (-> tuning-experiment-for-mutation
     (configuration (option string))

@@ -142,7 +142,46 @@
                    (equal (mapcar (lambda (record) (getf (rest record) :id))
                                   records)
                           '("complete-before" "complete-after")))
-              "the next mutation append atomically repairs the interrupted tail")))
+              "the next mutation append atomically repairs the interrupted tail"))
+           (mutation-journal-append
+            configuration
+            '(:mutation :id "context-id" :repair-context (:incident-id "old")))
+           (mutation-journal-append
+            configuration
+            '(:mutation :mutation "context-id" :repair-context (:incident-id "new")))
+           (mutation-journal-append
+            configuration
+            '(:mutation :id "another-id" :repair-context (:incident-id "unrelated")))
+           (test-call-with-function-replacements
+            (list (list 'log-read
+                        (lambda (&rest arguments)
+                          (declare (ignore arguments))
+                          (error "Journal queries must not materialize history."))))
+            (lambda ()
+              (let ((identifiers nil))
+                (mutation-journal-query
+                 configuration
+                 (lambda (record) (push (getf (rest record) :id) identifiers)))
+                (test-assert
+                 (equal (nreverse identifiers)
+                        '("complete-before" "complete-after" "context-id" nil "another-id"))
+                 "journal reducers consume complete records in append order"))
+              (test-assert
+               (equal (self-repair--journal-context configuration "context-id")
+                      '(:incident-id "new"))
+               "repair context uses the last exact identity or mutation match")))
+           (with-open-file (stream pathname :direction ':output :if-exists ':append)
+             (write-string ")" stream))
+           (test-assert
+            (handler-case
+                (progn (mutation-journal-query configuration (constantly nil)) nil)
+              (source-mutation-error () t))
+            "a malformed complete suffix is not treated as an interrupted tail")
+           (test-assert
+            (handler-case
+                (progn (self-repair--journal-context configuration "context-id") nil)
+              (source-mutation-error () t))
+            "an identity match does not bypass a corrupt suffix"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 

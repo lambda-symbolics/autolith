@@ -132,13 +132,17 @@ symbol itself."
 (-> self-repair--journal-context (configuration (option string)) list)
 (defun self-repair--journal-context (configuration identifier)
   "Return durable telemetry context for the exact journal IDENTIFIER."
-  (when identifier
-    (loop for record in (reverse (mutation-journal-read-records configuration))
-          for properties = (rest record)
-          when (and (or (equal identifier (getf properties :id))
-                        (equal identifier (getf properties :mutation)))
-                    (getf properties :repair-context))
-            return (copy-list (getf properties :repair-context)))))
+  (let ((context nil))
+    (when identifier
+      (mutation-journal-query
+       configuration
+       (lambda (record)
+         (let ((properties (rest record)))
+           (when (and (or (equal identifier (getf properties :id))
+                          (equal identifier (getf properties :mutation)))
+                      (getf properties :repair-context))
+             (setf context (copy-list (getf properties :repair-context))))))))
+    context))
 
 (defmethod tool-execute :around ((tool mutable-self-tool)
                                  (context tool-context)

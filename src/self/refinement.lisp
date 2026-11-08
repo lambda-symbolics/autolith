@@ -105,36 +105,45 @@
                 (eql (getf evaluation :observation-revision) (1- (getf current :revision))))))
      t)))
 
-(-> refinement-list (configuration) list)
-(defun refinement-list (configuration)
-  "Replay workspace refinement snapshots, rejecting corrupt or discontinuous records.
-The existing journal reader tolerates an interrupted final form. Returned snapshots
-are fresh portable data; they are not active definitions or verified model claims."
+(-> refinement--query (configuration &key (:identifier (option string))) list)
+(defun refinement--query (configuration &key identifier)
+  "Reduce refinement history to current workspace snapshots.
+Validate every workspace lifecycle, retaining only its latest state. IDENTIFIER
+limits the returned snapshots without building a complete result list."
   (let ((records   (make-hash-table :test #'equal))
         (order     nil)
         (workspace (refinement--workspace configuration)))
-    (dolist (record (mutation-journal-read-records configuration))
-      (when (and (consp record) (eq (first record) :refinement))
-        (unless (refinement-record-p record)
-          (refinement--reject ':corrupt "Invalid refinement journal record; inspect the journal before continuing."))
-        (let* ((properties (rest record))
-               (identifier (getf properties :id))
-               (previous   (gethash identifier records)))
-          (when (equal workspace (getf properties :workspace))
-            (unless (= (getf properties :revision)
-                       (if previous (1+ (getf previous :revision)) 1))
-              (refinement--reject ':corrupt "Discontinuous refinement revision; inspect the journal before continuing."))
-           (unless (refinement--transition-p previous properties)
-             (refinement--reject ':corrupt "Invalid refinement lifecycle, immutable evidence or scope transition."))
-           (unless previous (push identifier order))
-           (setf (gethash identifier records) (copy-tree properties))))))
-    (mapcar (lambda (identifier) (gethash identifier records)) (nreverse order))))
+    (mutation-journal-query
+     configuration
+     (lambda (record)
+       (when (and (consp record) (eq (first record) :refinement))
+         (unless (refinement-record-p record)
+           (refinement--reject ':corrupt "Invalid refinement journal record; inspect the journal before continuing."))
+         (let* ((properties (rest record))
+                (record-id  (getf properties :id))
+                (previous   (gethash record-id records)))
+           (when (equal workspace (getf properties :workspace))
+             (unless (= (getf properties :revision)
+                        (if previous (1+ (getf previous :revision)) 1))
+               (refinement--reject ':corrupt "Discontinuous refinement revision; inspect the journal before continuing."))
+             (unless (refinement--transition-p previous properties)
+               (refinement--reject ':corrupt "Invalid refinement lifecycle, immutable evidence or scope transition."))
+             (unless previous
+               (when (or (null identifier) (equal identifier record-id))
+                 (push record-id order)))
+             (setf (gethash record-id records) properties))))))
+    (mapcar (lambda (record-id) (copy-tree (gethash record-id records)))
+            (nreverse order))))
+
+(-> refinement-list (configuration) list)
+(defun refinement-list (configuration)
+  "Return current workspace proposals in first-appearance order."
+  (refinement--query configuration))
 
 (-> refinement-find (configuration string) list)
 (defun refinement-find (configuration identifier)
   "Return the current workspace proposal IDENTIFIER or signal MISSING."
-  (or (find identifier (refinement-list configuration)
-            :key (lambda (record) (getf record :id)) :test #'equal)
+  (or (first (refinement--query configuration :identifier identifier))
       (refinement--reject ':missing "No refinement with this identifier exists in this workspace.")))
 
 (-> refinement--append (configuration list) list)

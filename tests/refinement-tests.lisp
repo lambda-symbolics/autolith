@@ -342,6 +342,14 @@
                                :direction :output :if-exists :append :external-format :utf-8)
          (write-string "(:refinement :id \"incomplete" stream))
        (fiveam:is (equal (list proposal) (refinement-list configuration)))
+       (test-call-with-function-replacements
+        (list (list 'log-read
+                    (lambda (&rest arguments)
+                      (declare (ignore arguments))
+                      (error "Refinement lookup must stream the journal."))))
+        (lambda ()
+          (fiveam:is (equal proposal
+                            (refinement-find configuration (getf proposal :id))))))
        (let ((other (configuration-copy configuration
                                         :working-directory (merge-pathnames "other/" (config ':working-directory configuration)))))
          (fiveam:is (null (refinement-list other))))
@@ -349,7 +357,9 @@
          (setf (getf broken :revision) 3)
          (mutation-journal-append configuration (cons :refinement broken))
          (fiveam:is (eq :corrupt (refinement-tests--error-code
-                                  (lambda () (refinement-list configuration))))))))))
+                                  (lambda () (refinement-list configuration)))))
+         (fiveam:is (eq :corrupt (refinement-tests--error-code
+                                  (lambda () (refinement-find configuration (getf proposal :id)))))))))))
 
 (-> test-refinement-immutable-registry nil null)
 (defun test-refinement-immutable-registry ()

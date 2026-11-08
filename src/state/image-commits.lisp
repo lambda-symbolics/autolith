@@ -573,19 +573,21 @@ The next commit leaves them out, so dropping them is a change worth committing."
                                      (image-commit-consumed-mutation-identifiers current)))
          (records-by-identifier (make-hash-table :test #'equal))
          (order                 nil))
-    (dolist (record (mutation-journal-read-records configuration))
-      (cond
-        ((image-commit--record-p record *active-image-lineage-identifier*)
-         (let ((identifier (getf (rest record) :id)))
-           (unless (or (member identifier consumed :test #'string=)
-                       (gethash identifier records-by-identifier))
-             (setf (gethash identifier records-by-identifier) record)
-             (setf order (nconc order (list identifier))))))
-        ((image-commit--discard-record-p
-          record
-          *active-image-lineage-identifier*)
-         (remhash (getf (rest record) :id) records-by-identifier))))
-    (loop for identifier in order
+    (mutation-journal-query
+     configuration
+     (lambda (record)
+       (cond
+         ((image-commit--record-p record *active-image-lineage-identifier*)
+          (let ((identifier (getf (rest record) :id)))
+            (unless (or (member identifier consumed :test #'string=)
+                        (gethash identifier records-by-identifier))
+              (setf (gethash identifier records-by-identifier) record)
+              (push identifier order))))
+         ((image-commit--discard-record-p
+           record
+           *active-image-lineage-identifier*)
+          (remhash (getf (rest record) :id) records-by-identifier)))))
+    (loop for identifier in (nreverse order)
           for record = (gethash identifier records-by-identifier)
           when record
             collect record)))
