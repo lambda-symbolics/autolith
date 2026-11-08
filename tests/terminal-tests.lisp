@@ -2324,12 +2324,25 @@
   (let* ((terminal  (make-instance 'scripted-terminal
                                    :events '((:insert "beta") :submit) :columns 40))
          (ui        (terminal-ui-create :terminal terminal))
-         (resized-p nil))
+         (resized-p nil)
+         (hint-checked-p nil))
     (with-terminal-ui (active-ui ui)
       (terminal-ui-set-input active-ui "draft")
       (test-assert
        (string= "value-b"
                 (terminal-ui-select active-ui :title "choose" :search-p t
+                                     :hint (list (terminal-span ':legend-accent "Key")
+                                                 (terminal-span ':legend-dim " action"))
+                                     :on-event
+                                     (lambda (event selector)
+                                       (declare (ignore event selector))
+                                       (unless hint-checked-p
+                                         (setf hint-checked-p t)
+                                         (let ((styles (mapcar #'terminal-span-style
+                                                               (first (terminal-ui--composer-rows active-ui)))))
+                                           (test-assert
+                                            (equal (last styles 2) '(:legend-accent :legend-dim))
+                                            "picker hints preserve distinct key and description styles"))))
                                     :items '((:name "alpha" :description "" :value "value-a")
                                              (:name "beta" :description "" :value "value-b"))
                                     :resize-callback

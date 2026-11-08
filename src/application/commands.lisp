@@ -1591,7 +1591,7 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
 
 (-> application--pick-identifier
     (application &key (:title string) (:items list) (:usage string)
-                 (:empty-notice (or string list)) (:hint (option string))
+                 (:empty-notice (or string list)) (:hint (or string list))
                  (:visible-count (integer 1))
                  (:initial-name (option string))
                  (:initial-value (option string))
@@ -1718,8 +1718,16 @@ searches every task directory."
 (defun application--pick-channel (application)
   "Pick a channel to switch to, with removal of a channel by the Delete key and a confirmation step."
   (let* ((browse-title "switch channel")
-         (browse-hint  "type to search, enter selects, delete removes, esc cancels")
-         (confirm-hint "enter confirms, esc returns")
+         (browse-hint  (list (terminal-span ':legend-accent "Enter")
+                             (terminal-span ':legend-dim " select ")
+                             (terminal-span ':legend-accent "Delete")
+                             (terminal-span ':legend-dim " remove ")
+                             (terminal-span ':legend-accent "Escape")
+                             (terminal-span ':legend-dim " cancel")))
+         (confirm-hint (list (terminal-span ':legend-accent "Enter")
+                             (terminal-span ':legend-dim " confirm ")
+                             (terminal-span ':legend-accent "Escape")
+                             (terminal-span ':legend-dim " return")))
          (mode         ':browse)
          (pending      nil)
          (browse-items (application--channel-items application))

@@ -2256,11 +2256,15 @@ and the modeline last, so the response being received stays in view."
       (selector
           (let* ((hint (or (terminal-ui-selector-hint ui)
                            "Enter to select, Escape to cancel"))
+                 (hint-spans (if (stringp hint)
+                                 (list (terminal-span ':hint hint))
+                                 hint))
                  (title-spans
                    (terminal--clip-spans
-                    (list (terminal-span ':brand "∙ ")
-                          (terminal-span ':plain (terminal-ui-selector-title ui))
-                          (terminal-span ':hint (format nil "  ~A" hint)))
+                    (append (list (terminal-span ':brand "∙ ")
+                                  (terminal-span ':plain (terminal-ui-selector-title ui))
+                                  (terminal-span ':hint "  "))
+                            hint-spans)
                     row-width)))
             (values (append (list title-spans nil)
                             (terminal-ui--choice-rows selector row-width)
@@ -2692,7 +2696,7 @@ indicator with a completion marker."
       (terminal-ui-report-program-status ui (first previous) :kind (second previous)))))
 
 (-> terminal-ui-select
-    (terminal-ui &key (:title string) (:items list) (:hint (option string))
+    (terminal-ui &key (:title string) (:items list) (:hint (or string list))
      (:visible-count (integer 1)) (:initial-name (option string))
      (:initial-value (option string)) (:search-p boolean)
      (:search-key function) (:resize-callback (option function))
@@ -2715,7 +2719,7 @@ or (:REPLACE TITLE ITEMS [HINT [VALUE]]). EXTERNAL-EVENT-FUNCTION, polled
 with the terminal, returns an event from outside it, such as a client's
 answer, or NIL; such an event reaches ON-EVENT before terminal input.
 Filtering, stable selection, readiness polling, resize coordination and
-lifecycle cleanup belong to Clinedi."
+lifecycle cleanup belong to Clinedi. HINT accepts text or styled spans."
   (unless (and items (every #'terminal-completion-p items)
                (terminal-interactive-p (terminal-ui-terminal ui)))
     (return-from terminal-ui-select nil))

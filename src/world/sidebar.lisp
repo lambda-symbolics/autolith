@@ -564,10 +564,11 @@ Each action is NIL or a plist of :OPEN, the channel a click switches to, and
                              (when overflow-p
                               (list (list :picker-p t)))))
          (filler     (max 0 (- height 1 (length rows))))
-         (legend     (list (terminal-span ':legend-dim
-                                          (if drawer-p
-                                              " ↑↓ select · Enter opens · ←→ tree · Esc closes"
-                                              " click opens · Ctrl-T hides")))))
+         (legend     (if drawer-p
+                         (list (terminal-span ':legend-dim
+                                              " ↑↓ select · Enter opens · ←→ tree · Esc closes"))
+                         (list (terminal-span ':legend-accent " Ctrl-T")
+                               (terminal-span ':legend-dim " toggle sidebar")))))
     (values (subseq (append rows (make-list filler :initial-element nil) (list legend)) 0 height)
             (subseq (append actions (make-list filler :initial-element nil) (list nil)) 0 height))))
 

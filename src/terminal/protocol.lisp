@@ -350,8 +350,8 @@ panels while such frames show, as during the boot screen."))
    (selector-hint
     :initform      nil
     :accessor      terminal-ui-selector-hint
-    :type          (option string)
-    :documentation "Optional modal picker hint text after the title.")
+    :type          (or string list)
+    :documentation "Optional modal picker hint text or styled spans after the title.")
    (idle-status-details
     :initform      nil
     :accessor      terminal-ui-idle-status-details
