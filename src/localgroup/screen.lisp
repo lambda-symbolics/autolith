@@ -21,7 +21,7 @@
   (:documentation "Return the columns PANEL takes left of the session's rows on a terminal COLUMNS wide."))
 
 (defgeneric screen-panel-minimum-columns (panel)
-  (:documentation "Return the narrowest terminal that shows PANEL beside the session; a narrower one shows it alone."))
+  (:documentation "Return the minimum session-pane width beside PANEL; below it the panel is an explicit drawer."))
 
 (defgeneric screen-panel-refresh (panel)
   (:documentation "Gather PANEL's current content and return whether it changed since the last call."))
@@ -32,8 +32,17 @@
 (defgeneric screen-panel-click (panel column row)
   (:documentation "Act on a click at COLUMN and ROW of PANEL, both from 1.
 
-Return :REDRAW when PANEL changed and wants painting, a (:SWITCH :SESSION-ID
-ID) request to move the terminal to channel ID, or NIL."))
+Return :REDRAW to repaint, :DISMISS to return to the channel, :CHANNEL-PICKER
+to open the switch picker, (:SWITCH :SESSION-ID ID) to move to channel ID,
+or NIL."))
+
+(defgeneric screen-panel-event (panel event)
+  (:documentation "Handle a keyboard EVENT while PANEL has the whole screen; return a click-style action."))
+
+(defmethod screen-panel-event ((panel t) event)
+  "Ignore keys for panels without keyboard navigation."
+  (declare (ignore event))
+  nil)
 
 (defgeneric screen-panel-shown-p (panel)
   (:documentation "Return PANEL's visibility preference, or :SCREEN to use the screen's.
@@ -102,6 +111,11 @@ switches. The default methods leave the choice local to each screen."))
     :accessor      localgroup-screen-painted-panel-width
     :type          (integer 0)
     :documentation "The installed panel width, independent of a pending resize.")
+   (drawer-open-p
+    :initform      nil
+    :accessor      localgroup-screen-drawer-open-p
+    :type          boolean
+    :documentation "Whether the person explicitly opened the panel on a narrow terminal.")
    (cursor
     :initform      (list 0 0 t)
     :accessor      localgroup-screen-cursor
@@ -147,20 +161,27 @@ switches. The default methods leave the choice local to each screen."))
 (defun localgroup-screen-layout (screen)
   "Return how SCREEN shares its terminal: the session alone, the side panel beside it, or the panel alone.
 
-The panel shows when the person wants it and the session's frame does not ask
-for the whole screen. A terminal narrower than the panel's minimum gives it
-the whole screen; the person hides it again to see the session."
+The panel shows beside a channel with enough pane columns after subtracting
+its width and divider. Otherwise it opens only after an explicit toggle."
   (let ((panel (localgroup-screen-panel screen)))
     (cond
-      ((or (null panel)
-           (localgroup-screen-whole-screen-p screen)
-           (not (localgroup-screen-panel-shown-p screen)))
+      ((or (null panel) (localgroup-screen-whole-screen-p screen))
        ':session)
-      ((< (terminal-columns (localgroup-screen-terminal screen))
-          (screen-panel-minimum-columns panel))
-       ':alone)
+      ((localgroup-screen--compact-p screen)
+       (if (localgroup-screen-drawer-open-p screen) ':alone ':session))
+      ((not (localgroup-screen-panel-shown-p screen))
+       ':session)
       (t
        ':beside))))
+
+(-> localgroup-screen--compact-p (localgroup-screen) boolean)
+(defun localgroup-screen--compact-p (screen)
+  "Return whether docking SCREEN's panel would leave too few session columns."
+  (let* ((panel   (localgroup-screen-panel screen))
+         (columns (terminal-columns (localgroup-screen-terminal screen))))
+    (and panel
+         (< (- columns (screen-panel-width panel columns) 1)
+            (screen-panel-minimum-columns panel)))))
 
 (-> localgroup-screen-panel-visible-p (localgroup-screen) boolean)
 (defun localgroup-screen-panel-visible-p (screen)
@@ -226,13 +247,14 @@ to."
        (cond
          ((member event '(:interrupt :end-of-input :stream-end))
           event)
+         ((eq event ':escape)
+          (localgroup-screen-toggle-panel screen)
+          ':ignore)
          (click-p
-          (let ((result (localgroup-screen--panel-click screen (second event) (third event))))
-            (when (consp result)
-              (localgroup-screen-toggle-panel screen))
-            result))
+          (localgroup-screen--panel-click screen (second event) (third event)))
          (t
-          ':ignore)))
+          (localgroup-screen--panel-result
+           screen (screen-panel-event (localgroup-screen-panel screen) event)))))
       ((and pointer-p (eq layout ':beside))
        (let ((offset (1+ (second geometry))))
          (cond
@@ -250,16 +272,24 @@ to."
 (-> localgroup-screen--panel-click (localgroup-screen integer integer) t)
 (defun localgroup-screen--panel-click (screen column row)
   "Let SCREEN's panel act on a click at COLUMN and ROW; return its switch request or :IGNORE."
-  (let ((result (screen-panel-click (localgroup-screen-panel screen) column row)))
-    (cond
-      ((eq result ':redraw)
-       (with-lock-held ((localgroup-screen-lock screen))
-         (localgroup-screen--paint screen))
-       ':ignore)
-      ((consp result)
-       result)
-      (t
-       ':ignore))))
+  (localgroup-screen--panel-result
+   screen (screen-panel-click (localgroup-screen-panel screen) column row)))
+
+(-> localgroup-screen--panel-result (localgroup-screen t) t)
+(defun localgroup-screen--panel-result (screen result)
+  "Apply a panel RESULT, dismissing the drawer when a channel or picker opens."
+  (when (and (localgroup-screen-drawer-open-p screen)
+             (or (consp result) (member result '(:dismiss :channel-picker))))
+    (localgroup-screen-toggle-panel screen))
+  (cond
+    ((eq result ':redraw)
+     (with-lock-held ((localgroup-screen-lock screen))
+       (localgroup-screen--paint screen))
+     ':ignore)
+    ((or (consp result) (eq result ':channel-picker))
+     result)
+    (t
+     ':ignore)))
 
 (-> localgroup-screen-toggle-panel (localgroup-screen) null)
 (defun localgroup-screen-toggle-panel (screen)
@@ -273,8 +303,11 @@ across attachments."
         (let ((layout   (localgroup-screen-layout screen))
               (columns  (nth-value 1 (localgroup-screen-pane-size screen)))
               (wanted-p (not (localgroup-screen-panel-shown-p screen))))
-          (setf (screen-panel-shown-p panel) wanted-p
-                (localgroup-screen-own-panel-shown-p screen) wanted-p)
+          (if (localgroup-screen--compact-p screen)
+              (setf (localgroup-screen-drawer-open-p screen)
+                    (not (localgroup-screen-drawer-open-p screen)))
+              (setf (screen-panel-shown-p panel) wanted-p
+                    (localgroup-screen-own-panel-shown-p screen) wanted-p))
           (unless (eq layout (localgroup-screen-layout screen))
             (unless (= columns (nth-value 1 (localgroup-screen-pane-size screen)))
               (setf (localgroup-screen-resize-pending-p screen) t))
@@ -352,6 +385,7 @@ client it has not synchronized."
 (defun localgroup-screen-resized (screen)
   "Invalidate SCREEN after a resize; paint only a frame matching the new geometry."
   (with-lock-held ((localgroup-screen-lock screen))
+    (setf (localgroup-screen-drawer-open-p screen) nil)
     (terminal-screen-invalidate (localgroup-screen-terminal screen)
                                 (localgroup-screen-painter screen))
     (localgroup-screen--paint screen))
