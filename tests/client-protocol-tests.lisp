@@ -526,6 +526,113 @@
                            "settlement reports the same winning answer"))))))))
   nil)
 
+(-> test-client-work-values () null)
+(defun test-client-work-values ()
+  "Test channel-thread execution, all return values, and original local errors."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry       (world-client-entry configuration))
+            (channel     (getf (rest (world-server-tests--open entry (world-tests--workspace root "values")))
+                               :session-id))
+            (host        (world-server--find-host server channel))
+            (application (world-host-application host))
+            (original    (make-condition 'localgroup-error :message "Original client failure" :operation ':client)))
+       (test-assert (eq (world-host-thread host)
+                        (application-clients-call-as-work application #'current-thread))
+                    "only the channel thread executes client work")
+       (dolist (values '(() (nil) (:first nil :third)))
+         (test-assert (equal values
+                             (multiple-value-list
+                              (application-clients-call-as-work application (lambda () (values-list values)))))
+                      "inline work preserves zero, one, and multiple values"))
+       (test-assert (eq original
+                        (handler-case (application-clients-call-as-work application (lambda () (error original)))
+                          (error (condition)
+                            condition)))
+                    "the caller receives the identical local condition")
+       (test-assert (eq ':alive (application-clients-call-as-work application (lambda () ':alive)))
+                    "an operation failure does not retire the channel"))))
+  nil)
+
+(-> test-client-work-shutdown () null)
+(defun test-client-work-shutdown ()
+  "Test pool closure during inline execution and shutdown of queued work."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (dolist (phase '(:running :prepared :queued))
+       (let* ((entry       (world-client-entry configuration))
+              (channel     (getf (rest (world-server-tests--open
+                                        entry (world-tests--workspace root (format nil "shutdown-~A" phase))))
+                                 :session-id))
+              (application (world-host-application (world-server--find-host server channel)))
+              (controller  (application-input-controller application)))
+         (let ((entered   (sb-thread:make-semaphore))
+               (release   (sb-thread:make-semaphore))
+               (completed (sb-thread:make-semaphore))
+               (work      nil)
+               (waiter    nil)
+               (failure   nil)
+               (ran-p     nil))
+           (application-localgroup-pause application)
+           (unwind-protect
+                (progn
+                  (setf waiter
+                        (make-thread
+                         (lambda ()
+                           (let ((*client-work-poll-seconds* 60))
+                             (unwind-protect
+                                  (handler-case
+                                      (application-clients-call-as-work
+                                       application
+                                       (lambda ()
+                                         (sb-thread:signal-semaphore entered)
+                                         (sb-thread:wait-on-semaphore release)
+                                         (setf ran-p t)))
+                                    (localgroup-error (condition)
+                                      (setf failure condition)))
+                               (sb-thread:signal-semaphore completed))))
+                         :name "client work shutdown waiter"))
+                  (test-assert
+                   (task-tests--wait-until
+                    (lambda ()
+                      (with-lock-held ((application-input-controller-lock controller))
+                        (let ((items (deque->list (application-input-controller-work-items controller))))
+                          (when (and (= 1 (length items)) (eq (first (first items)) ':client-work))
+                            (setf work (second (first items)))))))
+                    10)
+                   "the paused channel retains the inline job until dispatch")
+                  (ecase phase
+                    (:running
+                     (application-localgroup-resume application)
+                     (test-assert (sb-thread:wait-on-semaphore entered :timeout 3)
+                                  "the channel enters the operation before its pool closes")
+                     (job-pool-close (job-pool work))
+                     (test-assert (not (sb-thread:wait-on-semaphore completed :timeout 0.05))
+                                  "closing the pool does not interrupt its inline channel thread")
+                     (sb-thread:signal-semaphore release))
+                    (:prepared
+                     (application-input-controller--prepare-shutdown controller ':shutdown))
+                    (:queued
+                     (application-input-controller-stop controller)))
+                  (test-assert (sb-thread:wait-on-semaphore completed :timeout 3)
+                               "terminal publication wakes the caller without the shutdown poll")
+                  (test-assert (and (typep failure 'client-work-cancelled)
+                                    (eq (client-work-cancelled-reason failure) ':shutdown)
+                                    (eq ran-p (eq phase ':running)))
+                               "shutdown cancels admission without interrupting an admitted operation")
+                  (test-assert (and (eq (job-pool-lifecycle-state (job-pool work)) ':closed)
+                                    (not (job-run-inline work)))
+                               "the caller closes its pool and terminal work cannot run again")
+                  (when (eq phase ':running)
+                    (test-assert (eq ':alive (application-clients-call-as-work application (lambda () ':alive)))
+                                 "the channel accepts work after a caller's pool closes")))
+             (sb-thread:signal-semaphore release)
+             (when work
+               (job-cancel work :reason ':shutdown))
+             (when waiter
+               (join-thread waiter))))))))
+  nil)
+
 (-> test-client-work-movement-cancellation () null)
 (defun test-client-work-movement-cancellation ()
   "Test moving and dismissing an agent settle queued editor operations without stopping the channel."

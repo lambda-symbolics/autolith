@@ -728,6 +728,8 @@
 (define-test-suite client-protocol
   test-client-protocol-channel
   test-client-approval-terminal-arbitration
+  test-client-work-values
+  test-client-work-shutdown
   test-client-work-movement-cancellation
   test-client-protocol-disconnect
   test-client-protocol-start-failure

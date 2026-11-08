@@ -131,6 +131,7 @@
                 #:job-pool-queued-count
                 #:job-pool-refresh
                 #:job-pool-remove-listener
+                #:job-pool-submit
                 #:job-pool-submit-batch
                 #:job-pool-update-limits
                 #:job-result

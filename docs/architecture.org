@@ -133,6 +133,10 @@ the serving daemon, which owns final stream closure. The channel's turn observer
 record appends and work items publish to the hub. Operations a client asks
 for run on their own thread, since they may wait for the channel while it
 waits for the client.
+Operations that require channel serialization use inline-only =cl-jobpond= jobs
+in the channel's work queue. Each waiting caller owns and closes its job pool;
+the channel thread runs the job between turns. A local condition adapter preserves
+original errors, and a list result preserves all return values.
 
 * ACP service
 
