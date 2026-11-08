@@ -153,6 +153,7 @@ TOOL-NAME names the refusing operation."
                        append (task-child--subtree world channel))
                  :test     #'string=
                  :from-end t)))
+    (task-child--quiesce configuration all tool-name)
     (dolist (identifier all)
       (when (conversation-lease-busy-p configuration identifier)
         (task-child--busy identifier tool-name)))
@@ -218,6 +219,7 @@ reached their owners. A failure keeps the directories."
 (-> task-child--call-with-lease (tool-context string function &key (:tool-name string)) null)
 (defun task-child--call-with-lease (context channel function &key tool-name)
   "Call FUNCTION holding the conversation lease of child CHANNEL, and refuse TOOL-NAME while the child is busy."
+  (task-child--quiesce (tool-context-configuration context) (list channel) tool-name)
   (let ((lease (handler-case (conversation-lease-acquire (tool-context-configuration context) channel)
                  (conversation-in-use ()
                    (task-child--busy channel tool-name)))))
@@ -225,13 +227,34 @@ reached their owners. A failure keeps the directories."
       (conversation-lease-release lease)))
   nil)
 
-(-> task-child--busy (string string) nil)
-(defun task-child--busy (channel tool-name)
-  "Refuse TOOL-NAME because the agent of CHANNEL is busy."
+(-> task-child--quiesce (configuration list string) null)
+(defun task-child--quiesce (configuration channels tool-name)
+  "Ask the world to release idle unattended hosts before TOOL-NAME leases CHANNELS."
+  (let ((entry (world-client-entry configuration)))
+    (when entry
+      (let ((states (getf (rest (localgroup-query-record entry ':quiesce
+                                                      (list :channels channels)))
+                         :states)))
+        (dolist (state states)
+          (unless (member (rest state) '(:closed :idle))
+            (task-child--busy (first state) tool-name :state (rest state)))))))
+  nil)
+
+(-> task-child--busy (string string &key (:state keyword)) nil)
+(defun task-child--busy (channel tool-name &key (state ':leased))
+  "Refuse TOOL-NAME with the specific reason CHANNEL cannot be leased."
   (error 'task-error
-         :message   (format nil "Channel ~A is busy: its agent runs, or a terminal shows it. Wait until it is idle~:[~;, or stop a child's run with job.cancel~]."
+         :message   (format nil "Channel ~A ~A"
                             (conversation-identifier-display channel)
-                            (uiop:string-prefix-p "child." tool-name))
+                            (case state
+                              (:attached
+                               "is shown in a terminal; switch away before trying again.")
+                              (:running
+                               "has running or queued work; finish or cancel it before trying again.")
+                              (:hosted
+                               "is hosted but could not close; retry after its host finishes shutting down.")
+                              (otherwise
+                               "has a conversation lease held by another operation; retry after that operation finishes.")))
          :tool-name tool-name
          :task-id   channel))
 
