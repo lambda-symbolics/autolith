@@ -22,7 +22,7 @@ Use the six green shades from userland/bootsplash/bootsplash.c, top to bottom.
 
 #+name: boot-linger
 #+begin_onboarding_text
-Space: onboarding   Esc or typing: Lisp listener
+SPACE: onboarding   ESCAPE: Lisp listener
 #+end_onboarding_text
 
 #+name: boot-start
@@ -112,12 +112,12 @@ Type ? (+ 1 2) and press Enter.
 
 #+name: hint-async-result
 #+begin_onboarding_text
-Safe result shown. Press Space or Enter to continue.
+Neat. Press Space or Enter to continue.
 #+end_onboarding_text
 
 #+name: hint-settings-input
 #+begin_onboarding_text
-Type (settings), browse the picker, then press Esc to return.
+Type (settings) to browse the picker, then press Esc to return.
 #+end_onboarding_text
 
 #+name: hint-settings-result
@@ -157,7 +157,7 @@ Background evaluation running...
 
 #+name: auth-provider-title
 #+begin_onboarding_text
-Choose your first provider
+Choose your first LLM provider
 #+end_onboarding_text
 
 #+name: auth-skip
@@ -210,16 +210,16 @@ Login cancelled. Type (auth) to try again, or continue to skip signing in.
 
 I'm [[https://twitter.com/LukasHozda][*Lukáš Hozda*]]. I made this tour to help you get started.
 
-You'll try the prompt, then explore what you can do with Autolith.
+We will explore what you can do with Autolith.
 
-@@dim:Press Space to continue, or Esc to skip. Replay anytime with (onboard).@@
+@@dim:Press Space to continue, or Esc to skip. Start the onboarding again anytime with (onboard).@@
 
 * Adapt the system while it runs
 :PROPERTIES:
 :ID: live-image
 :VERSION: 4
 :END:
-Autolith runs inside a *live Common Lisp image*. You and the agent can inspect, define, test, and revise behavior without a rebuild.
+Autolith runs inside a *Common Lisp image*. You and the agent can inspect, define, test, and revise behavior without a rebuild.
 
 @@brand:inspect -> redefine -> test -> private commit@@
 
@@ -237,11 +237,13 @@ Choose a provider and sign in before your first conversation.
 
 For a *ChatGPT subscription*, choose *chatgpt*. Use *browser* for OAuth with a local callback, or *device-code* to enter the displayed code in your browser.
 
-For an *OpenAI API key*, choose *openai-api* and paste your key at the hidden prompt. Autolith saves it in its private credential store and discovers your available models. Follow the login or API-key prompts for other providers.
+For an *OpenAI API key*, choose *openai-api* and paste your key into the hidden prompt. Autolith saves it in its private credential store and discovers your available models.
+
+Follow the login or API-key prompts for other providers.
 
 Don't want to sign in yet? Type =continue=.
 
-Press *Esc* in the method picker to return to providers, or in the provider picker to return here. You can retry after a cancelled or failed login.
+Press *Escape* in the method picker to return to providers, or in the provider picker to return here.
 
 @@brand:PRACTICE  Type (auth) to sign in, or continue to skip.@@
 
@@ -259,7 +261,7 @@ Ask a question, describe a task, or paste some code.
 Use familiar terminal editing shortcuts:
 *Ctrl-A / Ctrl-E*  go to the beginning / end
 *Ctrl-W / Ctrl-U*  erase a word / erase to the beginning
-*Up / Down*       recall input history
+*Up / Down*        recall input history
 
 @@brand:PRACTICE  Type  continue  and press Enter.@@
 
@@ -269,16 +271,16 @@ Use familiar terminal editing shortcuts:
 :VERSION: 4
 :EXERCISE: help
 :END:
-Start with a parenthesis to evaluate Common Lisp locally. Send ordinary text to the agent.
+The prompt accepts ordinary text, but you can also start with a parenthesis to evaluate Common Lisp forms.
 
 =(help)=      basic help
 =(settings)=  settings
 
-When you start a Lisp form, you'll see @@lisp-prompt:*@@ at the start of the prompt. Try it below.
+When you start a Lisp form, you'll see @@lisp-prompt:*@@ at the start of the prompt. Go on, try it.
 
 *Use Common Lisp syntax for forms and arguments.*
 
-@@brand:PRACTICE  Type  (help)  to read the basic help, then continue.@@
+@@brand:PRACTICE  Type  (help)  to get some pointers, then continue.@@
 
 * Run Lisp in the background
 :PROPERTIES:
@@ -290,19 +292,27 @@ Type *? followed by a space* before a Lisp form to run it in the background.
 
 =? (+ 1 2)=
 
-Press Enter to run it. You can keep typing while it runs.
+Press Enter to run it.
+
+This is also useful if a Lisp form you want to evaluate does not start with a parenthesis:
+
+=? *my-var*= 
 
 @@brand:(form)    local evaluation
 ? (form)  background local evaluation@@
 
-*PRACTICE  Try ? (+ 1 2). You'll get 3.*
+*PRACTICE  Try ? (+ 1 2).*
 
 * Compose requests with Lisp
 :PROPERTIES:
 :ID: prompt-function
 :VERSION: 4
 :END:
-Use =(prompt ...)= to send a request built in Lisp. Compute the text, read it from a file, or include images.
+Use =(prompt ...)= to send a prompt programmatically.
+
+E.g. you can compute the text or read it from a file.
+
+This is actually what your plain text evaluates to when you type it into the prompt.
 
 =(prompt "Review this change")=
 
@@ -312,7 +322,7 @@ Use =:to= to send a request to a named child that is already running:
 
 Omit =:to= to address the primary Autolith.
 
-* Stay in control while work is active
+* Steering and follow-ups
 :PROPERTIES:
 :ID: steering
 :VERSION: 3
@@ -320,9 +330,9 @@ Omit =:to= to address the primary Autolith.
 @@brand:NOW   Enter  -> steer the active turn
 NEXT  Tab    -> queue a follow-up@@
 
-*Press Enter to steer the current work.* Autolith reads all pending steers together at the next safe point.
+*Press Enter to steer the current work.* Autolith reads all pending steers together at the earliest opportunity.
 
-*Press Tab to queue a follow-up.* Autolith handles follow-ups one at a time, in order, after the current work ends.
+*Press Tab to queue a follow-up.* Autolith handles follow-ups one at a time, in order, whenever it becomes idle.
 
 =Focus on the parser first=
 =After that, review the documentation=
@@ -337,38 +347,39 @@ Store drafts and pending requests in the *input vault* to return to them later.
 =(vault-store)=    park input
 =(vault)=          view and edit
 =(vault-restore)=  return input to the queue
-Use =(vault-contents)= to edit the stored Lisp data.
+
+You can use =(vault-contents)= to edit the stored data or to compute a series of follow-ups.
 
 @@brand:draft -> vault -> restore@@
 
-Keep secrets out of the vault.
-
-* Find your way through a project
+* Searching and other tools
 :PROPERTIES:
 :ID: indexed-search
 :VERSION: 4
 :END:
-Use indexed search to find files, identifiers, or path patterns:
+The agent uses *fff* indexed search to find files, identifiers, or path patterns:
 
 =(search.files :query "parser")=           fuzzy file paths
 =(search.content :query "parse-request")=  exact identifiers
-=(search.glob :pattern "**/*.lisp")=       matching paths
+=(search.glob :pattern "**/*.lisp")=         matching paths
 
 *In the prompt: type @ and part of a path, then press Tab.* Choose a fuzzy match to insert its path.
 
-* Make it yours
+These are just tools available to the model - they are also available to you to call.
+In fullscreen mode, you can click on toolcalls to paste them into your prompt so you can either
+repeat them or do similar ones.
+
+* Configuration
 :PROPERTIES:
 :ID: settings
 :VERSION: 4
 :EXERCISE: settings
 :END:
 Type =(settings)= to browse and change your settings.
-Press Esc when you're ready to return to the tour.
+Press Esc when you are done.
 
 To configure Autolith in Lisp, edit:
 =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp=
-
-Find saved preferences and completed lessons in the state directory.
 
 @@dim:Your configuration and state directories:@@
 
@@ -383,12 +394,12 @@ State root:  {{{:state-root}}}@@
 :SETTING: activity-line-p
 :CHOICES: t nil
 :END:
-Read the turn timer in the modeline and the current activity below it:
+You have a turn timer in the modeline, along with other useful pieces of info, and a small decoration activity line below it:
 
 @@dim:REPL  ∙ 00:04  gpt-6.1-sol · high@@
 @@brand:∙@@ @@dim:pondering@@
 
-Choose whether to show the activity line. Change this in =(settings)=.
+Some people hate this Claudism, so you can disable it in =(settings)=.
 
 * Message style
 :PROPERTIES:
@@ -398,7 +409,7 @@ Choose whether to show the activity line. Change this in =(settings)=.
 :SETTING: transcript-style
 :CHOICES: :labels :repl
 :END:
-Choose labeled headers:
+Decided if you want labeled headers:
 
 @@user:❯ you@@
   hi!
@@ -414,10 +425,9 @@ Or Lisp REPL prompts:
 @@dim:  2026-10-26 21:30@@
 @@brand:<@@ Hello, I am Autolith. How can I help you today?
 
-Enable turn timestamps to show the time above each message.
-Change the style in =(settings)=.
+The time timestamps you see in this example are configurable in =(settings)=.
 
-* Leave the terminal.  Keep the session.
+* Detached sessions
 :PROPERTIES:
 :ID: detached-sessions
 :VERSION: 5
@@ -432,27 +442,26 @@ Use =(detach)= to disconnect your terminal while Autolith keeps working.
 =autolith localgroup detach [SESSION-ID]=
 =autolith localgroup kill   [SESSION-ID]=
 
-To watch without sending input, use =attach --read-only=.
-To take over the session, use =attach --take-over=.
-Use =autolith lg= as shorthand for =autolith localgroup=.
-With one active session, omit =SESSION-ID=.
-With several, use an ID from =status= or a unique prefix of 1+ characters.
+To watch a session, you can use =attach --read-only=, if you also want to control it (full re-attachment), use =attach --take-over=.
+
+You can use =autolith lg= as a shorthand for =autolith localgroup=.
+With one active session, you can omit =SESSION-ID=, otherwise, use a uniquely identifying prefix.
 
 * Give Autolith an objective
 :PROPERTIES:
 :ID: goals
 :VERSION: 3
 :END:
-Use a request for the next task. Set a *goal* for longer autonomous work.
+Use a *(goal)* for longer autonomous work.
 
 =(goal "Make the project ready for release")=
 =(goal :pause)=   pause autonomous work
 =(goal :resume)=  resume it
 =(goal :clear)=   remove the objective
 
-For explicit acceptance criteria, verification gates, and budgets, use =(mission ...)=.
+For more elaborate acceptance criteria, verification gates, and budgets, use =(mission ...)=.
 
-* Set acceptance criteria and a budget
+* Missions
 :PROPERTIES:
 :ID: missions
 :VERSION: 1
@@ -472,21 +481,28 @@ To finish this example, inspect the result, then record your acceptance:
 =(mission :accept "review" "I checked and accept the summary")=
 =(mission :verify)=
 
-For automated checks, link criteria to verification gates. To finish a mission, pass all criteria and gates.
+For automated checks, link criteria to verification gates.
+
+To finish a mission, pass all criteria and gates.
 Use =(mission :cancel "Reason")= to stop instead.
+
+Missions are very popular with our enterprise users that try to have predictable LLM execution
+bounds.
 
 * Keep evidence with what you remember
 :PROPERTIES:
 :ID: symbolic-evidence
 :VERSION: 1
 :END:
-Autolith keeps *prose memories* and *structured facts* with their sources. A fact can have several independent supports.
+Autolith keeps *prose memories* and *structured facts* with their sources.
+A fact can have several independent supports.
 
 =(memories)=           browse memories and facts
 =(memories "deploy")=  filter by topic
 =(why "ID")=           inspect sources and dependencies
 
-Check stale or invalid entries before relying on them: a cited file may have changed, a premise may no longer hold, or the evidence may have expired.
+Autolith checks stale or invalid entries before relying on them. May it reduce the amount of hallucinations
+your models have.
 
 @@brand:read the evidence -> record it -> recheck when it changes@@
 
@@ -501,20 +517,18 @@ An admitted *rule* derives facts locally. Move a meeting and its calculated depa
 =(admit-rule "departure")=  approve a proposed rule
 =(what-changed)=            inspect changes and their causes
 
-Use =(why "ID")= to inspect a conclusion's premises. A conclusion based on an assumption is still an assumption. Conflicting facts are listed together; missing evidence means unknown.
-
-@@dim:The next-turn notice counts recalled facts and reports changes to facts used earlier.@@
+Use =(why "ID")= to inspect a conclusion's premises.
 
 * Check plans and calls against facts
 :PROPERTIES:
 :ID: symbolic-actions
 :VERSION: 1
 :END:
-*Plan steps* can require facts and use their values in step text. Unsatisfied requirements appear as blocked. If evidence for a completed step changes, inspect the warning before continuing.
+*Plan steps* can require facts and use their values in step text.
+Unsatisfied requirements appear as blocked.
 
-*Mission fact gates* check accepted evidence. *Action contracts* check requirements before a tool call and describe its predicted effects and observed results.
-
-Before admitting a contract, review its version, its tool-result-to-fact mappings, and its evidence policy. Admit each changed version separately.
+*Mission fact gates* check accepted evidence.
+*Action contracts* check requirements before a tool call, describing its predicted effects and observed results.
 
 =(mission :status)=  inspect gates and evidence
 
@@ -527,8 +541,6 @@ Autolith can learn a *parameterized procedure* locally after repeating the same 
 
 =(procedures)=  inspect calls, admission, runs, and measured savings
 
-When one fits your request, you'll see a notice. Its first run needs admission; each call also needs its usual approval and contract checks.
-
 Automatic reuse requires successful runs of the *exact admitted version* with measured savings in both model requests and tokens.
 
 Use =(retire-procedure "NAME")= to stop using and learning that procedure.
@@ -538,30 +550,27 @@ Use =(retire-procedure "NAME")= to stop using and learning that procedure.
 :ID: symbolic-diagnosis
 :VERSION: 2
 :END:
-When several causes could explain a failure, Autolith can check known facts and run *diagnostic probes* before choosing a repair.
-Read the results and suggested repair in the diagnosis report.
-Cases without a known cause are marked open.
+When several causes could explain a failure, Autolith can check known facts
+and run *diagnostic probes* before choosing a repair.
 
 Probes are on by default. Turn them off in =(settings)=.
 
 =(diagnoses)=  inspect saved diagnoses and recent cases
 
-@@dim:Structured knowledge must be active. Each probe needs its ordinary tool approval and must satisfy its action contract.@@
-
-* Large inputs, focused reasoning
+* Large inputs via RLM (recursive inference)
 :PROPERTIES:
 :ID: recursive-inference
 :VERSION: 3
 :END:
-Autolith can use *recursive language models (RLM)* to read a large input in smaller pieces.
+Autolith can use *recursive language models (RLM)* to process very large inputs piecemeal.
 
 @@brand:large input
       -> selected views
       -> focused analyses
       -> combined result@@
 
-Ask for a summary, comparison, or extraction. Autolith selects the relevant passages and combines the analyses.
-
+You can request it specifically if you like, but generally, Autolith knows when to use it.
+      
 * Delegate independent work
 :PROPERTIES:
 :ID: child-agents
@@ -574,25 +583,24 @@ Autolith can start *child agents* for implementation, research, design, or revie
 
 Use =(task.agents)= to browse available roles.
 
-=.autolith/agents/=  project roles
-=<config-root>/agents/=  user roles
+=.autolith/agents/=       project roles
+=<config-root>/agents/=   user roles
 
-Steer a running child with =(prompt :to 'child-name "...")=.
+Steer a running child with =(prompt :to 'child-name "...")=. If it has a response for you, you will see it.
 
 * Define an agent
 :PROPERTIES:
 :ID: agent-definition
 :VERSION: 1
 :END:
-Save this as =.autolith/agents/code-reader.sexp=:
+Here is an example of a custom agent.
 
-=(:name "code-reader"
- :description "Read and explain code."
+You could use this as =.autolith/agents/code-reader.sexp=:
+
+=(:name         "code-reader"
+ :description  "Read and explain code."
  :instructions "Read relevant code. Cite files and line numbers."
- :tools ("resource.read" "search.*"))=
-
-Use =(task.agents)= to find your new role.
-Ask Autolith to start a child with that role.
+ :tools        ("resource.read" "search.*"))=
 
 Customize the role's models, reasoning effort, or spawn policy in the same file.
 
@@ -612,7 +620,7 @@ You can also register servers in =init.lisp=. Use =(mcp)= for configuration and 
 
 @@code:Config root: {{{:config-root}}}@@
 
-* Save task instructions as a Skill
+* Save instructions as a skills
 :PROPERTIES:
 :ID: skills
 :VERSION: 4
@@ -621,9 +629,9 @@ Save a skill in either format:
 
 *SKILL.sexp*
 =(:autolith-skill :version 1
- :name "review"
- :description "Review a code change."
- :instructions "Read the diff. Cite files and line numbers.")=
+ :name           "review"
+ :description    "Review a code change."
+ :instructions   "Read the diff. Cite files and line numbers.")=
 
 *SKILL.md*
 =---
@@ -632,11 +640,11 @@ description: Review a code change.
 ---
 Read the diff. Cite files and line numbers.=
 
-=.autolith/skills/review/=  project skill
+=.autolith/skills/review/=      project skill
 =<config-root>/skills/review/=  user skill
-Use =(skills)= to browse the catalog. Ask Autolith to load a skill for the task at hand.
+Use =(skills)= to browse the catalog.
 
-For executable Skills, add =EXECUTABLE.sexp= with entrypoints, contracts, and capabilities.
+For executable skills, add =EXECUTABLE.sexp= with entrypoints, contracts, and capabilities.
 
 * Choose your workspace view
 :PROPERTIES:
@@ -669,7 +677,7 @@ Scroll long lessons with Page Up/Page Down. On reading pages, use Up/Down too.
 @@lambda-logo-6:▀█▄▄    ██  ▀██▄
   ▀▀██▄▄█▀   ▀▀█@@
 
-*Give Autolith something real to do.*
-=Explain this codebase and identify the next useful change=
+*Give Autolith something fun to do.*
+=Explain this codebase and identify my biggest L snippet=
 
-Replay the tour with =(onboard)=.
+Replay this guide with =(onboard)=.
