@@ -582,37 +582,6 @@ notice preference is on, so enabling it mid-session takes effect immediately."
        (sanitize-text preview :single-line-p t)
        *conversation-preview-width*))))
 
-(-> application--conversation-current-directory-p
-    ((option string) pathname)
-    boolean)
-(defun application--conversation-current-directory-p (directory current)
-  "Return true when recorded DIRECTORY denotes CURRENT."
-  (and (non-empty-string-p directory)
-       (handler-case
-           (string= (namestring
-                     (uiop:ensure-directory-pathname (pathname directory)))
-                    (namestring (uiop:ensure-directory-pathname current)))
-         (error ()
-           nil))))
-
-(-> application--conversation-description
-    (integer &key (:directory (option string)) (:current-p boolean)
-             (:preview (option string)))
-    (values string terminal-styled-text))
-(defun application--conversation-description
-    (universal-time &key directory current-p preview)
-  "Return plain and styled resume descriptions for one conversation."
-  (multiple-value-bind (date time)
-      (application--calendar-parts universal-time)
-    (let ((suffix
-            (format nil "~@[, ~A~]~:[~;, current~]~@[ · ~A~]"
-                    directory current-p preview)))
-      (values
-       (format nil "~A ~A~A" date time suffix)
-       (list (terminal-span ':plain (format nil "~A " date))
-             (terminal-span ':timestamp-time time)
-             (terminal-span ':plain suffix))))))
-
 (-> application--conversation-metadata-tally
     (conversation-picker-metadata)
     string)
@@ -635,74 +604,6 @@ notice preference is on, so enabling it mid-session takes effect immediately."
     (if metadata
         (application--conversation-metadata-tally metadata)
         "0 turns")))
-
-(-> application--conversation-items (application) list)
-(defun application--conversation-items (application)
-  "Return grouped picker items, newest first within each workspace section."
-  (let* ((configuration (application-configuration application))
-         (current-identifier
-           (conversation-identifier (application-conversation application)))
-         (current-directory
-           (config :working-directory configuration))
-         (current-group
-           (format nil "current directory · ~A"
-                   (application--abbreviated-directory
-                    (namestring current-directory))))
-         (current-items nil)
-         (other-items   nil))
-    (dolist (pathname (remove-if #'conversation-inbox-pathname-p
-                                 (conversation-list configuration)))
-      (let* ((identifier (pathname-name pathname))
-             (identifier-display
-               (conversation-identifier-display identifier))
-             (header     (conversation-peek-header pathname))
-             (directory  (getf (rest header) :directory))
-             (current-directory-p
-               (application--conversation-current-directory-p
-                directory
-                current-directory))
-             (metadata   (conversation-picker-metadata-find pathname))
-             (title      (and metadata
-                              (conversation-picker-metadata-title metadata)))
-             (preview
-               (and metadata
-                    (application--conversation-preview-from-metadata metadata))))
-        (multiple-value-bind (description description-spans)
-            (application--conversation-description
-             (conversation-storage-write-date pathname)
-             :directory (and (not current-directory-p)
-                             (application--abbreviated-directory directory))
-             :current-p (string= identifier current-identifier)
-             :preview   preview)
-          (let* ((titled-p (and title
-                                (not (string= title identifier-display))))
-                 (item-description
-                   (if titled-p
-                       (format nil "~A · ~A" identifier-display description)
-                       description))
-                 (item-description-spans
-                   (if titled-p
-                       (append
-                        (list (terminal-span ':code
-                                             (format nil "~A · " identifier-display)))
-                        description-spans)
-                       description-spans))
-                 (item
-                   (list :name              (or title identifier-display)
-                         :value             identifier
-                         :argument          nil
-                         :group             (if current-directory-p
-                                                current-group
-                                                "other sessions")
-                         :tally             (if metadata
-                                                (application--conversation-metadata-tally metadata)
-                                                "0 turns")
-                         :description       item-description
-                         :description-spans item-description-spans)))
-            (if current-directory-p
-                (push item current-items)
-                (push item other-items))))))
-    (append (nreverse current-items) (nreverse other-items))))
 
 (-> application--effort-items (application) list)
 (defun application--effort-items (application)
@@ -1690,7 +1591,7 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
 
 (-> application--pick-identifier
     (application &key (:title string) (:items list) (:usage string)
-                 (:empty-notice string) (:hint (option string))
+                 (:empty-notice (or string list)) (:hint (option string))
                  (:visible-count (integer 1))
                  (:initial-name (option string))
                  (:initial-value (option string))
@@ -1730,38 +1631,95 @@ are forwarded to TERMINAL-UI-SELECT."
        :on-event        on-event
        :resize-callback #'application-pending-terminal-size))))
 
-(-> application--conversation-delete-confirm-items (list) list)
-(defun application--conversation-delete-confirm-items (item)
-  "Return the delete/keep confirmation items for ITEM."
+(-> application--channel-remove-confirm-items (list) list)
+(defun application--channel-remove-confirm-items (item)
+  "Return the remove/keep confirmation items for channel ITEM."
   (list
-   (list :name        "delete"
+   (list :name        "remove"
          :argument    nil
-         :description (format nil "permanently delete ~A" (getf item :name)))
+         :description (format nil "delete ~A for good: its agent, its history and the channels nested in it"
+                              (string-trim " " (getf item :name))))
    (list :name        "keep"
          :argument    nil
-         :description "return to the conversation list")))
+         :description "return to the channel list")))
 
 (-> application--channel-items (application) list)
 (defun application--channel-items (application)
-  "Return picker items for every channel: the person's inbox first, then each conversation's channel."
+  "Return picker items for every channel: the person's inbox, then each workspace's channels, children under their parents.
+
+An item names the channel's agent, or else its title or identifier, and says
+what the channel is about and whether a terminal session serves it. The
+workspace of this channel comes first; within one, the channel changed last
+comes first."
   (let* ((world   (handler-case (application-world application)
                     (autolith-error ()
                       nil)))
-         (inbox   (and world (world-inbox-channel world)))
-         (current (conversation-identifier (application-conversation application))))
-    (append (when (and inbox (not (string= (channel-identifier inbox) current)))
-              (list (list :name        *world-inbox-designator*
-                          :value       (channel-identifier inbox)
-                          :argument    nil
-                          :group       "inbox"
-                          :description "messages for you")))
-            (application--conversation-items application))))
+         (current (conversation-identifier (application-conversation application)))
+         (server  (application-world-server application)))
+    (when world
+      (let ((inbox    (world-inbox-channel world))
+            (channels (application--channels-newest-first application
+                                                          (remove-if #'channel-inbox-p (world-channels world)))))
+        (labels ((item (channel depth group)
+                   "Return the picker item of CHANNEL nested DEPTH deep in GROUP."
+                   (let* ((identifier (channel-identifier channel))
+                          (agent      (find ':agent (world-channel-residents world identifier)
+                                            :key #'participant-kind))
+                          (name       (or (and agent (participant-name agent))
+                                          (channel-title channel)
+                                          (conversation-identifier-display identifier))))
+                     (list :name        (format nil "~A~A"
+                                                (make-string (* 2 depth) :initial-element #\Space)
+                                                name)
+                           :value       identifier
+                           :argument    nil
+                           :group       group
+                           :description (format nil "~@[~A · ~]~A~:[~; · open~]"
+                                                (and agent (channel-title channel))
+                                                (conversation-identifier-display identifier)
+                                                (and server (world-server--find-host server identifier))))))
+
+                 (items (node depth group)
+                   "Return the items of NODE and the channels nested in it."
+                   (cons (item (first node) depth group)
+                         (loop for child in (rest node)
+                               append (items child (1+ depth) group)))))
+          (append
+           (when (and inbox (not (string= (channel-identifier inbox) current)))
+             (list (list :name        *world-inbox-designator*
+                         :value       (channel-identifier inbox)
+                         :argument    nil
+                         :description "messages for you")))
+           (loop for (workspace . members) in (world-channel-groups channels current)
+                 for group = (format nil "~A · ~A" (world-workspace-leaf workspace)
+                                     (application--abbreviated-directory workspace))
+                 append (loop for node in (world-channel-forest members)
+                              append (items node 0 group)))))))))
+
+(-> application--channels-newest-first (application list) list)
+(defun application--channels-newest-first (application channels)
+  "Return CHANNELS with the top-level ones whose conversation changed last first, and children by creation.
+
+Only a top-level conversation's file is looked at: finding a child's file
+searches every task directory."
+  (let ((configuration (application-configuration application)))
+    (mapcar #'rest
+            (stable-sort (mapcar (lambda (channel)
+                                   (cons (if (channel-parent channel)
+                                             (channel-created-at channel)
+                                             (or (conversation-storage-write-date
+                                                  (conversation-pathname-for-id configuration
+                                                                                (channel-identifier channel)))
+                                                 (channel-updated-at channel)))
+                                         channel))
+                                 channels)
+                         #'> :key #'first))))
 
 (-> application--pick-channel (application) (option string))
 (defun application--pick-channel (application)
-  "Pick a channel to switch to, with d-delete of a conversation and a confirmation step."
+  "Pick a channel to switch to, with removal of a channel by the Delete key and a confirmation step."
   (let* ((browse-title "switch channel")
-         (browse-hint  "enter selects, d deletes, esc cancels")
+         (browse-hint  "type to search, enter selects, delete removes, esc cancels")
          (confirm-hint "enter confirms, esc returns")
          (mode         ':browse)
          (pending      nil)
@@ -1783,14 +1741,6 @@ are forwarded to TERMINAL-UI-SELECT."
                       (<= 0 selection (1- (length items)))
                       (nth selection items))))
 
-             (insert-character-p (event character)
-               "Return true when EVENT inserts CHARACTER case-insensitively."
-               (and (listp event)
-                    (eq (first event) ':insert)
-                    (stringp (second event))
-                    (= (length (second event)) 1)
-                    (char-equal (char (second event) 0) character)))
-
              (browse-action (&optional selected-value)
                "Return the picker action that restores the browse list."
                (if browse-items
@@ -1803,7 +1753,7 @@ are forwarded to TERMINAL-UI-SELECT."
                (ecase mode
                  (:browse
                   (cond
-                    ((insert-character-p event #\d)
+                    ((eq event ':delete)
                      (let ((item (selected-item selector)))
                        (cond
                          ((null item)
@@ -1811,15 +1761,15 @@ are forwarded to TERMINAL-UI-SELECT."
                          ((string= (getf item :value) current-identifier)
                           (application-present
                            application
-                           "Cannot delete the active conversation.")
+                           (application-failure-line "this terminal shows that channel; switch away to remove it"))
                           ':continue)
                          (t
                           (setf mode ':confirm
                                 pending item)
                           (list
                            ':replace
-                           (format nil "delete ~A?" (getf item :name))
-                           (application--conversation-delete-confirm-items item)
+                           (format nil "remove ~A?" (string-trim " " (getf item :name)))
+                           (application--channel-remove-confirm-items item)
                            confirm-hint)))))
                     (t
                      nil)))
@@ -1838,22 +1788,23 @@ are forwarded to TERMINAL-UI-SELECT."
                            (selected-value (and pending (getf pending :value))))
                        (cond
                          ((and choice
-                               (string= (getf choice :name) "delete")
+                               (string= (getf choice :name) "remove")
                                pending)
                           (handler-case
-                              (progn
-                                (conversation-delete
-                                 (application-configuration application)
-                                 (getf pending :value))
+                              (let ((removed (channel-remove (application-configuration application)
+                                                             (getf pending :value)
+                                                             :tool-name "(switch)")))
                                 (application-present
                                  application
-                                 (format nil "Deleted conversation ~A."
-                                         (getf pending :name)))
+                                 (application-notice-line
+                                  (format nil "channel ~A removed~[~;~:;, with the ~:*~D channels nested in it~]"
+                                          (string-trim " " (getf pending :name))
+                                          (1- removed))))
                                 (refresh-items))
-                            (conversation-error (condition)
+                            (autolith-error (condition)
                               (application-present
                                application
-                               (format nil "~A" condition))
+                               (application-failure-line (autolith-error-message condition)))
                               (refresh-items)))
                           (setf mode ':browse
                                 pending nil)
@@ -1877,7 +1828,58 @@ are forwarded to TERMINAL-UI-SELECT."
        :initial-value current-identifier
        :on-event      #'on-event
        :usage         "Usage: (switch \"ID\")"
-       :empty-notice  "No other channels exist."))))
+       :search-p      t
+       :empty-notice  (application-notice-line "no other channels exist")))))
+
+(-> application--agent-items (application) list)
+(defun application--agent-items (application)
+  "Return picker items for every agent: its name, and the channel it resides in or that it is parked."
+  (let ((world (application-world application)))
+    (loop for participant in (world-participants world)
+          when (eq (participant-kind participant) ':agent)
+            collect (let* ((residence (participant-residence participant))
+                           (channel   (and residence (world-channel-find world residence))))
+                      (list :name        (participant-name participant)
+                            :value       (participant-name participant)
+                            :argument    nil
+                            :description (if residence
+                                             (format nil "in ~@[~A · ~]~A"
+                                                     (and channel (channel-title channel))
+                                                     (conversation-identifier-display residence))
+                                             "parked in no channel"))))))
+
+(-> application--pick-agent (application &key (:title string) (:usage string)) (option string))
+(defun application--pick-agent (application &key (title "pick an agent") (usage ""))
+  "Pick an agent by name, or return NIL when cancelled; USAGE explains the call where no picker can show."
+  (application--pick-identifier application
+                                :title        title
+                                :items        (application--agent-items application)
+                                :hint         "type to search, enter selects, esc cancels"
+                                :search-p     t
+                                :usage        usage
+                                :empty-notice (application-notice-line "no agents exist")))
+
+(-> application--pick-destination (application) (option string))
+(defun application--pick-destination (application)
+  "Pick the channel an agent moves into, this one first, or return NIL when cancelled."
+  (application--pick-identifier application
+                                :title         "into which channel?"
+                                :items         (remove *world-inbox-designator* (application--channel-items application)
+                                                       :key (lambda (item) (getf item :name)) :test #'equal)
+                                :hint          "type to search, enter selects, esc cancels"
+                                :initial-value (conversation-identifier (application-conversation application))
+                                :search-p      t
+                                :usage         "Usage: (move \"AGENT\" \"CHANNEL\")"
+                                :empty-notice  (application-notice-line "no channels exist")))
+
+(-> application--prefill-call (application string string) null)
+(defun application--prefill-call (application operator argument)
+  "Put (OPERATOR \"ARGUMENT\" \"\") in the input with the cursor in its empty string, for the person to finish."
+  (let ((ui (application-ui application)))
+    (terminal-ui-set-input ui (format nil "(~A ~S \"\")" operator argument))
+    (dotimes (index 2)
+      (terminal-ui-edit-input ui ':left)))
+  nil)
 
 (-> application--pick-model (application &key (:provider (option string))) (values (option string) (option string)))
 (defun application--pick-model (application &key provider)
@@ -3059,13 +3061,20 @@ last started is not in its world either, so the saved conversations come last."
 
 (define-application-command application--builtin-rename-command
     (:name              "/rename"
-     :argument          "[WHO] NAME"
+     :argument          "[[WHO] NAME]"
      :description       "name a participant for @mentions"
-     :tip               "renames this channel's agent, or the participant WHO names; names are letters, digits, hyphens and underscores."
+     :tip               "renames this channel's agent, or the participant WHO names, or picks one without arguments; names are letters, digits, hyphens and underscores."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
+     :terminal-behavior :exclusive-without-arguments
      :callable          t)
-    (application first &optional (second nil second-p))
+    (application &optional (first nil first-p) (second nil second-p))
+  (unless first-p
+    (let ((agent (application--pick-agent application
+                                          :title "rename an agent"
+                                          :usage "Usage: (rename \"WHO\" \"NAME\")")))
+      (when agent
+        (application--prefill-call application "rename" agent)))
+    (return-from application--builtin-rename-command ':continue))
   (let* ((configuration (application-configuration application))
          (name          (princ-to-string (if second-p second first)))
          (participant   (if second-p
@@ -3086,7 +3095,7 @@ last started is not in its world either, so the saved conversations come last."
                                        :operation ':rename-participant))))
          (before        (participant-name participant)))
     (world-participant-rename configuration (participant-identifier participant) name)
-    (application-present application (format nil "Renamed @~A to @~A." before name)))
+    (application-present application (application-notice-line (format nil "@~A is now @~A" before name))))
   ':continue)
 
 (define-application-command application--builtin-channels-command
@@ -3116,13 +3125,20 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-move-command
     (:name              "/move"
-     :argument          "AGENT [CHANNEL]"
+     :argument          "[AGENT [CHANNEL]]"
      :description       "move an agent into a channel, this one by default"
-     :tip               "stops the agent where it is; in its new channel it waits until someone writes there or mentions it."
+     :tip               "stops the agent where it is; in its new channel it waits until someone writes there or mentions it. Without arguments it picks the agent, then the channel."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
+     :terminal-behavior :exclusive-without-arguments
      :callable          t)
-    (application agent &optional channel)
+    (application &optional agent channel)
+  (unless agent
+    (setf agent   (application--pick-agent application
+                                           :title "move which agent?"
+                                           :usage "Usage: (move \"AGENT\" \"CHANNEL\")")
+          channel (and agent (application--pick-destination application)))
+    (unless (and agent channel)
+      (return-from application--builtin-move-command ':continue)))
   (let* ((configuration (application-configuration application))
          (server        (application--placing-server application ':move))
          (target        (if channel
@@ -3160,13 +3176,19 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-dismiss-command
     (:name              "/dismiss"
-     :argument          "AGENT"
+     :argument          "[AGENT]"
      :description       "park an agent, leaving its channel without one"
      :tip               "stops the agent and parks it in no channel, keeping its context and leaving its children unaffected; (move \"WHO\") brings it back. Its channel then takes a moved agent or a domestic one."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
+     :terminal-behavior :exclusive-without-arguments
      :callable          t)
-    (application agent)
+    (application &optional agent)
+  (unless agent
+    (setf agent (application--pick-agent application
+                                         :title "park which agent?"
+                                         :usage "Usage: (dismiss \"AGENT\")"))
+    (unless agent
+      (return-from application--builtin-dismiss-command ':continue)))
   (let ((answer (rest (world-server-dismiss (application--placing-server application ':park)
                                             (princ-to-string agent)))))
     (application-present
@@ -3183,22 +3205,34 @@ pristine or recovery session runs apart from it."
 
 (define-application-command application--builtin-tell-command
     (:name              "/tell"
-     :argument          "CHANNEL MESSAGE"
+     :argument          "[CHANNEL MESSAGE]"
      :description       "send a message to a channel as yourself"
-     :tip               "reaches the channel's residents and subscribers and wakes their agents."
+     :tip               "reaches the channel's residents and subscribers and wakes their agents. Without a message it picks the channel and lets you write one."
      :busy-behavior     :inspect
-     :terminal-behavior :shared
+     :terminal-behavior :exclusive-without-arguments
      :callable          t)
-    (application channel &rest words)
+    (application &optional channel &rest words)
+  (unless words
+    (let ((target (or channel
+                      (application--pick-identifier application
+                                                    :title        "tell which channel?"
+                                                    :items        (application--channel-items application)
+                                                    :hint         "type to search, enter selects, esc cancels"
+                                                    :search-p     t
+                                                    :usage        "Usage: (tell \"CHANNEL\" \"MESSAGE\")"
+                                                    :empty-notice (application-notice-line "no channels exist")))))
+      (when target
+        (application--prefill-call application "tell" (princ-to-string target)))
+      (return-from application--builtin-tell-command ':continue)))
   (let ((result (application-world-send application
                                         :channel (princ-to-string channel)
                                         :text    (format nil "~{~A~^ ~}" words))))
     (application-present
      application
-     (format nil "Sent to ~{~A~^, ~}~@[; reached live: ~{~A~^, ~}~]~@[; waiting for a full inbox: ~{~A~^, ~}~]."
-             (mapcar #'conversation-identifier-display (getf result :channels))
-             (mapcar #'conversation-identifier-display (getf result :notified))
-             (mapcar #'conversation-identifier-display (getf result :pending)))))
+     (application-notice-line
+      (format nil "sent to ~{~A~^, ~}~@[; waiting for a full inbox: ~{~A~^, ~}~]"
+              (mapcar #'conversation-identifier-display (getf result :channels))
+              (mapcar #'conversation-identifier-display (getf result :pending))))))
   ':continue)
 
 (define-application-command application--builtin-history-command

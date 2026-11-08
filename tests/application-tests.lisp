@@ -6189,18 +6189,19 @@
                (set-activity other-newer 20)
                (set-activity current-older 30)
                (set-activity other-older 40)))
+           (world-reconcile-sessions configuration)
            (terminal-ui-start (application-ui application))
            (recording-terminal-reset terminal)
            (setf (scripted-terminal-events terminal)
-                 (list '(:insert "d") :escape))
+                 (list :delete :escape))
            (test-assert (null (application--pick-channel application))
-                        "escape cancels after refusing active deletion")
+                        "escape cancels after refusing to remove the channel shown")
            (test-assert
              (and (conversation-storage-occupied-p
                    (conversation-pathname active))
-                 (search "Cannot delete the active conversation."
+                 (search "switch away to remove it"
                          (recording-terminal-output terminal)))
-            "the resume picker refuses to delete its active conversation")
+            "the switch picker refuses to remove the channel this terminal shows")
            (let* ((failed
                     (conversation-create
                      configuration
@@ -6210,6 +6211,7 @@
                      "conversation-images/cleanup-failure/"
                      (config :data-root configuration))))
              (conversation-append-user-message failed "temporary")
+             (world-reconcile-sessions configuration)
              (platform-set-file-times
               *platform*
               (conversation-log-pathname failed)
@@ -6219,7 +6221,7 @@
               '(:image))
              (recording-terminal-reset terminal)
              (setf (scripted-terminal-events terminal)
-                   (list :history-next '(:insert "d") :submit :escape))
+                   (list :history-next :delete :submit :escape))
              (let ((*conversation-delete-directory-tree-function*
                      (lambda (root &key validate if-does-not-exist)
                        (declare (ignore root validate if-does-not-exist))
@@ -6233,19 +6235,19 @@
                    (probe-file failed-image-root)
                    (search "was deleted, but private artifacts remain"
                            (recording-terminal-output terminal)))
-              "the resume picker reports cleanup failure after committed deletion"))
+              "the switch picker reports a cleanup failure after the history went"))
            (setf (scripted-terminal-events terminal)
                  (list :history-next
-                       '(:insert "d")
+                       :delete
                        :history-next
                        :submit
                        :escape))
            (test-assert (null (application--pick-channel application))
-                        "keeping a conversation returns to the browse picker")
+                        "keeping a channel returns to the browse picker")
            (test-assert
             (conversation-storage-occupied-p
              (conversation-pathname current-older))
-            "the keep confirmation preserves the conversation")
+            "the keep confirmation preserves the channel")
            (let ((image-root
                    (merge-pathnames "conversation-images/current-older/"
                                     (config :data-root configuration)))
@@ -6258,19 +6260,19 @@
                              '(:task))
              (recording-terminal-reset terminal)
              (setf (scripted-terminal-events terminal)
-                   (list :history-next '(:insert "d") :submit :escape))
+                   (list :history-next :delete :submit :escape))
              (test-assert (null (application--pick-channel application))
-                          "deletion returns to browsing until escape")
+                          "removal returns to browsing until escape")
              (test-assert
                (and (not (conversation-storage-occupied-p
                           (conversation-pathname current-older)))
                    (not (probe-file image-root))
-                   (not (probe-file task-root)))
-              "confirmed picker deletion removes the conversation and artifacts")
+                   (not (probe-file task-root))
+                   (null (world-channel-find (world-load configuration) "current-older")))
+              "a confirmed removal deletes the channel, its conversation and its artifacts")
              (test-assert
-               (search "Deleted conversation Older saved conversation."
-                       (recording-terminal-output terminal))
-              "confirmed picker deletion reports the removed conversation"))
+               (search "removed" (recording-terminal-output terminal))
+              "a confirmed removal says the channel went"))
            (terminal-ui-stop (application-ui application)))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let ((application (application-tests--ui-application :columns 60)))

@@ -1418,8 +1418,12 @@ provider generation.
 Provider-generated refreshes are enabled by default. Use =(titles)=, =(titles t)=,
 or =(titles nil)= to inspect or change the durable global preference.
 
-=(switch)= displays titles in its picker. An explicit =(switch "ID")= accepts the
-stable conversation identifier or a part that identifies one channel. The terminal status bar and local session
+=(switch)= picks a channel: the inbox, then each workspace's channels by their
+agents' names, children under their parents. Type to search; the Delete key
+removes the highlighted channel, after a confirmation, with its history and
+the channels nested in it. An explicit =(switch "ID")= accepts the stable
+conversation identifier, a part that identifies one channel, or =@NAME= for
+the channel where that agent resides. The terminal status bar and local session
 status show the title when one is available; otherwise they show the conversation
 ID.
 
@@ -1753,12 +1757,14 @@ a child agent takes the name its parent gave it, as in
 Names are letters, digits, hyphens and underscores, matched without regard to
 case. =(rename "NAME")= renames this channel's agent and
 =(rename "WHO" "NAME")= renames the participant =WHO= names by handle,
-identifier or a part of it, yourself included. A name another participant
+identifier or a part of it, yourself included. =(rename)= picks the agent,
+then leaves =(rename "WHO" "")= in the input for the new name. A name another participant
 has is refused, and so is =parent=, which always means the sender's parent.
 
 A channel has at most one resident agent. =(move "WHO")= moves the agent =WHO=
 names, by handle, identifier or a part of it, into this channel, and
-=(move "WHO" "ID")= into channel =ID=. The move stops the agent where it is
+=(move "WHO" "ID")= into channel =ID=; =(move)= picks the agent, then the
+channel. The move stops the agent where it is
 the way a steer does: the tool call in flight finishes, no new request
 starts, and the prompts it had not started are dropped with a notice in
 the channel it leaves; nothing moves until the turn has stopped. In its new
@@ -1779,7 +1785,7 @@ terminal shows you any channel. A move interrupts a child agent whose task
 is still running for its parent: the task is cancelled, the parent gets that
 result, and the child moves with the context it had. The tasks of the child's
 own children go on. An agent whose channel a pristine or recovery session has open
-is not moved or parked. =(dismiss "WHO")= parks an agent instead, after it
+is not moved or parked. =(dismiss "WHO")=, or =(dismiss)= with a picker, parks an agent instead, after it
 stops the same way: a parked agent resides in no channel and keeps
 its identity, its children and its context, and =(move "WHO")= brings it into
 a channel again. Parking never affects its children. A mention of a parked
@@ -1806,8 +1812,9 @@ accent color.
 
 Messages travel between channels through the same path for people and agents.
 =(tell "ID" "text")= sends a message to channel =ID= as yourself, where =ID=
-may be any part of the identifier that names one channel, as in
-=channel:id/ID= and =(switch "ID")=; the agent
+may be any part of the identifier that names one channel, or =@NAME=, as in
+=channel:id/ID= and =(switch "ID")=. =(tell)= picks the channel and leaves
+=(tell "ID" "")= in the input for the message. The agent
 tools =channel.send=, =channel.subscribe= and =channel.unsubscribe= do the same
 for an agent, a child agent included: it is the resident of its nested
 channel and messages as that participant under its role's ordinary tool
