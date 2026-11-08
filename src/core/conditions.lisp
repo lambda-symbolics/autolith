@@ -92,6 +92,18 @@
     :documentation "A secondary failure while restoring the previous workspace."))
   (:documentation "Changing the active process and tool workspace failed."))
 
+(define-condition application-role-change-error (autolith-error)
+  ((conversation
+    :initarg       :conversation
+    :reader        application-role-change-error-conversation
+    :type          string
+    :documentation "The conversation that would have replaced the current one."))
+  (:documentation "A session cannot swap in a conversation of another child role.
+
+A child agent's role decides its tools, model, and web policy for the whole
+session that serves it, so a child's conversation opens in a channel of its
+own instead of replacing another in place."))
+
 (define-condition application-runtime-replacement-error (autolith-error)
   ((operation
     :initarg       :operation

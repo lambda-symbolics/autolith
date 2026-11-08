@@ -504,7 +504,12 @@ from its world."
     (configuration conversation)
     configuration)
 (defun application--configuration-for-conversation (configuration conversation)
-  "Restore the recorded model/provider unless this launch explicitly selected one."
+  "Apply CONVERSATION's child role, then restore its recorded model/provider unless this launch explicitly selected one.
+
+A child agent's own channel serves it in the role it was spawned with, so it
+keeps that role's tools, web policy, and instructions there."
+  (setf configuration (application--configuration-for-role configuration
+                                                           (conversation-role conversation)))
   (if (config :model-selection-override-p configuration)
       configuration
       (multiple-value-bind (recorded-model registration)
@@ -524,6 +529,21 @@ from its world."
                              :test #'string=))
             (setf overrides (append overrides (list :reasoning-effort effort))))
           (apply #'configuration-copy configuration overrides)))))
+
+(-> application--configuration-for-role (configuration (option string)) configuration)
+(defun application--configuration-for-role (configuration role)
+  "Return CONFIGURATION in child ROLE, or CONFIGURATION itself when ROLE is NIL.
+
+A model this launch selected explicitly stays, as it does for any conversation."
+  (if role
+      (let ((child (task-configuration-for-definition configuration
+                                                      (task-role-definition configuration role))))
+        (if (config :model-selection-override-p configuration)
+            (configuration-copy child
+                                :model            (config :model configuration)
+                                :reasoning-effort (config :reasoning-effort configuration))
+            child))
+      configuration))
 
 (-> application--task-orchestrator
     (application)
@@ -731,6 +751,7 @@ from its world."
 (defun application--create-tool-registry (configuration &key shared-mcp-manager)
   "Create one complete registry and close its base runtimes on later failure.
 
+A child's channel gets only the tools permitted by its configured role.
 When SHARED-MCP-MANAGER serves CONFIGURATION, the registry reuses it rather than
 reconnecting its servers. The second value lists shared runtimes the registry did
 not create: either an empty list or SHARED-MCP-MANAGER alone. The registry's owner
@@ -751,8 +772,10 @@ must neither close nor lose those shared runtimes."
                                           :shared-manager shared-mcp-manager)
              (when (and manager (eq manager shared-mcp-manager))
                (setf retained (list manager)))
-             (setf registry augmented
-                   completed-p t)
+             (setf registry augmented)
+             (when (non-empty-string-p (config :child-role configuration))
+               (task-role-restrict-tool-registry registry configuration :retain retained))
+             (setf completed-p t)
              (values registry retained)))
       (unless completed-p
         (when registry
@@ -1979,7 +2002,10 @@ retiring the old registry."
     application)
 (defun application--install-owned-conversation
     (application conversation &key conversation-lease)
-  "Atomically install owned CONVERSATION with a fresh tool runtime and agent."
+  "Atomically install owned CONVERSATION with a fresh tool runtime and agent.
+
+CONVERSATION must be in the child role the current one is in, or in none."
+  (application--check-same-role application conversation)
   (let* ((configuration
            (application--configuration-for-conversation
             (application-configuration application)
@@ -2121,6 +2147,25 @@ retiring the old registry."
     (application-world-sync application)
     (application-refresh-context-meter application)
     application))
+
+(-> application--check-same-role (application conversation) null)
+(defun application--check-same-role (application conversation)
+  "Refuse CONVERSATION when its child role differs from the one APPLICATION serves."
+  (let ((role    (or (conversation-role conversation) ""))
+        (current (config :child-role (application-configuration application))))
+    (unless (string= role current)
+      (error 'application-role-change-error
+             :conversation (conversation-identifier conversation)
+             :message      (if (string= role "")
+                               (format nil "This session serves a child agent in its role ~A; open ~A in its own channel."
+                                       current
+                                       (conversation-identifier-display
+                                        (conversation-identifier conversation)))
+                               (format nil "~A is a child agent's conversation in role ~A; it opens in its own channel, where it keeps that role."
+                                       (conversation-identifier-display
+                                        (conversation-identifier conversation))
+                                       role)))))
+  nil)
 
 (-> application-install-conversation (application conversation) application)
 (defun application-install-conversation (application conversation)

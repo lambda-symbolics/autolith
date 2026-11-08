@@ -687,6 +687,12 @@ child.roles and for re-signaling when child.spawn requests a blocked role."
         :test #'string-equal
         :key  #'task-agent-definition-name))
 
+(-> task-role-definition (configuration string) task-agent-definition)
+(defun task-role-definition (configuration name)
+  "Return the effective role NAME for CONFIGURATION, or the general task role once NAME no longer exists."
+  (or (task-find-agent-definition (task-discover-agents configuration) name)
+      (task-find-agent-definition (task-bundled-agent-definitions) "task")))
+
 (-> task-find-agent-diagnostic (list string) (option condition))
 (defun task-find-agent-diagnostic (diagnostics name)
   "Return the typed diagnostic reserving NAME, when one exists."

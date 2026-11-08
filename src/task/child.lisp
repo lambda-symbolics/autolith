@@ -47,6 +47,29 @@
                           (task--tool-spec-matches-p spec tool))
                         specs))))))
 
+(-> task--role-tool-p (task-agent-definition tool &key (:spawn-p boolean)) boolean)
+(defun task--role-tool-p (definition tool &key spawn-p)
+  "Return true when a child in DEFINITION's role may use TOOL; SPAWN-P lets it spawn and list roles itself."
+  (or (task--definition-allows-tool-p definition tool)
+      (and spawn-p
+           (string= (tool-namespace tool) "child")
+           (member (tool-name tool) '("spawn" "roles") :test #'string=)
+           t)))
+
+(-> task-role-restrict-tool-registry (tool-registry configuration &key (:retain list)) tool-registry)
+(defun task-role-restrict-tool-registry (registry configuration &key retain)
+  "Leave in REGISTRY only the tools the child role of CONFIGURATION may use, and return it.
+
+This is the registry of a child's own channel, which serves it outside any
+spawned run: it lacks yield, and the role decides whether it spawns.
+Runtimes in RETAIN belong to another registry."
+  (let ((definition (task-role-definition configuration (config :child-role configuration))))
+    (tool-registry-restrict registry
+                            (lambda (tool)
+                              (task--role-tool-p definition tool
+                                                 :spawn-p (task-agent-definition-spawns definition)))
+                            :retain retain)))
+
 (-> task-agent-definition-validate-tools-available
     (task-agent-definition tool-registry)
     null)
@@ -76,18 +99,13 @@
     tool-registry)
 (defun task-child-tool-registry (parent-registry definition &key orchestrator depth)
   "Build a restricted child registry with yield and structurally bounded spawning."
-  (let ((registry (make-instance 'tool-registry)))
+  (let ((registry (make-instance 'tool-registry))
+        (spawn-p  (and (task-agent-definition-spawns definition)
+                       (< depth (task-orchestrator-maximum-depth orchestrator)))))
     (tool-registry-bind-runtime registry 'task-orchestrator orchestrator)
     (dolist (tool (tool-registry-tools parent-registry))
-      (when (task--definition-allows-tool-p definition tool)
+      (when (task--role-tool-p definition tool :spawn-p spawn-p)
         (tool-registry-register registry tool)))
-    (when
-        (and (task-agent-definition-spawns definition)
-             (< depth (task-orchestrator-maximum-depth orchestrator)))
-      (dolist (name '("spawn" "roles"))
-        (let ((task-tool (tool-registry-find parent-registry "child" name)))
-          (when task-tool
-            (tool-registry-register registry task-tool)))))
     (let ((output (task-agent-definition-output definition)))
       (tool-registry-describe-namespace
        registry "yield"

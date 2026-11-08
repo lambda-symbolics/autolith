@@ -363,6 +363,36 @@
             "large page results include a bounded excerpt and context URI"))))))
   nil)
 
+(-> test-tool-registry-restrict () null)
+(defun test-tool-registry-restrict ()
+  "Test restricting a registry closes the runtimes only removed tools used, and no shared one."
+  (let ((registry (make-instance 'tool-registry))
+        (closed   nil))
+    (flet ((register (name identity)
+             (tool-registry-register
+              registry
+              (make-instance 'tool-test-runtime-tool
+                             :namespace        "restrict"
+                             :name             name
+                             :description      "Exercise registry restriction."
+                             :parameters       (tool-object-schema (json-object) nil)
+                             :runtime-identity identity
+                             :close-function   (lambda () (push identity closed))
+                             :resume-function  (lambda () nil)
+                             :detach-function  (lambda () nil)))))
+      (register "kept" ':shared)
+      (register "dropped-sharing" ':shared)
+      (register "dropped-alone" ':alone)
+      (register "dropped-retained" ':retained))
+    (tool-registry-restrict registry
+                            (lambda (tool) (string= (tool-name tool) "kept"))
+                            :retain '(:retained))
+    (test-assert (equal (mapcar #'tool-name (tool-registry-tools registry)) '("kept"))
+                 "only the tools the predicate accepts stay")
+    (test-assert (equal closed '(:alone))
+                 "only a runtime no kept tool uses, and no other registry owns, is closed"))
+  nil)
+
 (-> test-tool-registry () null)
 (defun test-tool-registry ()
   "Test tool schemas, dispatch failure handling, and runtime lifecycle cleanup."
