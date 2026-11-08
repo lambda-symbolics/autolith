@@ -963,51 +963,57 @@ names the caller in refusals."
 
 RESIDENCE names an existing channel. HOME instead describes a new channel the
 participant owns and resides in, as a plist of :id, :workspace, :title and
-:parent, created in the same transaction. Exactly one of the two is given."
-  (values-list
-   (world--transact
-    configuration
-    (lambda (world)
-     (let ((identifier (or id (world--generate-identifier world now))))
-       (when (world-participant-find world identifier)
-         (error 'world-error
-                :message    (format nil "Participant ~A already exists." identifier)
-                :pathname   nil
-                :operation  ':create-participant
-                :identifier identifier))
-       (unless (if residence (null home) home)
-         (error 'world-error
-                :message    "A participant is created with either an existing residence or a new home channel."
-                :pathname   nil
-                :operation  ':create-participant
-                :identifier identifier))
-       (when parent (world--require-participant world parent ':create-participant))
-       (unless (world-settings-p (and settings-p settings))
-         (error 'world-error
-                :message    "Participant settings must be a bounded plist of portable values."
-                :pathname   nil
-                :operation  ':create-participant
-                :identifier identifier))
-       (let* ((channel     (if home
-                               (world--new-channel configuration world
-                                                   :home      home
-                                                   :owner     identifier
-                                                   :now       now
-                                                   :operation ':create-participant)
-                               (world--require-channel world residence ':create-participant)))
-              (participant (make-instance 'participant
-                                          :identifier identifier
-                                          :kind       kind
-                                          :name       (world--validate-name
-                                                       name ':create-participant)
-                                          :parent     parent
-                                          :residence  (channel-identifier channel)
-                                          :settings   (copy-list settings)
-                                          :created-at now
-                                          :updated-at now)))
-         (values (append (when home (list (world--channel-record channel)))
-                         (list (world--participant-record participant)))
-                 (list participant channel))))))))
+:parent, created in the same transaction. Exactly one of the two is given.
+A generated identifier is reserved only until the participant's record is
+written, so reservations never pile up in a long-running process."
+  (let ((generated nil))
+    (unwind-protect
+         (values-list
+          (world--transact
+           configuration
+           (lambda (world)
+            (let ((identifier (or id (setf generated (world--generate-identifier world now)))))
+             (when (world-participant-find world identifier)
+               (error 'world-error
+                      :message    (format nil "Participant ~A already exists." identifier)
+                      :pathname   nil
+                      :operation  ':create-participant
+                      :identifier identifier))
+             (unless (if residence (null home) home)
+               (error 'world-error
+                      :message    "A participant is created with either an existing residence or a new home channel."
+                      :pathname   nil
+                      :operation  ':create-participant
+                      :identifier identifier))
+             (when parent (world--require-participant world parent ':create-participant))
+             (unless (world-settings-p (and settings-p settings))
+               (error 'world-error
+                      :message    "Participant settings must be a bounded plist of portable values."
+                      :pathname   nil
+                      :operation  ':create-participant
+                      :identifier identifier))
+             (let* ((channel     (if home
+                                     (world--new-channel configuration world
+                                                         :home      home
+                                                         :owner     identifier
+                                                         :now       now
+                                                         :operation ':create-participant)
+                                     (world--require-channel world residence ':create-participant)))
+                    (participant (make-instance 'participant
+                                                :identifier identifier
+                                                :kind       kind
+                                                :name       (world--validate-name
+                                                             name ':create-participant)
+                                                :parent     parent
+                                                :residence  (channel-identifier channel)
+                                                :settings   (copy-list settings)
+                                                :created-at now
+                                                :updated-at now)))
+               (values (append (when home (list (world--channel-record channel)))
+                               (list (world--participant-record participant)))
+                       (list participant channel)))))))
+      (when generated
+        (identifier-release generated :namespace "world-participant")))))
 
 (-> world--update-participant
     (configuration string &key (:operation keyword) (:now timestamp) (:change function))

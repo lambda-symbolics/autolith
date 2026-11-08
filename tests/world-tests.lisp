@@ -1130,6 +1130,27 @@
                              (file-namestring pathname))))))
   nil)
 
+(-> test-world-generated-identifier-released () null)
+(defun test-world-generated-identifier-released ()
+  "Test a participant created without an identifier keeps no reservation once written."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human) (world-tests--agents configuration)
+      (let ((participant (world-participant-create
+                          configuration
+                          :kind   ':agent
+                          :name   "extra"
+                          :parent (participant-identifier human)
+                          :home   (list :id        "bextra1"
+                                        :workspace (namestring (config :working-directory configuration))))))
+        (test-assert (and (world-participant-find (world-load configuration)
+                                                  (participant-identifier participant))
+                          (not (identifier-reserved-p (participant-identifier participant)
+                                                      :namespace "world-participant")))
+                     "the written participant's identifier is no longer reserved"))))
+  nil)
+
 (-> test-world-compaction () null)
 (defun test-world-compaction ()
   "Test a grown world log is compacted to the records it needs, and a lean one is left alone."
