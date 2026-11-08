@@ -175,9 +175,9 @@ atomic publication, the source is removed. If publication fails, legacy metadata
 is used offline. After interrupted source removal, cleanup is retried without
 reimporting metadata. At 0.68.0 remove this migration, the preferences migration,
 legacy POSIX root compatibility, configuration-local choice cache and constructor
-bypass, and old conversation payload cleanup helpers; then remove
-=test-legacy-xdg-migration-removal=. The test fails for that version and every
-later version.
+bypass, old conversation payload cleanup helpers, and channel deliveries read
+without a =:sender-kind=; then remove =test-legacy-xdg-migration-removal=.
+The test fails for that version and every later version.
 
 | State         | Components                                               |
 |---------------+----------------------------------------------------------|
