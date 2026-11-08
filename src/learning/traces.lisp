@@ -31,8 +31,11 @@
 (defparameter *action-trace-cache-weight-limit* 4194304
   "The most characters of trace payload the cache keeps across conversations.")
 
-(defvar *action-trace-cache* (make-hash-table :test #'equal :synchronized t)
-  "The ACTION-TRACE-HISTORY of each read conversation by identity namestring.")
+(defvar *action-trace-cache* nil
+  "The weighted LRU cache of histories by conversation identity namestring.")
+
+(defvar *action-trace-cache-lock* (make-lock "action trace cache")
+  "Owner lock for cache reads, continuation, admission and complete learning passes.")
 
 (defclass action-trace ()
   ((conversation
@@ -141,12 +144,7 @@ the only results later calls can take values from.")
     :documentation "(IDENTIFIER VERSION) to its newest measured finished runs, newest first.
 
 Each run is a plist of :PROCEDURE, :REQUESTS and :TOKENS, at most
-*ACTION-TRACE-LIMIT* per key.")
-   (used-at
-    :initform      (get-internal-real-time)
-    :accessor      action-trace-history-used-at
-    :type          integer
-    :documentation "When a query last used this history, for cache eviction."))
+*ACTION-TRACE-LIMIT* per key."))
   (:documentation "The bounded trace state of one conversation's log."))
 
 
@@ -271,23 +269,24 @@ At most *ACTION-TRACE-LIMIT* turns are returned."
   "Call FUNCTION with the history of each recent conversation of CONFIGURATION's workspace.
 
 Conversations are visited newest first, at most *ACTION-TRACE-CONVERSATION-LIMIT*
-of them, until FUNCTION returns true. The cache is then trimmed to its budget."
-  (let ((workspace (knowledge--workspace configuration))
-        (visited   nil))
-    (loop for pathname in (conversation-list configuration)
-          repeat *action-trace-conversation-limit*
-          do (let ((history (handler-case (action-trace--read pathname)
-                              (error ()
-                                nil))))
-               (push (namestring (conversation-storage-identity-pathname pathname)) visited)
-               (when (and history
-                          (not (and workspace
-                                    (action-trace-history-directory history)
-                                    (not (equal (action-trace-history-directory history)
-                                                workspace))))
-                          (funcall function history))
-                 (return))))
-    (action-trace--trim-cache visited))
+of them, until FUNCTION returns true. Each admission enforces the cache budget.
+The owner lock covers the pass, so visited histories are newer than unvisited
+ones even when another query runs concurrently."
+  (with-lock-held (*action-trace-cache-lock*)
+    (action-trace--cache-current)
+    (let ((workspace (knowledge--workspace configuration)))
+      (loop for pathname in (conversation-list configuration)
+            repeat *action-trace-conversation-limit*
+            do (let ((history (handler-case (action-trace--read-locked pathname)
+                                (error ()
+                                  nil))))
+                 (when (and history
+                            (not (and workspace
+                                      (action-trace-history-directory history)
+                                      (not (equal (action-trace-history-directory history)
+                                                  workspace))))
+                            (funcall function history))
+                   (return))))))
   nil)
 
 (-> action-trace--history-traces (action-trace-history) list)
@@ -314,32 +313,37 @@ of them, until FUNCTION returns true. The cache is then trimmed to its budget."
            sum (loop for run in runs
                      sum (+ 256 (action-trace--procedure-weight (getf run :procedure)))))))
 
-(-> action-trace--trim-cache (list) null)
-(defun action-trace--trim-cache (visited)
-  "Evict cached histories beyond the conversation and weight budgets, least recently used first.
+(-> action-trace--cache-current () structlisp:lru-cache)
+(defun action-trace--cache-current ()
+  "Return the cache with the current budgets, while its owner lock is held.
+Rebuild in recency order only when policy changes; normal reads and admissions
+use the library's maintained order and weights."
+  (let ((count-limit (* 2 *action-trace-conversation-limit*)))
+    (unless (and (typep *action-trace-cache* 'structlisp:lru-cache)
+                 (= count-limit (structlisp:lru-cache-maximum-count *action-trace-cache*))
+                 (= *action-trace-cache-weight-limit*
+                    (structlisp:lru-cache-maximum-weight *action-trace-cache*)))
+      (let ((replacement
+              (structlisp:make-lru-cache
+               :test 'equal :maximum-count count-limit
+               :maximum-weight  *action-trace-cache-weight-limit*
+               :weight-function (lambda (key history)
+                                  (declare (ignore key))
+                                  (action-trace--history-weight history)))))
+        (when (typep *action-trace-cache* 'structlisp:lru-cache)
+          (structlisp:lru-cache-map
+           (lambda (key history) (structlisp:lru-cache-put replacement key history))
+           *action-trace-cache*))
+        (setf *action-trace-cache* replacement))))
+  *action-trace-cache*)
 
-Histories named in VISITED, the conversations the latest query read, go last."
-  (let ((entries (loop for name being the hash-keys of *action-trace-cache*
-                         using (hash-value history)
-                       collect (list name history (action-trace--history-weight history)))))
-    (setf entries
-          (sort entries
-                (lambda (left right)
-                  (let ((left-visited-p  (member (first left) visited :test #'string=))
-                        (right-visited-p (member (first right) visited :test #'string=)))
-                    (if (eq (not left-visited-p) (not right-visited-p))
-                        (< (action-trace-history-used-at (second left))
-                           (action-trace-history-used-at (second right)))
-                        (not left-visited-p))))))
-    (let ((count  (length entries))
-          (weight (reduce #'+ entries :key #'third)))
-      (loop for (name nil entry-weight) in entries
-            while (or (> count (* 2 *action-trace-conversation-limit*))
-                      (> weight *action-trace-cache-weight-limit*))
-            do (remhash name *action-trace-cache*)
-               (decf count)
-               (decf weight entry-weight))))
-  nil)
+(-> action-trace--cache-statistics () (values (integer 0) (integer 0) &optional))
+(defun action-trace--cache-statistics ()
+  "Return the cache's maintained conversation count and payload weight."
+  (with-lock-held (*action-trace-cache-lock*)
+    (let ((cache (action-trace--cache-current)))
+      (values (structlisp:lru-cache-count cache)
+              (structlisp:lru-cache-total-weight cache)))))
 
 (-> action-trace--segment-states (pathname) list)
 (defun action-trace--segment-states (identity)
@@ -370,6 +374,12 @@ same file, no shorter than when it was read."
 
 (-> action-trace--read (pathname) action-trace-history)
 (defun action-trace--read (pathname)
+  "Return PATHNAME's bounded history under the cache owner lock."
+  (with-lock-held (*action-trace-cache-lock*)
+    (action-trace--read-locked pathname)))
+
+(-> action-trace--read-locked (pathname) action-trace-history)
+(defun action-trace--read-locked (pathname)
   "Return the bounded trace history of the conversation at PATHNAME.
 
 Only records appended since the previous read are visited: archived segments
@@ -379,11 +389,10 @@ while it streams."
   (let* ((identity (conversation-storage-identity-pathname pathname))
          (name     (namestring identity))
          (states   (action-trace--segment-states identity))
-         (cached   (gethash name *action-trace-cache*)))
+         (cache    (action-trace--cache-current))
+         (cached   (structlisp:lru-cache-get cache name)))
     (if (and cached (equal (action-trace-history-segments cached) states))
-        (progn
-          (setf (action-trace-history-used-at cached) (get-internal-real-time))
-          cached)
+        cached
         (let* ((resume-p   (and cached
                                 (action-trace--resumable-p
                                  (action-trace-history-segments cached) states)))
@@ -405,7 +414,7 @@ while it streams."
                                             (and origin (namestring origin)))))
                                 (action-trace--reduce history record identifier)))
                           :start-position start)))
-          (setf (gethash name *action-trace-cache*) history)
+          (structlisp:lru-cache-put cache name history)
           history))))
 
 (-> action-trace--continue (action-trace-history list) action-trace-history)

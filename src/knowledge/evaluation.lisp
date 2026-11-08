@@ -764,56 +764,56 @@ unknown rather than impossible."
 
 ;;;; -- Current Views --
 
-(defvar *knowledge-view-cache* (make-hash-table :test #'equal :synchronized t)
-  "The latest view per (knowledge log, workspace), with the state it was evaluated from.")
-
 (defparameter *knowledge-view-cache-limit* 8
   "Maximum cached views. Each isolated task worktree is its own workspace, so
 without a limit every child would leave a whole view and its base behind.")
 
-(-> knowledge--view-cache-make-room (t) null)
-(defun knowledge--view-cache-make-room (key)
-  "Evict the least recently evaluated views so KEY's entry fits within the limit."
-  (loop while (and (not (nth-value 1 (gethash key *knowledge-view-cache*)))
-                   (>= (hash-table-count *knowledge-view-cache*) *knowledge-view-cache-limit*)
-                   (plusp (hash-table-count *knowledge-view-cache*)))
-        do (let ((oldest    nil)
-                 (oldest-at nil))
-             (maphash (lambda (candidate entry)
-                        (when (or (null oldest-at) (< (getf entry :evaluated-at) oldest-at))
-                          (setf oldest    candidate
-                                oldest-at (getf entry :evaluated-at))))
-                      *knowledge-view-cache*)
-             (remhash oldest *knowledge-view-cache*)))
-  nil)
+(defvar *knowledge-view-cache*
+  (structlisp:make-fifo-cache :test 'equal :maximum-count *knowledge-view-cache-limit*)
+  "The latest view per (knowledge log, workspace), in evaluation order.")
+
+(defvar *knowledge-view-cache-lock* (make-lock "knowledge view cache")
+  "Owner lock for view lookup, validation, evaluation and bounded admission.")
+
+(-> knowledge--view-cache-current () structlisp:fifo-cache)
+(defun knowledge--view-cache-current ()
+  "Return the cache with the current policy, while its owner lock is held."
+  (unless (typep *knowledge-view-cache* 'structlisp:fifo-cache)
+    (setf *knowledge-view-cache*
+          (structlisp:make-fifo-cache :test 'equal :maximum-count *knowledge-view-cache-limit*)))
+  (unless (= (structlisp:fifo-cache-maximum-count *knowledge-view-cache*)
+             *knowledge-view-cache-limit*)
+    (let ((replacement (structlisp:make-fifo-cache
+                        :test 'equal :maximum-count *knowledge-view-cache-limit*)))
+      (structlisp:fifo-cache-map
+       (lambda (key entry) (structlisp:fifo-cache-put replacement key entry))
+       *knowledge-view-cache*)
+      (setf *knowledge-view-cache* replacement)))
+  *knowledge-view-cache*)
 
 (defparameter *knowledge-unix-epoch* (encode-universal-time 0 0 0 1 1 1970 0)
   "The universal time of the Unix epoch, which file modification times count from.")
 
-(-> knowledge--file-fingerprint (pathname) t)
-(defun knowledge--file-fingerprint (pathname)
-  "Return the digest of PATHNAME's text, or why it could not be read."
-  (multiple-value-bind (text failure) (memory-source-read-file pathname)
-    (if text (memory-source-text-digest text) failure)))
+(-> knowledge--file-fingerprint (pathname source-observation-context) t)
+(defun knowledge--file-fingerprint (pathname sources)
+  "Return PATHNAME's observed digest or failure from the shared pass SOURCES."
+  (let ((entry (source-observation-context-file sources pathname)))
+    (or (source-observation-digest entry) (source-observation-failure entry))))
 
-(-> knowledge--file-unchanged-p (list timestamp) boolean)
-(defun knowledge--file-unchanged-p (file evaluated-at)
-  "Return true when cached FILE, (PATHNAME STATUS-KEY FINGERPRINT), still holds what was read.
+(-> knowledge--file-unchanged-p (list source-observation-context) boolean)
+(defun knowledge--file-unchanged-p (file sources)
+  "Return true when cached FILE's fingerprint matches this pass's observation.
 
-File times have one-second resolution, so a file modified in the second the
-view was evaluated, or later, has its content compared instead of its status."
+Use the same observation for cache validation and any later evidence or prose
+assessment, including files modified within a filesystem timestamp tick."
   (destructuring-bind (pathname status fingerprint) file
-    (let ((current (knowledge-file-status-key pathname)))
-      (and (if (and (equal current status)
-                    (consp current)
-                    (< (+ (third current) *knowledge-unix-epoch*) evaluated-at))
-               t
-               (equal (knowledge--file-fingerprint pathname) fingerprint))
-           t))))
+    (declare (ignore status))
+    (and (equal (knowledge--file-fingerprint pathname sources) fingerprint) t)))
 
 (-> knowledge--view-cache-valid-p
-    (list knowledge-base &key (:memory-key t) (:now timestamp)) boolean)
-(defun knowledge--view-cache-valid-p (entry base &key memory-key now)
+    (list knowledge-base &key (:memory-key t) (:now timestamp)
+                             (:sources source-observation-context)) boolean)
+(defun knowledge--view-cache-valid-p (entry base &key memory-key now sources)
   "Return true when cached view ENTRY still describes BASE, the memories, and the files at NOW."
   (let ((view (getf entry :view)))
     (and view
@@ -824,43 +824,51 @@ view was evaluated, or later, has its content compared instead of its status."
          (>= now (knowledge-view-now view))
          (let ((boundary (knowledge-view-boundary view)))
            (or (null boundary) (< now boundary)))
-         (every (lambda (file) (knowledge--file-unchanged-p file (getf entry :evaluated-at)))
+         (every (lambda (file) (knowledge--file-unchanged-p file sources))
                 (getf entry :files))
          t)))
 
-(-> knowledge-view-current (configuration &key (:workspace (option string))) knowledge-view)
-(defun knowledge-view-current (configuration &key workspace)
+(-> knowledge-view-current
+    (configuration &key (:workspace (option string)) (:sources source-observation-context))
+    knowledge-view)
+(defun knowledge-view-current (configuration &key workspace
+                                                 (sources (source-observation-context-create)))
   "Return CONFIGURATION's knowledge from WORKSPACE now, reusing an evaluation still valid.
 
 A view is reused while the knowledge log, the memory log, and every file it
 read are unchanged and no support or evidence has started or stopped being
 valid since. Recall and listings in a session therefore evaluate once per
 change, not once per request. Views are shared and must not be modified."
-  (let* ((workspace  (or workspace (knowledge--workspace configuration)))
-         (base       (knowledge-base-read configuration))
-         (now        (knowledge-now))
-         (memory-key (knowledge-file-status-key (configuration-memory-path configuration)))
-         (key        (list (namestring (configuration-knowledge-path configuration)) workspace))
-         (cached     (gethash key *knowledge-view-cache*)))
-    (if (and cached (knowledge--view-cache-valid-p cached base
+  (with-lock-held (*knowledge-view-cache-lock*)
+    (let* ((workspace  (or workspace (knowledge--workspace configuration)))
+           (base       (knowledge-base-read configuration))
+           (now        (knowledge-now))
+           (memory-key (knowledge-file-status-key (configuration-memory-path configuration)))
+           (key        (list (namestring (configuration-knowledge-path configuration)) workspace))
+           (cache      (knowledge--view-cache-current))
+           (cached     (structlisp:fifo-cache-get cache key)))
+      (if (and cached (knowledge--view-cache-valid-p cached base
                                                    :memory-key memory-key
-                                                   :now        now))
-        (getf cached :view)
-        (let* ((evaluated-at (get-universal-time))
-               (check        (evidence-check-create
-                              :now      now
-                              :memories (memory-list configuration :visibility ':all)))
-               (view         (knowledge-evaluate base :workspace workspace :check check)))
-          (knowledge--view-cache-make-room key)
-          (setf (gethash key *knowledge-view-cache*)
-                (list :view         view
-                      :memory-key   memory-key
-                      :evaluated-at evaluated-at
-                      :files        (loop for pathname being the hash-keys of (evidence-check-files check)
-                                            using (hash-value entry)
-                                          collect (list (pathname pathname)
-                                                        (third entry)
-                                                        (if (first entry)
-                                                            (memory-source-text-digest (first entry))
-                                                            (second entry))))))
-          view))))
+                                                   :now        now
+                                                   :sources    sources))
+          (getf cached :view)
+          (let* ((evaluated-at (get-universal-time))
+                 (check        (evidence-check-create
+                                :now      now
+                                :memories (memory-list configuration :visibility ':all)
+                                :sources  sources))
+                 (view         (knowledge-evaluate base :workspace workspace :check check)))
+            (unless (source-observation-context-exhausted-p sources)
+              (structlisp:fifo-cache-move-to-back cache key)
+              (structlisp:fifo-cache-put
+               cache key (list :view         view
+                               :memory-key   memory-key
+                               :evaluated-at evaluated-at
+                               :files        (loop for pathname being the hash-keys
+                                                   of (source-observation-context-files sources)
+                                                   using (hash-value entry)
+                                                   collect (list (pathname pathname)
+                                                                 (source-observation-status entry)
+                                                                 (or (source-observation-digest entry)
+                                                                     (source-observation-failure entry)))))))
+            view)))))

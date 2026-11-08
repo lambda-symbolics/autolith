@@ -224,9 +224,104 @@ beyond the checked size limit, :NOT-TEXT for non-UTF-8 content, and
     (error ()
       (values nil ':unreadable))))
 
-(-> memory-source-file-holds (list (option string) (option keyword))
+
+;;;; -- Per-pass Source Observations --
+
+(defparameter *source-observation-file-limit* 256
+  "Maximum distinct file observations retained by one assessment pass.")
+
+(defparameter *source-observation-character-limit* (* 16 1024 1024)
+  "Maximum file-text characters retained by one assessment pass.")
+
+(defclass source-observation ()
+  ((text :initarg :text :reader source-observation-text :type (option string)
+         :documentation "The file text, or NIL after a failed or refused read.")
+   (failure :initarg :failure :reader source-observation-failure :type (option keyword)
+            :documentation "The read failure, including :OBSERVATION-LIMIT.")
+   (status :initarg :status :reader source-observation-status
+           :documentation "Filesystem identity and times captured before reading.")
+   (digest :initarg :digest :reader source-observation-digest :type (option string)
+           :documentation "The digest computed once from the retained text."))
+  (:documentation "An immutable file observation shared by prose and structured evidence."))
+
+(defclass source-observation-context ()
+  ((files :initform      (make-hash-table :test #'equal)
+          :reader source-observation-context-files :type hash-table
+          :documentation "Admitted observations by absolute pathname namestring.")
+   (file-limit :initarg :file-limit :type (integer 0 *)
+               :reader        source-observation-context-file-limit
+               :documentation "Maximum admitted observations, including failed reads.")
+   (character-limit :initarg :character-limit :type (integer 0 *)
+                    :reader        source-observation-context-character-limit
+                    :documentation "Maximum retained file-text characters.")
+   (characters :initform 0 :accessor source-observation-context-characters
+               :type (integer 0 *) :documentation "Characters retained so far.")
+   (exhausted-p :initform nil :accessor source-observation-context-exhausted-p
+                :type boolean :documentation "Whether a source exceeded either bound."))
+  (:documentation "One bounded assessment pass; never evicts or rereads an admitted file.
+
+Ownership belongs to the caller, never to a global cache. Use a fresh context
+for each pass. A saturated context returns unverified limit observations."))
+
+(-> source-observation-context-create
+    (&key (:file-limit (integer 0 *)) (:character-limit (integer 0 *)))
+    source-observation-context)
+(defun source-observation-context-create
+    (&key (file-limit *source-observation-file-limit*)
+          (character-limit *source-observation-character-limit*))
+  "Return an empty pass bounded by FILE-LIMIT and CHARACTER-LIMIT."
+  (make-instance 'source-observation-context
+                 :file-limit file-limit :character-limit character-limit))
+
+(-> source-observation-file-status (pathname) t)
+(defun source-observation-file-status (pathname)
+  "Return PATHNAME's identity, size and timestamps, or :MISSING."
+  (let ((status (handler-case
+                    (platform-path-status *platform* pathname :follow-links-p t)
+                  (platform-error ()
+                    nil))))
+    (if status
+        (list (platform-file-status-identity status)
+              (platform-file-status-size status)
+              (platform-file-status-modification-time status)
+              (platform-file-status-change-time status))
+        ':missing)))
+
+(-> source-observation-context-file (source-observation-context pathname) source-observation)
+(defun source-observation-context-file (context pathname)
+  "Return the first observation of PATHNAME in CONTEXT, including failures.
+
+Capture status before reading. Refuse new reads after either bound is reached;
+when a read exceeds the remaining text budget, retain only its limit failure."
+  (let* ((key   (namestring pathname))
+         (files (source-observation-context-files context)))
+    (or (gethash key files)
+        (if (or (>= (hash-table-count files) (source-observation-context-file-limit context))
+                (>= (source-observation-context-characters context)
+                    (source-observation-context-character-limit context)))
+            (progn
+              (setf (source-observation-context-exhausted-p context) t)
+              (make-instance 'source-observation :text nil :failure ':observation-limit
+                             :status nil :digest nil))
+            (let ((status (source-observation-file-status pathname)))
+              (multiple-value-bind (text failure) (memory-source-read-file pathname)
+                (when (and text
+                           (> (+ (length text) (source-observation-context-characters context))
+                              (source-observation-context-character-limit context)))
+                  (setf text nil
+                        failure ':observation-limit
+                        (source-observation-context-exhausted-p context) t))
+                (when text
+                  (incf (source-observation-context-characters context) (length text)))
+                (setf (gethash key files)
+                      (make-instance 'source-observation :text text :failure failure
+                                     :status status
+                                     :digest (and text (memory-source-text-digest text))))))))))
+
+(-> memory-source-file-holds
+    (list (option string) (option keyword) &key (:digest (option string)))
     (values keyword (option keyword)))
-(defun memory-source-file-holds (source text failure)
+(defun memory-source-file-holds (source text failure &key digest)
   "Return whether file SOURCE holds for file TEXT read with FAILURE.
 
 The first value is :HOLDS, :FAILED, or :UNVERIFIED; the second names the
@@ -236,8 +331,8 @@ reason for any other outcome: :CHANGED, :MISSING, or the read FAILURE."
      (let ((quote (getf (rest source) :quote)))
        (if (if quote
                (memory-source-quote-found-p quote text)
-               (string= (memory-source-text-digest text)
-                        (getf (rest source) :digest)))
+               (string= (or digest (memory-source-text-digest text))
+                       (getf (rest source) :digest)))
            (values ':holds nil)
            (values ':failed ':changed))))
     ((eq failure ':missing)

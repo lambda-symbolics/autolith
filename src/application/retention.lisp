@@ -22,21 +22,21 @@ supports kept only in the log, all NIL when the knowledge log cannot be read; an
          (base     (handler-case (knowledge-base-read (application-configuration application))
                      (knowledge-error ()
                        nil))))
-    (list :transcript-chunks       (and viewport (clinedi:transcript-viewport-chunk-count viewport))
+    (multiple-value-bind (trace-count trace-weight) (action-trace--cache-statistics)
+      (list :transcript-chunks     (and viewport (clinedi:transcript-viewport-chunk-count viewport))
           :transcript-characters   (and viewport
                                         (clinedi:transcript-viewport-resident-characters viewport))
           :transcript-evicted      (and viewport (clinedi:transcript-viewport-evicted-count viewport))
           :finalized-identifiers   (if ui (hash-table-count (terminal-ui-finalized-identifiers ui)) 0)
           :input-recall-entries    (length history)
           :input-recall-characters (reduce #'+ history :key #'length)
-          :trace-conversations     (hash-table-count *action-trace-cache*)
-          :trace-characters        (loop for trace-history being the hash-values of *action-trace-cache*
-                                         sum (action-trace--history-weight trace-history))
+          :trace-conversations     trace-count
+          :trace-characters        trace-weight
           :knowledge-claims        (and base (hash-table-count (knowledge-base-claims base)))
           :knowledge-supports      (and base (hash-table-count (knowledge-base-supports base)))
           :knowledge-evidence      (and base (hash-table-count (knowledge-base-evidence base)))
           :knowledge-archived      (and base (knowledge-base-archived-supports base))
-          :heap-bytes              (sb-kernel:dynamic-usage))))
+          :heap-bytes              (sb-kernel:dynamic-usage)))))
 
 (-> application--retention-description (application) string)
 (defun application--retention-description (application)

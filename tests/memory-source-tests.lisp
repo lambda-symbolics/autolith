@@ -264,9 +264,112 @@
                                    :quote quote
                                    :time  (get-universal-time)))))
 
+(-> memory-source-tests--shared-observations () null)
+(defun memory-source-tests--shared-observations ()
+  "Exercise shared reads, pass lifetime, failures, bounds and distinct evidence policies."
+  (with-test-configuration (base root)
+    (multiple-value-bind (configuration workspace)
+        (memory-source-tests--workspace base root)
+      (let* ((path     (memory-source-tests--write
+                        (merge-pathnames "shared.txt" workspace) "The server listens on port 8080."))
+             (source   (memory-source-observe-file path :quote "listens on port 8080" :time 1))
+             (memory   (memory-remember configuration :title "Port" :content "Port 8080."
+                                                     :sources (list source)))
+             (evidence (knowledge-observe-file path :quote    "listens on port 8080"
+                                                   :workspace (namestring workspace)))
+             (reader   (symbol-function 'memory-source-read-file))
+             (reads    0))
+        (knowledge-define-schema configuration
+                                 (knowledge-make-schema
+                                  :predicate "server.port"
+                                  :arguments '((:name "port" :type :string))))
+        (knowledge-assert configuration '("server.port" "8080")
+                          :evidence evidence :basis ':observation)
+        (test-call-with-function-replacements
+         (list (list 'memory-source-read-file
+                     (lambda (pathname)
+                       (incf reads)
+                       (funcall reader pathname))))
+         (lambda ()
+           (dotimes (pass 2)
+             (setf reads 0)
+             (let ((assessor (memory-assessor-create configuration)))
+               (when (zerop pass)
+                 (memory-source-tests--write path "Changed surrounding prose; listens on port 8080."))
+               (test-assert (eq (memory-assessment-status (memory-assess assessor memory)) ':current)
+                            "prose uses the pass observation after a file changes")
+               (test-assert (= reads 1) "cold and warm view checks share one read with prose")
+               (test-assert (if (zerop pass)
+                                (knowledge-view-holds (memory-assessor-view assessor)
+                                                      '("server.port" "8080"))
+                                (null (knowledge-view-holds (memory-assessor-view assessor)
+                                                           '("server.port" "8080"))))
+                            "a new pass sees edits: structured digest rejects surviving prose quotes")))
+           (setf reads 0)
+           (let ((assessor (memory-assessor-create configuration)))
+             (memory-assess assessor memory)
+             (test-assert (= reads 1) "an unchanged warm view shares its validation read"))))
+        (dolist (failure '(:missing :unreadable :too-large :not-text))
+          (let* ((sources  (source-observation-context-create))
+                 (check    (evidence-check-create :sources sources))
+                 (assessor (make-instance 'memory-assessor :memories (make-hash-table :test #'equal)
+                                                           :view     (memory-assessor-view
+                                                                      (memory-assessor-create configuration))
+                                                           :sources  sources)))
+            (setf reads 0)
+            (test-call-with-function-replacements
+             (list (list 'memory-source-read-file
+                         (lambda (pathname)
+                           (declare (ignore pathname))
+                           (incf reads)
+                           (values nil failure))))
+             (lambda ()
+               (test-assert (eq (evidence-check-evidence check (rest evidence))
+                                (if (eq failure ':missing) ':missing ':unverified))
+                            "structured evidence preserves the shared failure outcome")
+               (test-assert (eq (memory-assessment-status (memory-assess assessor memory))
+                                (if (eq failure ':missing) ':stale ':unverified))
+                            "prose preserves the shared failure outcome")
+               (test-assert (= reads 1) "failed reads are shared between structured and prose checks")))))
+        (let ((sources (source-observation-context-create :file-limit 1 :character-limit 100)))
+          (let ((first (source-observation-context-file sources path)))
+            (memory-source-tests--write path "Different content in a later pass.")
+            (test-assert (eq first (source-observation-context-file sources path))
+                         "an admitted observation is never replaced in its pass")
+            (test-assert (not (equal (source-observation-digest first)
+                                    (source-observation-digest
+                                     (source-observation-context-file
+                                      (source-observation-context-create) path))))
+                         "fresh contexts do not reuse earlier observations"))
+          (setf reads 0)
+          (test-call-with-function-replacements
+           (list (list 'memory-source-read-file
+                       (lambda (pathname)
+                         (incf reads)
+                         (funcall reader pathname))))
+           (lambda ()
+             (loop repeat 3
+                   do (test-assert
+                       (eq (source-observation-failure
+                            (source-observation-context-file sources (merge-pathnames "other.txt" workspace)))
+                           ':observation-limit)
+                       "a full pass refuses new sources without evicting an earlier observation"))
+             (test-assert (zerop reads) "count saturation never rereads a refused source")
+             (test-assert (= (hash-table-count (source-observation-context-files sources)) 1)
+                          "count saturation bounds retained entries"))))
+        (let* ((sources (source-observation-context-create :character-limit 2))
+               (first   (source-observation-context-file sources path)))
+          (test-assert (and (eq (source-observation-failure first) ':observation-limit)
+                            (null (source-observation-text first))
+                            (zerop (source-observation-context-characters sources))
+                            (eq first (source-observation-context-file sources path)))
+                       "text saturation retains a stable failure without retaining oversized text")))))
+  nil)
+
 (-> test-memory-source-status () null)
 (defun test-memory-source-status ()
   "Test that cited files keep, lose, or cannot confirm their memories' support."
+  (memory-source-tests--shared-observations)
   (with-test-configuration (base root)
     (multiple-value-bind (configuration workspace)
         (memory-source-tests--workspace base root)

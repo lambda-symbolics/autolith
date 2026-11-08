@@ -48,11 +48,11 @@
     :reader        memory-assessor-memories
     :type          hash-table
     :documentation "Every active memory by identifier, for premise lookup.")
-   (files
-    :initform      (make-hash-table :test #'equal)
-    :reader        memory-assessor-files
-    :type          hash-table
-    :documentation "Each cited file's (TEXT . FAILURE), read at most once per pass.")
+   (sources
+    :initarg       :sources
+    :reader        memory-assessor-sources
+    :type          source-observation-context
+    :documentation "The bounded observations shared with structured evidence in this pass.")
    (assessments
     :initform      (make-hash-table :test #'equal)
     :reader        memory-assessor-assessments
@@ -81,10 +81,11 @@ The pass evaluates CONFIGURATION's structured knowledge from its workspace at
 the same time, so memories derived from claims follow those claims."
   (let* ((memories (make-hash-table :test #'equal))
          (all      (memory-list configuration :visibility ':all))
-         (view     (knowledge-view-current configuration)))
+         (sources  (source-observation-context-create))
+         (view     (knowledge-view-current configuration :sources sources)))
     (dolist (memory all)
       (setf (gethash (memory-identifier memory) memories) memory))
-    (make-instance 'memory-assessor :memories memories :view view)))
+    (make-instance 'memory-assessor :memories memories :view view :sources sources)))
 
 (-> memory-assessor-find (memory-assessor string) (option memory))
 (defun memory-assessor-find (assessor identifier)
@@ -101,27 +102,18 @@ the same time, so memories derived from claims follow those claims."
                 collect memory)
         #'> :key #'memory-updated-at))
 
-(-> memory-assessor--file (memory-assessor pathname) (values (option string) (option keyword)))
-(defun memory-assessor--file (assessor pathname)
-  "Return PATHNAME's text and read failure, reading it at most once per pass."
-  (let* ((key   (namestring pathname))
-         (entry (or (gethash key (memory-assessor-files assessor))
-                    (setf (gethash key (memory-assessor-files assessor))
-                          (multiple-value-call #'cons
-                            (memory-source-read-file pathname))))))
-    (values (first entry) (rest entry))))
-
 (-> memory-assessor--source-outcome (memory-assessor memory list) list)
 (defun memory-assessor--source-outcome (assessor memory source)
   "Return the (:source :outcome :reason) plist for one SOURCE of MEMORY."
   (if (eq (first source) :file)
-      (let ((path (memory-source-file-display source)))
+      (let* ((path  (memory-source-file-display source))
+             (entry (source-observation-context-file
+                     (memory-assessor-sources assessor)
+                     (memory-source-file-pathname source (memory-workspace memory)))))
         (multiple-value-bind (outcome why)
-            (multiple-value-call #'memory-source-file-holds
-              source
-              (memory-assessor--file
-               assessor
-               (memory-source-file-pathname source (memory-workspace memory))))
+            (memory-source-file-holds source (source-observation-text entry)
+                                      (source-observation-failure entry)
+                                      :digest (source-observation-digest entry))
           (list :source  source
                 :outcome outcome
                 :reason  (case why
