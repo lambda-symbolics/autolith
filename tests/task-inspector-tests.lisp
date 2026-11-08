@@ -93,7 +93,7 @@
 
 (-> test-task-inspector-dispatch () null)
 (defun test-task-inspector-dispatch ()
-  "Steer and cancel through ordinary owned job tools, preserving authorization."
+  "Inspect and cancel through ordinary owned job tools, preserving authorization."
   (task-continuity-tests--fixture
    (lambda (parent orchestrator context job path)
       (declare (ignore path))
@@ -131,11 +131,7 @@
           "Native records print base strings as plain strings"))
        (test-assert (= 1 (length (task-inspector-rows context orchestrator)))
                     "A live job and durable record merge into one inspector row")
-       (let* ((application (mission-test--application (agent-configuration parent)))
-              (message     "Use the corrected assignment, preserving these spaces.")
-              (invocation  (application-command-invocation-parse
-                            (format nil "/tasks send ~A ~A"
-                                    (session-job-identifier job) message))))
+       (let ((application (mission-test--application (agent-configuration parent))))
          (unwind-protect
               (progn
                 (setf (application-agent application) parent
@@ -144,10 +140,8 @@
                 (test-assert (eq ':ok (application-lisp-evaluation-status
                                        (application-lisp-evaluate "(tasks)" :application application)))
                              "native tasks list is callable from the Lisp prompt")
-                (let ((id      (session-job-identifier job))
-                      (literal "Keep Case, \"quotes\",  doubled spaces and an unmatched \""))
-                  (dolist (arguments (list (list "send" id :message literal)
-                                          (list ':send id :message nil)
+                (let ((id (session-job-identifier job)))
+                  (dolist (arguments (list (list ':send id :message "Steer through the channel.")
                                           (list ':transcript id :offset "2" :limit 3)
                                           (list ':transcript id :offset 0 :limit 0)
                                           (list ':revive id :authorize "authorize")
@@ -157,18 +151,8 @@
                          (progn (apply #'application-operation-call application "tasks" arguments) nil)
                        (task-continuity-error () t))
                      "invalid native task values receive typed rejections"))
-                  (test-assert (zerop (task-job-steering-pending-count job))
-                               "rejected task calls do not enqueue steering")
                   (test-assert (not (job-cancellation-requested-p job))
-                               "rejected task calls do not cancel the job")
-                  (application-operation-call application "tasks" ':send id :message literal)
-                  (test-assert (= 1 (task-job-steering-pending-count job))
-                               "native send enters the ordinary child queue once")
-                  (let ((entry (first (task-job-take-steering job))))
-                    (test-assert
-                     (search literal (user-message-input-text (agent-steering-input-content entry)))
-                     "native task message retains quotes, case and whitespace")
-                    (task-job-acknowledge-steering job (agent-steering-input-identifier entry))))
+                               "rejected task calls do not cancel the job"))
                 (let ((observed nil))
                   (test-call-with-function-replacements
                    (list (list 'task-inspector-action
@@ -188,16 +172,7 @@
                         (= 3 (getf (rest (first observed)) :limit))
                         (eq t (getf (rest (second observed)) :authorized-p))
                         (null (getf (rest (third observed)) :authorized-p)))
-                   "native transcript integers and explicit true/false authority reach ordinary task dispatch"))
-                (application-command-execute
-                 (application-command-invocation-command invocation) application invocation)
-                (test-assert (= 1 (task-job-steering-pending-count job))
-                             "The slash inspector enters the ordinary durable child input queue")
-                (test-assert
-                 (search message
-                         (user-message-input-text
-                          (agent-steering-input-content (first (task-job-take-steering job)))))
-                 "Multiword slash steering reaches the child without tokenization loss"))
+                   "native transcript integers and explicit true/false authority reach ordinary task dispatch")))
            (terminal-ui-stop (application-ui application))))
        (let ((count (length (task-orchestrator-list-jobs orchestrator))))
          (task-inspector-action context orchestrator "revive"

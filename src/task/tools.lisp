@@ -379,15 +379,6 @@ matches signal a TASK-ERROR naming the candidates."
           resolved)
         arguments)))
 
-(defparameter *task-parent-steering-preamble*
-  "Steering from the agent that assigned this job. It refines your current assignment and does not replace it: keep working toward the complete original assignment, and change objectives only if this message explicitly cancels, narrows, or replaces that assignment."
-  "The framing that keeps a parent's job.send message from becoming the child's whole task.")
-
-(-> task--parent-steering-message (string) string)
-(defun task--parent-steering-message (message)
-  "Return parent steering MESSAGE framed as a refinement of the child's assignment."
-  (format nil "~A~2%~A" *task-parent-steering-preamble* message))
-
 (-> task--artifact-group-root (configuration string) pathname)
 (defun task--artifact-group-root (configuration conversation-identifier)
   "Return the common artifact root for one primary conversation."
@@ -1267,34 +1258,6 @@ poll a job whose completion will wake it."
                (multiple-value-bind (form content)
                    (task--durable-job-native-form result path identifier)
                  (task-tool-result content form))))))
-      ((string= operation "send")
-       (task--validate-tool-arguments arguments '("id" "message") "job.send")
-       (let* ((identifier
-                (task--validate-job-identifier
-                 (tool-argument arguments "id" :required t)
-                 "job.send"))
-              (message (tool-argument arguments "message" :required t))
-              (job     (task-orchestrator-find-visible-job
-                        orchestrator identifier :viewer viewer :tool-name "job.send")))
-         (unless (and (stringp message) (non-empty-string-p message))
-           (error 'task-error
-                  :message   "job.send requires non-empty message text."
-                  :tool-name "job.send"
-                  :task-id   identifier))
-         (unless (typep job 'task-job)
-           (error 'task-error
-                  :message   "Only child-agent jobs accept steering messages."
-                  :tool-name "job.send"
-                  :task-id   identifier))
-         (multiple-value-bind (entry reason)
-             (task-job-enqueue-steering job (task--parent-steering-message message))
-           (if entry
-               (tool-success
-                (format nil
-                        "Steering accepted; the child reads it at its next safe boundary. Pending steering: ~D."
-                        (task-job-steering-pending-count job)))
-               (tool-failure
-                (format nil "Steering was not accepted: ~(~A~)." reason))))))
       ((member operation '("wait" "cancel") :test #'string=)
        (task--validate-tool-arguments
         arguments
@@ -1504,20 +1467,6 @@ poll a job whose completion will wake it."
                                            "cancel" :description
                                            "Request interruption of one queued or running session job."
                                            :parameters identifier-schema))
-    (tool-registry-register registry
-                            (make-instance 'task-job-tool :orchestrator
-                                           orchestrator :namespace "job" :name
-                                           "send" :description
-                                           "Send one bounded steering message to a running child-agent job; the child reads it at its next safe boundary and continues its assignment. Only a child that is still running accepts steering: a job that has already finished, failed, or been cancelled rejects the message, so check job.get first when its state is uncertain, and reply to a finished child's result with a new child.spawn instead."
-                                           :parameters
-                                           (tool-object-schema
-                                            (json-object
-                                             "id"
-                                             (task-job-identifier-property)
-                                             "message"
-                                             (tool-string-property
-                                              "The steering message text."))
-                                            '("id" "message"))))
     (tool-registry-register
      registry
      (make-instance 'task-continuity-tool :orchestrator orchestrator

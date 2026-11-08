@@ -128,7 +128,7 @@
                  (every
                   (lambda (name)
                     (tool-registry-find child-registry "job" name))
-                  '("list" "get" "wait" "cancel" "send")))
+                  '("list" "get" "wait" "cancel")))
                 "task children can manage jobs within their existing visibility scope")
                (test-assert
                 (and

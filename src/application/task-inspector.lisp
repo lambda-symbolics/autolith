@@ -118,7 +118,7 @@
                              (if page (1+ start) 0) end))
          (navigation (format nil "(tasks :list :offset OFFSET :limit LIMIT)~@[ · next: (tasks :list :offset ~D :limit ~D)~]"
                              (and (< end total) end) limit))
-         (actions    "(tasks :get \"ID\") | (tasks :transcript \"ID\" :offset OFFSET :limit LIMIT) | (tasks :send \"ID\" :message \"MESSAGE\") | (tasks :cancel \"ID\") | (tasks :revive \"ID\" :authorize t) | (tasks :abandon \"ID\" :authorize t)"))
+         (actions    "(tasks :get \"ID\") | (tasks :transcript \"ID\" :offset OFFSET :limit LIMIT) | (tasks :cancel \"ID\") | (tasks :revive \"ID\" :authorize t) | (tasks :abandon \"ID\" :authorize t)"))
     (if application
         (application--tool-entry
          application :style ':notice :header heading
@@ -217,11 +217,11 @@ clamped at EOF. Live children use their deterministic conversation identity."
 
 (-> task-inspector-action
     (tool-context task-orchestrator string &key (:id (option string))
-     (:message (option string)) (:authorized-p boolean)
+     (:authorized-p boolean)
      (:offset integer) (:limit integer) (:application (option application)))
     (or string list))
 (defun task-inspector-action (context orchestrator action
-                              &key id message authorized-p (offset 0)
+                              &key id authorized-p (offset 0)
                                 (limit (if (equal action "list") *task-job-page-default* 4000))
                                 application)
   "Inspect or control owned jobs through ordinary registered job dispatch."
@@ -251,14 +251,11 @@ clamped at EOF. Live children use their deterministic conversation identity."
                          append (application--tool-field-rows
                                  application (list (list :label "" :value line :style ':code))))))
            (task--write-readable-sexp window))))
-    ((member action '("send" "cancel" "get") :test #'equal)
-     (let ((arguments (json-object "id" id)))
-       (when (equal action "send")
-         (setf (gethash "message" arguments) message))
-       (let ((result (task-continuity-dispatch context "job" action :arguments arguments)))
-         (if application
-             (task-inspector--result-entry application context :operation action :result result)
-             (tool-result-content result)))))
+    ((member action '("cancel" "get") :test #'equal)
+     (let ((result (task-continuity-dispatch context "job" action :arguments (json-object "id" id))))
+       (if application
+           (task-inspector--result-entry application context :operation action :result result)
+           (tool-result-content result))))
     ((member action '("revive" "abandon") :test #'equal)
      (let ((result (task-continuity-dispatch
                     context "job" "continuity"
@@ -272,7 +269,7 @@ clamped at EOF. Live children use their deterministic conversation identity."
 
 (-> application-task-inspector-slash-arguments (string) list)
 (defun application-task-inspector-slash-arguments (text)
-  "Parse task actions and page bounds, preserving the steering message tail."
+  "Parse task actions and page bounds."
   (let ((position 0) (size (length text)))
     (labels ((skip-space ()
                (loop while (and (< position size) (find (char text position) '(#\Space #\Tab)))
@@ -293,14 +290,12 @@ clamped at EOF. Live children use their deterministic conversation identity."
                        (task-continuity--fail "Task bounds must be integers."))
                    default)))
       (let* ((name   (or (word) "list"))
-             (action (find name '(:list :get :transcript :send :cancel :revive :abandon)
+             (action (find name '(:list :get :transcript :cancel :revive :abandon)
                            :key #'symbol-name :test #'string-equal))
              (id     (word)))
         (unless action (task-continuity--fail "Unknown task inspector action."))
         (skip-space)
         (case action
-          (:send
-           (list action id :message (subseq text position)))
           (:list
            (let ((limit (word)))
              (when (word) (task-continuity--fail "Too many task page arguments."))
@@ -325,23 +320,19 @@ clamped at EOF. Live children use their deterministic conversation identity."
   (when (and (eq action ':list) (keywordp id))
     (setf options (cons id options)
           id nil))
-  (unless (and (member action '(:list :get :transcript :send :cancel :revive :abandon))
+  (unless (and (member action '(:list :get :transcript :cancel :revive :abandon))
                (if (eq action ':list) (null id) (non-empty-string-p id))
                (evenp (length options))
                (let ((keys (plist-keys options)))
                  (and (= (length keys) (length (remove-duplicates keys)))
                       (every (lambda (key)
                                (member key (case action
-                                             (:send
-                                              '(:message))
                                              ((:list :transcript)
                                               '(:offset :limit))
                                              ((:revive :abandon)
                                               '(:authorize)))))
                              keys)))
                (case action
-                 (:send
-                  (non-empty-string-p (getf options :message)))
                  (:list
                   (and (integerp (getf options :offset 0))
                        (<= 0 (getf options :offset 0) 1000000)
@@ -376,8 +367,11 @@ clamped at EOF. Live children use their deterministic conversation identity."
                         (agent-observer-authorize-tool observer requested-tool tool-arguments)))))
       (unless (typep tool 'task-job-tool)
         (task-continuity--fail "Task inspection is not registered in this session."))
-      (task-inspector-action
-       context (task-job-tool-orchestrator tool) (string-downcase (symbol-name action)) :id id
-       :message (getf options :message) :authorized-p (getf options :authorize)
-       :application (and (application-ui application) application) :offset (getf options :offset 0)
-       :limit                                                                               (getf options :limit (if (eq action ':list) *task-job-page-default* 4000))))))
+      (task-inspector-action context (task-job-tool-orchestrator tool)
+                             (string-downcase (symbol-name action))
+                             :id           id
+                             :authorized-p (getf options :authorize)
+                             :application  (and (application-ui application) application)
+                             :offset       (getf options :offset 0)
+                             :limit        (getf options :limit
+                                                 (if (eq action ':list) *task-job-page-default* 4000))))))
