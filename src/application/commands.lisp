@@ -3098,19 +3098,6 @@ last started is not in its world either, so the saved conversations come last."
     (application-present application (application-notice-line (format nil "@~A is now @~A" before name))))
   ':continue)
 
-(define-application-command application--builtin-channels-command
-    (:name              "/channels"
-     :argument          nil
-     :description       "list channels and their participants"
-     :tip               "lists every channel with its residents and subscribers, newest change first."
-     :busy-behavior     :inspect
-     :terminal-behavior :shared
-     :callable          t)
-    (application)
-  (application-present application
-                       (application-channels-entry application))
-  ':continue)
-
 (-> application--placing-server (application keyword) world-server)
 (defun application--placing-server (application operation)
   "Return the world server that places APPLICATION's agents, or refuse OPERATION in a session of its own.

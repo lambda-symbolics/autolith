@@ -5,7 +5,7 @@
 (defparameter *application-help-sections*
   '((:topic :channels :title "Channels"
      :description "Move between channels, message them, and place their agents."
-     :commands    ("switch" "new" "channels" "tell" "move" "dismiss" "domestic" "rename"))
+     :commands    ("switch" "new" "tell" "move" "dismiss" "domestic" "rename"))
     (:topic :conversations :title "Conversations"
      :description "Manage the conversation of this channel."
      :commands    ("history" "goal" "context" "compact"))

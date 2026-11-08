@@ -1228,15 +1228,6 @@ agent still resides there."
              (when (participant-residence participant)
                (list :residence nil)))))
 
-(-> world-parked-agents (world) list)
-(defun world-parked-agents (world)
-  "Return WORLD's parked agents, oldest first."
-  (sort (world--participants-where world
-                                   (lambda (participant)
-                                     (and (eq (participant-kind participant) ':agent)
-                                          (null (participant-residence participant)))))
-        #'< :key #'participant-created-at))
-
 (-> world-participant-subscribe (configuration string string &key (:now timestamp)) participant)
 (defun world-participant-subscribe (configuration identifier channel-identifier &key (now (get-universal-time)))
   "Subscribe participant IDENTIFIER to channel CHANNEL-IDENTIFIER and return it."
