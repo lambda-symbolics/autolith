@@ -642,6 +642,33 @@ run once the wake has."
                              "the next open joins it rather than starting it twice")))))))))
   nil)
 
+(-> test-world-server-open-passes-damage () null)
+(defun test-world-server-open-passes-damage ()
+  "Test a workspace open passes over a channel whose conversation cannot be loaded, and names it."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((workspace (world-tests--workspace root "a"))
+            (local     (configuration-copy configuration :working-directory workspace))
+            (broken    (world-tests--persisted-conversation local "bbroken1" 1000)))
+       (world-tests--persisted-conversation local "bgood1" 1000)
+       (world-server--reconcile configuration)
+       (with-open-file (stream (conversation-log-pathname broken)
+                               :direction :output :if-exists :supersede)
+         (write-line "(:not-a-conversation-header)" stream))
+       (let ((dates '(("bbroken1" . 5000) ("bgood1" . 1000))))
+         (test-call-with-function-replacements
+          (list (list 'conversation-storage-write-date
+                      (lambda (pathname)
+                        (or (rest (assoc (pathname-name pathname) dates :test #'string=)) 0))))
+          (lambda ()
+            (multiple-value-bind (host started-p skipped)
+                (world-server--host-for server (list :directory workspace))
+              (test-assert (and started-p (string= (world-host-channel host) "bgood1"))
+                           "the damaged newest channel is passed over for the next one")
+              (test-assert (equal (mapcar #'first skipped) '("bbroken1"))
+                           "the open names the channel it passed over"))))))))
+  nil)
+
 (-> test-world-server-open-images-and-new () null)
 (defun test-world-server-open-images-and-new ()
   "Test an open's images become the channel's composer draft, new or running, :new-p opens a channel of its own, and a running channel refuses MCP servers."
