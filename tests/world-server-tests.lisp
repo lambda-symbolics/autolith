@@ -148,6 +148,22 @@
                            "the attached terminal is told the server was stopped by lg stop")))))))
     nil))
 
+(-> test-world-server-status-line () null)
+(defun test-world-server-status-line ()
+  "Test lg status leads with the world server's process and version while a server runs."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (declare (ignore server root))
+     (let ((output (test-call-with-function-replacements
+                    (list (list 'localgroup--client-configuration (lambda () configuration)))
+                    (lambda ()
+                      (with-output-to-string (*standard-output*)
+                        (localgroup--run-status :sexp-p nil))))))
+       (test-assert (and (search "· world server PID" output)
+                         (search (princ-to-string (current-process-id)) output))
+                    "lg status names the world server's process first"))))
+  nil)
+
 (-> test-world-server-hosting () null)
 (defun test-world-server-hosting ()
   "Test opening, sharing, closing and resuming channels through a world server."

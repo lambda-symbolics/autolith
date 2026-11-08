@@ -793,12 +793,15 @@ controlling terminal."
 (-> localgroup--run-status (&key (:sexp-p boolean)) null)
 (defun localgroup--run-status (&key sexp-p)
   "Print localgroup session statuses, as readable forms when SEXP-P."
-  (let ((statuses (localgroup-statuses (localgroup--client-configuration))))
+  (let* ((configuration (localgroup--client-configuration))
+         (statuses      (localgroup-statuses configuration)))
     (if sexp-p
         (dolist (status statuses)
           (write status :stream *standard-output* :readably t)
           (terpri))
-        (localgroup-print-statuses statuses)))
+        (progn
+          (world-client-print-server configuration *standard-output*)
+          (localgroup-print-statuses statuses))))
   nil)
 
 (-> localgroup--reachable-records (configuration) list)
@@ -993,7 +996,6 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
           "pause" "pause a detached session" ':pause)
          (localgroup--operation-command
           "kill" "terminate a detached session" ':kill)
-         (world-client--server-command)
          (world-client--stop-command))
    :handler
    (lambda (command)
