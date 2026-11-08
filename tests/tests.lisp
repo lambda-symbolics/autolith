@@ -323,6 +323,19 @@
        "bounded presentation renders unreadable conditions safely")))
   nil)
 
+(-> test-bounded-string-limit () null)
+(defun test-bounded-string-limit ()
+  "Test a truncated string stays within its limit, its notice included, and says what it left out."
+  (loop for (limit uri) in '((100 nil) (100 "conversation:current") (40 nil))
+        for text = (bounded-string (make-string 5000 :initial-element #\x)
+                                   :limit                 limit
+                                   :overflow-uri-function (and uri (constantly uri)))
+        do (test-assert (and (<= (length text) limit)
+                             (search "characters omitted" text)
+                             (or (null uri) (search uri text)))
+                        (format nil "a ~D-character limit holds with~:[out~;~] an overflow URI" limit uri)))
+  nil)
+
 (-> test-make-identifier () null)
 (defun test-make-identifier ()
   "Test that identifiers are distinct random version 4 UUIDs."
