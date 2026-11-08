@@ -99,15 +99,15 @@ The world server sets it while it runs, so a message wakes the agent it is for."
 (defun world-delivery--record (delivery)
   "Return DELIVERY as one portable readable record."
   (list :delivery
-        :id          (world-delivery-identifier delivery)
+        :id          (world-portable-string (world-delivery-identifier delivery))
         :time        (world-delivery-time delivery)
-        :sender      (world-delivery-sender delivery)
-        :sender-name (world-delivery-sender-name delivery)
+        :sender      (world-portable-string (world-delivery-sender delivery))
+        :sender-name (world-portable-string (world-delivery-sender-name delivery))
         :sender-kind (world-delivery-sender-kind delivery)
-        :source      (world-delivery-source delivery)
-        :target      (world-delivery-target delivery)
-        :text        (world-delivery-text delivery)
-        :mentions    (copy-list (world-delivery-mentions delivery))
+        :source      (world-portable-string (world-delivery-source delivery))
+        :target      (world-portable-string (world-delivery-target delivery))
+        :text        (world-portable-string (world-delivery-text delivery))
+        :mentions    (mapcar #'world-portable-string (world-delivery-mentions delivery))
         :kind        (world-delivery-kind delivery)))
 
 (-> world-delivery--record-p (t) boolean)

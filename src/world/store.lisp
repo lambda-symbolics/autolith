@@ -236,17 +236,27 @@ becomes one hyphen, with no hyphen at either end."
        (loop for (nil item) on value by (partial #'nthcdr 2)
              always (world--portable-value-p item))))
 
+(-> world-portable-string ((option string)) (option string))
+(defun world-portable-string (value)
+  "Return VALUE, a string or NIL, as a fresh string of characters.
+
+Identifiers often come from pathnames as base strings, which some Lisps
+print with implementation syntax; and one string written twice prints as a
+shared reference. A fresh character string avoids both, so a file of world
+records stays plain, portable text."
+  (and value (replace (make-string (length value)) value)))
+
 (-> world--participant-record (participant) list)
 (defun world--participant-record (participant)
   "Return PARTICIPANT as one portable readable record."
   (list :participant
         :version       *world-format-version*
-        :id            (participant-identifier participant)
+        :id            (world-portable-string (participant-identifier participant))
         :kind          (participant-kind participant)
-        :name          (participant-name participant)
-        :parent        (participant-parent participant)
-        :residence     (participant-residence participant)
-        :subscriptions (copy-list (participant-subscriptions participant))
+        :name          (world-portable-string (participant-name participant))
+        :parent        (world-portable-string (participant-parent participant))
+        :residence     (world-portable-string (participant-residence participant))
+        :subscriptions (mapcar #'world-portable-string (participant-subscriptions participant))
         :presence      (participant-presence participant)
         :settings      (copy-list (participant-settings participant))
         :created-at    (participant-created-at participant)
@@ -257,11 +267,11 @@ becomes one hyphen, with no hyphen at either end."
   "Return CHANNEL as one portable readable record."
   (list :channel
         :version    *world-format-version*
-        :id         (channel-identifier channel)
-        :parent     (channel-parent channel)
-        :owner      (channel-owner channel)
-        :workspace  (channel-workspace channel)
-        :title      (channel-title channel)
+        :id         (world-portable-string (channel-identifier channel))
+        :parent     (world-portable-string (channel-parent channel))
+        :owner      (world-portable-string (channel-owner channel))
+        :workspace  (world-portable-string (channel-workspace channel))
+        :title      (world-portable-string (channel-title channel))
         :inbox-p    (channel-inbox-p channel)
         :created-at (channel-created-at channel)
         :updated-at (channel-updated-at channel)))

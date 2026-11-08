@@ -1110,6 +1110,26 @@
                          "mentions of others are accented, of the person styled as the user, unknown ones left alone")))))
     nil))
 
+(-> test-world-portable-files () null)
+(defun test-world-portable-files ()
+  "Test the world, its mappings and its inboxes are written as plain text any Lisp reads."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bfirst1" 1000)
+    (world-tests--persisted-conversation configuration "bsecnd2" 2000)
+    (multiple-value-bind (human) (world-tests--agents configuration)
+      (world-message-send configuration :sender   (participant-identifier human)
+                                        :channel  "bfirst1"
+                                        :text     "hello"
+                                        :notify-p nil))
+    (dolist (pathname (list (configuration-world-path configuration)
+                            (configuration-world-sessions-path configuration)
+                            (world-inbox-pathname configuration "bfirst1")))
+      (let ((text (uiop:read-file-string pathname)))
+        (test-assert (not (or (search "#A(" text) (search "#1=" text)))
+                     (format nil "~A has no implementation syntax or shared references"
+                             (file-namestring pathname))))))
+  nil)
+
 (-> test-world-compaction () null)
 (defun test-world-compaction ()
   "Test a grown world log is compacted to the records it needs, and a lean one is left alone."

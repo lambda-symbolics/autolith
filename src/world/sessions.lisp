@@ -117,9 +117,11 @@ read.")
 (defun world-session--mapping->form (mapping)
   "Return MAPPING as one portable readable record."
   (list :session
-        :conversation (world-session-mapping-conversation mapping)
-        :participant (world-session-mapping-participant mapping)
-        :token       (copy-list (world-session-mapping-token mapping))))
+        :conversation (world-portable-string (world-session-mapping-conversation mapping))
+        :participant (world-portable-string (world-session-mapping-participant mapping))
+        :token       (mapcar (lambda (item)
+                               (if (stringp item) (world-portable-string item) item))
+                             (world-session-mapping-token mapping))))
 
 (-> world-session--form->mapping (list) world-session-mapping)
 (defun world-session--form->mapping (form)
