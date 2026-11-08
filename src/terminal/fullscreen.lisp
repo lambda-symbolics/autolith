@@ -36,7 +36,14 @@ Older output is evicted past it and stays loadable with (history).")
                         :documentation "Reverse-ordered output and record batches awaiting publication.")
    (deferred-base-group :initform      nil
                         :accessor      fullscreen-terminal-ui-deferred-base-group
-                        :documentation "Separator state before the first queued output operation."))
+                        :documentation "Separator state before the first queued output operation.")
+   (press :initform      nil
+          :accessor      fullscreen-terminal-ui-press
+          :documentation "The (COLUMN ROW) of the left button held down in the transcript, or NIL.")
+   (dragged-p :initform      nil
+              :accessor      fullscreen-terminal-ui-dragged-p
+              :type          boolean
+              :documentation "Whether the pointer moved while the button was held, selecting text."))
   (:documentation "An alternate-screen transcript viewport and bottom-pinned composer."))
 
 (defmethod shared-initialize :after ((ui fullscreen-terminal-ui) slot-names &key)
@@ -231,7 +238,7 @@ EVICTED-P adds how to load output older than the viewport keeps."
      ("Ctrl-PgUp/PgDn" "messages"))
    (if following-p
        '(("Ctrl-Home/End" "ends")
-         ("Shift+mouse" "to select text"))
+         ("drag" "to copy text"))
        '(("Ctrl-End" "to follow")))
    (when evicted-p
      '(("(history)" "earlier output")))))
@@ -427,6 +434,45 @@ lock, because copying and browser launches present notices of their own."
       (setf (terminal-ui-pending-action ui) action))
     (not (null action))))
 
+(-> terminal-ui-fullscreen--pointer (fullscreen-terminal-ui list) boolean)
+(defun terminal-ui-fullscreen--pointer (ui event)
+  "Select transcript text with a press, drag and release, or act on a plain click, as pointer EVENT says.
+
+EVENT is (KIND COLUMN ROW) with KIND :CLICK, :DRAG or :RELEASE.
+
+A press starts a selection. Dragging stretches it and paints it in reverse
+video; releasing after a drag copies the text it covers. A release without a
+drag is a click: the selection ends and the transcript action there runs."
+  (destructuring-bind (kind column row) event
+    (let ((viewport (fullscreen-terminal-ui-viewport ui)))
+      (ecase kind
+        (:click
+         (clinedi:transcript-viewport-selection-start viewport column row)
+         (setf (fullscreen-terminal-ui-press ui)     (list column row)
+               (fullscreen-terminal-ui-dragged-p ui) nil)
+         (terminal-ui--paint-live ui)
+         t)
+        (:drag
+         (when (fullscreen-terminal-ui-press ui)
+           (clinedi:transcript-viewport-selection-extend viewport column row)
+           (setf (fullscreen-terminal-ui-dragged-p ui) t)
+           (terminal-ui--paint-live ui))
+         t)
+        (:release
+         (let* ((press (shiftf (fullscreen-terminal-ui-press ui) nil))
+                (text  (and press
+                            (shiftf (fullscreen-terminal-ui-dragged-p ui) nil)
+                            (clinedi:transcript-viewport-selection-text viewport))))
+           (cond
+             (text
+              (setf (terminal-ui-pending-action ui) (list ':copy text)))
+             (t
+              (clinedi:transcript-viewport-selection-clear viewport)
+              (terminal-ui--paint-live ui)
+              (when press
+                (terminal-ui-fullscreen--click ui (first press) (second press)))))
+           t))))))
+
 (-> terminal-ui-fullscreen-handle-event (fullscreen-terminal-ui t) boolean)
 (defun terminal-ui-fullscreen-handle-event (ui event)
   "Consume viewport navigation without changing the draft or its history position."
@@ -449,8 +495,8 @@ lock, because copying and browser launches present notices of their own."
        (terminal-ui-fullscreen-jump-message ui 1))
       ((and (consp event) (eq (first event) ':scroll) (member (second event) '(-1 1)))
        (terminal-ui-fullscreen-scroll ui (* 3 (second event))))
-      ((typep event '(cons (eql :click) (cons (integer 1) (cons (integer 1) null))))
-       (terminal-ui-fullscreen--click ui (second event) (third event)))
+      ((typep event '(cons (member :click :drag :release) (cons (integer 1) (cons (integer 1) null))))
+       (terminal-ui-fullscreen--pointer ui event))
       ((eq event ':clear-screen)
        (terminal-ui-fullscreen-invalidate ui)
        (terminal-ui--paint-live ui))

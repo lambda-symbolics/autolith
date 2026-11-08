@@ -191,10 +191,13 @@ panel shows it without a resize."
 The toggle key shows or hides the side panel. A click lands in the panel,
 which acts on it and may ask to move the terminal to another channel with a
 (:SWITCH :SESSION-ID ID) request, or in the session's pane, whose columns
-start after the panel. While the panel takes the whole screen, the hidden
-session gets no keys, and a switch hides the panel to show the channel
-switched to."
-  (let ((click-p (typep event '(cons (eql :click) (cons integer (cons integer null))))))
+start after the panel. A drag and its release go to the pane; over the
+panel they stay on the pane's edge, so selecting never takes the panel's
+text. While the panel takes the whole screen, the hidden session gets no
+keys or drags, and a switch hides the panel to show the channel switched
+to."
+  (let* ((pointer-p (typep event '(cons (member :click :drag :release) (cons integer (cons integer null)))))
+         (click-p   (and pointer-p (eq (first event) ':click))))
     (cond
       ((equal event *localgroup-screen-toggle-event*)
        (localgroup-screen-toggle-panel screen)
@@ -210,11 +213,17 @@ switched to."
             result))
          (t
           ':ignore)))
-      ((and click-p (eq (localgroup-screen-layout screen) ':beside))
+      ((and pointer-p (eq (localgroup-screen-layout screen) ':beside))
        (let ((offset (1+ (localgroup-screen--panel-width screen))))
-         (if (<= (second event) offset)
-             (localgroup-screen--panel-click screen (second event) (third event))
-             (list ':click (- (second event) offset) (third event)))))
+         (cond
+           ((> (second event) offset)
+            (list (first event) (- (second event) offset) (third event)))
+           (click-p
+            (localgroup-screen--panel-click screen (second event) (third event)))
+           (t
+            ;; A drag over the panel stays on the pane's edge, so a
+            ;; selection never takes the panel's text.
+            (list (first event) 1 (third event))))))
       (t
        event))))
 

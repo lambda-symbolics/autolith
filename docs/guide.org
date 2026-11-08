@@ -558,8 +558,12 @@ jump places the end of the message on the row above the composer. If the
 message is taller than the window, its header appears at the top instead. The
 =--fullscreen= and =--plain= options choose the mode for one launch without
 changing the saved preference. Set =(config :fullscreen-p)= back to =t= to
-return future launches to fullscreen. Because the viewport owns the mouse, hold
-=Shift= while dragging to select text with the terminal emulator. Fullscreen
+return future launches to fullscreen. Drag across the transcript to select
+text: it shows highlighted, and letting go copies it to the clipboard through
+the terminal. The selection takes only transcript text, never the sidebar or
+the composer; a click without a drag still opens links and copy actions.
+Holding =Shift= while dragging selects whole screen rows with the terminal
+emulator instead. Fullscreen
 history lives in the application, not the terminal emulator's native scrollback. The viewport keeps about four
 million characters of recent output in memory. At the oldest retained row, the
 legend shows =(history)=. Run =(history)= to load a page of older output.
