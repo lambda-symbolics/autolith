@@ -29,12 +29,36 @@
              :message   "This conversation has no participant yet; it gets one with its first durable message."
              :tool-name tool-name)))
 
+(defparameter *channel-tool-channel-description*
+  "The channel: its identifier or a unique part of it, inbox for the person's inbox, or @name for the channel where that agent resides."
+  "How every channel tool describes the channel it acts on.")
+
 (-> channel-tool--channel (tool-context hash-table) string)
 (defun channel-tool--channel (context arguments)
-  "Return the canonical channel identifier ARGUMENTS name."
-  (conversation-identifier-migration-resolve
-   (tool-context-configuration context)
-   (tool-argument arguments "channel" :required t)))
+  "Return the identifier of the channel ARGUMENTS designate, as every channel tool resolves it."
+  (let ((configuration (tool-context-configuration context)))
+    (channel-identifier
+     (world-channel-designated (world-load configuration)
+                               configuration
+                               (tool-argument arguments "channel" :required t)))))
+
+(-> channel-tool--send-text (configuration list) string)
+(defun channel-tool--send-text (configuration result)
+  "Return what the send RESULT of `world-message-send' did, as the sender reads it."
+  (let ((world (world-load configuration)))
+    (flet ((names (identifiers)
+             "Return IDENTIFIERS as the channels' display identifiers."
+             (mapcar (lambda (identifier)
+                       (let ((channel (world-channel-find world identifier)))
+                         (if (and channel (channel-inbox-p channel))
+                             "inbox"
+                             (conversation-identifier-display identifier))))
+                     identifiers)))
+      (format nil "Sent message ~A.~@[ Delivered to ~{~A~^, ~}; each resident reads it at its next turn boundary, or wakes for it.~]~@[ Not delivered yet to ~{~A~^, ~}; it is retried with the next message.~]~@[ Parked, so got no copy: ~{@~A~^, ~}.~]"
+              (getf result :id)
+              (names (getf result :channels))
+              (names (getf result :pending))
+              (getf result :parked)))))
 
 (defmethod tool-execute ((tool channel-tool) (context tool-context) arguments)
   "Send to, subscribe to or unsubscribe from a channel as the requesting participant."
@@ -42,31 +66,32 @@
          (tool-name     (format nil "channel.~A" name))
          (configuration (tool-context-configuration context))
          (sender        (channel-tool--sender context tool-name))
-         (result
-           (cond
-             ((string= name "send")
-              (task--validate-tool-arguments arguments '("channel" "text" "mentions") tool-name)
-              (world-message-send configuration
-                                  :sender   (participant-identifier sender)
-                                  :channel  (channel-tool--channel context arguments)
-                                  :text     (tool-argument arguments "text" :required t)
-                                  :mentions (let ((mentions (tool-argument arguments "mentions")))
-                                              (and mentions (coerce mentions 'list)))))
-             ((string= name "subscribe")
-              (task--validate-tool-arguments arguments '("channel") tool-name)
-              (let ((channel (channel-tool--channel context arguments)))
-                (world-participant-subscribe configuration (participant-identifier sender) channel)
-                (list :subscribed channel :participant (participant-identifier sender))))
-             ((string= name "unsubscribe")
-              (task--validate-tool-arguments arguments '("channel") tool-name)
-              (let ((channel (channel-tool--channel context arguments)))
-                (world-participant-unsubscribe configuration (participant-identifier sender) channel)
-                (list :unsubscribed channel :participant (participant-identifier sender))))
-             (t
-              (error 'tool-error
-                     :message   (format nil "Unknown channel operation ~A." name)
-                     :tool-name tool-name)))))
-    (task-tool-result (task--write-readable-sexp result :pretty-p t) result)))
+         (channel       (progn
+                          (task--validate-tool-arguments
+                           arguments
+                           (if (string= name "send") '("channel" "text" "mentions") '("channel"))
+                           tool-name)
+                          (channel-tool--channel context arguments)))
+         (display       (conversation-identifier-display channel)))
+    (cond
+      ((string= name "send")
+       (let ((result (world-message-send configuration
+                                         :sender   (participant-identifier sender)
+                                         :channel  channel
+                                         :text     (tool-argument arguments "text" :required t)
+                                         :mentions (let ((mentions (tool-argument arguments "mentions")))
+                                                     (and mentions (coerce mentions 'list))))))
+         (task-tool-result (channel-tool--send-text configuration result) result)))
+      ((string= name "subscribe")
+       (world-participant-subscribe configuration (participant-identifier sender) channel)
+       (tool-success (format nil "Subscribed to channel ~A: its messages now reach you." display)))
+      ((string= name "unsubscribe")
+       (world-participant-unsubscribe configuration (participant-identifier sender) channel)
+       (tool-success (format nil "Unsubscribed from channel ~A." display)))
+      (t
+       (error 'tool-error
+              :message   (format nil "Unknown channel operation ~A." name)
+              :tool-name tool-name)))))
 
 (-> channel-register-tools (tool-registry) tool-registry)
 (defun channel-register-tools (registry)
@@ -84,8 +109,8 @@
                            :description description
                            :parameters  (tool-object-schema properties required)))))
     (register "send"
-              "Send a message to a channel. It reaches the channel's residents, its subscribers and every participant mentioned as @name or @id. @parent reaches your parent agent; when it is parked, the nearest ancestor that is not, or the person. Read channel:list for channels and participants."
-              (json-object "channel" (tool-string-property "The channel identifier.")
+              "Send a message to a channel. It reaches the channel's residents, its subscribers and every participant mentioned as @name or @id. @parent reaches your parent agent; when it is parked, the nearest ancestor that is not, or the person. channel:current lists your children; channel:list finds other channels."
+              (json-object "channel" (tool-string-property *channel-tool-channel-description*)
                            "text" (tool-string-property
                                    (format nil "The message, 1 to ~:D characters."
                                            *world-message-text-limit*))
@@ -96,10 +121,10 @@
               '("channel" "text"))
     (register "subscribe"
               "Receive future messages of a channel without residing in it."
-              (json-object "channel" (tool-string-property "The channel identifier."))
+              (json-object "channel" (tool-string-property *channel-tool-channel-description*))
               '("channel"))
     (register "unsubscribe"
               "Remove your subscription to a channel."
-              (json-object "channel" (tool-string-property "The channel identifier."))
+              (json-object "channel" (tool-string-property *channel-tool-channel-description*))
               '("channel")))
   registry)
