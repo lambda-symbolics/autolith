@@ -1,17 +1,15 @@
 (in-package #:autolith)
 
-;;;; -- Legacy Session Reconciliation --
+;;;; -- Conversations Into Channels --
 
-;;; Until clients select channels directly, every durable conversation maps
-;;; onto one channel of the same identifier and one agent participant that
-;;; resides there, both owned by the one human participant. The mapping keeps
-;;; the source token each conversation was synced from, so a conversation
-;;; newer than its mapping is migrated again onto the same identities, and a
-;;; conversation that vanished takes its participant and channel with it.
-;;;
-;;; This is release machinery. Remove this file,
-;;; configuration-world-sessions-path and the application-world-sync hooks
-;;; once the channel model replaces conversation-centric startup.
+;;; Every durable conversation is one channel of the same identifier, with one
+;;; agent participant residing there, al-<identifier>, both owned by the one
+;;; person, user. A mapping records each conversation's place and the source
+;;; token it was synced from, so a changed conversation is synced again onto
+;;; the same identities, and a conversation that vanished takes its
+;;; participant and channel with it. The world server brings every
+;;; conversation in as it starts; afterwards each channel syncs its own as it
+;;; changes, and a child's channel follows its job's lifecycle.
 
 (defparameter *world-sessions-version* 1
   "The readable session mapping format version.")
