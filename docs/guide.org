@@ -2782,8 +2782,12 @@ Lisp names, slash aliases, completion, and busy/terminal policy.
   error immediately instead of being scheduled.
 - Terminal behavior is =:shared=, =:exclusive=, or
   =:exclusive-without-arguments=. It declares which invocations open a modal
-  picker. During active work, these invocations wait rather than running on the
-  immediate reader path. An open modal picker requires exclusive terminal input.
+  picker. A modal picker requires exclusive terminal input when open.
+  Commands with =:execute= policy may open their pickers during inference;
+  modal state mutations with =:inspect= or =:apply= policy wait for idle.
+  Channel navigation, messaging, movement and dismissal run immediately.
+  Movement and dismissal stop the affected agent at its safe boundary;
+  work in an unrelated channel need not finish first.
   The responsive reader continues animating until the picker opens.
 - =:static-options= replaces =:argument= for one finite positional parameter.
   Supply native strings, keywords, or booleans to derive the help hint and

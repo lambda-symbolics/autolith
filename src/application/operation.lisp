@@ -875,13 +875,16 @@ argument objects to construct a label; only the outer argument list is copied."
 
 (defmethod application-operation-active-turn-action
     ((operation application-command-operation) argument-forms)
-  "Return command busy policy for native arguments or a parsed invocation."
+  "Return command busy policy, retaining modal safety unless explicitly immediate."
   (let* ((command (application-operation-backend operation))
          (invocation
            (application-operation--command-invocation command argument-forms))
          (action  (application-command-busy-action command invocation)))
+    ;; Explicitly immediate commands own only presentation or use a coordinated
+    ;; world transition. A modal state mutation still waits for its safe boundary.
     (if (and (eq action ':execute)
-             (application-command-terminal-owner-p command invocation))
+             (application-command-terminal-owner-p command invocation)
+             (not (eq (application-command-busy-behavior command) ':execute)))
         ':hold
         action)))
 

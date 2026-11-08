@@ -697,6 +697,7 @@
   test-world-server-restart-checkpoint
   test-world-server-stop
   test-world-server-switch
+  test-world-channel-command-admission
   test-world-server-resume-order
   test-world-server-open-latest-touched
   test-world-server-open-passes-damage
@@ -860,6 +861,7 @@
   test-application-command-registry
   test-application-command-policies
   test-built-in-application-command-policies
+  test-channel-command-admission-safety
   test-built-in-application-command-calls
   test-switch-command-direct
   test-rename-command
