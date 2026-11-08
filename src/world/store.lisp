@@ -670,12 +670,18 @@ ends."
 
 (-> world-unique-handle (world string) string)
 (defun world-unique-handle (world base)
-  "Return BASE, or BASE with the lowest numbered suffix, that names no participant of WORLD and is not reserved."
-  (loop for index from 1
-        for candidate = (world-handle-suffixed base index)
-        unless (or (world-participant-named-p world candidate)
-                   (world-handle-reserved-p candidate))
-          return candidate))
+  "Return BASE, or BASE with the lowest numbered suffix, that names no participant of WORLD and is not reserved.
+
+The names taken are gathered once, since a common base such as agent can
+need hundreds of suffixes."
+  (let ((taken (make-hash-table :test #'equalp)))
+    (loop for participant being the hash-values of (world--participant-table world)
+          do (setf (gethash (participant-name participant) taken) t))
+    (loop for index from 1
+          for candidate = (world-handle-suffixed base index)
+          unless (or (gethash candidate taken)
+                     (world-handle-reserved-p candidate))
+            return candidate)))
 
 (-> world-handle-reserved-p (string) boolean)
 (defun world-handle-reserved-p (name)
@@ -690,13 +696,22 @@ ends."
                            nil))))
         (or (world-participant-find world designator)
             (and canonical (world-participant-find world canonical))))
-      (let ((named (remove-if-not (lambda (participant)
-                                    (string-equal (participant-name participant) designator))
-                                  (world-participants world))))
-        (and (= (length named) 1) (first named)))
-      (let ((matches (identifier-match designator (world-participants world)
+      (world-participant-named world designator)
+      (let ((matches (identifier-match designator
+                                       (loop for participant being the hash-values
+                                               of (world--participant-table world)
+                                             collect participant)
                                        :key #'participant-identifier)))
         (and (= (length matches) 1) (first matches)))))
+
+(-> world-participant-named (world string) (option participant))
+(defun world-participant-named (world name)
+  "Return the one participant of WORLD named NAME, ignoring case, or NIL when none or several are."
+  (let ((named nil))
+    (loop for participant being the hash-values of (world--participant-table world)
+          when (string-equal (participant-name participant) name)
+            do (push participant named))
+    (and (= (length named) 1) (first named))))
 
 (-> world-channel-designated (world configuration string) channel)
 (defun world-channel-designated (world configuration designator)
