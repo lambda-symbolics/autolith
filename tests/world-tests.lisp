@@ -1715,6 +1715,216 @@
             (task-orchestrator-close orchestrator))))))
   nil)
 
+(-> test-world-child-removal-batch () null)
+(defun test-world-child-removal-batch ()
+  "Test removal batches discovery and durable updates, and leases all children before cleanup."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bremove11" 1000)
+    (world-tests--child-conversation configuration "bremovea" :root "bremove11" :parent "bremove11"
+                                                            :name "one" :created-at 1500)
+    (world-tests--child-conversation configuration "bremoveb" :root "bremove11" :parent "bremovea"
+                                                            :name "two" :created-at 1600)
+    (world-tests--child-conversation configuration "bremovec" :root "bremove11" :parent "bremove11"
+                                                            :name "three" :created-at 1700)
+    (world-reconcile-sessions configuration)
+    (let ((lease (conversation-lease-acquire configuration "bremovec")))
+      (unwind-protect
+           (test-assert
+            (handler-case (progn (channel-remove configuration '("bremovea" "bremovec")) nil)
+              (task-error () t))
+            "a busy sibling refuses the entire deletion before cleanup")
+        (conversation-lease-release lease)))
+    (test-assert (and (conversation-task-pathname-for-id configuration "bremovea")
+                      (conversation-task-pathname-for-id configuration "bremoveb"))
+                 "an idle subtree is not partly removed when another selected child is busy")
+    (let ((persist (symbol-function 'shell-log-persist-owner-delivery)))
+      (test-call-with-function-replacements
+       (list (list 'shell-log-persist-owner-delivery
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))
+                     (error 'task-error :message "Delivery evidence could not be persisted."))))
+       (lambda ()
+         (test-assert
+          (handler-case (progn (channel-remove configuration '("bremovea" "bremovec")) nil)
+            (task-error () t))
+          "delivery evidence failure refuses storage deletion")))
+      (test-assert (and (world-channel-find (world-load configuration) "bremovea")
+                        (conversation-task-pathname-for-id configuration "bremovea")
+                        (not (conversation-lease-busy-p configuration "bremovea")))
+                   "failed cleanup keeps the world and storage and releases the acquired leases")
+      (let ((transact        (symbol-function 'world--transact))
+            (sessions        (symbol-function 'world-session--transact))
+            (subdirectories  (symbol-function 'uiop:subdirectories))
+            (world-updates   0)
+            (mapping-updates 0)
+            (discoveries     0)
+            (log-passes      0))
+        (test-call-with-function-replacements
+         (list
+          (list 'world--transact
+                (lambda (&rest arguments) (incf world-updates) (apply transact arguments)))
+          (list 'world-session--transact
+                (lambda (&rest arguments) (incf mapping-updates) (apply sessions arguments)))
+          (list 'uiop:subdirectories
+                (lambda (directory)
+                  (when (equal directory (merge-pathnames "tasks/" (config :data-root configuration)))
+                    (incf discoveries))
+                  (funcall subdirectories directory)))
+          (list 'shell-log-persist-owner-delivery
+                (lambda (&rest arguments) (incf log-passes) (apply persist arguments))))
+         (lambda ()
+           (test-assert (= 3 (channel-remove configuration '("bremovea" "bremovec")))
+                        "a retry removes all selected children and their nested channels")))
+        (test-assert (= discoveries 1) "task-root discovery is shared by the complete plan")
+        (test-assert (= log-passes 1) "children of one root share one shell-log pass")
+        (test-assert (= world-updates 1) "the complete world deletion uses one transaction")
+        (test-assert (= mapping-updates 1) "the complete mapping deletion uses one transaction"))))
+  nil)
+
+(-> test-world-child-removal-interleavings () null)
+(defun test-world-child-removal-interleavings ()
+  "Test fresh-world validation and context ownership across deletion planning races."
+  (dolist (race '(:nested :incoming :outgoing))
+    (with-test-configuration (configuration)
+      (world-tests--persisted-conversation configuration "brace11" 1000)
+      (world-tests--child-conversation configuration "braceaa" :root "brace11" :parent "brace11"
+                                                            :name "selected" :created-at 1500)
+      (world-tests--child-conversation configuration "bracebb" :root "brace11" :parent "brace11"
+                                                            :name "survivor" :created-at 1600)
+      (world-reconcile-sessions configuration)
+      (let* ((world             (world-load configuration))
+             (selected          (find ':agent (world-channel-residents world "braceaa") :key #'participant-kind))
+             (survivor          (find ':agent (world-channel-residents world "bracebb") :key #'participant-kind))
+             (agent-id          (participant-identifier (if (eq race ':incoming) survivor selected)))
+             (context           (world-context-pathname configuration agent-id))
+             (quiesce           (symbol-function 'task-child--quiesce))
+             (delete-worktree   (symbol-function 'task-worktree-discard))
+             (destructive-calls 0))
+        (world-channel-create configuration :id "bracedst" :parent "brace11"
+                              :owner     (channel-owner (world-channel-find world "braceaa"))
+                              :workspace (channel-workspace (world-channel-find world "braceaa")))
+        (snapshot-write context '(:test-context))
+        (test-call-with-function-replacements
+         (list
+          (list 'task-child--quiesce
+                (lambda (&rest arguments)
+                  (apply quiesce arguments)
+                  (ecase race
+                    (:nested
+                     (world-channel-create configuration :id "bracenew" :parent "braceaa"
+                                           :owner     (channel-owner (world-channel-find world "braceaa"))
+                                           :workspace (channel-workspace (world-channel-find world "braceaa"))))
+                    (:incoming
+                     (world-participant-move configuration (participant-identifier selected) "bracedst")
+                     (world-participant-move configuration agent-id "braceaa"))
+                    (:outgoing
+                     (world-participant-move configuration agent-id "bracedst")))))
+          (list 'task-worktree-discard
+                (lambda (&rest arguments)
+                  (incf destructive-calls)
+                  (apply delete-worktree arguments))))
+         (lambda ()
+           (if (eq race ':outgoing)
+               (test-assert (= 1 (channel-remove configuration '("braceaa")))
+                            "an outgoing resident does not prevent deleting its old channel")
+               (test-assert
+                (handler-case (progn (channel-remove configuration '("braceaa")) nil)
+                  (world-error () t))
+                "new descendants and incoming residents refuse the stale plan before cleanup"))))
+        (test-assert (probe-file context) "a surviving participant keeps its private context")
+        (test-assert (not (conversation-lease-busy-p configuration "braceaa"))
+                     "interleaved validation always releases the selected conversation lease")
+        (if (eq race ':outgoing)
+            (test-assert (and (world-participant-find (world-load configuration) agent-id)
+                              (not (world-channel-find (world-load configuration) "braceaa")))
+                         "actual transaction-deleted participants exclude the moved resident")
+            (test-assert (and (zerop destructive-calls)
+                              (world-channel-find (world-load configuration) "braceaa")
+                              (conversation-task-pathname-for-id configuration "braceaa"))
+                         "a rejected fresh-world plan performs no destructive storage work")))))
+  nil)
+
+(-> test-world-child-removal-recovery () null)
+(defun test-world-child-removal-recovery ()
+  "Test later-root preparation failure and durable cleanup recovery without resurrection."
+  (with-test-configuration (configuration)
+    (dolist (root '("bfirst11" "bsecond11"))
+      (world-tests--persisted-conversation configuration root 1000))
+    (world-tests--child-conversation configuration "bfirstaa" :root "bfirst11" :parent "bfirst11"
+                                                           :name "first" :created-at 1500)
+    (world-tests--child-conversation configuration "bsecondaa" :root "bsecond11" :parent "bsecond11"
+                                                            :name "second" :created-at 1600)
+    (world-reconcile-sessions configuration)
+    (let* ((channels    '("bfirstaa" "bsecondaa"))
+           (world       (world-load configuration))
+           (agent       (first (world-channel-residents world "bfirstaa")))
+           (context     (world-context-pathname configuration (participant-identifier agent)))
+           (persist     (symbol-function 'shell-log-persist-owner-delivery))
+           (worktree    (symbol-function 'task-worktree-discard))
+           (delete-root (symbol-function 'task-child--delete-root-storage))
+           (passes      0)
+           (deletes     0)
+           (intent      nil))
+      (snapshot-write context '(:test-context))
+      (test-call-with-function-replacements
+       (list (list 'shell-log-persist-owner-delivery
+                   (lambda (&rest arguments)
+                     (when (= 2 (incf passes))
+                       (error 'task-error :message "Second root delivery preparation failed."))
+                     (apply persist arguments)))
+             (list 'task-worktree-discard
+                   (lambda (&rest arguments) (incf deletes) (apply worktree arguments))))
+       (lambda ()
+         (test-assert
+          (handler-case (progn (channel-remove configuration channels) nil)
+            (task-error () t))
+          "a later root's delivery preparation can fail the batch")))
+      (test-assert (and (= passes 2) (zerop deletes)
+                        (every (lambda (id) (world-channel-find (world-load configuration) id)) channels)
+                        (every (lambda (id) (conversation-task-pathname-for-id configuration id)) channels)
+                        (every (lambda (id) (not (conversation-lease-busy-p configuration id))) channels))
+                   "all roots prepare before any destructive work, and preparation exceptions release every lease")
+      (setf deletes 0)
+      (test-call-with-function-replacements
+       (list (list 'task-child--delete-root-storage
+                   (lambda (&rest arguments)
+                     (when (= 2 (incf deletes))
+                       (error 'task-error :message "Second root storage cleanup failed."))
+                     (apply delete-root arguments))))
+       (lambda ()
+         (test-assert
+          (handler-case (progn (channel-remove configuration channels) nil)
+            (channel-removal-pending (cause)
+              (setf intent (channel-removal-pending-intent cause))
+              t))
+          "post-publication cleanup failure exposes its durable exact-identity intent")))
+      (test-assert (and intent (probe-file intent) (probe-file context)
+                        (equal channels (getf (snapshot-read intent) :channels))
+                        (every (lambda (id) (not (world-channel-find (world-load configuration) id))) channels)
+                        (every (lambda (id) (not (conversation-lease-busy-p configuration id))) channels))
+                   "failed cleanup retains retry evidence and contexts while releasing every lease")
+      (test-assert (= 1 (count-if (lambda (id)
+                                   (null (conversation-task-pathname-for-id configuration id)))
+                                 channels))
+                   "a partially completed cleanup can resume after an earlier root directory is already gone")
+      ;; Drop followers and compact, then discover before retry as another
+      ;; process would. Deleted storage must never turn into live agents again.
+      (sexp-store:store-compact (world--store configuration))
+      (let ((*world-followers* (make-hash-table :test #'equal))
+            (*world-checked*   (make-hash-table :test #'equal)))
+        (world-reconcile-sessions configuration)
+        (test-assert (every (lambda (id) (not (world-channel-find (world-load configuration) id))) channels)
+                     "compaction and fresh discovery preserve storage-deletion tombstones")
+        (test-assert (probe-file intent) "discovery does not hide or consume pending cleanup")
+        (world-server--reconcile configuration))
+      (test-assert (and (not (probe-file intent)) (not (probe-file context))
+                        (every (lambda (id) (not (conversation-task-pathname-for-id configuration id))) channels)
+                        (notany (lambda (mapping)
+                                  (member (world-session-mapping-conversation mapping) channels :test #'string=))
+                                (world-session-mappings configuration)))
+                   "server startup retries the on-disk intent and completes histories, contexts and mappings")))
+  nil)
+
 (-> test-world-child-role () null)
 (defun test-world-child-role ()
   "Test a child's own channel serves it in its role, and a session refuses to swap in a conversation of another role."

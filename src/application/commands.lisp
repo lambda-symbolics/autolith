@@ -1790,25 +1790,10 @@ searches every task directory."
                          ((and choice
                                (string= (getf choice :name) "remove")
                                pending)
-                          (handler-case
-                              (let ((removed (channel-remove (application-configuration application)
-                                                             (list (getf pending :value))
-                                                             :tool-name "(switch)")))
-                                (application-present
-                                 application
-                                 (application-notice-line
-                                  (format nil "channel ~A removed~[~;~:;, with the ~:*~D channels nested in it~]"
-                                          (string-trim " " (getf pending :name))
-                                          (1- removed))))
-                                (refresh-items))
-                            (autolith-error (condition)
-                              (application-present
-                               application
-                               (application-failure-line (autolith-error-message condition)))
-                              (refresh-items)))
-                          (setf mode ':browse
-                                pending nil)
-                          (browse-action selected-value))
+                           ;; End the modal before filesystem cleanup. Clinedi calls
+                           ;; this callback under the presentation lock.
+                          (setf mode ':remove)
+                          (list ':accept selected-value))
                          (t
                           (setf mode ':browse
                                 pending nil)
@@ -1820,16 +1805,40 @@ searches every task directory."
                        (browse-action selected-value)))
                     (t
                      nil))))))
-      (application--pick-identifier
-       application
-       :title         browse-title
-       :items         browse-items
-       :hint          browse-hint
-       :initial-value current-identifier
-       :on-event      #'on-event
-       :usage         "Usage: (switch \"ID\")"
-       :search-p      t
-       :empty-notice  (application-notice-line "no other channels exist")))))
+      (loop
+        (let ((selected
+                (application--pick-identifier
+                 application
+                 :title         browse-title
+                 :items         browse-items
+                 :hint          browse-hint
+                 :initial-value current-identifier
+                 :on-event      #'on-event
+                 :usage         "Usage: (switch \"ID\")"
+                 :search-p      t
+                 :empty-notice  (application-notice-line "no other channels exist"))))
+          (unless (eq mode ':remove)
+            (return selected))
+          (let* ((ui                (application-ui application))
+                 (previous-activity (terminal-ui-local-activity ui)))
+            (unwind-protect
+                 (progn
+                   (application-set-local-activity application "removing channel")
+                   (handler-case
+                       (let ((removed (channel-remove (application-configuration application)
+                                                      (list (getf pending :value))
+                                                      :tool-name "(switch)")))
+                         (application-present
+                          application
+                          (application-notice-line
+                           (format nil "channel ~A removed~[~;~:;, with the ~:*~D channels nested in it~]"
+                                   (string-trim " " (getf pending :name)) (1- removed)))))
+                     (autolith-error (condition)
+                       (application-present application
+                                            (application-failure-line (autolith-error-message condition))))))
+              (application-set-local-activity application previous-activity)))
+          (setf mode ':browse pending nil)
+          (refresh-items))))))
 
 (-> application--agent-items (application) list)
 (defun application--agent-items (application)

@@ -327,15 +327,23 @@ rewrite and nothing to reconcile, so the move leaves it to the world store."
 
 (-> world-session-forget (configuration string) boolean)
 (defun world-session-forget (configuration conversation-identifier)
-  "Drop the mapping of CONVERSATION-IDENTIFIER, whose conversation and channel are gone, and return whether one existed."
-  (world-session--transact
-   configuration
-   (lambda (mappings)
-     (let ((mapping (find conversation-identifier mappings
-                          :key #'world-session-mapping-conversation :test #'string=)))
-       (if mapping
-           (values (remove mapping mappings) t t)
-           (values nil nil nil))))))
+  "Drop CONVERSATION-IDENTIFIER's mapping and return whether one existed."
+  (plusp (world-sessions-forget configuration (list conversation-identifier))))
+
+(-> world-sessions-forget (configuration list) (integer 0))
+(defun world-sessions-forget (configuration identifiers)
+  "Drop the mappings for IDENTIFIERS in one update, returning how many existed."
+  (let ((doomed (make-hash-table :test #'equal)))
+    (dolist (identifier identifiers)
+      (setf (gethash identifier doomed) t))
+    (world-session--transact
+     configuration
+     (lambda (mappings)
+       (let* ((kept  (remove-if (lambda (mapping)
+                                  (gethash (world-session-mapping-conversation mapping) doomed))
+                                mappings))
+              (count (- (length mappings) (length kept))))
+         (values kept count (plusp count)))))))
 
 
 ;;;; -- Reconciliation --
@@ -438,6 +446,10 @@ MAPPINGS are the existing mappings, consulted for the root of a child task.
 The records are folded into a private copy of WORLD as they are planned, so
 every later record sees the identities the earlier ones introduce. The third
 value lists the conversation identifiers whose mappings end."
+  ;; Discovery may have read storage before another process deleted it.
+  (setf changes (remove-if (lambda (change)
+                             (gethash (getf change :id) (world--deleted-channel-table world)))
+                           changes))
   (let ((preview (world--copy world))
         (records nil)
         (planned nil)

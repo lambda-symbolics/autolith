@@ -6261,8 +6261,32 @@
              (recording-terminal-reset terminal)
              (setf (scripted-terminal-events terminal)
                    (list :history-next :delete :submit :escape))
-             (test-assert (null (application--pick-channel application))
-                          "removal returns to browsing until escape")
+             (let ((remove-function (symbol-function 'channel-remove))
+                   (painted-p       nil))
+               (test-call-with-function-replacements
+                (list
+                 (list 'channel-remove
+                       (lambda (&rest arguments)
+                         (test-assert (null (terminal-ui-selector (application-ui application)))
+                                      "cleanup starts after the picker releases its modal")
+                         (test-assert (terminal-ui-local-activity (application-ui application))
+                                      "cleanup uses the local activity indicator")
+                         (let ((painter
+                                 (make-thread
+                                  (lambda ()
+                                    (with-terminal-ui-locked ((application-ui application))
+                                      (setf painted-p t)))
+                                  :name "picker cleanup presentation probe")))
+                           (unwind-protect
+                                (test-assert (task-tests--wait-until (lambda () painted-p) 2)
+                                             "presentation can advance during channel cleanup")
+                             (image-daemon:daemon-stop-thread painter)))
+                         (apply remove-function arguments))))
+                (lambda ()
+                  (test-assert (null (application--pick-channel application))
+                               "removal returns to browsing until escape")))
+               (test-assert (null (terminal-ui-local-activity (application-ui application)))
+                            "cleanup restores the previous local activity"))
              (test-assert
                (and (not (conversation-storage-occupied-p
                           (conversation-pathname current-older)))

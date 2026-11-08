@@ -3044,6 +3044,15 @@ serves it in its role, with that role's tools and instructions, whether it
 runs for its parent or someone opens the channel. A session that serves one
 conversation in place refuses to swap in a conversation of another role.
 
+Channel deletion validates the whole selection before changing the world and
+prepares shell-delivery evidence for every task root before deleting storage.
+If subsequent storage cleanup fails, the error names a durable cleanup intent
+under =channel-removals/= in the data directory. Use the =retry-cleanup= restart
+when handling that condition; otherwise cleanup is retried at the next server
+start or channel deletion. Deleted identities cannot be reused or rediscovered
+from leftover histories. Private contexts are removed only for participants the
+world transaction actually deleted, after history and worktree cleanup finishes.
+
 ** Completion-driven turns
 
 Set =completion-policy= to =continue= (the default) or =notify= on asynchronous

@@ -135,65 +135,248 @@
 
 (-> channel-remove (configuration list &key (:tool-name string)) (integer 0))
 (defun channel-remove (configuration channels &key (tool-name "child.remove"))
-  "Delete CHANNELS with their agents, histories, worktrees and every channel nested below them, and return how many went.
+  "Remove CHANNELS after validating fresh world state and preparing every root.
 
-This removes children, or any channels the person no longer wants; never the
-inbox. Nothing is deleted while any of them is busy. A child's isolated
-worktree is discarded with it, edits included. The children of one root
-share one pass over that root's shell logs, and the deepest channels leave
-the world first, so a failure partway leaves no channel without its parent.
-TOOL-NAME names the refusing operation."
-  (let* ((world (world-load configuration))
-         (all   (remove-duplicates
-                 (loop for channel in channels
-                       do (when (channel-inbox-p (world--require-channel world channel ':delete-channel))
-                            (error 'task-error
-                                   :message   "The inbox stays; only other channels can be removed."
-                                   :tool-name tool-name))
-                       append (task-child--subtree world channel))
-                 :test     #'string=
-                 :from-end t)))
-    (task-child--quiesce configuration all tool-name)
-    (dolist (identifier all)
-      (when (conversation-lease-busy-p configuration identifier)
-        (task-child--busy identifier tool-name)))
-    (dolist (identifier all)
-      (task-worktree-discard configuration identifier))
-    (let ((children (remove-if-not (lambda (identifier)
-                                     (conversation-task-pathname-for-id configuration identifier))
-                                   all)))
-      (task-child-delete-storage configuration children)
-      (dolist (identifier (set-difference all children :test #'string=))
-        (when (conversation-storage-active-pathname (conversation-pathname-for-id configuration identifier))
-          (conversation-delete configuration identifier))))
-    (dolist (identifier (reverse all))
-      (task-child--forget configuration identifier))
-    (length all)))
+All leases precede publication. A durable cleanup intent precedes the atomic
+world deletion; destructive storage cleanup follows it. Failed cleanup retains
+that intent and the private contexts for retry at server start or RETRY-CLEANUP."
+  (channel-remove-recover configuration)
+  (call-with-file-lock
+   (task-child--removal-lock-pathname configuration)
+   (lambda ()
+     (let* ((world        (world-load configuration))
+            (all          (remove-duplicates
+                           (loop for channel in channels
+                                 do (when (channel-inbox-p (world--require-channel world channel ':delete-channel))
+                                      (error 'task-error :message   "The inbox stays; only other channels can be removed."
+                                                         :tool-name tool-name))
+                                 append (task-child--subtree world channel))
+                           :test #'string= :from-end t))
+            (identities   (task-child--storage-identities configuration all))
+            (participants (remove-duplicates
+                           (loop for identifier in all
+                                 append (loop for resident in (world-channel-residents world identifier)
+                                              append (cons (participant-identifier resident)
+                                                           (mapcar #'participant-identifier
+                                                                   (world-participant-descendants
+                                                                    world (participant-identifier resident))))))
+                           :test #'string=))
+            (intent       (merge-pathnames (format nil "~A.sexp" (first all))
+                                           (task-child--removal-root configuration))))
+       (task-child--quiesce configuration all tool-name)
+       (task-child--call-with-removal-leases
+        configuration all
+        :identities identities
+        :function   (lambda ()
+                      (world-channels-delete
+                       configuration (reverse all) :participants participants
+                       :prepare-function
+                       (lambda (deleted)
+                         ;; Validation and preparation hold the world store lock.
+                         (task-child--prepare-storage configuration all identities)
+                         (snapshot-write
+                          intent
+                          (list :version 1 :channels all :participants deleted
+                                :identities (loop for identifier in all
+                                                  collect (list identifier
+                                                                (namestring (gethash identifier identities))))))))
+                      (task-child--finish-removal configuration intent))
+        :tool-name  tool-name)
+       (length all)))))
 
-(-> task-child-delete-storage (configuration list) null)
-(defun task-child-delete-storage (configuration channels)
-  "Delete the histories and run artifacts of the idle children CHANNELS, keeping what their shell logs delivered.
+(-> channel-remove-recover (configuration) null)
+(defun channel-remove-recover (configuration)
+  "Retry durable channel cleanup intents at server start or before another deletion.
 
-The children of one root share one pass over its shell logs: their
-directories go under their source locks, after the delivery evidence is saved
-outside them, so a later sweep of shell logs still knows which captures
-reached their owners. A failure keeps the directories."
+An intent whose world transaction never published is simply retired. A
+published deletion is resumed idempotently under all its conversation leases.
+An exception leaves the intent on disk and exposes RETRY-CLEANUP."
+  (call-with-file-lock
+   (task-child--removal-lock-pathname configuration)
+   (lambda ()
+     (dolist (intent (uiop:directory-files (task-child--removal-root configuration) "*.sexp"))
+       (let* ((plan       (task-child--read-removal intent))
+              (channels   (getf plan :channels))
+              (world      (world-load configuration))
+              (identities (task-child--removal-identities plan)))
+         (cond
+           ((every (lambda (identifier) (world-channel-find world identifier)) channels)
+            ;; No destructive work preceded publication, so an uncommitted
+            ;; intent needs no rollback.
+            (delete-file intent))
+           ((some (lambda (identifier) (world-channel-find world identifier)) channels)
+            (error 'task-error
+                   :message   (format nil "Cleanup intent ~A conflicts with live channel identities; storage is untouched." intent)
+                   :tool-name "child.remove"))
+           (t
+            (task-child--call-with-removal-leases
+             configuration channels
+             :identities identities
+             :function   (lambda () (task-child--finish-removal configuration intent))
+             :tool-name  "child.remove")))))))
+  nil)
+
+(-> task-child-delete-storage
+    (configuration list &key (:identities (option hash-table)) (:leased-p boolean)
+                             (:prepared-p boolean)) null)
+(defun task-child-delete-storage (configuration channels &key identities leased-p prepared-p)
+  "Delete idle child storage after preparing delivery evidence for every root.
+
+Prepare every root before deleting the first directory. PREPARED-P means the
+caller already preserved that evidence while holding all conversation leases."
+  (let ((identities (or identities (task-child--storage-identities configuration channels))))
+    (if leased-p
+        (progn
+          (unless prepared-p
+            (task-child--prepare-storage configuration channels identities))
+          (maphash (lambda (root entries)
+                     (task-child--delete-root-storage configuration root entries
+                                                      :leased-p t :prepared-p t))
+                   (task-child--storage-roots configuration channels identities)))
+        (task-child--call-with-removal-leases
+         configuration channels
+         :identities identities
+         :function   (lambda ()
+                       (task-child-delete-storage configuration channels
+                                                  :identities identities
+                                                  :leased-p   t
+                                                  :prepared-p prepared-p)))))
+  nil)
+
+
+;;;; -- Private Functions --
+
+(-> task-child--removal-root (configuration) pathname)
+(defun task-child--removal-root (configuration)
+  "Return the private directory of outstanding channel cleanup intents."
+  (let ((root (merge-pathnames "channel-removals/" (config :data-root configuration))))
+    (ensure-directories-exist root)
+    root))
+
+(-> task-child--removal-lock-pathname (configuration) pathname)
+(defun task-child--removal-lock-pathname (configuration)
+  "Return the guard serializing deletion and recovery, including other processes."
+  (merge-pathnames "cleanup.lock" (task-child--removal-root configuration)))
+
+(-> task-child--read-removal (pathname) list)
+(defun task-child--read-removal (intent)
+  "Read and validate INTENT before interpreting its identities or retiring it."
+  (let ((plan (snapshot-read intent)))
+    (unless (and (eql (getf plan :version) 1)
+                 (getf plan :channels)
+                 (world--identifier-list-p (getf plan :channels))
+                 (world--identifier-list-p (getf plan :participants))
+                 (every (lambda (entry)
+                          (and (listp entry) (= (length entry) 2)
+                               (non-empty-string-p (first entry))
+                               (non-empty-string-p (second entry))))
+                        (getf plan :identities))
+                 (equal (mapcar #'first (getf plan :identities)) (getf plan :channels)))
+      (error 'task-error
+             :message   (format nil "Invalid channel cleanup intent ~A; preserve it for recovery." intent)
+             :tool-name "child.remove"))
+    plan))
+
+(-> task-child--removal-identities (list) hash-table)
+(defun task-child--removal-identities (plan)
+  "Restore the conversation identity paths retained in cleanup PLAN."
+  (let ((identities (make-hash-table :test #'equal)))
+    (dolist (entry (getf plan :identities))
+      (setf (gethash (first entry) identities) (pathname (second entry))))
+    identities))
+
+(-> task-child--call-with-removal-leases
+    (configuration list &key (:identities hash-table) (:function function) (:tool-name string)) t)
+(defun task-child--call-with-removal-leases (configuration channels
+                                             &key identities function (tool-name "child.remove"))
+  "Call FUNCTION holding every channel lease, releasing all on any exception."
+  (let ((leases nil))
+    (unwind-protect
+         (progn
+           (dolist (identifier channels)
+             (push (handler-case
+                       (conversation-lease-acquire configuration identifier
+                                                   :pathname (gethash identifier identities))
+                     (conversation-in-use ()
+                       (task-child--busy identifier tool-name)))
+                   leases))
+           (funcall function))
+      (mapc #'conversation-lease-release leases))))
+
+(-> task-child--storage-roots (configuration list hash-table) hash-table)
+(defun task-child--storage-roots (configuration channels identities)
+  "Group child storage CHANNELS by task root without rediscovering their paths."
   (let ((roots (make-hash-table :test #'equal)))
     (dolist (channel channels)
-      (let ((pathname (conversation-task-pathname-for-id configuration channel)))
-        (when pathname
+      (let ((pathname (gethash channel identities)))
+        (unless (equal (pathname-directory pathname)
+                       (pathname-directory (configuration-conversation-root configuration)))
           (let ((directory (uiop:pathname-directory-pathname pathname)))
             (push (cons channel directory)
                   (gethash (first (last (pathname-directory
                                          (uiop:pathname-parent-directory-pathname directory))))
                            roots))))))
-    (maphash (lambda (root entries)
-               (task-child--delete-root-storage configuration root entries))
-             roots))
+    roots))
+
+(-> task-child--prepare-storage (configuration list hash-table) null)
+(defun task-child--prepare-storage (configuration channels identities)
+  "Persist every root's delivery evidence before any destructive cleanup."
+  (maphash (lambda (root entries)
+             (shell-log-persist-owner-delivery configuration root (mapcar #'first entries)))
+           (task-child--storage-roots configuration channels identities))
   nil)
 
+(define-condition channel-removal-pending (task-error)
+  ((intent
+    :initarg       :intent
+    :reader        channel-removal-pending-intent
+    :documentation "Durable cleanup intent to retry, containing the exact identities.")
+   (cause
+    :initarg       :cause
+    :reader        channel-removal-pending-cause
+    :documentation "The cleanup exception; the deletion itself has already published."))
+  (:documentation "A channel deletion published, but its durable cleanup is incomplete."))
 
-;;;; -- Private Functions --
+(-> task-child--finish-removal (configuration pathname) null)
+(defun task-child--finish-removal (configuration intent)
+  "Finish committed INTENT idempotently, retaining it on failure for automatic retry."
+  (loop
+    (restart-case
+        (handler-case
+            (let* ((plan       (task-child--read-removal intent))
+                   (channels   (getf plan :channels))
+                   (identities (task-child--removal-identities plan)))
+              ;; Do the most failure-prone work first. Contexts and mapping
+              ;; evidence survive until every history and worktree is cleaned.
+              (dolist (identifier channels)
+                (task-worktree-discard configuration identifier :pathname (gethash identifier identities)))
+              (task-child-delete-storage configuration channels :identities identities
+                                                               :leased-p t :prepared-p t)
+              (dolist (identifier channels)
+                (let ((pathname (gethash identifier identities)))
+                  (when (equal (pathname-directory pathname)
+                               (pathname-directory (configuration-conversation-root configuration)))
+                    (when (conversation-storage-active-pathname pathname)
+                      (conversation-delete-history configuration identifier :pathname pathname))
+                    (conversation-delete-artifacts configuration identifier))))
+              (let ((world (world-load configuration)))
+                (dolist (participant (getf plan :participants))
+                  (unless (world-participant-find world participant)
+                    (world-context-delete configuration participant))))
+              (dolist (identifier channels)
+                (world-inbox-delete configuration identifier))
+              (world-sessions-forget configuration channels)
+              (delete-file intent)
+              (return nil))
+          (error (cause)
+            (error 'channel-removal-pending
+                   :message   (format nil "Channels removed; cleanup is pending in ~A: ~A. Retry with RETRY-CLEANUP, or automatically at the next server start or channel deletion."
+                                      intent cause)
+                   :tool-name "child.remove"
+                   :intent    intent
+                   :cause     cause)))
+      (retry-cleanup ()
+        :report "Retry this channel deletion's durable cleanup intent."))))
 
 (-> task-child--find (tool-context string string) (values string participant))
 (defun task-child--find (context designator tool-name)
@@ -299,40 +482,64 @@ reached their owners. A failure keeps the directories."
         (loop for child in (world-channel-children world channel)
               append (task-child--subtree world (channel-identifier child)))))
 
-(-> task-child--delete-root-storage (configuration string list) null)
-(defun task-child--delete-root-storage (configuration root entries)
-  "Delete the (CHANNEL . DIRECTORY) ENTRIES of ROOT's children under their leases, in one shell log pass."
+(-> task-child--storage-identities (configuration list) hash-table)
+(defun task-child--storage-identities (configuration channels)
+  "Resolve CHANNELS once, sharing task-root discovery across the deletion plan."
+  (let* ((tasks      (merge-pathnames "tasks/" (config :data-root configuration)))
+         (groups     (when (uiop:directory-exists-p tasks) (uiop:subdirectories tasks)))
+         (identities (make-hash-table :test #'equal)))
+    (dolist (channel channels)
+      (let* ((top-level (merge-pathnames (make-pathname :name channel :type "sexp")
+                                         (configuration-conversation-root configuration)))
+             (pathname  (if (conversation-storage-active-pathname top-level)
+                            top-level
+                            (or (loop for group in groups
+                                      for candidate = (merge-pathnames
+                                                       (make-pathname :directory (list ':relative channel)
+                                                                      :name channel :type "sexp")
+                                                       group)
+                                      when (conversation-storage-active-pathname candidate)
+                                        return candidate)
+                                top-level))))
+        (setf (gethash channel identities) pathname)))
+    identities))
+
+(-> task-child--delete-root-storage
+    (configuration string list &key (:leased-p boolean) (:prepared-p boolean)) null)
+(defun task-child--delete-root-storage (configuration root entries &key leased-p prepared-p)
+  "Delete ROOT's child ENTRIES under their leases, preserving delivery evidence first."
   (let ((leases nil))
     (unwind-protect
          (progn
-           (dolist (entry entries)
-             (push (handler-case (conversation-lease-acquire configuration (first entry))
-                     (conversation-in-use ()
-                       (task-child--busy (first entry) "child.remove")))
-                   leases))
-           (shell-log-persist-owner-delivery
-            configuration root (mapcar #'first entries)
-            :delete-function (lambda ()
-                               (dolist (entry entries)
-                                 (conversation-delete-artifacts configuration (first entry))
-                                 (platform-delete-directory-tree *platform* (rest entry)
-                                                                 :validate          t
-                                                                 :if-does-not-exist ':ignore)))))
-      (mapc #'conversation-lease-release leases)))
-  nil)
+           (unless leased-p
+             (dolist (entry entries)
+               (push (handler-case
+                         (conversation-lease-acquire
+                          configuration (first entry)
+                          :pathname (merge-pathnames (make-pathname :name (first entry) :type "sexp")
+                                                    (rest entry)))
+                       (conversation-in-use ()
+                         (task-child--busy (first entry) "child.remove")))
+                     leases)))
+           (labels ((delete-storage ()
+                      (dolist (entry entries)
+                        (conversation-delete-artifacts configuration (first entry))
+                        (platform-delete-directory-tree *platform* (rest entry)
+                                                        :validate          t
+                                                        :if-does-not-exist ':ignore)))
 
-(-> task-child--forget (configuration string) null)
-(defun task-child--forget (configuration channel)
-  "Take channel CHANNEL, whose storage is gone and none of whose nested channels remain, out of the world."
-  (let* ((world  (world-load configuration))
-         (doomed (loop for resident in (world-channel-residents world channel)
-                       append (cons (participant-identifier resident)
-                                    (mapcar #'participant-identifier
-                                            (world-participant-descendants
-                                             world (participant-identifier resident)))))))
-    (world-channel-delete configuration channel :participants doomed)
-    (dolist (participant doomed)
-      (world-context-delete configuration participant))
-    (world-inbox-delete configuration channel)
-    (world-session-forget configuration channel))
+                    (with-source-locks (remaining)
+                      (if remaining
+                          (let* ((entry (first remaining))
+                                 (path  (merge-pathnames
+                                         (make-pathname :name (first entry) :type "sexp") (rest entry))))
+                            (call-with-file-lock
+                             (conversation-picker-source-lock-pathname path)
+                             (lambda () (with-source-locks (rest remaining)))))
+                          (delete-storage))))
+             (if prepared-p
+                 (with-source-locks (sort (copy-list entries) #'string< :key #'first))
+                 (shell-log-persist-owner-delivery
+                  configuration root (mapcar #'first entries) :delete-function #'delete-storage))))
+      (mapc #'conversation-lease-release leases)))
   nil)

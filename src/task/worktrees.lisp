@@ -461,14 +461,14 @@ a successful child is downgraded rather than claiming an absent artifact."
         (task-tool-result (bounded-string (task--write-readable-sexp answer :pretty-p t)
                                           :limit *task-tool-content-limit*) answer)))))
 
-(-> task-worktree-discard (configuration string) null)
-(defun task-worktree-discard (configuration channel)
+(-> task-worktree-discard (configuration string &key (:pathname (option pathname))) null)
+(defun task-worktree-discard (configuration channel &key pathname)
   "Discard the isolated worktree of child CHANNEL, edits included, when it has one.
 
 The child is being removed, so nothing of its checkout is left to integrate:
 Git forgets the worktree and its directory goes. A checkout Git no longer
 knows is deleted all the same."
-  (let* ((pathname (conversation-task-pathname-for-id configuration channel))
+  (let* ((pathname (or pathname (conversation-task-pathname-for-id configuration channel)))
          (record   (and pathname
                         (merge-pathnames "worktree.sexp" (uiop:pathname-directory-pathname pathname))))
          (metadata (and record (probe-file record) (snapshot-read record))))

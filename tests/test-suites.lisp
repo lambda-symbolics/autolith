@@ -652,6 +652,9 @@
   test-world-prune-empty-conversations
   test-world-inbox-modeline
   test-world-child-lifecycle
+  test-world-child-removal-batch
+  test-world-child-removal-interleavings
+  test-world-child-removal-recovery
   test-world-placing-needs-server
   test-world-agent-hierarchy
   test-world-parent-mention
