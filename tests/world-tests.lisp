@@ -617,7 +617,7 @@
       (world-channel-update configuration "bsecnd2" :title "Second thoughts")
       (setf world (world-load configuration))
       (dolist (case '(("bfirst1" "bfirst1") ("b-first1" "bfirst1") ("FIRST" "bfirst1")
-                      ("secnd" "bsecnd2") ("b-s" "bsecnd2")))
+                      ("secnd" "bsecnd2") ("b-secnd" "bsecnd2")))
         (test-assert (string= (channel-identifier (world-channel-resolve world (first case)))
                               (second case))
                      "a full identifier or a unique fragment resolves to its channel"))
