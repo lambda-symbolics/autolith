@@ -125,11 +125,14 @@
     (:native-compaction
      (let ((summary (getf (rest record) :summary)))
        (and (stringp summary)
-            (list ':summary
-                  :seq         (getf (rest record) :seq)
-                  :time        (getf (rest record) :time)
-                  :through-seq (getf (rest record) :through-seq)
-                  :content     summary))))
+            (append
+             (list ':summary
+                   :seq         (getf (rest record) :seq)
+                   :time        (getf (rest record) :time)
+                   :through-seq (getf (rest record) :through-seq)
+                   :content     summary)
+             (when (getf (rest record) :recovery)
+               (list :recovery (copy-tree (getf (rest record) :recovery))))))))
     (:side-status
      (list ':side-status
            :seq     (getf (rest record) :seq)
@@ -259,9 +262,10 @@ whole history when a crash or retention boundary interrupted sequencing."
              (or (getf (rest record) :status) ':unknown)
              (or (getf (rest record) :output) "")))
     (:summary
-     (format stream "context compacted through sequence ~A~%~A~%"
+     (format stream "context compacted through sequence ~A~%~A~%~@[~A~%~]"
              (getf (rest record) :through-seq)
-             (or (getf (rest record) :content) "")))
+             (or (getf (rest record) :content) "")
+             (compaction-recovery-notice (getf (rest record) :recovery))))
     (:side-status
      (format stream "~A~%" (getf (rest record) :content)))
     (:user-operation

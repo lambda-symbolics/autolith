@@ -1740,6 +1740,12 @@ publication. Return issued request count and optional next-request details."
          (compaction                   (conversation-compaction-capture conversation))
          (captured-view                (conversation-compaction-view compaction))
          (request-context              (mission-request-view-context conversation))
+         (recovery
+           (make-compaction-recovery
+            (lambda (details)
+              (conversation-append-provider-metadata
+               conversation (list :compaction-recovery details))
+              (agent-observer-status observer :compaction-recovery details))))
          (unfinished-work              nil)
          (*request-context-hurry-up-p* (agent-hurry-up-p agent))
          (issued                       0)
@@ -1753,36 +1759,42 @@ publication. Return issued request count and optional next-request details."
     (setf unfinished-work (task-unfinished-work-snapshot agent))
     (let* ((*provider-hosted-tools-enabled-p* (not tool-restriction-p))
            (provider                          (agent-provider agent))
+           (native-tools
+             (if (not tools-p)
+                 #()
+                 (if tool-restriction-p
+                     (tool-registry-provider-schemas
+                      (agent-tool-registry agent) :canonical-names tool-allowlist)
+                     (tool-registry-provider-schemas (agent-tool-registry agent)))))
            (native-window
              (multiple-value-bind (window usage)
-                  (mission-call-with-native-compaction-view
-                   request-context captured-view
-                   (lambda ()
-                     (provider-native-compact-conversation
-                      provider captured-view
-                      :tool-namespaces
-                      (if (not tools-p)
-                          #()
-                          (if tool-restriction-p
-                              (tool-registry-provider-schemas
-                               (agent-tool-registry agent)
-                               :canonical-names tool-allowlist)
-                              (tool-registry-provider-schemas
-                               (agent-tool-registry agent))))
-                      :event-callback
-                      (lambda (event)
-                        (if (typep event 'native-compaction-completed-event)
-                            (progn
-                              (setf native-request-accounted-p t
-                                    native-usage (native-compaction-completed-event-usage event))
-                              (incf issued)
-                              (agent--note-compaction-request
-                               agent observer
-                               :request-number (+ request-number issued)
-                               :kind           ':native
-                               :usage          native-usage
-                               :response-id    (native-compaction-completed-event-response-id event)))
-                            (agent-observer-status observer :provider-progress nil))))))
+                  (values-list
+                   (compaction-recovery-call
+                    recovery provider captured-view :dispatch
+                    (lambda (candidate)
+                      (agent--check-request-budget agent (+ request-number issued))
+                      (multiple-value-list
+                       (mission-call-with-native-compaction-view
+                        request-context candidate
+                        (lambda ()
+                          (provider-native-compact-conversation
+                           provider candidate :tool-namespaces native-tools
+                           :event-callback
+                           (lambda (event)
+                             (if (typep event 'native-compaction-completed-event)
+                                 (progn
+                                   (setf native-request-accounted-p t
+                                         native-usage (native-compaction-completed-event-usage event))
+                                   (incf issued)
+                                   (agent--note-compaction-request
+                                    agent observer :request-number (+ request-number issued)
+                                    :kind ':native :usage native-usage
+                                    :response-id                   (native-compaction-completed-event-response-id event)))
+                                 (agent-observer-status observer :provider-progress nil))))))))
+                    :preflight (lambda (candidate)
+                                (provider-check-request-context
+                                 provider (provider-native-compaction-request-object provider candidate native-tools)))
+                    :native-p  t))
                  (unless native-request-accounted-p
                    (setf native-usage usage))
                  (agent--native-compaction-window window)))
@@ -1811,19 +1823,27 @@ publication. Return issued request count and optional next-request details."
            :usage          native-usage))
       (loop for attempt from 1 to *agent-compaction-maximum-summary-requests*
             for result =
-              (let ((*telemetry-request-role* ':compaction))
-                (agent--check-request-budget agent (+ request-number issued))
-                (mission-call-with-request-view
-                 request-context summary-conversation
-                 (lambda ()
-                   (provider-stream-turn
-                    provider summary-conversation
-                    :tool-namespaces #()
-                    :event-callback
-                    (lambda (event)
-                      (declare (ignore event))
-                      (agent-observer-status observer :provider-progress nil))
-                    :compaction-p    t))))
+                (let ((*telemetry-request-role* ':compaction))
+                  (multiple-value-bind (result candidate)
+                      (compaction-recovery-call
+                       recovery provider summary-conversation :dispatch
+                       (lambda (candidate)
+                         (agent--check-request-budget agent (+ request-number issued))
+                         (mission-call-with-request-view
+                          request-context candidate
+                          (lambda ()
+                            (provider-stream-turn
+                             provider candidate :tool-namespaces #()
+                             :event-callback
+                             (lambda (event)
+                               (declare (ignore event))
+                               (agent-observer-status observer :provider-progress nil))
+                             :compaction-p                       t))))
+                       :preflight (lambda (candidate)
+                                   (provider-check-request-context
+                                    provider (provider-request-object provider candidate #() :compaction-p t))))
+                    (setf summary-conversation candidate)
+                    result))
             do (incf issued)
                (push result summary-results)
                ;; Every completed paid request is accounted for before its
@@ -1874,7 +1894,8 @@ publication. Return issued request count and optional next-request details."
                conversation native-window
                :family          (provider-family provider)
                :summary         summary
-               :compaction      compaction
+               :compaction      (compaction-recovery-publication recovery compaction)
+               :recovery        (compaction-recovery-audit recovery :completed)
                :unfinished-work unfinished-work
                :validate-projection
                (lambda (candidate)
@@ -1887,7 +1908,8 @@ publication. Return issued request count and optional next-request details."
                   :tool-restriction-p    tool-restriction-p
                   :tool-allowlist        tool-allowlist)))
               (conversation-append-summary
-               conversation summary :compaction compaction
+               conversation summary :compaction (compaction-recovery-publication recovery compaction)
+               :recovery                        (compaction-recovery-audit recovery :completed)
                :unfinished-work                 unfinished-work
                :validate-projection
                (lambda (candidate)

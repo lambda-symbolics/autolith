@@ -1842,3 +1842,14 @@
   test-mission-inference-unknown-usage-policy-fail-closed
   test-mission-inference-unknown-usage-policy-review
   test-job-completion-controller-unknown-usage-policy)
+
+(define-test-suite compaction-recovery
+  test-compaction-recovery-encrypted-history
+  test-compaction-recovery-publication-preserves-tail-families
+  test-compaction-recovery-metadata-permit
+  test-compaction-recovery-unrelated-failure
+  test-compaction-recovery-encrypted-eligibility
+  test-compaction-recovery-tools-and-transcript
+  test-compaction-recovery-mission-accounting
+  test-compaction-recovery-selected-route
+  test-compaction-recovery-exhaustion)
