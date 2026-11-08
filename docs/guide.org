@@ -1582,24 +1582,33 @@ sidebar on the left. Your inbox comes first, with the number of messages
 waiting there unread; that count is kept on disk, so every terminal shows
 the same one. The other channels are grouped by workspace, with the current
 workspace first. Within a workspace, the channel whose conversation changed
-last comes first, and child channels are nested under their parents.
+last comes first, and child channels are nested under their parents. Each
+channel shows its agent's name, then its title.
 
-| Marker | Meaning |
-|--------+---------|
-| =▸= | This terminal's current channel |
-| Cyan =●= | A terminal is attached |
-| Green =●= | The agent is working |
-| =○= | Hosted but not working |
-| =·= | No running session |
+The workspaces and channels form a tree. The current workspace starts open,
+and so does each channel the current one nests in; the rest start closed. A
+closed node shows how many channels it hides and their unread counts. Click
+a node's =▸= or =▾= marker, or a workspace's row, to open or close it; the
+sidebar keeps that choice. Click a channel or the inbox to switch to it.
 
-A yellow number counts messages received since this terminal last viewed
-the channel; =@= counts mentions of you. Each terminal tracks its own unread
-counts. A channel first seen by that terminal starts at zero. The =✉= count
-shows deliveries waiting for a channel that no process serves.
+| Marker    | Meaning                         |
+|-----------+---------------------------------|
+| =›=       | This terminal's current channel |
+| =▸= / =▾= | A closed or open node           |
+| Green =●= | The agent is working            |
+| =○=       | Hosted but not working          |
+| =·=       | No running session              |
 
-Press =Ctrl-T= to hide or show the sidebar. That preference is kept when the
-same terminal switches channels or reconnects. Below 100 columns, the
-sidebar is hidden automatically.
+A channel name in cyan has a terminal attached. A yellow number counts
+messages received since this terminal last viewed the channel; =@= counts
+mentions of you. Each terminal tracks its own unread counts. A channel first
+seen by that terminal starts at zero. The =✉= count shows deliveries waiting
+for a channel that no process serves.
+
+The sidebar takes about a fifth of the terminal's width. Below 90 columns it
+takes the whole screen; a click on a channel switches to it and hides the
+sidebar. Press =Ctrl-T= to hide or show the sidebar. That preference is kept
+when the same terminal switches channels or reconnects.
 
 *** Session endpoints
 

@@ -11,11 +11,14 @@
 ;;; server and the inboxes never holds up the terminal's keystrokes; the
 ;;; panel only takes what the thread gathered last.
 
-(defparameter *world-sidebar-width* 28
-  "The columns the sidebar takes left of the channel.")
+(defparameter *world-sidebar-share* 22/100
+  "The share of the terminal's columns the sidebar takes left of the channel.")
 
-(defparameter *world-sidebar-minimum-columns* 100
-  "The narrowest terminal that shows the sidebar beside the channel.")
+(defparameter *world-sidebar-minimum-width* 24
+  "The fewest columns the sidebar takes beside the channel.")
+
+(defparameter *world-sidebar-minimum-columns* 90
+  "The narrowest terminal that shows the sidebar beside the channel; a narrower one shows it alone.")
 
 (defparameter *world-sidebar-marker-columns* 3
   "The columns at the start of a sidebar row where a click opens or closes the row's tree node.")
@@ -133,12 +136,12 @@
   "Record whether the person wants the sidebar, for every later screen of this terminal."
   (setf (world-sidebar-shown-p panel) (and shown-p t)))
 
-(defmethod screen-panel-width ((panel world-sidebar))
-  "The sidebar's fixed width."
-  *world-sidebar-width*)
+(defmethod screen-panel-width ((panel world-sidebar) columns)
+  "The sidebar's share of a terminal COLUMNS wide, but never fewer than its minimum."
+  (max *world-sidebar-minimum-width* (round (* columns *world-sidebar-share*))))
 
 (defmethod screen-panel-minimum-columns ((panel world-sidebar))
-  "The narrowest terminal that keeps a readable channel beside the sidebar."
+  "The narrowest terminal that keeps a readable channel beside the sidebar; a narrower one shows the sidebar alone."
   *world-sidebar-minimum-columns*)
 
 (defmethod screen-panel-refresh ((panel world-sidebar))
@@ -160,13 +163,13 @@ a refresh is due."
               (setf (world-sidebar-refreshed-at panel) now)
               (world-sidebar--take panel (world-sidebar--gather panel)))))))
 
-(defmethod screen-panel-rows ((panel world-sidebar) terminal height)
-  "Render the sidebar's entries as HEIGHT rows for TERMINAL, remembering what a click on each does."
+(defmethod screen-panel-rows ((panel world-sidebar) terminal &key height width)
+  "Render the sidebar's entries as HEIGHT rows WIDTH cells wide for TERMINAL, remembering what a click on each does."
   (multiple-value-bind (rows actions) (world-sidebar--rows (world-sidebar-entries panel) height)
     (setf (world-sidebar-actions panel) (coerce actions 'vector))
     (loop for spans in rows
           collect (terminal--render-spans
-                   terminal (terminal--pad-spans spans *world-sidebar-width*)))))
+                   terminal (terminal--pad-spans spans width)))))
 
 (defmethod screen-panel-click ((panel world-sidebar) column row)
   "Open or close the tree node at ROW, or ask to switch to its channel.

@@ -253,8 +253,9 @@
     :documentation "The fixed rows the test panel shows."))
   (:documentation "A side panel of fixed rows for client screen tests."))
 
-(defmethod screen-panel-width ((panel localgroup-tests-panel))
-  "Ten columns."
+(defmethod screen-panel-width ((panel localgroup-tests-panel) columns)
+  "Ten columns, however wide the terminal."
+  (declare (ignore columns))
   10)
 
 (defmethod screen-panel-click ((panel localgroup-tests-panel) column row)
@@ -276,11 +277,11 @@
   "Nothing changes."
   nil)
 
-(defmethod screen-panel-rows ((panel localgroup-tests-panel) terminal height)
-  "Return HEIGHT rows padded to the panel's width."
+(defmethod screen-panel-rows ((panel localgroup-tests-panel) terminal &key height width)
+  "Return HEIGHT rows padded to WIDTH."
   (declare (ignore terminal))
   (loop for index below height
-        collect (format nil "~10A" (or (nth index (localgroup-tests-panel-rows panel)) ""))))
+        collect (format nil "~vA" width (or (nth index (localgroup-tests-panel-rows panel)) ""))))
 
 (-> test-localgroup-screen-panel () null)
 (defun test-localgroup-screen-panel ()
@@ -339,8 +340,8 @@
                    "the next ordinary frame brings the panel back")
       (terminal-set-dimensions terminal 50 :rows 6)
       (test-assert (and (equal (pane) '(6 50))
-                        (not (localgroup-screen-panel-visible-p screen)))
-                   "a narrow terminal hides the panel although it is wanted")
+                        (eq (localgroup-screen-layout screen) ':alone))
+                   "a narrow terminal shows the wanted panel alone, the session keeping the whole width")
       (localgroup-screen-close screen)))
   nil)
 
