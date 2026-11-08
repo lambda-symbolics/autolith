@@ -1650,6 +1650,10 @@
                    do (task-child-delete-storage configuration (list owner))
                       (test-assert (not (probe-file directory))
                                    "Explicit removal deletes each marked nested owner")
+                      (test-assert (conversation-storage-active-pathname
+                                    (merge-pathnames (make-pathname :name owner :type "sexp")
+                                                     (configuration-conversation-root configuration)))
+                                   "Child removal preserves a same-ID primary conversation")
                       (test-assert (and (shell-log-tests--marked-p configuration capture)
                                         (shell-log-tests--disk-prunable configuration capture))
                                    "Marked authority survives its nested owner's removal")))

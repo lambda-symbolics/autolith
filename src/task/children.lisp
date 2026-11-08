@@ -224,7 +224,7 @@ An exception leaves the intent on disk and exposes RETRY-CLEANUP."
 
 Prepare every root before deleting the first directory. PREPARED-P means the
 caller already preserved that evidence while holding all conversation leases."
-  (let ((identities (or identities (task-child--storage-identities configuration channels))))
+  (let ((identities (or identities (task-child--storage-identities configuration channels :prefer-task-p t))))
     (if leased-p
         (progn
           (unless prepared-p
@@ -482,25 +482,28 @@ caller already preserved that evidence while holding all conversation leases."
         (loop for child in (world-channel-children world channel)
               append (task-child--subtree world (channel-identifier child)))))
 
-(-> task-child--storage-identities (configuration list) hash-table)
-(defun task-child--storage-identities (configuration channels)
-  "Resolve CHANNELS once, sharing task-root discovery across the deletion plan."
+(-> task-child--storage-identities (configuration list &key (:prefer-task-p boolean)) hash-table)
+(defun task-child--storage-identities (configuration channels &key prefer-task-p)
+  "Resolve CHANNELS once, sharing task-root discovery across the deletion plan.
+
+PREFER-TASK-P selects child storage ahead of a same-ID primary conversation."
   (let* ((tasks      (merge-pathnames "tasks/" (config :data-root configuration)))
          (groups     (when (uiop:directory-exists-p tasks) (uiop:subdirectories tasks)))
          (identities (make-hash-table :test #'equal)))
     (dolist (channel channels)
       (let* ((top-level (merge-pathnames (make-pathname :name channel :type "sexp")
-                                         (configuration-conversation-root configuration)))
-             (pathname  (if (conversation-storage-active-pathname top-level)
-                            top-level
-                            (or (loop for group in groups
-                                      for candidate = (merge-pathnames
-                                                       (make-pathname :directory (list ':relative channel)
-                                                                      :name channel :type "sexp")
-                                                       group)
-                                      when (conversation-storage-active-pathname candidate)
-                                        return candidate)
-                                top-level))))
+                                        (configuration-conversation-root configuration)))
+             (pathname  (or (when (and (not prefer-task-p)
+                                      (conversation-storage-active-pathname top-level))
+                              top-level)
+                            (loop for group in groups
+                                  for candidate = (merge-pathnames
+                                                   (make-pathname :directory (list ':relative channel)
+                                                                  :name channel :type "sexp")
+                                                   group)
+                                  when (conversation-storage-active-pathname candidate)
+                                    return candidate)
+                            top-level)))
         (setf (gethash channel identities) pathname)))
     identities))
 
