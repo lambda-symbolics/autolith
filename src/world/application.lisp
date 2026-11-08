@@ -583,7 +583,7 @@ The channel is told and its work resumes."
       (dolist (item (nreverse removed))
         (case (first item)
           (:client-work
-           (client-work-cancel (second item) (if destination ':moved ':dismissed)))
+           (job-cancel (second item) :reason (if destination ':moved ':dismissed)))
           ((:message :command :lisp)
            (let ((submission (if (eq (first item) ':message)
                                  (user-message-input-submission (second item))

@@ -210,105 +210,79 @@ cursor outside the retained tail is refused rather than skipping events."
 
 ;;;; -- Work for Clients --
 
-(defclass client-work ()
-  ((function
-    :initarg       :function
-    :reader        client-work-function
-    :type          function
-    :documentation "What the channel runs for the client, on its main thread.")
-   (lock
-    :initform      (make-lock "Autolith client work")
-    :reader        client-work-lock
-    :documentation "The lock guarding the outcome.")
-   (condition-variable
-    :initform      (make-condition-variable :name "Autolith client work")
-    :reader        client-work-condition-variable
-    :documentation "Signaled once the work has run.")
-   (done-p
-    :initform      nil
-    :accessor      client-work-done-p
-    :type          boolean
-    :documentation "Whether the work has run.")
-   (values
-    :initform      nil
-    :accessor      client-work-values
-    :type          list
-    :documentation "What the function returned.")
-   (failure
+(defclass client-work (job)
+  ((failure
     :initform      nil
     :accessor      client-work-failure
-    :documentation "The condition the function signaled, or NIL."))
-  (:documentation "A function a client has a channel run as one of its own work items."))
+    :type          (option error)
+    :documentation "The original local condition, beyond the job's portable report."))
+  (:documentation "An inline job whose channel thread runs a client's operation."))
+
+(defmethod job-interrupt-on-cancellation-p ((work client-work))
+  "Never interrupt the shared channel thread when its waiting client leaves."
+  nil)
 
 (defparameter *client-work-poll-seconds* 0.25
   "How often a client waiting for its work checks that the channel still runs.")
 
 (-> application-clients-call-as-work (application function) t)
 (defun application-clients-call-as-work (application function)
-  "Run FUNCTION as a work item on APPLICATION's channel and return what it returns.
+  "Run FUNCTION between turns on APPLICATION's channel, returning all its values.
 
-The channel runs it between its other work, as it runs typed input, so it
-never overlaps a turn. A condition FUNCTION signals is signaled here; a
-channel that stops before running it refuses it."
+Re-signal the original local error. Refuse work when the channel stops. The
+waiting caller owns the pool; cancellation never interrupts the channel thread."
   (let ((controller (application-input-controller application))
-        (work       (make-instance 'client-work :function function)))
-    (unless (and controller (application-input-controller-enqueue-work controller (list :client-work work)))
-      (error 'localgroup-error :message "The channel does not accept work now." :operation ':client))
-    (with-lock-held ((client-work-lock work))
-      (loop until (client-work-done-p work)
-            do (when (application-input-controller-stopping-p controller)
-                 (error 'localgroup-error
-                        :message   "The channel stopped before it ran the work."
-                        :operation ':client))
-               (condition-wait (client-work-condition-variable work) (client-work-lock work)
-                               :timeout *client-work-poll-seconds*)))
-    (let ((failure (client-work-failure work)))
-      (when failure
-        (error failure)))
-    (values-list (client-work-values work))))
-
-(-> client-work-run (client-work) null)
-(defun client-work-run (work)
-  "Run WORK's function and hand its values or its failure to the waiting client."
-  (let ((results nil)
-        (failure nil))
+        (pool       (make-job-pool :name                         "Autolith client work"
+                                   :job-class                    'client-work
+                                   :maximum-concurrency          1
+                                   :maximum-runtime-milliseconds 0
+                                   :terminal-retention-limit     1
+                                   :start-threads-p              nil)))
     (unwind-protect
-         (handler-case (setf results (multiple-value-list (funcall (client-work-function work))))
-           (error (condition)
-             (setf failure condition)))
-      (with-lock-held ((client-work-lock work))
-        (setf (client-work-values work)  results
-              (client-work-failure work) failure
-              (client-work-done-p work)  t)
-        (condition-notify (client-work-condition-variable work)))))
-  nil)
-
-(-> client-work-cancel (client-work keyword) null)
-(defun client-work-cancel (work reason)
-  "Cancel unstarted WORK for REASON and wake its waiting client."
-  (with-lock-held ((client-work-lock work))
-    (unless (client-work-done-p work)
-      (setf (client-work-failure work)
-            (make-condition 'client-work-cancelled
-                            :message   (format nil "The queued editor operation was cancelled because the agent ~A."
-                                               (ecase reason
-                                                 (:moved
-                                                  "moved to another channel")
-                                                 (:dismissed
-                                                  "was dismissed")))
-                            :operation ':client
-                            :reason    reason)
-            (client-work-done-p work) t)
-      (condition-notify (client-work-condition-variable work))))
-  nil)
+         (let ((work (job-pool-submit
+                      pool
+                      (lambda (work)
+                        (handler-case (multiple-value-list (funcall function))
+                          (error (condition)
+                            (setf (client-work-failure work) condition)
+                            (error condition))))
+                      :inline-only-p t)))
+           (unless (and controller (application-input-controller-enqueue-work controller (list :client-work work)))
+             (error 'localgroup-error :message "The channel does not accept work now." :operation ':client))
+           (let ((snapshot
+                   (loop
+                     (multiple-value-bind (snapshot terminal-p)
+                         (job-await work :timeout-seconds *client-work-poll-seconds*)
+                       (when terminal-p
+                         (return snapshot)))
+                     (when (application-input-controller-stopping-p controller)
+                       (error 'localgroup-error
+                              :message   "The channel stopped before it ran the work."
+                              :operation ':client)))))
+             (when (client-work-failure work)
+               (error (client-work-failure work)))
+             (case (getf snapshot :state)
+               (:completed
+                (values-list (getf snapshot :result)))
+               (:aborted
+                (let ((reason (getf snapshot :cancellation-reason)))
+                  (error 'client-work-cancelled
+                         :message   (format nil "The queued editor operation was cancelled: ~(~A~)." reason)
+                         :operation ':client
+                         :reason    reason)))
+               (otherwise
+                (error 'localgroup-error
+                       :message   (or (getf snapshot :condition-report) "The client operation did not finish.")
+                       :operation ':client)))))
+      (job-pool-close pool))))
 
 (define-condition client-work-cancelled (localgroup-error)
   ((reason
     :initarg       :reason
     :reader        client-work-cancelled-reason
     :type          keyword
-    :documentation "Why movement removed the queued operation."))
-  (:documentation "An editor operation was cancelled before the channel ran it."))
+    :documentation "Why movement or shutdown cancelled the operation."))
+  (:documentation "A client operation was cancelled through its inline job lifecycle."))
 
 
 ;;;; -- Measurements --

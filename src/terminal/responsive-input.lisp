@@ -449,6 +449,17 @@ offers, so the hint appears only while forcing exit is still worth explaining."
         (application-input-controller-steering-in-flight-items controller)
         (application-input-controller-pending-apply-items controller)))
 
+(-> application-input-controller--clear-queues-locked (application-input-controller) list)
+(defun application-input-controller--clear-queues-locked (controller)
+  "Clear CONTROLLER's queues and return removed client jobs.
+
+The caller holds the controller lock and cancels returned jobs outside it."
+  (let ((jobs (loop for item in (deque->list (application-input-controller-work-items controller))
+                    when (eq (first item) ':client-work)
+                      collect (second item))))
+    (mapc #'deque-clear (application-input-controller--queues controller))
+    jobs))
+
 (-> application-input-controller--prepare-shutdown
     (application-input-controller keyword)
     (values boolean boolean))
@@ -460,6 +471,7 @@ second reports whether shutdown was prepared."
   (let ((active-p            nil)
         (prepared-p          nil)
         (pending-publication nil)
+        (cancelled           nil)
         (message
           (application-input-controller--forced-exit-message controller reason)))
     (with-lock-held ((application-input-controller-lock controller))
@@ -483,8 +495,7 @@ second reports whether shutdown was prepared."
                (application-input-controller--next-publication-generation-locked
                 controller)
                t))
-        (mapc #'deque-clear
-              (application-input-controller--queues controller))
+        (setf cancelled (application-input-controller--clear-queues-locked controller))
         (setf (application-input-controller-stopping-p controller) t
               (application-deferred-goal-continuation
                (application-input-controller-application controller)) nil
@@ -497,6 +508,8 @@ second reports whether shutdown was prepared."
               (application-input-controller-follow-up-edit-work controller) nil)
         (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller))))
+    (dolist (work cancelled)
+      (job-cancel work :reason ':shutdown))
     (when pending-publication
       (application-input-controller--publish-pending-publication
        controller pending-publication nil))
@@ -3595,32 +3608,34 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
              (application-input-controller-application controller)))
     (application-job-completions-disconnect
      (application-input-controller-application controller)))
-  (with-lock-held ((application-input-controller-lock controller))
-    (mapc #'deque-clear
-          (application-input-controller--queues controller))
-    (setf (application-input-controller-stopping-p controller) t
-          (application-input-controller-active-p controller) nil
-          (application-input-controller-active-work-kind controller) nil
-          (application-input-controller-active-work controller) nil
-          (application-input-controller-active-work-identifier controller) nil
-          (application-input-controller-active-work-interactive-p controller) nil
-          (application-input-controller-prompt-marker-work-p controller) nil
-          (application-input-controller-prompt-marker-status controller) 0
-          (application-input-controller-prompt-marker-reopen-p controller) nil
-          (application-input-controller-pending-snapshot-identifier controller) nil
-          (application-input-controller-vault-capture-identifiers controller) nil
-          (application-input-controller-steering-promotion-prefix-count controller) 0
-          (application-input-controller-queued-work-paused-p controller) nil
-          (application-input-controller-follow-up-edit-index controller) nil
-          (application-input-controller-follow-up-edit-work controller) nil
-          (application-input-controller-turn-cancellation-p controller) nil
-          (application-input-controller-turn-cancellation-delivery-pending-p
-           controller)
-          nil
-          (application-input-controller-interrupt-deadline controller) nil
-          (application-input-controller-interrupt-hint-time controller) nil)
-    (sb-thread:condition-broadcast
-     (application-input-controller-condition-variable controller)))
+  (let ((cancelled nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (setf cancelled (application-input-controller--clear-queues-locked controller))
+     (setf (application-input-controller-stopping-p controller) t
+           (application-input-controller-active-p controller) nil
+           (application-input-controller-active-work-kind controller) nil
+           (application-input-controller-active-work controller) nil
+           (application-input-controller-active-work-identifier controller) nil
+           (application-input-controller-active-work-interactive-p controller) nil
+           (application-input-controller-prompt-marker-work-p controller) nil
+           (application-input-controller-prompt-marker-status controller) 0
+           (application-input-controller-prompt-marker-reopen-p controller) nil
+           (application-input-controller-pending-snapshot-identifier controller) nil
+           (application-input-controller-vault-capture-identifiers controller) nil
+           (application-input-controller-steering-promotion-prefix-count controller) 0
+           (application-input-controller-queued-work-paused-p controller) nil
+           (application-input-controller-follow-up-edit-index controller) nil
+           (application-input-controller-follow-up-edit-work controller) nil
+           (application-input-controller-turn-cancellation-p controller) nil
+           (application-input-controller-turn-cancellation-delivery-pending-p
+            controller)
+           nil
+           (application-input-controller-interrupt-deadline controller) nil
+           (application-input-controller-interrupt-hint-time controller) nil)
+     (sb-thread:condition-broadcast
+      (application-input-controller-condition-variable controller)))
+    (dolist (work cancelled)
+      (job-cancel work :reason ':shutdown)))
   (input-pump-stop (application-input-controller-input-pump controller))
   (let ((application (application-input-controller-application controller)))
     (when (eq controller (application-input-controller application))
@@ -3905,7 +3920,7 @@ however it ended."
              (:apply-pending
               (application-input-controller--apply-pending-commands controller))
              (:client-work
-              (client-work-run (second work)))
+              (job-run-inline (second work)))
              (:job-completion
               (application-input-controller--record-prompt-result
                controller
