@@ -2963,7 +2963,7 @@ The current value and its source sit in aligned columns of their own."
      :argument          nil
      :description       "open a new channel in this workspace"
      :tip               "opens a new channel and moves this terminal there; the channel you leave keeps running."
-     :busy-behavior     :hold
+     :busy-behavior     :execute
      :terminal-behavior :shared
      :callable          t)
     (application)
@@ -2986,6 +2986,13 @@ The current value and its source sit in aligned columns of their own."
              (application-notice-line (format nil "new channel ~A opened; (switch ~S) goes there"
                                               display display)))))
         (progn
+          ;; A standalone session replaces its own conversation instead of
+          ;; changing the client's attachment. Never replace it during a turn.
+          (when (and (application-input-controller application)
+                     (application-input-controller-turn-active-p
+                      (application-input-controller application)))
+            (error 'configuration-error
+                   :message "A standalone session can start a new conversation only when its turn has finished."))
           (application-install-conversation application (conversation-create configuration))
           (terminal-ui-reset-transcript (application-ui application))
           (application-present
@@ -3070,7 +3077,7 @@ show."
      :argument          "[ID]"
      :description       "move this terminal to another channel"
      :tip               "takes a channel ID or a unique fragment of one, or picks one without; the channel you leave keeps running."
-     :busy-behavior     :inspect
+     :busy-behavior     :execute
      :terminal-behavior :exclusive-without-arguments
      :callable          t)
     (application &optional (designator nil designator-p))
@@ -3165,7 +3172,7 @@ pristine or recovery session runs apart from it."
      :argument          "[AGENT [CHANNEL]]"
      :description       "move an agent into a channel, this one by default"
      :tip               "stops the agent where it is; in its new channel it waits until someone writes there or mentions it. Without arguments it picks the agent, then the channel."
-     :busy-behavior     :inspect
+     :busy-behavior     :execute
      :terminal-behavior :exclusive-without-arguments
      :callable          t)
     (application &optional agent channel)
@@ -3216,7 +3223,7 @@ pristine or recovery session runs apart from it."
      :argument          "[AGENT]"
      :description       "park an agent, leaving its channel without one"
      :tip               "stops the agent and parks it in no channel, keeping its context and leaving its children unaffected; (move \"WHO\") brings it back. Its channel then takes a moved agent or a domestic one."
-     :busy-behavior     :inspect
+     :busy-behavior     :execute
      :terminal-behavior :exclusive-without-arguments
      :callable          t)
     (application &optional agent)
@@ -3245,7 +3252,7 @@ pristine or recovery session runs apart from it."
      :argument          "[CHANNEL MESSAGE]"
      :description       "send a message to a channel as yourself"
      :tip               "reaches the channel's residents and subscribers and wakes their agents. Without a message it picks the channel and lets you write one."
-     :busy-behavior     :inspect
+     :busy-behavior     :execute
      :terminal-behavior :exclusive-without-arguments
      :callable          t)
     (application &optional channel &rest words)

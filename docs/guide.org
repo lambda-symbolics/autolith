@@ -2766,9 +2766,12 @@ aliases, completion, and busy/terminal policy share its registration.
   error immediately instead of being scheduled.
 - Terminal behavior is =:shared=, =:exclusive=, or
   =:exclusive-without-arguments=. It declares which invocations open a modal
-  picker so active work keeps them off the immediate reader path. A modal
-  picker requires exclusive terminal input when open. The responsive reader
-  continues animating until then.
+  picker. A modal picker requires exclusive terminal input when open.
+  Commands with =:execute= policy may open their pickers during inference;
+  modal state mutations with =:inspect= or =:apply= policy wait for idle.
+  Channel navigation, messaging, movement and dismissal run immediately.
+  Movement and dismissal stop the affected agent at its safe boundary;
+  work in an unrelated channel need not finish first.
 - =:static-options= replaces =:argument= for one finite positional parameter.
   Supply native strings, keywords, or booleans to derive the help hint and
   completions. Use =(t nil)= for boolean controls. Define a slash parser to

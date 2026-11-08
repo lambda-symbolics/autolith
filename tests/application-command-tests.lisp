@@ -687,10 +687,11 @@
               (test-assert (and (equal resumed '("switchtarget"))
                                 (search "already" (terminal--spans-text (first presented))))
                            "the current channel is reported without a resume")
-              (test-assert (handler-case
-                               (progn (application--builtin-switch-command application "zzzz") nil)
-                             (world-error () t))
-                           "an unknown channel is refused"))))
+              (application--builtin-switch-command application "zzzz")
+              (test-assert (and (equal resumed '("switchtarget"))
+                                (= 2 (length presented))
+                                (eq (terminal-span-style (first (first presented))) ':failure))
+                           "an unknown channel is refused visibly without resuming another conversation"))))
       (tool-registry-close-runtime-state (application-tool-registry application))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
@@ -2155,4 +2156,31 @@
          (test-assert
           (string= saved (uiop:read-file-string (configuration-preferences-path configuration)))
           "rejection leaves the durable preferences untouched")))))
+  nil)
+(-> test-channel-command-admission-safety () null)
+(defun test-channel-command-admission-safety ()
+  "Keep current-session mutation and computed Lisp arguments off the immediate path."
+  (with-test-configuration (configuration)
+    (let* ((terminal     (make-instance 'recording-terminal :columns 80))
+           (ui           (terminal-ui-create :terminal terminal))
+           (conversation (conversation-create configuration))
+           (application  (make-instance 'application :configuration configuration
+                                                     :conversation  conversation
+                                                     :ui            ui))
+           (controller   (application-input-controller-create application :start-reader-p nil)))
+      (unwind-protect
+           (progn
+             (dolist (source '("(model)" "(effort)" "(compact)" "(cwd \"elsewhere\")"
+                               "(tell (read-line) \"message\")"))
+               (test-assert (eq (application-operation-source-active-turn-action application source) ':hold)
+                            (format nil "~A keeps its serialized admission" source)))
+             (application-input-controller-begin-external-work controller)
+             (unwind-protect
+                  (dolist (source '("(new)" "/new"))
+                    (application-input-controller--handle-submission controller source)
+                    (test-assert (and (eq (application-conversation application) conversation)
+                                      (application-input-controller-turn-active-p controller))
+                                 "new cannot replace a standalone session's active conversation"))
+               (application-input-controller-finish-external-work controller)))
+        (application-input-controller-stop controller))))
   nil)
