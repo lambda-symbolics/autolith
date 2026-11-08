@@ -1881,6 +1881,38 @@ run once the wake has."
                  (application-world-adopt-pending-context app :strict-p t)
                  (world-server-tests--check-adoption app configuration :identifier identifier :transition transition)))))))))
   nil)
+
+(-> test-move-picker-available-destinations () null)
+(defun test-move-picker-available-destinations ()
+  "Offer only channels that can accept an agent, excluding occupied channels and the inbox."
+  (world-server-tests--call
+   (lambda (server configuration root)
+     (let* ((entry   (world-client-entry configuration))
+            (id-a    (getf (rest (world-server-tests--open entry (world-tests--workspace root "a"))) :session-id))
+            (id-b    (getf (rest (world-server-tests--open entry (world-tests--workspace root "b"))) :session-id))
+            (app-a   (world-host-application (world-server--find-host server id-a)))
+            (app-b   (world-host-application (world-server--find-host server id-b)))
+            (offered nil))
+       (conversation-append-user-message (application-conversation app-a) "occupied")
+       (conversation-append-user-message (application-conversation app-b) "vacant later")
+       (let* ((world (values (world-reconcile-sessions configuration)))
+              (agent (find ':agent (world-channel-residents world id-b) :key #'participant-kind)))
+         (world-server-dismiss server (participant-name agent)))
+       (test-call-with-function-replacements
+        (list (list 'application--pick-identifier
+                    (lambda (application &key title items hint initial-value search-p usage empty-notice)
+                      (declare (ignore application title hint initial-value search-p usage empty-notice))
+                      (setf offered (mapcar (lambda (item) (getf item :value)) items))
+                      nil)))
+        (lambda ()
+          (application--pick-destination app-a)
+          (test-assert (equal offered (list id-b))
+                       "the picker excludes occupied A and the human inbox, and offers vacant B")
+          (application-world-domestic-agent app-b)
+          (application--pick-destination app-a)
+          (test-assert (null offered) "no destinations are offered when every channel has an agent"))))))
+  nil)
+
 (-> test-world-channel-command-admission () null)
 (defun test-world-channel-command-admission ()
   "Execute channel navigation and placement through the reader while another channel works."

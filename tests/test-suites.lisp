@@ -698,6 +698,7 @@
   test-world-server-stop
   test-world-server-switch
   test-world-channel-command-admission
+  test-move-picker-available-destinations
   test-world-server-resume-order
   test-world-server-open-latest-touched
   test-world-server-open-passes-damage
