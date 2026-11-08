@@ -1233,6 +1233,13 @@ request it conflicts with from one that says nothing."
           (when (getopt* command ':almighty)
             (list :theme ':almighty))))
 
+(-> main--switch-failure (string condition) string)
+(defun main--switch-failure (identifier condition)
+  "Return what the terminal is told when its switch to channel IDENTIFIER failed with CONDITION."
+  (format nil "could not switch to ~A: ~A"
+          (conversation-identifier-display identifier)
+          (autolith-error-message condition)))
+
 (-> main--run-world-client
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:pristine-p boolean)
@@ -1271,6 +1278,7 @@ gives the terminal back in between."
       (unwind-protect
            (loop
              with origin = nil
+             with notice = nil
             do
             (let* ((record (localgroup--find-record configuration session-id))
                    (exit
@@ -1292,7 +1300,8 @@ gives the terminal back in between."
                              (setf (world-sidebar-current panel) session-id)
                              (localgroup-attach-record configuration record ':control
                                                        :panel  panel
-                                                       :screen screen))
+                                                       :screen screen
+                                                       :notice (shiftf notice nil)))
                          (localgroup-error (condition)
                            (close-started)
                            ;; A switch whose channel refuses this terminal, as
@@ -1301,10 +1310,7 @@ gives the terminal back in between."
                            (unless (and origin
                                         (eq (image-daemon:daemon-error-operation condition) ':attach))
                              (error condition))
-                           (format *error-output* "~&Autolith: could not switch to ~A: ~A~%"
-                                   (conversation-identifier-display session-id)
-                                   (autolith-error-message condition))
-                           (force-output *error-output*)
+                           (setf notice (main--switch-failure session-id condition))
                            (list ':return))
                          (serious-condition (condition)
                            (close-started)
@@ -1330,11 +1336,9 @@ gives the terminal back in between."
                                               :switch-p        t))
                          (setf origin left))
                      (localgroup-error (condition)
-                       (format *error-output* "~&Autolith: could not switch to ~A: ~A~%"
-                               (conversation-identifier-display (getf (rest exit) :session-id))
-                               (autolith-error-message condition))
-                       (force-output *error-output*)
-                       (setf session-id left
+                       (setf notice     (main--switch-failure (getf (rest exit) :session-id)
+                                                              condition)
+                             session-id left
                              origin     nil
                              started-p  nil)))))
                 (t
