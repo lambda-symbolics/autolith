@@ -3674,6 +3674,24 @@ pristine or recovery session runs apart from it."
   (application-checkpoint application :allow-dirty-p (not (null allow-dirty)))
   ':continue)
 
+(define-application-command application--builtin-checkpoint-cancel-command
+    (:name              "/checkpoint-cancel"
+     :argument          nil
+     :description       "cancel a checkpoint that waits for running work"
+     :tip               "a checkpoint holds every channel's new turns until running work finishes; this lets them go on without it."
+     :busy-behavior     :execute
+     :terminal-behavior :shared
+     :callable          t)
+    (application)
+  (let ((server (application-world-server application)))
+    (application-present
+     application
+     (application-notice-line
+      (if (and server (world-server-cancel-checkpoint server))
+          "checkpoint cancelled; every channel goes on"
+          "no checkpoint is waiting"))))
+  ':continue)
+
 (define-application-command application--builtin-generations-command
     (:name              "/generations"
      :argument          nil

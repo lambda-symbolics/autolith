@@ -679,6 +679,7 @@
   test-world-server-kill-channel
   test-world-server-hosting
   test-world-server-checkpoint-quiescence
+  test-world-server-checkpoint-cancel
   test-world-server-restart-marker
   test-world-server-restart-checkpoint
   test-world-server-stop
