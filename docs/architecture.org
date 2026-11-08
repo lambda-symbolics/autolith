@@ -174,8 +174,9 @@ both source and target locks. Existing target metadata wins. Successful atomic
 publication is followed by source removal; failed publication uses legacy metadata
 offline. Interrupted removal retries cleanup, not import. At 0.68.0 remove this
 migration, the preferences migration, legacy POSIX root compatibility,
-configuration-local choice cache and constructor bypass, and old conversation
-payload cleanup helpers; then remove =test-legacy-xdg-migration-removal=.
+configuration-local choice cache and constructor bypass, old conversation
+payload cleanup helpers, and channel deliveries read without a =:sender-kind=;
+then remove =test-legacy-xdg-migration-removal=.
 The test fails for that version and every later version.
 
 | State         | Components                                               |

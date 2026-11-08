@@ -57,7 +57,7 @@ The world server sets it while it runs, so a message wakes the agent it is for."
     :initform      nil
     :reader        world-delivery-sender-kind
     :type          (option participant-kind)
-    :documentation "Whether the sender is the person or an agent, or NIL in a copy written before deliveries recorded it.")
+    :documentation "Whether the sender is the person or an agent, or NIL in a copy an unreleased build wrote before deliveries recorded it; that allowance goes at 0.68.0.")
    (source
     :initarg       :source
     :reader        world-delivery-source
