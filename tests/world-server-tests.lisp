@@ -120,7 +120,14 @@ run once the wake has."
             (wake (world-tests--inbox configuration))
             (test-assert (null started) "a message for the person in the inbox serves nothing")
             (wake "bnone11")
-            (test-assert (null started) "an unknown channel serves nothing")))))))
+            (test-assert (null started) "an unknown channel serves nothing")
+            (let ((lease (conversation-lease-acquire configuration "bwake11")))
+              (unwind-protect
+                   (progn
+                     (wake "bwake11")
+                     (test-assert (null started)
+                                  "a channel whose conversation another holder leases, as a running child does, is left to that holder"))
+                (conversation-lease-release lease)))))))))
   nil)
 
 (-> test-world-server-stop-reason () null)

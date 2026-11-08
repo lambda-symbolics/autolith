@@ -871,24 +871,28 @@ continuation, allowing callers to hold a source lock through actual removal."
     (mission-context-bind (task-job-mission-context job) configuration)
     (mission-context-bind (task-job-mission-context job) conversation)
     (mission-review-bind-checkpoint (task-job-review-checkpoint job) conversation)
-    (unwind-protect
-         (progn
-           (task-child-inherit-reference-history job conversation provider)
-           (let ((result
-                   (agent-run-user-turn
-                    child
-                    (getf (task-job-item job) :task)
-                    :observer     observer
-                    :goal-context (task-child-goal-context job configuration))))
-             (task--assemble-child-result
-              job :provider-result result
-                  :child           child
-                  :conversation    conversation
-                  :completion      completion)))
-      (task-job-cancel-execution-descendants job ':parent-finished)
-      ; mallet:suppress no-ignore-errors -- best-effort release must not mask the child result
-      (ignore-errors (task-completion-release child))
-      ; mallet:suppress no-ignore-errors -- best-effort release must not mask the child result
-      (ignore-errors (context-forget-conversation (conversation-identifier conversation)))
-      ; mallet:suppress no-ignore-errors -- best-effort worker shutdown must not mask the child result
-      (ignore-errors (lisp-worker-pool-stop-all worker)))))
+    ;; The lease marks the child's channel as served while it runs, so a
+    ;; message to it is taken as steering instead of opening the channel again.
+    (let ((lease (conversation-lease-acquire configuration (conversation-identifier conversation))))
+      (unwind-protect
+           (progn
+             (task-child-inherit-reference-history job conversation provider)
+             (let ((result
+                     (agent-run-user-turn
+                      child
+                      (getf (task-job-item job) :task)
+                      :observer     observer
+                      :goal-context (task-child-goal-context job configuration))))
+               (task--assemble-child-result
+                job :provider-result result
+                    :child           child
+                    :conversation    conversation
+                    :completion      completion)))
+        (task-job-cancel-execution-descendants job ':parent-finished)
+        ; mallet:suppress no-ignore-errors -- best-effort release must not mask the child result
+        (ignore-errors (task-completion-release child))
+        ; mallet:suppress no-ignore-errors -- best-effort release must not mask the child result
+        (ignore-errors (context-forget-conversation (conversation-identifier conversation)))
+        ; mallet:suppress no-ignore-errors -- best-effort worker shutdown must not mask the child result
+        (ignore-errors (lisp-worker-pool-stop-all worker))
+        (conversation-lease-release lease)))))

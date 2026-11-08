@@ -861,6 +861,16 @@ ordinary append protocol. Failed scans or checkpoint writes can be retried."
   (and (conversation-lease-held-p lease)
        (string= (conversation-lease-identifier lease) identifier)))
 
+(-> conversation-lease-busy-p (configuration string) boolean)
+(defun conversation-lease-busy-p (configuration identifier)
+  "Return true when a lease in this process or another holds conversation IDENTIFIER."
+  (handler-case
+      (progn
+        (conversation-lease-release (conversation-lease-acquire configuration identifier))
+        nil)
+    (conversation-in-use ()
+      t)))
+
 (-> conversation-lease-acquire (configuration string) conversation-lease)
 (defun conversation-lease-acquire (configuration identifier)
   "Acquire the primary process lease for IDENTIFIER without waiting.

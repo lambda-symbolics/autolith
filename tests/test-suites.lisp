@@ -1389,6 +1389,7 @@
 
 (define-test-suite task-scheduler
   test-task-child-identity
+  test-task-child-channel-lease
   test-task-default-detachment
   test-task-running-cancellation
   test-task-runtime-deadline
