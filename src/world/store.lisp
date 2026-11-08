@@ -718,6 +718,40 @@ resolved as a fragment through WORLD-CHANNEL-RESOLVE."
         (and resolved (world-channel-find world resolved)))
       (world-channel-resolve world designator)))
 
+(-> world-channel-groups (list (option string)) list)
+(defun world-channel-groups (channels current)
+  "Return (WORKSPACE . CHANNELS) groups of CHANNELS, the group of CURRENT first.
+
+CHANNELS arrive newest first, which orders the groups and their members."
+  (let ((groups nil))
+    (dolist (channel channels)
+      (let ((group (assoc (channel-workspace channel) groups :test #'string=)))
+        (if group
+            (setf (rest group) (append (rest group) (list channel)))
+            (setf groups (append groups (list (list (channel-workspace channel) channel)))))))
+    (let ((home (find-if (lambda (group)
+                           (find current (rest group) :key #'channel-identifier :test #'equal))
+                         groups)))
+      (if home
+          (cons home (remove home groups))
+          groups))))
+
+(-> world-channel-forest (list) list)
+(defun world-channel-forest (members)
+  "Return MEMBERS as (CHANNEL . CHILDREN) trees, each channel under its parent.
+
+A channel whose parent is not among MEMBERS is a root."
+  (labels ((children (parent)
+             "Return the trees of PARENT's members, or of the roots without a PARENT."
+             (loop for channel in members
+                   when (if parent
+                            (equal (channel-parent channel) (channel-identifier parent))
+                            (or (null (channel-parent channel))
+                                (not (find (channel-parent channel) members
+                                           :key #'channel-identifier :test #'equal))))
+                     collect (cons channel (children channel)))))
+    (children nil)))
+
 (-> world--residence-channel (world string) channel)
 (defun world--residence-channel (world name)
   "Return the channel where the participant NAME, an identifier or a name, resides."
