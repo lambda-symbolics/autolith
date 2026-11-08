@@ -215,7 +215,7 @@ Several matches are reported together and select nothing."
   "Return FIELD's compact human-readable table heading."
   (ecase field
     (:session
-     "SESSION")
+     "CHANNEL")
     (:pid
      "PID")
     (:state
@@ -223,7 +223,7 @@ Several matches are reported together and select nothing."
     (:started
      "STARTED")
     (:conversation
-     "CONVERSATION")
+     "TITLE")
     (:activity
      "ACTIVITY")
     (:workspace
