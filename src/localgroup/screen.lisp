@@ -88,6 +88,20 @@ switches. The default methods leave the choice local to each screen."))
     :accessor      localgroup-screen-frame
     :type          (option vector)
     :documentation "The session's rows as last received, or NIL before a complete frame.")
+   (frame-width
+    :initform      0
+    :accessor      localgroup-screen-frame-width
+    :type          (integer 0)
+    :documentation "The width of the cached frame, including its delta baseline.")
+   (painted-layout
+    :initform      nil
+    :accessor      localgroup-screen-painted-layout
+    :documentation "The installed layout, used for pointer routing until a matching new frame arrives.")
+   (painted-panel-width
+    :initform      0
+    :accessor      localgroup-screen-painted-panel-width
+    :type          (integer 0)
+    :documentation "The installed panel width, independent of a pending resize.")
    (cursor
     :initform      (list 0 0 t)
     :accessor      localgroup-screen-cursor
@@ -197,12 +211,18 @@ text. While the panel takes the whole screen, the hidden session gets no
 keys or drags, and a switch hides the panel to show the channel switched
 to."
   (let* ((pointer-p (typep event '(cons (member :click :drag :release) (cons integer (cons integer null)))))
-         (click-p   (and pointer-p (eq (first event) ':click))))
+         (click-p   (and pointer-p (eq (first event) ':click)))
+         (geometry  (with-lock-held ((localgroup-screen-lock screen))
+                      (list (or (localgroup-screen-painted-layout screen) (localgroup-screen-layout screen))
+                            (if (localgroup-screen-painted-layout screen)
+                                (localgroup-screen-painted-panel-width screen)
+                                (localgroup-screen--panel-width screen)))))
+         (layout    (first geometry)))
     (cond
       ((equal event *localgroup-screen-toggle-event*)
        (localgroup-screen-toggle-panel screen)
        ':ignore)
-      ((eq (localgroup-screen-layout screen) ':alone)
+      ((eq layout ':alone)
        (cond
          ((member event '(:interrupt :end-of-input :stream-end))
           event)
@@ -213,8 +233,8 @@ to."
             result))
          (t
           ':ignore)))
-      ((and pointer-p (eq (localgroup-screen-layout screen) ':beside))
-       (let ((offset (1+ (localgroup-screen--panel-width screen))))
+      ((and pointer-p (eq layout ':beside))
+       (let ((offset (1+ (second geometry))))
          (cond
            ((> (second event) offset)
             (list (first event) (- (second event) offset) (third event)))
@@ -330,7 +350,7 @@ client it has not synchronized."
 
 (-> localgroup-screen-resized (localgroup-screen) null)
 (defun localgroup-screen-resized (screen)
-  "Repaint SCREEN completely after the client's terminal changed size."
+  "Invalidate SCREEN after a resize; paint only a frame matching the new geometry."
   (with-lock-held ((localgroup-screen-lock screen))
     (terminal-screen-invalidate (localgroup-screen-terminal screen)
                                 (localgroup-screen-painter screen))
@@ -347,13 +367,16 @@ client it has not synchronized."
 (-> localgroup-screen--apply-frame (localgroup-screen list) boolean)
 (defun localgroup-screen--apply-frame (screen properties)
   "Record the frame PROPERTIES describe and return whether there is a frame to paint."
+  (localgroup-screen--take-whole-screen screen (not (null (getf properties :whole-screen-p))))
   (let* ((height     (getf properties :height))
+         (width      (getf properties :width))
          (complete-p (not (null (getf properties :complete-p))))
          (previous   (localgroup-screen-frame screen))
          (frame      (cond
                        (complete-p
                         (make-array height :initial-element ""))
-                       ((and previous (= (length previous) height))
+                       ((and previous (= (length previous) height)
+                             (= width (localgroup-screen-frame-width screen)))
                         (copy-seq previous))
                        (t
                         nil))))
@@ -361,13 +384,14 @@ client it has not synchronized."
       (dolist (row (getf properties :rows))
         (when (< (first row) height)
           (setf (aref frame (first row)) (second row))))
-      (localgroup-screen--take-whole-screen screen (not (null (getf properties :whole-screen-p))))
       (setf (localgroup-screen-frame screen) frame
+            (localgroup-screen-frame-width screen) width
             (localgroup-screen-cursor screen)
             (list (getf properties :cursor-row)
                   (getf properties :cursor-column)
                   (not (null (getf properties :cursor-visible-p)))))
-      (unless (localgroup-screen-active-p screen)
+      (unless (or (localgroup-screen-active-p screen)
+                  (not (localgroup-screen--frame-fits-p screen)))
         (localgroup-screen--enter screen)))
     (not (null frame))))
 
@@ -406,11 +430,20 @@ client tells the session, and the next paint rewrites the whole screen."
         (terminal-screen-invalidate terminal (localgroup-screen-painter screen)))))
   nil)
 
+(-> localgroup-screen--frame-fits-p (localgroup-screen) boolean)
+(defun localgroup-screen--frame-fits-p (screen)
+  "Return whether the cached frame matches the requested pane geometry."
+  (multiple-value-bind (height width) (localgroup-screen-pane-size screen)
+    (and (localgroup-screen-frame screen)
+         (= height (length (localgroup-screen-frame screen)))
+         (= width (localgroup-screen-frame-width screen)))))
+
 (-> localgroup-screen--paint (localgroup-screen) null)
 (defun localgroup-screen--paint (screen)
   "Paint the session's frame, beside the side panel when it shows, on the client's terminal."
   (let ((frame (localgroup-screen-frame screen)))
-    (when (and frame (localgroup-screen-active-p screen))
+    (when (and frame (localgroup-screen-active-p screen)
+               (localgroup-screen--frame-fits-p screen))
       (destructuring-bind (cursor-row cursor-column cursor-visible-p)
           (localgroup-screen-cursor screen)
         (let ((terminal (localgroup-screen-terminal screen))
@@ -433,7 +466,9 @@ client tells the session, and the next paint rewrites the whole screen."
                                                        :width  (terminal-columns terminal))
                                     :cursor-row       0
                                     :cursor-column    0
-                                    :cursor-visible-p nil)))))))
+                                    :cursor-visible-p nil)))))
+      (setf (localgroup-screen-painted-layout screen) (localgroup-screen-layout screen)
+            (localgroup-screen-painted-panel-width screen) (localgroup-screen--panel-width screen))))
   nil)
 
 (-> localgroup-screen--composed-rows (localgroup-screen vector) list)
