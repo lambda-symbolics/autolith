@@ -3021,6 +3021,16 @@ Persisted child results must contain one data-only form with valid terminal
 status and field types. The default reading limits are 16 MiB, 128 nesting
 levels, and 262,144 tree nodes.
 
+A child keeps its channel, name, role and history after its run. Its parent
+sends it more work through that channel, and =channel:current= lists the
+parent's children, each busy or idle. An agent has at most 32 children.
+=child.rename= renames a child; =child.compact= and =child.reset= compact or
+clear an idle child's history; =child.remove= deletes an idle child with its
+channel and its own children. Nothing else deletes a child. A child's channel
+serves it in its role, with that role's tools and instructions, whether it
+runs for its parent or someone opens the channel. A session that serves one
+conversation in place refuses to swap in a conversation of another role.
+
 ** Completion-driven turns
 
 Set =completion-policy= to =continue= (the default) or =notify= on asynchronous
