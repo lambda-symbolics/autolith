@@ -599,12 +599,14 @@ A channel nobody serves is served for its agent to read the message."
   "Open the channel ARGUMENTS select and answer with its session identifier.
 
 ARGUMENTS name a :CHANNEL or a :DIRECTORY, and carry the client's
-:PERMISSION-MODE, :FULLSCREEN-P, :RESUME-COMMAND-P, :RECOVERY-DIAGNOSIS,
+:PERMISSION-MODE, :FULLSCREEN-P, :PICK-CHANNEL-P, :RECOVERY-DIAGNOSIS,
 :ROWS, :COLUMNS and :STYLED-P. :IMAGES, absolute namestrings of local
 images, replace the channel's composer draft, whether the channel started
 now or ran already. The answer arrives once the channel's endpoint is
-published, so the client can attach at once."
-  (multiple-value-bind (host started-p)
+published, so the client can attach at once. A workspace channel whose
+conversation cannot be loaded is passed over, and the channel that opens
+instead says so."
+  (multiple-value-bind (host started-p skipped)
       (with-lock-held ((world-server-open-lock server))
         ;; Admission and host registration happen under one lock, the one a
         ;; checkpoint takes before it declares itself, so no host can start
@@ -621,6 +623,12 @@ published, so the client can attach at once."
           (setf (world-server-fullscreen-p server) (not (null (getf arguments :fullscreen-p)))))
         (world-server--host-for server arguments))
     (world-server--wait-ready server host)
+    (loop for (identifier . message) in skipped
+          do (application-present (world-host-application host)
+                                  (application-failure-line
+                                   (format nil "channel ~A could not open: ~A"
+                                           (conversation-identifier-display identifier)
+                                           message))))
     (let ((images (getf arguments :images)))
       (when images
         (terminal-ui-set-input (application-ui (world-host-application host))
@@ -804,13 +812,15 @@ hosts, two leases or two threads."
 
 (-> world-server--host-for (world-server list) (values world-host boolean))
 (defun world-server--host-for (server arguments)
-  "Return the host selected by ARGUMENTS and whether it was started now.
+  "Return the host selected by ARGUMENTS, whether it was started now, and the channels passed over.
 
 For a named channel, reuse its host or start one. For a directory, try its
 top-level channels by latest activity. Reuse an unattached compatible host,
 or start an unhosted channel whose conversation is free. Create a channel
 if none qualifies, or at once when ARGUMENTS ask for a new one with :new-p.
-The caller waits for the host to publish its endpoint."
+The channels passed over are (IDENTIFIER . MESSAGE) pairs for workspace
+channels whose conversation could not be loaded. The caller waits for the
+host to publish its endpoint."
   (let ((channel   (getf arguments :channel))
         (directory (getf arguments :directory)))
     (cond
@@ -840,16 +850,17 @@ The caller waits for the host to publish its endpoint."
                 :message   (format nil "The directory ~A does not exist." directory)
                 :operation ':open))
        (let ((workspace (world-workspace-name directory)))
-         (multiple-value-bind (host started-p)
+         (multiple-value-bind (host started-p skipped)
              (if (getf arguments :new-p)
-                 (values nil nil)
+                 (values nil nil nil)
                  (world-server--latest-host server workspace arguments))
            (if host
-               (values host started-p)
+               (values host started-p skipped)
                (values (world-server--start-host server
                                                  :directory workspace
                                                  :arguments arguments)
-                       t)))))
+                       t
+                       skipped)))))
       (t
        (error 'world-error
               :message   "An open names a channel or a directory."
@@ -903,16 +914,19 @@ person's inbox is never a candidate: it is opened only by name."
                                    candidates)
                            #'> :key #'first)))))
 
-(-> world-server--latest-host (world-server string list) (values (option world-host) boolean))
+(-> world-server--latest-host (world-server string list) (values (option world-host) boolean list))
 (defun world-server--latest-host (server workspace arguments)
-  "Return the host of WORKSPACE's latest touched free channel, and whether it was started now.
+  "Return the host of WORKSPACE's latest touched free channel, whether it was started now, and the channels passed over.
 
 A hosted channel serves when no client controls it, the launch options of
 ARGUMENTS can apply to it and they bring no MCP servers its tools would need;
-an unhosted one starts when its conversation is free. Return NIL when no
-channel qualifies."
-  (let ((launch (getf arguments :launch)))
-    (dolist (candidate (world-server--latest-candidates server workspace) (values nil nil))
+an unhosted one starts when its conversation is free and loads. A channel
+whose conversation cannot be loaded is passed over, as an (IDENTIFIER .
+MESSAGE) pair, so one damaged conversation never keeps the workspace from
+opening. Return NIL for the host when no channel qualifies."
+  (let ((launch  (getf arguments :launch))
+        (skipped nil))
+    (dolist (candidate (world-server--latest-candidates server workspace) (values nil nil (nreverse skipped)))
       (destructuring-bind (identifier . host) candidate
         (cond
           (host
@@ -920,16 +934,19 @@ channel qualifies."
                        (getf arguments :mcp-servers)
                        (world-server--launch-conflict host launch))
              (world-server--reconcile-launch server host launch)
-             (return (values host nil))))
+             (return (values host nil (nreverse skipped)))))
           (t
            (handler-case
                (return (values (world-server--start-host server
                                                          :conversation-id identifier
                                                          :directory       workspace
                                                          :arguments       arguments)
-                               t))
+                               t
+                               (nreverse skipped)))
              (conversation-in-use ()
-               nil))))))))
+               nil)
+             (conversation-error (condition)
+               (push (cons identifier (autolith-error-message condition)) skipped)))))))))
 
 (-> world-server--launch-conflict (world-host list) (option string))
 (defun world-server--launch-conflict (host launch)

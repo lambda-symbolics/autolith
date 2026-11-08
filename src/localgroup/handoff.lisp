@@ -415,7 +415,7 @@ before any shell is involved."
   "Launch a detached session and return its ready identifier.
 
 CONVERSATION-ID resumes that conversation instead of starting a fresh
-one, RESUME-COMMAND-P lets the session pick one itself through the
+one, PICK-CHANNEL-P lets the session pick one itself through the
 attached terminal, and RECOVERY-DIAGNOSIS preserves crash diagnosis
 across the client-first launch. When ATTACH-EXPECTED-P is false, the
 session is explicitly detached and its first-attach watchdog is disabled.
