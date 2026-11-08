@@ -740,7 +740,6 @@ A model this launch selected explicitly stays, as it does for any conversation."
           (task-orchestrator-add-listener orchestrator listener)
           (application--refresh-task-presentation-locked
            application orchestrator)))))
-  (application-peer-messages-ensure application)
   (application-job-completions-connect application)
   (application--wake-input-controller application)
   nil)

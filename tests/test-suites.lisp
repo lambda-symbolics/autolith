@@ -150,7 +150,6 @@
   ;; telemetry-hook-authority-tests.lisp
   test-telemetry-mission-authority-hooks
   test-telemetry-continuity-authority-hooks
-  test-telemetry-peer-authority-hooks
   test-telemetry-worker-host-admission-hooks
   test-telemetry-worktree-authority-hook
   test-telemetry-child-authority-hooks
@@ -295,14 +294,6 @@
   test-mission-schedule-native-wakeup-stale-claim-process
   test-mission-schedule-lisp-restart-policy
   test-vault-edit-accepts-native-lisp)
-
-(define-test-suite peer-message
-  test-peer-message-authority
-  test-peer-message-durable-delivery
-  test-peer-message-context-boundary
-  test-peer-message-identity-and-finish
-  test-peer-message-daemon-transport
-  test-peer-message-child-provider-boundary)
 
 (define-test-suite lsp
   test-lsp-configuration
@@ -1540,6 +1531,7 @@
   test-terminal-non-tty-fallback)
 
 (define-test-suite localgroup
+  test-localgroup-message-dispatch
   test-localgroup-conversation-identity
   test-localgroup-terminal-restart
   test-localgroup-picker-waits-for-relayed-input

@@ -93,11 +93,9 @@
       (if controller
           (application-input-controller-call-with-primary-steering controller #'run)
           (run (lambda ()
-                 (append (peer-message-take-context (application-agent application))
-                         (application-world-steering-take application)))
+                 (application-world-steering-take application))
                (lambda (identifier)
-                 (or (peer-message-ack-context (application-agent application) identifier)
-                     (application-world-steering-ack application identifier))))))))
+                 (application-world-steering-ack application identifier)))))))
 
 (-> mission-schedule-service-create
     (application &key (:path (option pathname)) (:clock function)
