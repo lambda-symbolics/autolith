@@ -239,7 +239,7 @@
 
 (-> test-compaction-recovery-encrypted-eligibility () null)
 (defun test-compaction-recovery-encrypted-eligibility ()
-  "Keep plaintext reasoning, current-loop reasoning, anchors and correlated replay groups."
+  "Keep correlated neighbors and detach arbitrary metadata before removing old reasoning."
   (with-test-configuration (configuration)
     (let* ((state        (make-compaction-recovery))
            (conversation (conversation-create configuration))
@@ -248,19 +248,50 @@
            (paired       (json-object "type" "reasoning" "encrypted_content" "paired encrypted"))
            (call         (compaction-tail-tests--call "paired"))
            (output       (compaction-tail-tests--output "paired" "answer"))
+           (after-output (json-object "type" "reasoning" "encrypted_content" "after output"))
+           (anchor       (json-object "type" "compaction" "encrypted_content" "native anchor"))
+           (after-anchor (json-object "type" "reasoning" "encrypted_content" "after anchor"))
+           (separator    (json-object "type" "message" "role" "assistant" "content" "separator"))
+           (old-second   (json-object "type" "reasoning" "encrypted_content" "second old encrypted"))
            (current      (json-object "type" "reasoning" "encrypted_content" "current encrypted"))
+           (metadata     (json-object "nested" (vector (list (copy-seq "source metadata")))))
            (view         (conversation-compaction-summary-view
-                          conversation (list old plain paired call output
-                                             (json-object "type" "message" "role" "user" "content" "latest") current)))
-           (detached     (compaction-recovery-view state view))
-           (candidate    (compaction-recovery-strip-encrypted state detached)))
-      (test-assert (not (test-object-contains-string-p (conversation-input-items candidate) "old encrypted"))
-                   "Eligible old encrypted content is removed.")
-      (dolist (text '("plaintext reasoning" "paired encrypted" "paired" "current encrypted" "latest"))
-        (test-assert (test-object-contains-string-p (conversation-input-items candidate) text)
-                     "Protected reasoning and replay pairs survive."))
-      (test-assert (equal "old encrypted" (json-get old "encrypted_content"))
-                   "Detached removal leaves source objects unchanged.")))
+                          conversation (list old plain paired call output after-output anchor after-anchor
+                                             separator old-second
+                                             (json-object "type" "message" "role" "user" "content" "latest") current))))
+      (setf (gethash plain (clinker-transcript:projection-metadata-table
+                            (conversation-projection view) "extra-namespace")) metadata
+            (gethash plain (clinker-transcript:projection-metadata-table
+                            (conversation-projection view) ':explicit-nil)) nil
+            (gethash old (clinker-transcript:projection-metadata-table
+                          (conversation-projection view) ':discarded)) t)
+      (let* ((detached  (compaction-recovery-view state view))
+             (candidate (compaction-recovery-strip-encrypted state detached))
+             (copy      (second (conversation-input-items detached)))
+             (copied-metadata
+               (gethash copy (clinker-transcript:projection-metadata-table
+                              (conversation-projection candidate) "extra-namespace"))))
+        (dolist (text '("old encrypted" "second old encrypted"))
+          (test-assert (not (test-object-contains-string-p (conversation-input-items candidate) text))
+                       "Eligible standalone old encrypted content is removed."))
+        (dolist (text '("plaintext reasoning" "paired encrypted" "paired" "after output"
+                        "native anchor" "after anchor" "current encrypted" "latest"))
+          (test-assert (test-object-contains-string-p (conversation-input-items candidate) text)
+                       "Original linked neighbors and protected reasoning survive."))
+        (test-assert (= 2 (getf (first (compaction-recovery-notes state)) :removed-items))
+                     "The chronological pass reports both eligible removals.")
+        (test-assert (nth-value 1 (gethash copy (clinker-transcript:projection-metadata-table
+                                                 (conversation-projection candidate) ':explicit-nil)))
+                     "Present NIL metadata survives detachment and removal.")
+        (test-assert (zerop (hash-table-count
+                             (clinker-transcript:projection-metadata-table
+                              (conversation-projection candidate) ':discarded)))
+                     "Removed roots leave no metadata entries.")
+        (setf (char (first (aref (json-get copied-metadata "nested") 0)) 0) #\X)
+        (test-assert (string= "source metadata" (first (aref (json-get metadata "nested") 0)))
+                     "Nested arbitrary metadata is detached from canonical history.")
+        (test-assert (equal "old encrypted" (json-get old "encrypted_content"))
+                     "Detached removal leaves source objects unchanged."))))
   nil)
 
 (-> test-compaction-recovery-tools-and-transcript () null)
@@ -280,6 +311,12 @@
            (candidates   (compaction-recovery-stub-candidates state view)))
       (test-assert (equal '("b" "a") (mapcar (lambda (item) (json-get item "call_id")) candidates))
                    "Eligible outputs are newest-first outside the 40K protected tail.")
+      (let ((output (first candidates)))
+        (setf (gethash output (clinker-transcript:projection-metadata-table
+                               (conversation-projection view) ':explicit-nil)) nil
+              (gethash output (clinker-transcript:projection-metadata-table
+                               (conversation-projection view) "stub-annotation"))
+              (json-object "nested" (vector (copy-seq "candidate metadata")))))
       (let* ((candidate (compaction-recovery-stub state view (first candidates)))
              (outputs   (remove-if-not (lambda (item) (json-string= (json-get item "type") "function_call_output"))
                                      (conversation-input-items candidate))))
@@ -290,6 +327,24 @@
         (test-assert (search "12000" (json-get (second outputs) "output"))
                      "The stub records original size.")
         (test-assert (= 12000 (length (json-get b "output"))) "Source tool objects are detached.")
+        (let* ((stub     (second outputs))
+               (source   (gethash (first candidates)
+                                 (clinker-transcript:projection-metadata-table
+                                  (conversation-projection view) "stub-annotation")))
+               (metadata (gethash stub (clinker-transcript:projection-metadata-table
+                                        (conversation-projection candidate) "stub-annotation"))))
+          (test-assert (and (nth-value 1
+                             (gethash stub (clinker-transcript:projection-metadata-table
+                                            (conversation-projection candidate) ':explicit-nil)))
+                           (null (gethash stub (clinker-transcript:projection-metadata-table
+                                                (conversation-projection candidate) ':explicit-nil))))
+                       "The exact stub candidate preserves present NIL metadata.")
+          (test-assert (and metadata (string= (aref (json-get metadata "nested") 0)
+                                              "candidate metadata"))
+                       "The exact stub candidate inherits arbitrary output metadata.")
+          (setf (char (aref (json-get metadata "nested") 0) 0) #\X)
+          (test-assert (string= (aref (json-get source "nested") 0) "candidate metadata")
+                       "Stub metadata is detached from the preceding candidate."))
         (let* ((text   (compaction-recovery-text-view state candidate))
                (newest (compaction-recovery-drop-exchange text)))
           (test-assert (= 1 (length (conversation-input-items newest)))
@@ -298,7 +353,20 @@
                                                      (make-string 180000 :initial-element #\p))
                        "The newest protected text is never clipped.")
           (test-assert (null (compaction-recovery-drop-exchange newest))
-                       "The newest exchange cannot be evicted.")))))
+                       "The newest exchange cannot be evicted."))))
+    (let* ((conversation (conversation-create configuration))
+           (state        (make-compaction-recovery))
+           (items        (list (compaction-tail-tests--call "boundary")
+                               (compaction-tail-tests--output "boundary" "old output")
+                               (json-object "type" "compaction" "encrypted_content" "native")
+                               (json-object "type" "message" "role" "user" "content"
+                                            (make-string 180000 :initial-element #\p))))
+           (view         (compaction-recovery-view
+                          state (conversation-compaction-summary-view conversation items))))
+      (test-assert (= 2 (compaction-recovery-protected-start state view))
+                   "The native neighbor begins the protected suffix.")
+      (test-assert (null (compaction-recovery-stub-candidates state view))
+                   "The scan sees a native next item across the protected boundary.")))
   nil)
 
 (defclass compaction-recovery-accounting-test-provider
@@ -2197,7 +2265,7 @@
                                :queue-reloaded-tail-p   (and (eq entry :acp-queue)
                                                              (multiple-value-bind (form complete-p)
                                                                  (snapshot-read (configuration-pending-inputs-path configuration (conversation-pathname loaded)))
-                                                               (let* ((state      (and complete-p (application-input-controller--pending-state form (conversation-identifier loaded))))
+                                                               (let* ((state      (and complete-p (input-state-from-form form (conversation-identifier loaded))))
                                                                       (work-items (getf state :work-items)))
                                                                  (and (= 1 (length work-items))
                                                                       (equal "Matrix unclaimed queued tail."

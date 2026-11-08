@@ -244,6 +244,7 @@
     :type          (option integer)
     :documentation "The start sequence of the latest turn-aborted marker in memory.")
    (projection
+    :initarg       :projection
     :initform      (clinker-transcript:make-projection)
     :reader        conversation-projection
     :type          clinker-transcript:projection
@@ -426,13 +427,14 @@ not yet been told that work from the previous process is gone.")
   (:documentation "An append-only conversation and its provider projection."))
 
 (defmethod initialize-instance
-    :after ((conversation conversation) &key input-items &allow-other-keys)
+    :after ((conversation conversation) &key (input-items nil supplied-p) &allow-other-keys)
   "Initialize CONVERSATION's provider projection and lineage key."
   (unless (conversation-prompt-cache-key conversation)
     (setf (conversation-prompt-cache-key conversation)
           (conversation-identifier conversation)))
-  (clinker-transcript:projection-replace
-   (conversation-projection conversation) input-items))
+  (when supplied-p
+    (clinker-transcript:projection-replace
+     (conversation-projection conversation) input-items)))
 
 (-> conversation-input-items (conversation) list)
 (defun conversation-input-items (conversation)
@@ -1825,10 +1827,13 @@ this append's original EOF, including when publication failed after the write."
      :handoff-families (conversation-portable-handoff-families conversation))))
 
 (-> conversation-compaction-summary-view
-    (conversation list &optional (option keyword))
+    (conversation (or list clinker-transcript:projection) &optional (option keyword))
     conversation)
 (defun conversation-compaction-summary-view (conversation items &optional family)
-  "Return a detached request view, preserving original families unless FAMILY is supplied."
+  "Return a request view of ITEMS or an already detached projection.
+
+Preserve original families unless FAMILY is supplied. A supplied projection
+already owns its metadata and is installed without an additional remap."
   (let ((view
           (make-instance
            'conversation
@@ -1843,12 +1848,15 @@ this append's original EOF, including when publication failed after the write."
            :model-provider   (conversation-model-provider conversation)
            :reasoning-effort (conversation-reasoning-effort conversation)
            :next-sequence    (conversation-next-sequence conversation)
-           :input-items      (copy-list items))))
-    (if family
-        (dolist (item items)
-          (setf (gethash item (conversation-input-item-families view)) family))
-        (conversation-compaction--copy-metadata
-         (conversation-projection conversation) (conversation-projection view) items))
+           :projection       (if (typep items 'clinker-transcript:projection)
+                                 items
+                                 (clinker-transcript:make-projection :items items)))))
+    (cond (family
+           (dolist (item (conversation-input-items view))
+             (setf (gethash item (conversation-input-item-families view)) family)))
+          ((not (typep items 'clinker-transcript:projection))
+           (conversation-compaction--copy-metadata
+            (conversation-projection conversation) (conversation-projection view) items)))
     view))
 
 (defparameter *conversation-inherited-reference-boundary*

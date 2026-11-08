@@ -41,14 +41,10 @@
 (-> conversation-compaction--copy-metadata
     (clinker-transcript:projection clinker-transcript:projection list) null)
 (defun conversation-compaction--copy-metadata (source target items)
-  "Copy family and portable-handoff metadata for ITEMS from SOURCE to TARGET."
-    (dolist (key '(:family :handoff-family :checkpoint-summary))
-     (let ((from (clinker-transcript:projection-metadata-table source key))
-           (to   (clinker-transcript:projection-metadata-table target key)))
-       (dolist (item items)
-         (multiple-value-bind (value present-p) (gethash item from)
-           (when present-p
-             (setf (gethash item to) value))))))
+  "Copy all named metadata for retained EQ ITEMS from SOURCE to TARGET."
+  (let ((remap (make-hash-table :test #'eq)))
+    (dolist (item items) (setf (gethash item remap) item))
+    (clinker-transcript:projection-copy-metadata source target :remap remap))
   nil)
 
 (-> conversation-compaction-capture (conversation) conversation-compaction)

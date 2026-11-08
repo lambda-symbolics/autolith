@@ -14,7 +14,7 @@
   (captured-p nil :type boolean)
   (protected (make-hash-table :test #'eq) :type hash-table)
   (notes nil :type list)
-  (replacements (make-hash-table :test #'eq) :type hash-table))
+  (replacements (clinker-transcript:make-projection-lineage)))
 
 (defgeneric provider-compaction-recovery-window (provider)
   (:documentation "Return existing selected-route metadata without discovery or preparation."))
@@ -42,62 +42,35 @@
 
 (-> compaction-recovery-copy (t) t)
 (defun compaction-recovery-copy (value)
-  "Deep-copy JSON values before any recovery transformation."
-  (typecase value
-    (hash-table
-     (let ((copy (make-hash-table :test (hash-table-test value))))
-       (maphash (lambda (key item) (setf (gethash key copy) (compaction-recovery-copy item))) value)
-       copy))
-    (string
-     (copy-seq value))
-    (vector
-     (map 'vector #'compaction-recovery-copy value))
-    (cons
-     (mapcar #'compaction-recovery-copy value))
-    (t
-     value)))
+  "Deep-copy JSON values through the transcript library."
+  (clinker-transcript:transform-json value))
 
 (-> compaction-recovery-view (compaction-recovery conversation) conversation)
 (defun compaction-recovery-view (state source)
   "Detach SOURCE while carrying previous removals and replacements across paths."
-  (let ((items     nil)
-        (origins   nil)
-        (table     (compaction-recovery-replacements state))
-        (protected (compaction-recovery-protected state)))
+  (let ((protected (compaction-recovery-protected state)))
     (unless (compaction-recovery-captured-p state)
       (setf (compaction-recovery-captured-p state) t)
       (dolist (item (nthcdr (compaction-recovery-last-user (conversation-input-items source))
                            (conversation-input-items source)))
         (setf (gethash item protected) t)))
-    (dolist (item (conversation-input-items source))
-      (let ((replacement (gethash item table item)))
-        (unless (eq replacement :removed)
-          (let ((copy (compaction-recovery-copy replacement)))
-            (when (or (gethash item protected) (gethash replacement protected))
-              (setf (gethash copy protected) t))
-            (setf (gethash item table) copy
-                  (gethash copy table) copy)
-            (push (cons item copy) origins)
-            (push copy items)))))
-    (let ((target (conversation-compaction-summary-view source (nreverse items))))
-      (dolist (origin origins)
-        (dolist (key '(:family :handoff-family :checkpoint-summary))
-          (multiple-value-bind (value present-p)
-              (gethash (first origin)
-                       (clinker-transcript:projection-metadata-table (conversation-projection source) key))
-            (when present-p
-              (setf (gethash (rest origin)
-                             (clinker-transcript:projection-metadata-table (conversation-projection target) key))
-                    value)))))
-      target)))
+    (multiple-value-bind (projection remap)
+        (clinker-transcript:projection-transform
+         (conversation-projection source)
+         :lineage           (compaction-recovery-replacements state)
+         :repaired-output-p #'conversation-compaction--repaired-output-p)
+      (maphash (lambda (item copy)
+                 (when (gethash item protected)
+                   (setf (gethash copy protected) t)))
+               remap)
+      (conversation-compaction-summary-view source projection))))
 
 (-> compaction-recovery-replace (compaction-recovery json-object t) null)
 (defun compaction-recovery-replace (state item replacement)
-  "Carry ITEM's replacement through older source identities as well as new views."
-  (let ((table (compaction-recovery-replacements state)))
-    (maphash (lambda (key value)
-               (when (eq value item) (setf (gethash key table) replacement))) table)
-    (setf (gethash item table) replacement))
+  "Carry ITEM's replacement through the library's canonical origin index."
+  (clinker-transcript:projection-lineage-replace
+   (compaction-recovery-replacements state) item
+   (if (eq replacement :removed) :drop :replace) :replacement replacement)
   nil)
 
 (-> compaction-recovery-last-user (list) (integer 0))
@@ -119,16 +92,16 @@
   (let* ((items   (conversation-input-items view))
          (removed 0)
          (result
-           (loop for item in items
-                 for index from 0
+            (loop for tail on items
+                  for previous = nil then item
+                  for item = (first tail)
+                  for next = (second tail)
                  unless (and (not (gethash item (compaction-recovery-protected state)))
                              (json-string= (json-get item "type") "reasoning")
                              (non-empty-string-p (json-get item "encrypted_content"))
                              (not (compaction-recovery-linked-p item))
-                             (not (and (plusp index)
-                                       (compaction-recovery-linked-p (nth (1- index) items))))
-                             (not (and (< (1+ index) (length items))
-                                       (compaction-recovery-linked-p (nth (1+ index) items)))))
+                             (not (and previous (compaction-recovery-linked-p previous)))
+                             (not (and next (compaction-recovery-linked-p next))))
                    collect item
                  else do (incf removed)
                          (compaction-recovery-replace state item :removed))))
@@ -157,30 +130,42 @@
 (-> compaction-recovery-stub-candidates (compaction-recovery conversation) list)
 (defun compaction-recovery-stub-candidates (state view)
   "Return eligible old tool outputs newest-first, outside all protected groups."
-  (let* ((items (conversation-input-items view))
-         (end   (compaction-recovery-protected-start state view)))
-    (loop for index downfrom (1- end) to 0
-          for item = (nth index items)
+  (let* ((items      (conversation-input-items view))
+         (end        (compaction-recovery-protected-start state view))
+         (candidates nil))
+    (loop for tail on items
+          for previous = nil then item
+          for item = (first tail)
+          for next = (second tail)
+          repeat end
           when (and (json-string= (json-get item "type") "function_call_output")
                     (stringp (json-get item "output"))
                     (not (equal (json-get item "output") *conversation-interrupted-tool-output*))
-                    (not (and (plusp index) (native-compaction-item-p (nth (1- index) items))))
-                    (not (and (< (1+ index) (length items))
-                              (native-compaction-item-p (nth (1+ index) items)))))
-            collect item)))
+                    (not (and previous (native-compaction-item-p previous)))
+                    (not (and next (native-compaction-item-p next))))
+            do (push item candidates))
+    candidates))
 
 (-> compaction-recovery-stub (compaction-recovery conversation json-object) conversation)
 (defun compaction-recovery-stub (state view item)
   "Replace one old output without changing its identifier, batch or position."
-  (let* ((copy (compaction-recovery-copy item))
-         (size (length (json-get item "output"))))
+  (let* ((copy       (compaction-recovery-copy item))
+         (size       (length (json-get item "output")))
+         (items      (conversation-input-items view))
+         (remap      (make-hash-table :test #'eq))
+         (projection (clinker-transcript:make-projection
+                      :items (substitute copy item items :test #'eq))))
     (setf (gethash "output" copy)
           (format nil "[Emergency compaction Tier2: old tool output elided; original ~D characters.]" size))
+    (dolist (original items)
+      (setf (gethash original remap) (if (eq original item) copy original)))
+    (clinker-transcript:projection-copy-metadata
+     (conversation-projection view) projection
+     :remap remap :value-function #'compaction-recovery-copy)
     (compaction-recovery-replace state item copy)
     (compaction-recovery-note state :tool-output   :call-id (json-get item "call_id")
                               :original-characters size)
-    (conversation-compaction-summary-view
-     view (substitute copy item (conversation-input-items view) :test #'eq))))
+    (conversation-compaction-summary-view view projection)))
 
 (-> compaction-recovery-text-item (t) (values t (integer 0)))
 (defun compaction-recovery-text-item (value)
@@ -189,27 +174,18 @@
 Return the copy and omitted image count. Ordinary strings are never interpreted
 as media; image payloads, URLs and incidental metadata are not copied."
   (let ((images 0))
-    (labels ((project (item)
-               "Copy JSON containers while omitting recognized image nodes."
-               (typecase item
-                 (hash-table
-                  (if (provider-context--image-p item)
-                      (progn
-                        (incf images)
-                        (json-object "type" "input_text" "text"
-                                     "[Emergency compaction: image omitted; visual content unavailable in this text transcript.]"))
-                      (let ((copy (make-hash-table :test (hash-table-test item))))
-                        (maphash (lambda (key child) (setf (gethash key copy) (project child))) item)
-                        copy)))
-                 (string
-                  (copy-seq item))
-                 (vector
-                  (map 'vector #'project item))
-                 (cons
-                  (mapcar #'project item))
-                 (t
-                  item))))
-      (values (project value) images))))
+    (values
+     (clinker-transcript:transform-json
+      value :node-function
+      (lambda (item)
+        (if (and (hash-table-p item) (provider-context--image-p item))
+            (progn
+              (incf images)
+              (values :replace
+                      (json-object "type" "input_text" "text"
+                                   "[Emergency compaction: image omitted; visual content unavailable in this text transcript.]")))
+            (values :retain nil))))
+     images)))
 
 (-> compaction-recovery-text-view (compaction-recovery conversation) conversation)
 (defun compaction-recovery-text-view (state view)
