@@ -955,7 +955,34 @@ and inspection failures yield :UNKNOWN, never confirmed exit."
               (response      (localgroup-query-record entry operation)))
          (localgroup--print-response response *standard-output*)
          (when (eq operation ':kill)
-           (localgroup--check-kill-exit pid)))))))
+           (if (localgroup--hosted-pid-p configuration pid)
+               (localgroup--check-channel-closed (first entry))
+               (localgroup--check-kill-exit pid))))))))
+
+(-> localgroup--hosted-pid-p (configuration t) boolean)
+(defun localgroup--hosted-pid-p (configuration pid)
+  "Return true when PID is the world server's: the record names a channel it hosts, not a process of its own."
+  (let ((world (world-client-entry configuration)))
+    (and world (eql pid (getf (rest (rest world)) :pid)) t)))
+
+(defparameter *localgroup-channel-close-seconds* 5
+  "How long lg kill waits for a hosted channel to withdraw its endpoint.")
+
+(-> localgroup--check-channel-closed (pathname) null)
+(defun localgroup--check-channel-closed (pathname)
+  "Report a hosted channel that still publishes its endpoint record PATHNAME after the wait.
+
+The world server keeps running, so the channel's exit shows as its record
+going away."
+  (let ((deadline (+ (get-internal-real-time)
+                     (* *localgroup-channel-close-seconds* internal-time-units-per-second))))
+    (loop while (and (probe-file pathname) (< (get-internal-real-time) deadline))
+          do (sleep 0.05))
+    (when (probe-file pathname)
+      (error 'localgroup-error
+             :operation ':kill
+             :message   "Could not confirm the channel closed: its endpoint is still published.")))
+  nil)
 
 (-> main-localgroup-command () clingon:command)
 (defun main-localgroup-command ()
