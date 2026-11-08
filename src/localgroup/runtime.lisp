@@ -442,10 +442,10 @@ Persist pending input and cancel any active turn when exiting. Return true on ex
 
 (-> localgroup--terminal-event-p (t) boolean)
 (defun localgroup--terminal-event-p (event)
-  "Accept ordinary relay input and bounded fullscreen wheel and click events."
+  "Accept ordinary relay input and bounded fullscreen wheel, click, drag and release events."
   (not (null (or (image-daemon:daemon-terminal-event-p event)
                  (typep event '(cons (eql :scroll) (cons (member -1 1) null)))
-                 (typep event '(cons (eql :click)
+                 (typep event '(cons (member :click :drag :release)
                                 (cons (integer 1 10000)
                                  (cons (integer 1 10000) null))))))))
 
