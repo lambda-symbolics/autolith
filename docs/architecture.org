@@ -125,9 +125,11 @@ Only the world server runs the agents of world channels. Clients other than
 terminals follow a channel through the structured client protocol:
 =src/localgroup/clients.lisp= serves the =:client= endpoint operation and
 holds the client side of a connection, =src/application/clients.lisp= the
-per-channel hub, event queues and portable values, and
+per-channel membership, event sequencing, replay and portable values, and
 =src/application/approvals.lisp= the approval offered to the terminal and
-every approving client at once. The channel's turn observer, presentations,
+every approving client at once. Each client uses an =image-daemon= attachment
+for its character-bounded output queue and writer, borrowing the transport from
+the serving daemon, which owns final stream closure. The channel's turn observer, presentations,
 record appends and work items publish to the hub. Operations a client asks
 for run on their own thread, since they may wait for the channel while it
 waits for the client.

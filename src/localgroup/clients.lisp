@@ -46,12 +46,12 @@
   (let* ((application (localgroup-session-application session))
          (arguments   (localgroup--request-field request :arguments))
          (name        (getf arguments :name))
-         (client      (make-instance 'channel-client
-                                     :name           (if (non-empty-string-p name) name "client")
-                                     :approves-p     (getf arguments :approves-p t)
-                                     :stream         stream
-                                     :socket         socket
-                                     :transport-lock (image-daemon:daemon-runtime-lock session))))
+         (client      (channel-client-create
+                       :name           (if (non-empty-string-p name) name "client")
+                       :approves-p     (getf arguments :approves-p t)
+                       :stream         stream
+                       :socket         socket
+                       :transport-lock (image-daemon:daemon-runtime-lock session))))
     (unwind-protect
          (progn
            (handler-case
@@ -78,10 +78,7 @@
                       (if (eq (first command) ':operation)
                           (make-thread reply :name "Autolith client operation")
                           (funcall reply)))))
-      (channel-client-close client)
-      (let ((writer (channel-client-writer-thread client)))
-        (when writer
-          (join-thread writer)))))
+      (channel-client-close client)))
   nil)
 
 (-> localgroup--client-reply (localgroup-session list) list)

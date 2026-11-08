@@ -351,32 +351,40 @@
                "wire error data retains the transmitted request's uncertain execution"))))))))
   nil)
 
-(-> test-channel-client-checkpoint-blocked-writer () null)
-(defun test-channel-client-checkpoint-blocked-writer ()
-  "Refuse to checkpoint a client writer that transport shutdown cannot stop."
-  (let* ((lock       (make-lock "Blocked writer test"))
-         (condition  (make-condition-variable :name "Blocked writer test"))
-         (released-p nil)
-         (client     (make-instance 'channel-client :stream (make-string-output-stream)
-                                                    :socket nil :transport-lock (make-lock "Test transport")))
-         (writer     (make-thread
-                      (lambda ()
-                        (with-lock-held (lock)
-                          (loop until released-p do (condition-wait condition lock))))
-                      :name "Deliberately uninterruptible writer")))
-    (setf (channel-client-writer-thread client) writer)
-    (unwind-protect
-         (progn
-           (test-assert
-            (handler-case
-                (progn (channel-client-finish client (list :checkpoint-reconnect :id "test")) nil)
-              (localgroup-error () t))
-            "a live writer prevents checkpoint completion instead of entering the saved heap")
-           (test-assert (channel-client-closed-p client) "transport admission closes on timeout"))
-      (with-lock-held (lock)
-        (setf released-p t)
-        (condition-notify condition))
-      (join-thread writer)))
+(-> test-channel-client-checkpoint-stop-failure () null)
+(defun test-channel-client-checkpoint-stop-failure ()
+  "Seal every client before draining and propagate an unreaped transport failure."
+  (client-protocol-tests--call
+   (lambda (application entry)
+     (let* ((connections (loop repeat 2 collect (localgroup-client-connect entry :approves-p nil)))
+            (clients     (application-clients application))
+            (injected    (make-condition 'image-daemon:daemon-error
+                                         :message "Injected unreaped writer." :operation ':stop-thread))
+            (sealed-p    nil))
+       (unwind-protect
+            (test-call-with-function-replacements
+             (list (list 'image-daemon:attachment-finish
+                         (lambda (attachment event)
+                           (declare (ignore attachment event))
+                           (setf sealed-p
+                                 (and (= 2 (length clients))
+                                      (every (lambda (client)
+                                               (eq (image-daemon:attachment-try-send
+                                                    (channel-client-attachment client) '(:late))
+                                                   ':closed))
+                                             clients)))
+                           (error injected))))
+             (lambda ()
+               (test-assert
+                (eq injected
+                    (handler-case
+                        (localgroup--finish-checkpoint-clients application "test")
+                      (image-daemon:daemon-error (condition)
+                        condition)))
+                "checkpoint preserves the transport's structured reaping failure")
+               (test-assert sealed-p "every captured client refuses output before any drain begins")))
+         (dolist (connection connections)
+           (localgroup-client-close connection))))))
   nil)
 
 (-> test-acp-session-close-during-greeting () null)

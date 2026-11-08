@@ -5,8 +5,8 @@
 ;;; A channel client is a program other than a terminal that follows one
 ;;; channel through the structured client protocol: an editor speaking ACP
 ;;; today, a web, GUI or phone client later. It receives the channel's events
-;;; as portable plists and sends commands back. Each client has its own queue
-;;; and writer thread, so a slow client never holds up the channel's turn.
+;;; as portable plists and sends commands back. An image-daemon attachment
+;;; handles each client's bounded output queue and writer.
 
 (defclass channel-client ()
   ((identifier
@@ -26,50 +26,23 @@
     :reader        channel-client-approves-p
     :type          boolean
     :documentation "Whether the client answers approvals, as an editor does and a script does not.")
-   (stream
-    :initarg       :stream
-    :reader        channel-client-stream
-    :type          stream
-    :documentation "The connection events are written to.")
+   (attachment
+    :accessor      channel-client-attachment
+    :type          image-daemon:attachment
+    :documentation "The attachment owning this client's output lifecycle.")
    (hub
     :initform      nil
     :accessor      channel-client-hub
-    :documentation "The hub owning this client's registration, or NIL before attachment.")
-   (socket
-    :initarg       :socket
-    :reader        channel-client-socket
-    :documentation "The accepted socket, shut down to wake the serving reader.")
-   (transport-lock
-    :initarg       :transport-lock
-    :reader        channel-client-transport-lock
-    :documentation "The daemon lock serializing socket shutdown with its final close.")
-   (lock
-    :initform      (make-lock "Autolith channel client")
-    :reader        channel-client-lock
-    :documentation "The lock guarding the queue and the closed flag.")
-   (condition-variable
-    :initform      (make-condition-variable :name "Autolith channel client")
-    :reader        channel-client-condition-variable
-    :documentation "Signaled when an event is queued or the client closes.")
-   (events
-    :initform      (make-deque)
-    :reader        channel-client-events
-    :documentation "Events queued for the writer thread, oldest first.")
-   (final-event
-    :initform      nil
-    :accessor      channel-client-final-event
-    :type          (option list)
-    :documentation "The final event to write after queued output before closing admission.")
-   (closed-p
-    :initform      nil
-    :accessor      channel-client-closed-p
-    :type          boolean
-    :documentation "Whether the client is gone and takes no more events.")
-   (writer-thread
-    :initform      nil
-    :accessor      channel-client-writer-thread
-    :documentation "The thread writing queued events to the connection."))
+    :documentation "The hub owning this client's registration, or NIL before attachment."))
   (:documentation "One structured client following a channel."))
+
+(defclass channel-client-transport (image-daemon:attachment)
+  ((client
+    :initarg       :client
+    :reader        channel-client-transport-client
+    :type          channel-client
+    :documentation "The structured client notified when its transport stops."))
+  (:documentation "Attachment output with structured framing and daemon-owned closure."))
 
 (defclass client-hub ()
   ((lock
@@ -115,28 +88,17 @@
 
 ;;;; -- Policy --
 
-(defparameter *channel-client-queue-limit* 20000
-  "How many events may wait for a client before it counts as gone.
-
-A client that falls this far behind is disconnected; it reconnects and reads
-the channel's state and history again.")
-
 (defparameter *channel-client-journal-limit* 10000
   "Maximum channel events retained for cursor-based reconnection.")
 
 (-> channel-client--queue-event (channel-client list) boolean)
 (defun channel-client--queue-event (client event)
-  "Queue EVENT without closing CLIENT; return whether its queue overflowed."
-  (with-lock-held ((channel-client-lock client))
-    (cond
-      ((or (channel-client-closed-p client) (channel-client-final-event client))
-       nil)
-      ((>= (deque-count (channel-client-events client)) *channel-client-queue-limit*)
-       t)
-      (t
-       (deque-push-back (channel-client-events client) event)
-       (condition-notify (channel-client-condition-variable client))
-       nil))))
+  "Queue EVENT without transport cleanup; return whether CLIENT must disconnect."
+  (handler-case
+      (eq (image-daemon:attachment-try-send (channel-client-attachment client) event) ':overflow)
+    ;; A malformed packet disconnects its recipient, not the publishing channel.
+    (error ()
+      t)))
 
 (-> application-clients--record-sequence (application) integer)
 (defun application-clients--record-sequence (application)
@@ -219,8 +181,9 @@ cursor outside the retained tail is refused rather than skipping events."
                  (dolist (event events)
                    (when (and after-sequence (> (getf (rest event) :sequence) after-sequence))
                      (when (channel-client--queue-event client event)
-                       (error 'localgroup-error :operation ':client :message "The retained event tail exceeds the client queue."))))
-                 (with-lock-held ((channel-client-lock client))
+                       (error 'localgroup-error :operation ':client
+                              :message                     "The retained event tail exceeds the client queue."))))
+                 (with-lock-held ((image-daemon:attachment-lock (channel-client-attachment client)))
                    (unless (channel-client-closed-p client)
                      (setf (channel-client-hub client) hub)
                      (push client (client-hub-clients hub))))))))
@@ -229,11 +192,8 @@ cursor outside the retained tail is refused rather than skipping events."
             (application-clients--follow-conversation application)
             (subscribe))
           (subscribe)))
-    (with-lock-held ((channel-client-lock client))
-      (unless (channel-client-closed-p client)
-        (setf (channel-client-writer-thread client)
-              (make-thread (lambda () (channel-client--write-events client))
-                           :name (format nil "Autolith ~A client writer" (channel-client-name client)))))))
+    ;; The serving scope owns cleanup, after transmitting an attachment refusal.
+    (image-daemon:attachment-start (channel-client-attachment client)))
   nil)
 
 (-> application-clients--follow-conversation (application) null)
@@ -369,110 +329,66 @@ channel that stops before running it refuses it."
 
 ;;;; -- One Client --
 
+(-> channel-client-create
+    (&key (:socket t) (:stream stream) (:transport-lock t) (:name string) (:approves-p boolean))
+    channel-client)
+(defun channel-client-create (&key socket stream transport-lock (name "client") (approves-p t))
+  "Create a structured client and its deferred output attachment."
+  (let ((client (make-instance 'channel-client :name name :approves-p approves-p)))
+    (setf (channel-client-attachment client)
+          (make-instance 'channel-client-transport
+                         :client client :socket socket :stream stream :mode ':read-only
+                         :transport-lock transport-lock))
+    client))
+
+(-> channel-client-closed-p (channel-client) boolean)
+(defun channel-client-closed-p (client)
+  "Return whether CLIENT's attachment has stopped accepting output."
+  (image-daemon:attachment-closed-p (channel-client-attachment client)))
+
 (-> channel-client-enqueue (channel-client list) null)
 (defun channel-client-enqueue (client event)
   "Queue EVENT for CLIENT, disconnecting a client that fell too far behind."
-  (when (with-lock-held ((channel-client-lock client))
-          (unless (or (channel-client-closed-p client) (channel-client-final-event client))
-            (if (>= (deque-count (channel-client-events client)) *channel-client-queue-limit*)
-                t
-                (progn
-                  (deque-push-back (channel-client-events client) event)
-                  (condition-notify (channel-client-condition-variable client))
-                  nil))))
+  (when (channel-client--queue-event client event)
     (channel-client-close client))
   nil)
 
 (-> channel-client-finish (channel-client list) null)
 (defun channel-client-finish (client event)
-  "Stop admitting output to CLIENT and deliver EVENT after its queue drains.
-
-Call outside hub and queue locks. A blocked writer gets one second to drain
-before transport shutdown wakes it."
-  (with-lock-held ((channel-client-lock client))
-    (unless (or (channel-client-closed-p client) (channel-client-final-event client))
-      (setf (channel-client-final-event client) event)
-      (condition-notify (channel-client-condition-variable client))))
-  (let ((writer (channel-client-writer-thread client)))
-    (when (and writer (not (eq writer (current-thread))))
-      (sb-thread:join-thread writer :timeout 1 :default nil))
-    (channel-client-close client)
-    (when (and writer (not (eq writer (current-thread))))
-      (sb-thread:join-thread writer :timeout 1 :default nil)
-      (when (thread-alive-p writer)
-        (error 'localgroup-error :message  "The structured client writer did not stop for checkpoint."
-                                :operation ':checkpoint))))
-  nil)
+  "Seal CLIENT with EVENT, then drain and reap its writer within the daemon deadline."
+  (image-daemon:attachment-finish (channel-client-attachment client) event))
 
 (-> channel-client-close (channel-client) null)
 (defun channel-client-close (client)
-  "Detach CLIENT once, wake approval waiters and shut down its reader and writer.
+  "Detach CLIENT and reap its writer outside hub and attachment locks."
+  (image-daemon:attachment-close (channel-client-attachment client)))
 
-The daemon owns final socket closure. Never shut down or close a transport
-while holding the queue or hub lock."
-  (when (with-lock-held ((channel-client-lock client))
-          (unless (channel-client-closed-p client)
-            (setf (channel-client-closed-p client) t)
-            (condition-notify (channel-client-condition-variable client))
-            t))
-    (let ((hub (channel-client-hub client)))
+(defmethod image-daemon:attachment-release-transport ((transport channel-client-transport))
+  "Shut down TRANSPORT, unregister its client and wake approvals; the daemon closes it."
+  (unwind-protect
+       (image-daemon:attachment-shutdown transport)
+    (let* ((client (channel-client-transport-client transport))
+           (hub    (channel-client-hub client)))
       (when hub
         (with-lock-held ((client-hub-lock hub))
-          (setf (client-hub-clients hub) (delete client (client-hub-clients hub)))
-          (sb-thread:condition-broadcast (client-hub-condition-variable hub)))))
-    (with-lock-held ((channel-client-transport-lock client))
-      ; mallet:suppress no-ignore-errors -- the peer or daemon may have shut down already
-      (ignore-errors (sb-bsd-sockets:socket-shutdown (channel-client-socket client)
-                                                    :direction ':io))))
+          (when (eq (channel-client-hub client) hub)
+            (setf (client-hub-clients hub) (delete client (client-hub-clients hub))
+                  (channel-client-hub client) nil)
+            (sb-thread:condition-broadcast (client-hub-condition-variable hub)))))))
   nil)
 
-(-> channel-client--next-event (channel-client) (option list))
-(defun channel-client--next-event (client)
-  "Wait for CLIENT's next queued event and return it, or NIL once CLIENT closed."
-  (with-lock-held ((channel-client-lock client))
-    (loop
-      (cond
-        ((channel-client-closed-p client)
-         (return nil))
-        ((not (deque-empty-p (channel-client-events client)))
-         (return (deque-pop-front (channel-client-events client))))
-        ((channel-client-final-event client)
-         (return (channel-client-final-event client)))
-        (t
-         (condition-wait (channel-client-condition-variable client)
-                         (channel-client-lock client)))))))
-
-(-> channel-client--write-events (channel-client) null)
-(defun channel-client--write-events (client)
-  "Write queued events until CLIENT closes or its transport fails."
-  (unwind-protect
-       (handler-case
-           (loop for event = (channel-client--next-event client)
-                 while event
-                do (channel-client--write-event client event)
-                   (when (eq event (channel-client-final-event client))
-                     (return)))
-         (error ()
-           nil))
-    (channel-client-close client))
-  nil)
-
-(-> channel-client--write-event (channel-client list) null)
-(defun channel-client--write-event (client event)
-  "Write EVENT, replacing oversized replies with errors and other events with notices."
-  (let ((frame (handler-case (image-daemon:daemon-packet-string event)
-                 (image-daemon:daemon-error ()
-                   ;; Framing precedes I/O, so this cannot be a transport failure.
-                   (image-daemon:daemon-packet-string
-                    (if (eq (first event) ':reply)
-                        (list :reply :id (getf (rest event) :id)
-                              :error "The reply exceeded the packet size limit.")
-                        (list :omitted         :kind (first event)
-                              :sequence        (getf (rest event) :sequence)
-                              :record-sequence (getf (rest event) :record-sequence))))))))
-    (write-string frame (channel-client-stream client))
-    (finish-output (channel-client-stream client)))
-  nil)
+(defmethod image-daemon:attachment-packet-string ((transport channel-client-transport) event)
+  "Frame EVENT, retaining reply identity or event cursors when its payload is too large."
+  (declare (ignore transport))
+  (handler-case (image-daemon:daemon-packet-string event)
+    (image-daemon:daemon-error ()
+      (image-daemon:daemon-packet-string
+       (if (eq (first event) ':reply)
+           (list :reply :id (getf (rest event) :id)
+                 :error "The reply exceeded the packet size limit.")
+           (list :omitted         :kind (first event)
+                 :sequence        (getf (rest event) :sequence)
+                 :record-sequence (getf (rest event) :record-sequence)))))))
 
 
 ;;;; -- Portable Events --

@@ -730,6 +730,7 @@
   test-client-approval-terminal-arbitration
   test-client-work-movement-cancellation
   test-client-protocol-disconnect
+  test-client-protocol-start-failure
   test-client-protocol-packet-limit
   test-client-protocol-cursor-tail
   test-client-protocol-write-failure)
@@ -1940,7 +1941,7 @@
   test-acp-session-consecutive-checkpoint-race
   test-acp-session-setup-disconnection
   test-acp-request-interrupted-wire-data
-  test-channel-client-checkpoint-blocked-writer
+  test-channel-client-checkpoint-stop-failure
   test-acp-extension-portable-values
   test-acp-extension-wire-state-and-authority
   test-acp-extension-notification-order
