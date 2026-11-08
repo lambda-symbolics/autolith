@@ -613,8 +613,7 @@ Legacy checkouts directly beneath checkouts/ never authorize deleting their pare
 (defun task-worktree-discard (configuration channel &key pathname)
   "Discard a removed child's verified checkout without widening legacy cleanup."
   (let* ((pathname (or pathname
-                       (find channel (conversation-task-pathnames (config :data-root configuration))
-                             :key #'pathname-name :test #'equal)))
+                       (conversation-task-pathname-for-id configuration channel)))
          (record   (and pathname
                         (merge-pathnames "worktree.sexp" (uiop:pathname-directory-pathname pathname))))
          (metadata (and record (probe-file record) (snapshot-read record))))
@@ -627,8 +626,12 @@ Legacy checkouts directly beneath checkouts/ never authorize deleting their pare
                               :writable-roots (cons cleanup-root
                                                     (task-worktree--git-admin-roots
                                                      (pathname (getf metadata :source)))))))
-          (cl-worktree:cleanup-worktree manager (task-worktree--find-handle manager metadata)
-                                        :owner (getf metadata :owner) :discard-dirty t)
+          (handler-case
+              (cl-worktree:cleanup-worktree manager (task-worktree--find-handle manager metadata)
+                                            :owner (getf metadata :owner) :discard-dirty t)
+            (task-worktree-error ()
+              ;; Git may no longer know the removed child's checkout.
+              nil))
           (platform-delete-directory-tree *platform* cleanup-root
                                           :validate t :if-does-not-exist ':ignore)))))
   nil)

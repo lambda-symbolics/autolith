@@ -80,15 +80,23 @@
                           (participant-name agent)))))
 
 (defmethod tool-execute ((tool child-remove-tool) (context tool-context) arguments)
-  "Delete the idle child ARGUMENTS name, with everything it owns."
+  "Delete the idle children ARGUMENTS name, with everything they own, in one pass."
   (declare (ignore tool))
-  (task--validate-tool-arguments arguments '("child") "child.remove")
-  (multiple-value-bind (channel agent)
-      (task-child--find context (tool-argument arguments "child" :required t) "child.remove")
-    (let ((below (1- (channel-remove (tool-context-configuration context) channel))))
-      (tool-success (if (zerop below)
-                        (format nil "Removed @~A." (participant-name agent))
-                        (format nil "Removed @~A and the ~D children below it." (participant-name agent) below))))))
+  (task--validate-tool-arguments arguments '("children") "child.remove")
+  (let* ((designators (coerce (tool-argument arguments "children" :required t) 'list))
+         (found       (progn
+                        (unless (and designators (every #'non-empty-string-p designators))
+                          (error 'task-error
+                                 :message   "child.remove takes children, a list of one or more names or channels."
+                                 :tool-name "child.remove"))
+                        (mapcar (lambda (designator)
+                                  (multiple-value-list (task-child--find context designator "child.remove")))
+                                designators)))
+         (removed     (channel-remove (tool-context-configuration context) (mapcar #'first found)))
+         (below       (- removed (length found))))
+    (tool-success (format nil "Removed ~{@~A~^, ~}~[~:;, and the ~:*~D channels below them~]."
+                          (mapcar (lambda (entry) (participant-name (second entry))) found)
+                          below))))
 
 
 ;;;; -- Public Functions --
@@ -117,61 +125,70 @@
       (register 'child-reset-tool "reset"
                 "Clear an idle child's history. It keeps its name, role and channel, and starts fresh on the next work you send it.")
       (register 'child-remove-tool "remove"
-                "Delete an idle child for good: its channel, its history, and its own children. A child with an isolated worktree is removed only after child.worktree cleans it up.")))
+                "Delete idle children for good, several at once: their channels, histories, worktrees and own children."
+                (json-object "children" (json-object "type"        "array"
+                                                     "description" "The children to remove, by name or channel."
+                                                     "minItems"    1
+                                                     "items"       child))
+                '("children"))))
   registry)
 
-(-> channel-remove (configuration string &key (:tool-name string)) (integer 1))
-(defun channel-remove (configuration channel &key (tool-name "child.remove"))
-  "Delete channel CHANNEL with its agent, its history and every channel nested below it, and return how many went.
+(-> channel-remove (configuration list &key (:tool-name string)) (integer 0))
+(defun channel-remove (configuration channels &key (tool-name "child.remove"))
+  "Delete CHANNELS with their agents, histories, worktrees and every channel nested below them, and return how many went.
 
-This removes a child, or any channel the person no longer wants; never the
-inbox. Nothing is deleted while any of them is busy or keeps an isolated
-worktree. The deepest channels go first, so a failure partway leaves no
-channel without its parent. TOOL-NAME names the refusing operation."
-  (let* ((world    (world-load configuration))
-         (target   (world--require-channel world channel ':delete-channel))
-         (channels (task-child--subtree world channel)))
-    (when (channel-inbox-p target)
-      (error 'task-error
-             :message   "The inbox stays; only other channels can be removed."
-             :tool-name tool-name))
-    (dolist (identifier channels)
+This removes children, or any channels the person no longer wants; never the
+inbox. Nothing is deleted while any of them is busy. A child's isolated
+worktree is discarded with it, edits included. The children of one root
+share one pass over that root's shell logs, and the deepest channels leave
+the world first, so a failure partway leaves no channel without its parent.
+TOOL-NAME names the refusing operation."
+  (let* ((world (world-load configuration))
+         (all   (remove-duplicates
+                 (loop for channel in channels
+                       do (when (channel-inbox-p (world--require-channel world channel ':delete-channel))
+                            (error 'task-error
+                                   :message   "The inbox stays; only other channels can be removed."
+                                   :tool-name tool-name))
+                       append (task-child--subtree world channel))
+                 :test     #'string=
+                 :from-end t)))
+    (dolist (identifier all)
       (when (conversation-lease-busy-p configuration identifier)
-        (task-child--busy identifier tool-name))
-      (when (uiop:directory-exists-p (task-child--worktree-directory configuration identifier))
-        (error 'task-error
-               :message   (format nil "Channel ~A keeps an isolated worktree; clean it up with child.worktree first."
-                                  (conversation-identifier-display identifier))
-               :tool-name tool-name
-               :task-id   identifier)))
-    (dolist (identifier (reverse channels))
-      (task-child--delete configuration identifier))
-    (length channels)))
+        (task-child--busy identifier tool-name)))
+    (dolist (identifier all)
+      (task-worktree-discard configuration identifier))
+    (let ((children (remove-if-not (lambda (identifier)
+                                     (conversation-task-pathname-for-id configuration identifier))
+                                   all)))
+      (task-child-delete-storage configuration children)
+      (dolist (identifier (set-difference all children :test #'string=))
+        (when (conversation-storage-active-pathname (conversation-pathname-for-id configuration identifier))
+          (conversation-delete configuration identifier))))
+    (dolist (identifier (reverse all))
+      (task-child--forget configuration identifier))
+    (length all)))
 
-(-> task-child-delete-storage (configuration string) null)
-(defun task-child-delete-storage (configuration channel)
-  "Delete the history and run artifacts of the idle child CHANNEL, keeping what its shell logs delivered.
+(-> task-child-delete-storage (configuration list) null)
+(defun task-child-delete-storage (configuration channels)
+  "Delete the histories and run artifacts of the idle children CHANNELS, keeping what their shell logs delivered.
 
-The child's directory goes under its shell logs' source lock, after their
-delivery evidence is saved outside it, so a later sweep of shell logs still
-knows which captures reached their owner. A failure keeps the directory."
-  (let ((pathname (conversation-task-pathname-for-id configuration channel)))
-    (when pathname
-      (let* ((directory (uiop:pathname-directory-pathname pathname))
-             (root      (first (last (pathname-directory
-                                      (uiop:pathname-parent-directory-pathname directory)))))
-             (lease     (handler-case (conversation-lease-acquire configuration channel)
-                          (conversation-in-use ()
-                            (task-child--busy channel "child.remove")))))
-        (unwind-protect
-             (shell-log-persist-owner-delivery
-              configuration root channel
-              :delete-function (lambda ()
-                                 (conversation-delete-artifacts configuration channel)
-                                 (platform-delete-directory-tree *platform* directory
-                                                                 :validate          t
-                                                                 :if-does-not-exist ':ignore)))
-          (conversation-lease-release lease)))))
+The children of one root share one pass over its shell logs: their
+directories go under their source locks, after the delivery evidence is saved
+outside them, so a later sweep of shell logs still knows which captures
+reached their owners. A failure keeps the directories."
+  (let ((roots (make-hash-table :test #'equal)))
+    (dolist (channel channels)
+      (let ((pathname (conversation-task-pathname-for-id configuration channel)))
+        (when pathname
+          (let ((directory (uiop:pathname-directory-pathname pathname)))
+            (push (cons channel directory)
+                  (gethash (first (last (pathname-directory
+                                         (uiop:pathname-parent-directory-pathname directory))))
+                           roots))))))
+    (maphash (lambda (root entries)
+               (task-child--delete-root-storage configuration root entries))
+             roots))
   nil)
 
 
@@ -259,28 +276,37 @@ knows which captures reached their owner. A failure keeps the directory."
         (loop for child in (world-channel-children world channel)
               append (task-child--subtree world (channel-identifier child)))))
 
-(-> task-child--worktree-directory (configuration string) pathname)
-(defun task-child--worktree-directory (configuration channel)
-  "Return where the isolated worktree of the child run CHANNEL would be checked out."
-  (merge-pathnames (format nil "task-worktrees/checkouts/~A/" channel)
-                   (config :data-root configuration)))
+(-> task-child--delete-root-storage (configuration string list) null)
+(defun task-child--delete-root-storage (configuration root entries)
+  "Delete the (CHANNEL . DIRECTORY) ENTRIES of ROOT's children under their leases, in one shell log pass."
+  (let ((leases nil))
+    (unwind-protect
+         (progn
+           (dolist (entry entries)
+             (push (handler-case (conversation-lease-acquire configuration (first entry))
+                     (conversation-in-use ()
+                       (task-child--busy (first entry) "child.remove")))
+                   leases))
+           (shell-log-persist-owner-delivery
+            configuration root (mapcar #'first entries)
+            :delete-function (lambda ()
+                               (dolist (entry entries)
+                                 (conversation-delete-artifacts configuration (first entry))
+                                 (platform-delete-directory-tree *platform* (rest entry)
+                                                                 :validate          t
+                                                                 :if-does-not-exist ':ignore)))))
+      (mapc #'conversation-lease-release leases)))
+  nil)
 
-(-> task-child--delete (configuration string) null)
-(defun task-child--delete (configuration channel)
-  "Delete channel CHANNEL, none of whose nested channels remain: its storage, then its place in the world.
-
-A child's storage keeps what its shell logs delivered; any other channel's
-conversation goes with its private artifacts."
+(-> task-child--forget (configuration string) null)
+(defun task-child--forget (configuration channel)
+  "Take channel CHANNEL, whose storage is gone and none of whose nested channels remain, out of the world."
   (let* ((world  (world-load configuration))
          (doomed (loop for resident in (world-channel-residents world channel)
                        append (cons (participant-identifier resident)
                                     (mapcar #'participant-identifier
                                             (world-participant-descendants
                                              world (participant-identifier resident)))))))
-    (if (conversation-task-pathname-for-id configuration channel)
-        (task-child-delete-storage configuration channel)
-        (when (conversation-storage-active-pathname (conversation-pathname-for-id configuration channel))
-          (conversation-delete configuration channel)))
     (world-channel-delete configuration channel :participants doomed)
     (dolist (participant doomed)
       (world-context-delete configuration participant))

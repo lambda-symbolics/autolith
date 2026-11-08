@@ -1407,7 +1407,7 @@
                             "Pre-index rotated child evidence needs backfill before removal"))
              (flet ((remove-owners ()
                       (dolist (job jobs)
-                        (task-child-delete-storage configuration (session-job-execution-identifier job)))))
+                        (task-child-delete-storage configuration (list (session-job-execution-identifier job))))))
                (if around-removal
                    (funcall around-removal configuration root #'remove-owners)
                    (remove-owners)))
@@ -1564,8 +1564,8 @@
         (list (list 'shell-log--write-manifest
                     (lambda (capture) (incf writes) (funcall original capture))))
         (lambda ()
-          (shell-log-persist-owner-delivery configuration "mark-root" "000Owner")
-          (shell-log-persist-owner-delivery configuration "mark-root" "000Owner")))
+          (shell-log-persist-owner-delivery configuration "mark-root" (list "000Owner"))
+          (shell-log-persist-owner-delivery configuration "mark-root" (list "000Owner"))))
        (test-assert (= writes 1) "Retry of an already marked capture performs no publication")
        (test-assert (shell-log-tests--marked-p configuration artifact) "Mark is durable on disk")
        ;; TASK-CONTINUITY--READ is the unchanged bounded reader used at the base.
@@ -1630,7 +1630,7 @@
                       (t
                        (error "Injected pre-delete ~A failure." failure))))))
           (lambda ()
-            (handler-case (task-child-delete-storage configuration "000Owner")
+            (handler-case (task-child-delete-storage configuration (list "000Owner"))
               (error (condition)
                 (setf signalled condition)))))
          (test-assert signalled (format nil "Failed ~A handoff signals to the remover" failure))
@@ -1639,7 +1639,7 @@
                       "Failure never destroys existing positive delivery authority")
          (test-assert (eq (eq failure :delete) (shell-log-tests--marked-p configuration artifact))
                       "Only post-mark deletion failure leaves a positive mark")
-         (task-child-delete-storage configuration "000Owner")
+         (task-child-delete-storage configuration (list "000Owner"))
          (test-assert (not (probe-file owner-root)) "A retried removal completes")
          (test-assert (shell-log-tests--marked-p configuration artifact)
                       "Successful retry preserves authority outside the deleted owner")))))
@@ -1663,7 +1663,7 @@
                  (task-completion--receipt (getf (shell-log-artifact-metadata capture) :execution-id)))
                (test-assert (handler-case
                                 (progn (shell-log-persist-owner-delivery configuration
-                                         "boundary-root" "boundary-root") nil)
+                                         "boundary-root" (list "boundary-root")) nil)
                               (shell-log-error () t))
                             "Primary owner cannot be treated as a deleted child")
                (test-assert (shell-log-tests--disk-prunable configuration capture)
@@ -1684,11 +1684,11 @@
                  (shell-log-tests--receipt-append
                   (conversation-create configuration :identifier owner) receipt)
                  (shell-log-tests--receipt-append conversation "completion:wrong")
-                 (shell-log-persist-owner-delivery configuration "boundary-root" owner)
+                 (shell-log-persist-owner-delivery configuration "boundary-root" (list owner))
                  (test-assert (not (shell-log-tests--marked-p configuration capture))
                               "Foreign root, same-ID primary and wrong receipt cannot grant a mark")
                  (shell-log-tests--receipt-append conversation receipt)
-                 (shell-log-persist-owner-delivery configuration "boundary-root" owner)
+                 (shell-log-persist-owner-delivery configuration "boundary-root" (list owner))
                  (test-assert (shell-log-tests--marked-p configuration capture)
                               "Exact durable child or nested-child receipt grants authority")
                  (push (list owner (task--artifact-root configuration job) capture) owners)
@@ -1696,7 +1696,7 @@
                                             :conversation conversation :job job :depth (1+ depth)))))
              ;; Remove the nested child first, then its ancestor, as child removal does.
              (loop for (owner directory capture) in owners
-                   do (task-child-delete-storage configuration owner)
+                   do (task-child-delete-storage configuration (list owner))
                       (test-assert (not (probe-file directory))
                                    "Explicit removal deletes each marked nested owner")
                       (test-assert (and (shell-log-tests--marked-p configuration capture)
@@ -1713,7 +1713,7 @@
          (shell-log--write-manifest
           (make-instance 'shell-log-artifact :configuration configuration
                          :capture-directory (shell-log-capture-directory artifact) :metadata bad))
-         (handler-case (shell-log-persist-owner-delivery configuration "mark-root" "000Owner")
+         (handler-case (shell-log-persist-owner-delivery configuration "mark-root" (list "000Owner"))
            (shell-log-error () nil))
          (test-assert (not (shell-log-tests--marked-p configuration artifact))
                       "Wrong group or physical execution/artifact identity cannot be marked")
@@ -1744,7 +1744,7 @@
                                          :tool-details (list :shell-logs (list (shell-log--public-metadata metadata)))))))
              (test-assert (shell-log--sync-delivered-p configuration metadata)
                           "Tagged details do not hide a later exact synchronous receipt")
-             (shell-log-persist-owner-delivery configuration "tagged-details-root" "tagged-details")
+             (shell-log-persist-owner-delivery configuration "tagged-details-root" (list "tagged-details"))
              (test-assert (shell-log-tests--marked-p configuration artifact)
                           "Exact synchronous delivery persists before owner removal"))
         (task-orchestrator-close runtime))))
@@ -1763,16 +1763,16 @@
             (progn
               (setf (gethash (namestring directory) *shell-log-active*)
                     (cons (current-thread) lease))
-              (shell-log-persist-owner-delivery configuration "mark-root" "000Owner")
+              (shell-log-persist-owner-delivery configuration "mark-root" (list "000Owner"))
               (test-assert (not (shell-log-tests--marked-p configuration artifact))
                            "A live local lease excludes even a closed delivered capture")
               (remhash (namestring directory) *shell-log-active*)
-              (shell-log-persist-owner-delivery configuration "mark-root" "000Owner")
+              (shell-log-persist-owner-delivery configuration "mark-root" (list "000Owner"))
               (test-assert (not (shell-log-tests--marked-p configuration artifact))
                            "Kernel lease exclusion does not require a local heap pin"))
          (remhash (namestring directory) *shell-log-active*)
          (lease-release lease))
-       (shell-log-persist-owner-delivery configuration "mark-root" "000Owner")
+       (shell-log-persist-owner-delivery configuration "mark-root" (list "000Owner"))
        (test-assert (shell-log-tests--marked-p configuration artifact)
                     "Released lease permits the positive handoff"))))
   nil)
@@ -1793,12 +1793,12 @@
                             (merge-pathnames "owner.lock" directory)))
                 (setf worker child)
                 (test-assert (equal values '("T")) "Fresh worker acquired the capture's real lease"))
-              (shell-log-persist-owner-delivery configuration "mark-root" "000Owner")
+              (shell-log-persist-owner-delivery configuration "mark-root" (list "000Owner"))
               (test-assert (not (shell-log-tests--marked-p configuration artifact))
                            "A foreign process lease excludes the positive capture")
               (lisp-worker-stop worker)
               (setf worker nil)
-              (shell-log-persist-owner-delivery configuration "mark-root" "000Owner")
+              (shell-log-persist-owner-delivery configuration "mark-root" (list "000Owner"))
               (multiple-value-bind (values child)
                   (test-conversation--worker-eval configuration
                     (format nil "(let* ((configuration ~A) (directory ~S)
@@ -1849,12 +1849,12 @@
                             :name "owner removal fixture") threads)))
             (unwind-protect
                  (progn
-                   (start (lambda () (task-child-delete-storage configuration "000Owner")))
+                   (start (lambda () (task-child-delete-storage configuration (list "000Owner"))))
                    (unless (sb-thread:wait-on-semaphore entered :timeout 10)
                      (error "Removal did not reach mark publication."))
                    (start (lambda ()
                             (sb-thread:signal-semaphore started)
-                            (shell-log-persist-owner-delivery configuration "mark-root" "000Owner")))
+                            (shell-log-persist-owner-delivery configuration "mark-root" (list "000Owner"))))
                    (start (lambda ()
                             (sb-thread:signal-semaphore started)
                             (with-shell-log-lock (configuration)

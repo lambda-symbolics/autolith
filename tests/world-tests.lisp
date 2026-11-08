@@ -1595,6 +1595,8 @@
                                                              :name "helper" :role "scout" :created-at 1500)
       (world-tests--child-conversation configuration "bgrand11" :root "broot11" :parent "bkid11"
                                                                :name "aide" :created-at 1600)
+      (world-tests--child-conversation configuration "bsib11" :root "broot11" :parent "broot11"
+                                                             :name "sibling" :created-at 1700)
       (world-reconcile-sessions configuration :now 2000)
       (let* ((orchestrator (task-tests--orchestrator))
              (parent       (agent-create :configuration configuration
@@ -1634,7 +1636,7 @@
                         (test-assert (and (refused-p (lambda ()
                                                        (call 'child-reset-tool (json-object "child" "keeper"))))
                                           (refused-p (lambda ()
-                                                       (call 'child-remove-tool (json-object "child" "keeper")))))
+                                                       (call 'child-remove-tool (json-object "children" (vector "keeper"))))))
                                      "a busy child is neither reset nor removed")
                      (conversation-lease-release lease)))
                  (let ((compacted nil))
@@ -1659,13 +1661,15 @@
                                      (equal (conversation-role child) "scout")
                                      (equal (conversation-parent-identifier child) "broot11"))
                                 "a reset child keeps its role and parent and loses its history"))
-                 (test-assert (search "the 1 children below it"
+                 (test-assert (search "Removed @keeper, @sibling, and the 1 channels below them"
                                       (tool-result-content
-                                       (call 'child-remove-tool (json-object "child" "keeper"))))
-                              "removing a child removes the children below it")
+                                       (call 'child-remove-tool (json-object "children" (vector "keeper" "sibling")))))
+                              "one call removes several children and the children below them")
                  (let ((world (world-load configuration)))
                    (test-assert (and (null (world-channel-find world "bkid11"))
                                      (null (world-channel-find world "bgrand11"))
+                                     (null (world-channel-find world "bsib11"))
+                                     (null (conversation-task-pathname-for-id configuration "bsib11"))
                                      (null (world-participant-find world "al-bkid11"))
                                      (null (conversation-task-pathname-for-id configuration "bkid11"))
                                      (null (conversation-task-pathname-for-id configuration "bgrand11"))
