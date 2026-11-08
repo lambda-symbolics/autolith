@@ -239,15 +239,17 @@ the terminal wraps the semantic spans for both inline and fullscreen tips."
 
 (-> application-present-generation-health-warning (application) boolean)
 (defun application-present-generation-health-warning (application)
-  "Present a retained-generation health warning during ordinary startup."
+  "Present a retained-generation health warning during ordinary startup.
+
+The checkpoints belong to the data root, not to a channel, so a world server
+presents the warning in the first channel it opens only."
   (let* ((configuration (application-configuration application))
-         (warning       (generation-health-warning
-                         (generation-health-summary configuration))))
+         (server        (application-world-server application))
+         (warning       (and (or (null server) (world-server-take-generation-warning server))
+                             (generation-health-warning
+                              (generation-health-summary configuration)))))
     (when warning
-      (application-present
-       application
-       (list (terminal-span ':failure
-                            (format nil "· checkpoint warning: ~A~%" warning))))
+      (application-present application (application-notice-line (format nil "checkpoints: ~A" warning)))
       t)))
 
 (-> application--update-choice-items () list)

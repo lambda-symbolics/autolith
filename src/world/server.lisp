@@ -97,6 +97,11 @@ the process could fork, and a new thread serves the application again."))
     :accessor      world-server-holding-p
     :type          boolean
     :documentation "Whether a checkpoint waits for the work under way; no channel starts a new turn meanwhile.")
+   (generation-warning-taken-p
+    :initform      nil
+    :accessor      world-server--generation-warning-taken-p
+    :type          boolean
+    :documentation "Whether a channel already presented the checkpoint health warning.")
    (fullscreen-p
     :initarg       :fullscreen-p
     :initform      nil
@@ -875,6 +880,12 @@ host to publish its endpoint."
     (if channel
         (channel-workspace channel)
         (world-workspace-name (config :working-directory configuration)))))
+
+(-> world-server-take-generation-warning (world-server) boolean)
+(defun world-server-take-generation-warning (server)
+  "Return true the first time a channel of SERVER asks to present the checkpoint health warning."
+  (with-lock-held ((world-server-lock server))
+    (not (shiftf (world-server--generation-warning-taken-p server) t))))
 
 (-> world-server--latest-candidates (world-server string) list)
 (defun world-server--latest-candidates (server workspace)
