@@ -1414,6 +1414,7 @@
   test-run-job-streaming-cli-blocked-exit)
 
 (define-test-suite task-scheduler
+  test-task-child-identity
   test-task-default-detachment
   test-task-running-cancellation
   test-task-runtime-deadline

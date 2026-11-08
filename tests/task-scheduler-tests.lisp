@@ -3329,3 +3329,19 @@ pool must reject the cancelled parent without creating a descendant."
         (join-thread reader)
         (task-orchestrator-close orchestrator))))
   nil)
+
+(-> test-task-child-identity () null)
+(defun test-task-child-identity ()
+  "Test a child is named after its role unless given a name, and gets a short identifier."
+  (let ((definition (make-instance 'task-agent-definition :name "reviewer" :description "fixture"
+                                                          :instructions "fixture" :source ':test)))
+    (loop for (item expected) in '(((:task "look") "reviewer")
+                                   ((:task "look" :name "auditor") "auditor")
+                                   ((:task "look" :name "") "reviewer"))
+          do (test-assert (string= (task-child-name item definition) expected)
+                          (format nil "a child admitted with ~S is named ~A" item expected))))
+  (with-test-configuration (configuration)
+    (let ((identifier (task-child-identifier-generate configuration)))
+      (test-assert (and (identifier-p identifier) (< (length identifier) 12))
+                   "a child's identifier is a short identifier, not a UUID")))
+  nil)

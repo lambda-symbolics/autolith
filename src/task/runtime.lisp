@@ -288,28 +288,29 @@ A completed shutdown can be reopened only by an explicit runtime resume."
          (trimmed   (string-trim '(#\HYPHEN-MINUS) mapped)))
     (and (non-empty-string-p trimmed) trimmed)))
 
-(-> task-orchestrator--child-name (task-orchestrator (option string)) string)
-(defun task-orchestrator--child-name (orchestrator requested-name)
-  "Return the readable name a new child of ORCHESTRATOR is admitted under.
+(-> task-child-name (list t) string)
+(defun task-child-name (item definition)
+  "Return the name a new child of ITEM is admitted under: the name it was given, else its role's.
 
-A supplied name passes through: the pool bounds it and appends the admission index
-to make it unique. A child given no name still gets a readable one, since a task
-identifier is what an agent uses to refer to its own children."
-  (if (non-empty-string-p requested-name)
-      requested-name
-      (let ((index (with-lock-held ((task-orchestrator-lock orchestrator))
-                     (incf (task-orchestrator-next-name-index orchestrator))))
-            (adjectives
-              #("amber" "brisk" "calm" "clear" "keen" "quiet" "rapid" "steady"
-                "vivid" "wise"))
-            (nouns
-              #("badger" "falcon" "heron" "lynx" "otter" "raven" "sparrow" "tern"
-                "wolf" "wren")))
-        (format nil "~A-~A"
-                (aref adjectives (mod (1- index) (length adjectives)))
-                (aref nouns
-                      (mod (floor (1- index) (length adjectives))
-                           (length nouns)))))))
+The pool appends the admission index, so reviewer becomes reviewer-3, and an
+agent refers to its children by names that say what they do."
+  (or (and (non-empty-string-p (getf item :name)) (getf item :name))
+      (and definition (task-agent-definition-name definition))
+      "child"))
+
+(-> task-child-identifier-generate (configuration) string)
+(defun task-child-identifier-generate (configuration)
+  "Return a new child agent's short identifier, which no conversation or child has yet.
+
+The child's conversation, its channel and its directory below its root are
+named after it; it shares the conversations' reservations in this process."
+  (let ((root (uiop:ensure-directory-pathname (configuration-conversation-root configuration))))
+    (identifier-generate
+     :timestamp  (get-universal-time)
+     :namespace  (namestring root)
+     :occupied-p (lambda (candidate)
+                   (not (null (conversation-storage-active-pathname
+                               (conversation-pathname-for-id configuration candidate))))))))
 
 (-> task-orchestrator-reserve-session-orders
     (task-orchestrator (integer 1))
