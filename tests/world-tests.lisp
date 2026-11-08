@@ -1516,6 +1516,36 @@
                    "the deleted conversation never becomes a channel")))
   nil)
 
+(-> test-world-ambiguous-channel () null)
+(defun test-world-ambiguous-channel ()
+  "Test a command given a part of several channels' identifiers lists them, one per line, instead of signaling."
+  (with-test-configuration (configuration)
+    (world-tests--persisted-conversation configuration "bsame1" 1000)
+    (world-tests--persisted-conversation configuration "bsame2" 2000)
+    (world-reconcile-sessions configuration)
+    (let ((application (make-instance 'application
+                                      :configuration configuration
+                                      :conversation  (conversation-load-by-id configuration "bsame1")
+                                      :ui            (terminal-ui-create
+                                                      :terminal (make-instance 'recording-terminal :columns 80))))
+          (presented   nil))
+      (test-call-with-function-replacements
+       (list (list 'application-present
+                   (lambda (candidate entry &key identifier)
+                     (declare (ignore candidate identifier))
+                     (push entry presented))))
+       (lambda ()
+         (test-assert (eq (application--builtin-tell-command application "bsame" "hello") ':continue)
+                      "an ambiguous channel does not signal")))
+      (let ((lines (uiop:split-string (terminal--spans-text (first presented)) :separator '(#\Newline))))
+        (test-assert (and (search "\"bsame\" matches 2 channels" (first lines))
+                          (= (length lines) 3)
+                          (every (lambda (identifier)
+                                   (= 1 (count-if (lambda (line) (search identifier line)) (rest lines))))
+                                 '("bsame1" "bsame2")))
+                     "the matching channels are listed one per line"))))
+  nil)
+
 (-> test-world-tell-prefill () null)
 (defun test-world-tell-prefill ()
   "Test (tell CHANNEL) without a message leaves the call in the input, the cursor where the message goes."

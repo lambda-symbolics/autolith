@@ -3014,6 +3014,54 @@ last started is not in its world either, so the saved conversations come last."
               (configuration-error ()
                 (error condition))))))))
 
+(-> application--channel-or-ask (application string &key (:title string) (:usage string)) (option string))
+(defun application--channel-or-ask (application designator &key title usage)
+  "Return the identifier of the channel DESIGNATOR names, or NIL once the person has been told why there is none.
+
+A DESIGNATOR that matches several channels opens a picker of just those at an
+interactive terminal, titled TITLE, and lists them otherwise; one that matches
+nothing is said in one line. Neither reaches the debugger: typing part of an
+identifier is no program error. USAGE explains the call where no picker can
+show."
+  (handler-case (application--switch-target application designator)
+    (world-channel-ambiguous (condition)
+      (application--pick-among application designator (world-channel-ambiguous-channels condition)
+                               :title title
+                               :usage usage))
+    (world-error ()
+      (application-present application
+                           (application-failure-line
+                            (format nil "no channel matches ~S; (switch) picks one" designator)))
+      nil)))
+
+(-> application--pick-among (application string list &key (:title string) (:usage string)) (option string))
+(defun application--pick-among (application designator channels &key title usage)
+  "Let the person pick one of CHANNELS, which DESIGNATOR matches alike, or list them when no picker can show."
+  (let ((identifiers (mapcar #'channel-identifier channels)))
+    (if (terminal-interactive-p (terminal-ui-terminal (application-ui application)))
+        (application--pick-identifier
+         application
+         :title        (format nil "~A ~S matches ~D channels" title designator (length channels))
+         :items        (remove-if-not (lambda (item)
+                                        (member (getf item :value) identifiers :test #'equal))
+                                      (application--channel-items application))
+         :hint         "enter selects, esc cancels"
+         :search-p     t
+         :usage        usage
+         :empty-notice (application-notice-line "none of them can be opened"))
+        (progn
+          (application-present
+           application
+           (append (application-failure-line
+                    (format nil "~S matches ~D channels; name one by more of its identifier:"
+                            designator (length channels)))
+                   (loop for channel in channels
+                         append (list (terminal-span ':plain (format nil "~%  "))
+                                      (terminal-span ':code (conversation-identifier-display
+                                                             (channel-identifier channel)))
+                                      (terminal-span ':dim (format nil "~@[  ~A~]" (channel-title channel)))))))
+          nil))))
+
 (define-application-command application--builtin-switch-command
     (:name              "/switch"
      :argument          "[ID]"
@@ -3028,7 +3076,9 @@ last started is not in its world either, so the saved conversations come last."
                          (and *application-command-interactive-p*
                               (application--pick-channel application))))
          (identifier (and designator
-                          (application--switch-target application (princ-to-string designator))))
+                          (application--channel-or-ask application (princ-to-string designator)
+                                                       :title "switch to which channel?"
+                                                       :usage "Usage: (switch \"ID\")")))
          (display    (and identifier (conversation-identifier-display identifier)))
          (current    (and identifier
                           (conversation-identifier (application-conversation application))))
@@ -3208,15 +3258,19 @@ pristine or recovery session runs apart from it."
       (when target
         (application--prefill-call application "tell" (princ-to-string target)))
       (return-from application--builtin-tell-command ':continue)))
-  (let ((result (application-world-send application
-                                        :channel (princ-to-string channel)
-                                        :text    (format nil "~{~A~^ ~}" words))))
-    (application-present
-     application
-     (application-notice-line
-      (format nil "sent to ~{~A~^, ~}~@[; waiting for a full inbox: ~{~A~^, ~}~]"
-              (mapcar #'conversation-identifier-display (getf result :channels))
-              (mapcar #'conversation-identifier-display (getf result :pending))))))
+  (let ((target (application--channel-or-ask application (princ-to-string channel)
+                                             :title "tell which channel?"
+                                             :usage "Usage: (tell \"CHANNEL\" \"MESSAGE\")")))
+    (when target
+      (let ((result (application-world-send application
+                                            :channel target
+                                            :text    (format nil "~{~A~^ ~}" words))))
+        (application-present
+         application
+         (application-notice-line
+          (format nil "sent to ~{~A~^, ~}~@[; waiting for a full inbox: ~{~A~^, ~}~]"
+                  (mapcar #'conversation-identifier-display (getf result :channels))
+                  (mapcar #'conversation-identifier-display (getf result :pending))))))))
   ':continue)
 
 (define-application-command application--builtin-history-command
