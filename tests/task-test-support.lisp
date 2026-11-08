@@ -290,8 +290,8 @@
                      (= request-number 1))
                 (agent-test-call
                  :call-id   "nested-task"
-                 :namespace "task"
-                 :name      "run"
+                 :namespace "child"
+                 :name      "spawn"
                  :arguments
                  (json-encode
                   (json-object "agent" "task"

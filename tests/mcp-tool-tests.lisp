@@ -1167,7 +1167,7 @@
                               (task-orchestrator-lifecycle-state
                                (task-run-tool-orchestrator
                                 (tool-registry-find
-                                 new-registry "task" "run")))
+                                 new-registry "child" "spawn")))
                               ':closed))
                             "pre-commit failure closes the replacement runtime")
                            (test-assert

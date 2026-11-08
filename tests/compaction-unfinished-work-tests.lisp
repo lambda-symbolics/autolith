@@ -262,7 +262,7 @@
          (setf (agent-provider parent) child-provider)
          (unwind-protect
               (progn
-                (tool-execute (tool-registry-find registry "task" "run") context
+                (tool-execute (tool-registry-find registry "child" "spawn") context
                               (json-object "name" "compaction-child" "agent" "task"
                                            "task" "Enter the blocking ordinary tool."
                                            "completion-policy" "continue"))

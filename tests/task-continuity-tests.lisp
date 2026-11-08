@@ -12,7 +12,7 @@
            (provider      (make-instance 'task-test-provider :mode ':concurrent))
            (parent        (agent-create :configuration configuration :provider provider
                                         :tool-registry registry :worker nil))
-           (run-tool      (tool-registry-find registry "task" "run"))
+           (run-tool      (tool-registry-find registry "child" "spawn"))
            (orchestrator  (task-run-tool-orchestrator run-tool))
            (definition    (task-agent-definition-create
                            :name "task" :description "continuity fixture"
@@ -101,7 +101,7 @@
         "An unauthorized attempt does not claim replay")
        (let* ((result  (task-continuity-revive context orchestrator execution :authorized-p t))
               (revived (first (task-orchestrator-list-jobs orchestrator))))
-         (test-assert (tool-result-success-p result) "The ordinary task.run pathway admits recovery")
+         (test-assert (tool-result-success-p result) "The ordinary child.spawn pathway admits recovery")
          (test-assert revived "Recovery creates a real supervised child")
          (multiple-value-bind (snapshot terminal-p) (task-job-await revived 10)
            (test-assert (and terminal-p (eq :success (getf (getf snapshot :result) :status)))

@@ -644,7 +644,7 @@
      (declare (ignore path commands executions))
      (let* ((registry     (task-augment-tool-registry (application-tool-registry application)))
             (provider     (make-instance 'mission-child-unknown-test-provider :mode mode))
-            (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "task" "run")))
+            (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
             (definition   (task-agent-definition-create
                            :name "bounded-child" :description "Exercise missing usage"
                            :instructions "Attempt one turn." :tools ':all :source ':test))
@@ -951,7 +951,7 @@
       (let* ((application  (mission-test--application configuration))
              (registry     (task-augment-tool-registry (application-tool-registry application)))
              (provider     (make-instance 'mission-child-unknown-test-provider :mode mode))
-             (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "task" "run")))
+             (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
              (definition   (task-agent-definition-create
                             :name "outcome-child" :description "Exercise native outcome"
                             :instructions "Return the requested outcome." :tools ':all :spawns ':all :source ':test))

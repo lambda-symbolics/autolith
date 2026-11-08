@@ -1031,7 +1031,7 @@ values from either side of a terminal transition."
 (defun task-orchestrator-visible-job-named (orchestrator viewer identifier)
   "Return VIEWER's visible job whose job or execution identifier is IDENTIFIER.
 
-task.run reports both identifiers, and models pass either one."
+child.spawn reports both identifiers, and models pass either one."
   (find-if (lambda (job)
              (or (equal identifier (session-job-identifier job))
                  (equal identifier (session-job-execution-identifier job))))

@@ -234,7 +234,7 @@
   (test-telemetry--call
    (lambda (configuration)
      (let* ((registry                                (task-augment-tool-registry (make-default-tool-registry)))
-            (orchestrator                            (task-run-tool-orchestrator (tool-registry-find registry "task" "run")))
+            (orchestrator                            (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
             (*tool-execution-blocking-grace-seconds* 90)
             (observer                                (callback-agent-observer-create
                                                       :command-authorization-callback

@@ -145,7 +145,7 @@ The root context never enters a prompt, but its environment holds it in memory."
      "type" "string"
      "enum" (json-array "none" "read")
      "description"
-     "Frame capabilities: none for a pure call over the views (the default), read to also allow a few targeted workspace resource reads, content searches, and nested rlm calls inside the shared budget and a handful of tool rounds. A read frame answers one bounded question; open-ended investigation belongs to a task.run child."))
+     "Frame capabilities: none for a pure call over the views (the default), read to also allow a few targeted workspace resource reads, content searches, and nested rlm calls inside the shared budget and a handful of tool rounds. A read frame answers one bounded question; open-ended investigation belongs to a child.spawn child."))
    (unless nested-p (rlm--routing-parameters))
    (rlm--allowance-parameters)
    (rlm--async-parameters)))
@@ -162,7 +162,7 @@ The root context never enters a prompt, but its environment holds it in memory."
    :provider  provider
    :budget    budget
    :description
-   "Analyze supplied read-only views in a separate, bounded model call. The frame does not inherit this conversation, so include all needed context. With read capabilities, it can inspect a few files within a small tool-round limit. Use a child agent for repository audits or whole change-set reviews. Returns the answer, trace identifier, token spend, and remaining budget."
+   "Analyze supplied read-only views in a separate, bounded model call. The frame does not inherit this conversation, so include all needed context. With read capabilities, it can inspect a few files within a small tool-round limit. Use child.spawn for repository audits or whole change-set reviews. Returns the answer, trace identifier, token spend, and remaining budget."
    :parameters
    (tool-object-schema
     (apply #'json-object
@@ -548,7 +548,7 @@ filesystem paths are only a programmatic Lisp designator."
        (rlm--result-sexp (rlm-partial-result-observation condition))))
     (rlm-budget-exhausted (condition)
       (tool-failure
-       (format nil "~A Narrow the task or its views, set calls and tokens explicitly (at most ~D and ~D from the primary agent), or hand an open-ended investigation to a task.run child agent."
+       (format nil "~A Narrow the task or its views, set calls and tokens explicitly (at most ~D and ~D from the primary agent), or hand an open-ended investigation to a child.spawn child agent."
                condition
                *rlm-tool-maximum-call-budget*
                *rlm-tool-maximum-token-budget*)))

@@ -715,7 +715,7 @@
              (application  (mission-inference-test--application configuration provider))
              (conversation (application-conversation application))
              (registry     (task-augment-tool-registry (application-tool-registry application)))
-             (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "task" "run")))
+             (orchestrator (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
              (definition   (task-agent-definition-create
                             :name "admission-child" :description "Exercise admission and settlement"
                             :instructions "Attempt one request." :tools ':all :source ':test))

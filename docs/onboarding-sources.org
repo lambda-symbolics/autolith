@@ -580,7 +580,7 @@ Autolith can start *child agents* for implementation, research, design, or revie
 @@brand:you -> primary Autolith -> named children
                         <- results and evidence@@
 
-Use =(task.agents)= to browse available roles.
+Use =(child.roles)= to browse available roles.
 
 =.autolith/agents/=       project roles
 =<config-root>/agents/=   user roles
@@ -600,6 +600,9 @@ You could use this as =.autolith/agents/code-reader.sexp=:
  :description  "Read and explain code."
  :instructions "Read relevant code. Cite files and line numbers."
  :tools        ("resource.read" "search.*"))=
+
+Use =(child.roles)= to find your new role.
+Ask Autolith to start a child with that role.
 
 Customize the role's models, reasoning effort, or spawn policy in the same file.
 

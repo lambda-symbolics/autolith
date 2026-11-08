@@ -921,7 +921,7 @@ Direct tool results use report text without string-literal wrapping. Native
 S-expression reports from task, job, and mission tools use the Lisp formatter,
 with parentheses, tagged roots, and fields intact. Ordinary strings use Lisp
 string notation. Tool calls return their usual values, so
-=(list (task.agents))= produces a list containing the report string. Copied or
+=(list (child.roles))= produces a list containing the report string. Copied or
 modified report strings also use string notation. Synchronous and asynchronous
 evaluation retain the same display text for replay.
 
@@ -3014,7 +3014,7 @@ Example:
  :blocking-p t)
 #+END_SRC
 
-=task.agents= shows effective roles. =task.run= starts one task or an
+=child.roles= shows effective roles. =child.spawn= starts one task or an
 independent batch. Nonblocking work detaches by default. =blocking: true=
 waits. A role with =:blocking-p t= always waits. Each child must finish
 with one =yield.submit= of =success=, =failed=, or =aborted=.
@@ -3025,7 +3025,7 @@ levels, and 262,144 tree nodes.
 ** Completion-driven turns
 
 Set =completion-policy= to =continue= (the default) or =notify= on asynchronous
-tools and =task.run=. A batch inherits its outer policy unless an item overrides
+tools and =child.spawn=. A batch inherits its outer policy unless an item overrides
 it. The policy also applies after the synchronous grace period hands work off.
 
 In a primary terminal session, continue independent work while jobs run. When
@@ -3174,7 +3174,7 @@ A failed or aborted child follows the ordinary error-only terminal contract.
 
 ** Isolated modifying tasks
 
-Supply an =isolation= object in a flat =task.run= call or in each selected batch
+Supply an =isolation= object in a flat =child.spawn= call or in each selected batch
 item. Omit it for the ordinary shared workspace. The object accepts =baseline=
 (a commit-resolving revision, default =HEAD=), =dirtyPolicy= (=reject= by default,
 or explicit =ignore=), and =artifactKind= (=patch= by default, or =commit-range=).
@@ -3197,7 +3197,7 @@ task is aborted. If extraction fails, the checkout is retained and the result
 reports =:worktree-error=. A successful child without a complete artifact is
 reported as failed.
 
-Use =task.worktree= with an explicit =action=:
+Use =child.worktree= with an explicit =action=:
 
 - =inspect= returns provenance, touched paths and the durable artifact pathname;
   =extract= explicitly retries extraction after repairing an incomplete checkout.

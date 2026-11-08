@@ -262,7 +262,7 @@
                             path))
            (configuration (configuration-copy base :working-directory workspace))
            (registry      (task-augment-tool-registry (make-default-tool-registry)))
-           (run-tool      (tool-registry-find registry "task" "run"))
+           (run-tool      (tool-registry-find registry "child" "spawn"))
            (orchestrator  (task-run-tool-orchestrator run-tool))
            (primary       (task-tests--primary-agent configuration
                                                      "windows-sandbox-primary"

@@ -82,10 +82,10 @@
          (progn
            (let ((registry (make-default-tool-registry)))
              (task-augment-tool-registry registry)
-             (dolist (name '("run" "agents"))
-               (test-assert (tool-registry-find registry "task" name)
+             (dolist (name '("spawn" "roles"))
+               (test-assert (tool-registry-find registry "child" name)
                             (format nil
-                                    "task augmentation registers task.~A"
+                                    "task augmentation registers child.~A"
                                     name)))
              (dolist (name '("list" "get" "wait" "cancel"))
                (test-assert (tool-registry-find registry "job" name)
@@ -94,7 +94,7 @@
                           "task augmentation is idempotent")
              (let* ((orchestrator
                       (task-run-tool-orchestrator
-                       (tool-registry-find registry "task" "run")))
+                       (tool-registry-find registry "child" "spawn")))
                     (definition
                       (task-find-agent-definition
                        (task-bundled-agent-definitions)
@@ -123,8 +123,8 @@
                 "task children never inherit active-image tools")
                (test-assert
                 (and
-                 (tool-registry-find child-registry "task" "run")
-                 (tool-registry-find child-registry "task" "agents")
+                 (tool-registry-find child-registry "child" "spawn")
+                 (tool-registry-find child-registry "child" "roles")
                  (every
                   (lambda (name)
                     (tool-registry-find child-registry "job" name))
@@ -132,8 +132,8 @@
                 "task children can manage jobs within their existing visibility scope")
                (test-assert
                 (and
-                 (null (tool-registry-find non-spawning-registry "task" "run"))
-                 (null (tool-registry-find non-spawning-registry "task" "agents"))
+                 (null (tool-registry-find non-spawning-registry "child" "spawn"))
+                 (null (tool-registry-find non-spawning-registry "child" "roles"))
                  (every
                   (lambda (name)
                     (null
@@ -266,15 +266,15 @@
                                    :registry      registry
                                    :agent         parent))
                   (tool
-                    (tool-registry-find registry "task" "run"))
+                    (tool-registry-find registry "child" "spawn"))
                   (orchestrator (task-run-tool-orchestrator tool)))
              (unwind-protect
                   (let ((result
                           (tool-registry-execute-call
                            registry
                            (json-object
-                            "namespace" "task"
-                            "name" "run"
+                            "namespace" "child"
+                            "name" "spawn"
                             "arguments"
                             "{\"task\":\"Reject null async.\",\"async\":null}")
                            context)))
@@ -282,7 +282,7 @@
                      (and (not (tool-result-success-p result))
                           (null
                            (task-orchestrator-list-jobs orchestrator)))
-                     "registry task.run decoding rejects JSON null before job admission"))
+                     "registry child.spawn decoding rejects JSON null before job admission"))
                (tool-registry-close-runtime-state registry)))
            (test-assert
             (handler-case
@@ -489,7 +489,7 @@
          (marker        (merge-pathnames "child-lisp-started" root))
          (worker-pool   (lisp-worker-pool-create configuration))
          (registry      (task-augment-tool-registry (make-default-tool-registry)))
-         (run-tool      (tool-registry-find registry "task" "run"))
+         (run-tool      (tool-registry-find registry "child" "spawn"))
          (orchestrator  (task-run-tool-orchestrator run-tool))
          (definition
            (task-agent-definition-create
@@ -591,7 +591,7 @@
       (unless (task-orchestrator-close orchestrator)
         (error 'task-error
                :message   "Task job pools did not stop before test cleanup."
-               :tool-name "task.run"))
+               :tool-name "child.spawn"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -704,7 +704,7 @@
   (with-test-configuration (configuration)
     (let* ((registry       (task-augment-tool-registry (make-default-tool-registry)))
            (orchestrator
-             (task-run-tool-orchestrator (tool-registry-find registry "task" "run")))
+             (task-run-tool-orchestrator (tool-registry-find registry "child" "spawn")))
            (definition
              (task-agent-definition-create
               :name "job-reader" :description "Inspect owned asynchronous work."
@@ -740,7 +740,7 @@
                        :async-p            t))
                     (identifier (getf (getf (rest (tool-result-details handoff)) :job) :id)))
                (test-assert (and identifier
-                                 (null (tool-registry-find child-registry "task" "run")))
+                                 (null (tool-registry-find child-registry "child" "spawn")))
                             "a non-spawning child can still own an execution job")
                (dolist (operation '("wait" "get"))
                  (let ((result
@@ -759,7 +759,7 @@
                  (test-assert (and (stringp execution)
                                    (tool-result-success-p result)
                                    (search "owned-result" (tool-result-content result)))
-                              "job.get also finds a job by the execution ID task.run reports")))
+                              "job.get also finds a job by the execution ID child.spawn reports")))
              (dolist (operation '("get" "wait" "cancel"))
                (test-assert
                 (handler-case

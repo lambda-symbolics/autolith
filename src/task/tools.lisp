@@ -51,7 +51,7 @@
     (t
      (error 'task-error
             :message   (format nil "Task field ~S must be a boolean." field)
-            :tool-name "task.run"))))
+            :tool-name "child.spawn"))))
 
 (-> task--blocking-policy (json-object (option boolean) string) boolean)
 (defun task--blocking-policy (object inherited-p location)
@@ -65,9 +65,9 @@ The primary blocking field and legacy inverse async field are mutually exclusive
       (when (and blocking-present-p async-present-p)
         (error 'task-error
                :message
-               (format nil "Task.run cannot combine blocking and async in ~A."
+               (format nil "child.spawn cannot combine blocking and async in ~A."
                        location)
-               :tool-name "task.run"))
+               :tool-name "child.spawn"))
       (cond
         (blocking-present-p
          (task--json-boolean blocking "blocking"))
@@ -83,9 +83,9 @@ The primary blocking field and legacy inverse async field are mutually exclusive
         unless (member field allowed-fields :test #'string=)
           do (error 'task-error
                     :message
-                    (format nil "Unknown task.run field ~S in ~A."
+                    (format nil "Unknown child.spawn field ~S in ~A."
                             field location)
-                    :tool-name "task.run"))
+                    :tool-name "child.spawn"))
   nil)
 
 (-> task--normalize-item
@@ -97,7 +97,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
   "Validate and normalize one flat task OBJECT."
   (unless (json-object-p object)
     (error 'task-error :message "Every tasks item must be a JSON object."
-           :tool-name           "task.run"))
+           :tool-name           "child.spawn"))
   (task--validate-json-fields
    object '("name" "agent" "task" "context" "blocking" "async" "isolation"
             "completion-policy")
@@ -111,26 +111,26 @@ The primary blocking field and legacy inverse async field are mutually exclusive
     (unless (non-empty-string-p task)
       (error 'task-error :message
              "Every child requires a non-empty task assignment." :tool-name
-             "task.run"))
+             "child.spawn"))
     (when (and name (not (non-empty-string-p name)))
       (error 'task-error :message
              "A supplied task name must be a non-empty string." :tool-name
-             "task.run"))
+             "child.spawn"))
     (when (and name
                (> (length name) *task-identifier-maximum-characters*))
       (error 'task-error
              :message
              (format nil "A task name may contain at most ~D characters."
                      *task-identifier-maximum-characters*)
-             :tool-name "task.run"))
+             :tool-name "child.spawn"))
     (unless (non-empty-string-p agent)
       (error 'task-error :message "A task agent must be a non-empty string."
-             :tool-name           "task.run"))
+             :tool-name           "child.spawn"))
     (when (and (nth-value 1 (gethash "context" object))
                (not (stringp context)))
       (error 'task-error :message
              "A supplied task context must be a string."
-             :tool-name "task.run"))
+             :tool-name "child.spawn"))
     (list :name      name
           :agent     (string-downcase agent)
           :task      task
@@ -139,7 +139,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
           :blocking  blocking-p
           :completion-policy
           (tool-completion-policy-argument
-           object :tool-name "task.run" :default top-completion-policy)
+           object :tool-name "child.spawn" :default top-completion-policy)
           :async     (not blocking-p))))
 
 (-> task-normalize-arguments (hash-table &key (:definitions list)) list)
@@ -157,7 +157,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
          (top-blocking-p
            (task--blocking-policy arguments nil "the top-level call"))
          (top-completion-policy
-           (tool-completion-policy-argument arguments :tool-name "task.run"))
+           (tool-completion-policy-argument arguments :tool-name "child.spawn"))
          (items               nil))
     (multiple-value-setq (tasks tasks-present-p)
       (gethash "tasks" arguments))
@@ -167,14 +167,14 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                (not (stringp shared-context)))
       (error 'task-error :message
              "A supplied task context must be a string."
-             :tool-name "task.run"))
+             :tool-name "child.spawn"))
     (setf items
           (cond
             (tasks-present-p
              (when flat-task-present-p
                (error 'task-error :message
                       "A batch task call cannot also contain top-level task."
-                      :tool-name "task.run"))
+                      :tool-name "child.spawn"))
              (dolist (field '("name" "agent" "isolation"))
                (when (nth-value 1 (gethash field arguments))
                  (error 'task-error
@@ -182,13 +182,13 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                         (format nil
                                 "A batch task call cannot contain top-level field ~S."
                                 field)
-                        :tool-name "task.run")))
+                        :tool-name "child.spawn")))
              (unless (and (vectorp tasks)
                           (not (stringp tasks))
                           (plusp (length tasks)))
                (error 'task-error :message
                       "A batch task call requires a non-empty tasks array."
-                      :tool-name "task.run"))
+                      :tool-name "child.spawn"))
              (loop for item across tasks
                    collect (task--normalize-item
                             item :shared-context   shared-context
@@ -203,7 +203,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
              :message
              (format nil "A task batch may contain at most ~D children."
                      *task-maximum-batch-size*)
-             :tool-name "task.run"))
+             :tool-name "child.spawn"))
     (let ((names (make-hash-table :test #'equal)))
       (dolist (item items)
         (let ((name (getf item :name)))
@@ -213,7 +213,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                 (error 'task-error :message
                        (format nil "Task name ~S is duplicated in this batch."
                                name)
-                       :tool-name "task.run"))
+                       :tool-name "child.spawn"))
               (setf (gethash key names) t))))))
     (loop for item in items
           for index from 1
@@ -259,7 +259,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
            (error 'task-error
                   :message   "The current agent may not spawn the requested role."
                   :code      ':authority
-                  :tool-name "task.run"))
+                  :tool-name "child.spawn"))
          (let ((definition
                  (task-find-agent-definition selectable-definitions name)))
            (unless definition
@@ -276,7 +276,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                               (format nil
                                       "Unknown task agent ~S. No task agents are available."
                                       name))
-                          :tool-name "task.run"))))
+                          :tool-name "child.spawn"))))
            (task-agent-definition-validate-tools-available definition registry)
            (list :item item :definition definition :detached
                   (eq (getf item :mode) ':detached)))))
@@ -291,7 +291,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                (<= (length content) *task-tool-content-limit*))
     (error 'task-error
            :message   "A task tool produced an oversized native result."
-           :tool-name "task.run"))
+           :tool-name "child.spawn"))
   (make-instance 'task-tool-result
                  :content    content
                  :success-p  (and success-p t)
@@ -735,7 +735,7 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
     (values list string))
 (defun task--task-run-native-form
     (jobs snapshots &key duration-milliseconds artifact-root success-p)
-  "Fit every admitted JOB into one fair bounded native task.run manifest."
+  "Fit every admitted JOB into one fair bounded native child.spawn manifest."
   (loop with preview-limit = *task-result-preview-limit*
         for records =
           (loop for job in jobs
@@ -759,8 +759,8 @@ CACHE, when supplied, belongs to one caller snapshot, including negative reads."
         when (zerop preview-limit)
           do (error 'task-error
                     :message
-                    "The mandatory task.run manifest exceeds its native result bound."
-                    :tool-name "task.run")
+                    "The mandatory child.spawn manifest exceeds its native result bound."
+                    :tool-name "child.spawn")
         do (setf preview-limit (floor preview-limit 2))))
 
 (-> task--job-native-form
@@ -929,7 +929,7 @@ poll a job whose completion will wake it."
 
 (-> task--agent-policy-presentation (t) t)
 (defun task--agent-policy-presentation (value)
-  "Return bounded policy VALUE for task.agents discovery."
+  "Return bounded policy VALUE for child.roles discovery."
   (task--compact-native-value value 1000))
 
 (-> task--agent-native-record (task-agent-definition) list)
@@ -1008,7 +1008,7 @@ poll a job whose completion will wake it."
       (error 'task-error
              :message
              "One task agent discovery record exceeds the native result bound."
-             :tool-name "task.agents"))
+             :tool-name "child.roles"))
     (let* ((next (+ offset (length selected)))
            (form
              (list :task-agents
@@ -1068,7 +1068,7 @@ poll a job whose completion will wake it."
 
 (-> task-run--cancel-synchronous-jobs (list) null)
 (defun task-run--cancel-synchronous-jobs (jobs)
-  "Cancel unfinished synchronous JOBS after task.run exits non-locally."
+  "Cancel unfinished synchronous JOBS after child.spawn exits non-locally."
   (dolist (job jobs)
     (unless (task-job-detached-p job)
       (task-job-cancel job :signal)))
@@ -1079,8 +1079,8 @@ poll a job whose completion will wake it."
   (let ((parent (tool-context-agent context)))
     (unless (typep parent 'agent)
       (error 'task-error :message
-             "task.run requires an executing parent agent context." :tool-name
-             "task.run"))
+             "child.spawn requires an executing parent agent context." :tool-name
+             "child.spawn"))
     (multiple-value-bind (definitions diagnostics)
         (task-discover-agents (agent-configuration parent))
       (let* ((orchestrator
@@ -1152,24 +1152,24 @@ poll a job whose completion will wake it."
          (orchestrator (task-agents-tool-orchestrator tool)))
     (unless (typep parent 'agent)
       (error 'task-error
-             :message   "task.agents requires an executing parent agent context."
-             :tool-name "task.agents"))
+             :message   "child.roles requires an executing parent agent context."
+             :tool-name "child.roles"))
     (task--validate-tool-arguments arguments '("offset" "limit")
-                                   "task.agents")
+                                   "child.roles")
     (let ((offset (or (tool-argument arguments "offset") 0))
           (limit  (or (tool-argument arguments "limit")
                       *task-agent-page-default*)))
       (unless (and (integerp offset) (<= 0 offset 1000000))
         (error 'task-error
-               :message   "task.agents offset must be an integer from 0 to 1000000."
-               :tool-name "task.agents"))
+               :message   "child.roles offset must be an integer from 0 to 1000000."
+               :tool-name "child.roles"))
       (unless (and (integerp limit)
                    (<= 1 limit *task-agent-page-maximum*))
         (error 'task-error
                :message
-               (format nil "task.agents limit must be an integer from 1 to ~D."
+               (format nil "child.roles limit must be an integer from 1 to ~D."
                        *task-agent-page-maximum*)
-               :tool-name "task.agents"))
+               :tool-name "child.roles"))
       (multiple-value-bind (definitions diagnostics)
           (task-discover-agents (agent-configuration parent))
         (let ((agent-records      nil)
@@ -1365,7 +1365,7 @@ poll a job whose completion will wake it."
 
 (-> task-run-parameters-schema () hash-table)
 (defun task-run-parameters-schema ()
-  "Return the permissive flat-or-batch schema advertised by task.run."
+  "Return the permissive flat-or-batch schema advertised by child.spawn."
   (let* ((item-properties
            (json-object "name"
                         (tool-string-property "Optional stable child name.")
@@ -1417,7 +1417,7 @@ poll a job whose completion will wake it."
 
 (-> task-agents-parameters-schema () hash-table)
 (defun task-agents-parameters-schema ()
-  "Return the pagination schema advertised by task.agents."
+  "Return the pagination schema advertised by child.roles."
   (tool-object-schema
    (json-object
     "offset"
@@ -1432,14 +1432,14 @@ poll a job whose completion will wake it."
 (-> task-augment-tool-registry (tool-registry) tool-registry)
 (defun task-augment-tool-registry (registry)
   "Register one session-scoped task orchestrator and its task/job tools."
-  (when (tool-registry-find registry "task" "run")
+  (when (tool-registry-find registry "child" "spawn")
     (return-from task-augment-tool-registry registry))
   (tool-registry-describe-namespace
-   registry "task"
-   "In-process child-agent delegation with batching and detached jobs.")
+   registry "child"
+   "Your child agents: spawn them with roles and manage them.")
   (tool-registry-describe-namespace
    registry "job"
-   "Inspection, waiting, cancellation, and durable result lookup for task jobs.")
+   "Inspection, waiting, cancellation, and durable result lookup for jobs.")
   (let* ((orchestrator (task-orchestrator-create))
          (identifier-schema
            (tool-object-schema
@@ -1459,8 +1459,8 @@ poll a job whose completion will wake it."
     (tool-registry-bind-runtime registry 'task-orchestrator orchestrator)
     (tool-registry-register registry
                             (make-instance 'task-run-tool :orchestrator
-                                           orchestrator :namespace "task" :name
-                                           "run" :description
+                                           orchestrator :namespace "child" :name
+                                           "spawn" :description
                                            "Spawn a real in-process child agent or a concurrency-limited batch. Non-blocking roles detach by default; set blocking to wait. Children have explicit identities, restricted tools, recursion policy, progress, artifacts, and a required yield protocol."
                                            :parameters
                                            (task-run-parameters-schema)))
@@ -1468,8 +1468,8 @@ poll a job whose completion will wake it."
                             (make-instance
                              'task-agents-tool
                              :orchestrator orchestrator
-                             :namespace    "task"
-                             :name         "agents"
+                             :namespace    "child"
+                             :name         "roles"
                              :description
                              "List child-agent roles allowed by the current depth and spawn policy, plus typed diagnostics for unavailable definitions."
                              :parameters   (task-agents-parameters-schema)))
@@ -1508,7 +1508,7 @@ poll a job whose completion will wake it."
                             (make-instance 'task-job-tool :orchestrator
                                            orchestrator :namespace "job" :name
                                            "send" :description
-                                           "Send one bounded steering message to a running child-agent job; the child reads it at its next safe boundary and continues its assignment. Only a child that is still running accepts steering: a job that has already finished, failed, or been cancelled rejects the message, so check job.get first when its state is uncertain, and reply to a finished child's result with a new task.run instead."
+                                           "Send one bounded steering message to a running child-agent job; the child reads it at its next safe boundary and continues its assignment. Only a child that is still running accepts steering: a job that has already finished, failed, or been cancelled rejects the message, so check job.get first when its state is uncertain, and reply to a finished child's result with a new child.spawn instead."
                                            :parameters
                                            (tool-object-schema
                                             (json-object

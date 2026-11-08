@@ -103,7 +103,7 @@
   "The complete native child-role plist vocabulary.")
 
 (defparameter *task-forbidden-child-tool-namespaces*
-  '("self" "task" "yield")
+  '("self" "child" "yield")
   "Tool namespaces structurally unavailable to ordinary child-role grants.")
 
 (defparameter *task-model-aliases*
@@ -146,7 +146,7 @@
                   definition-name pathname line field cause)))
     (error 'task-agent-definition-error
            :message         message
-           :tool-name       "task.run"
+           :tool-name       "child.spawn"
            :pathname        pathname
            :source          source
            :line            line
@@ -278,7 +278,7 @@
   (handler-case
       (cl-llm-provider-api:output-sexp->json value)
     (cl-llm-provider-api:output-value-error (condition)
-      (error 'task-error :tool-name "task.run"
+      (error 'task-error :tool-name "child.spawn"
              :message               (cl-llm-provider-api:provider-api-error-message condition)))))
 
 (-> task--character-strings (t) t)
@@ -291,7 +291,7 @@ Repeated subtrees are copied independently; cyclic conses signal TASK-ERROR."
         (nodes  0))
     (labels ((reject ()
                "Reject data outside the portable task result's structural bounds."
-               (error 'task-error :tool-name "task.run"
+               (error 'task-error :tool-name "child.spawn"
                       :message               "Task result data is cyclic or exceeds its structural bounds."))
 
              (walk (item depth)

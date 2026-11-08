@@ -219,9 +219,9 @@
                                  '(:goal :id "async" :status :active :gates nil) :mission-p t)
                                 (application-operation-tests--native-result nil)))
             (setf fixture result)
-            (dolist (source '("? (task.agents :limit 1)"
-                              "? (list (task.agents :limit 1))"
-                              "? (copy-seq (task.agents :limit 1))"))
+            (dolist (source '("? (child.roles :limit 1)"
+                              "? (list (child.roles :limit 1))"
+                              "? (copy-seq (child.roles :limit 1))"))
               (application-run-async-lisp-input application source)
               (let* ((job    (async-lisp-tests--last-job application))
                      (record (async-lisp-tests--wait job))
@@ -264,7 +264,7 @@
         (lambda ()
           (dolist (plain '(nil t))
             (setf plain-p plain entries nil)
-            (application-run-async-lisp-input application "? (task.agents :limit 1)")
+            (application-run-async-lisp-input application "? (child.roles :limit 1)")
             (let* ((job    (async-lisp-tests--last-job application))
                    (record (async-lisp-tests--wait job))
                    (entry  (find-if (lambda (entry)

@@ -310,7 +310,7 @@ Sandbox permission does not authorize evaluation acceptance or promotion."
     (unless (and registry
                  (member (cons (json-get operation "namespace") (json-get operation "name"))
                          '(("resource" . "read") ("self" . "diff") ("self" . "status")
-                           ("task" . "agents")) :test #'equal))
+                           ("child" . "roles")) :test #'equal))
       (refinement--reject ':invalid "The adaptation guard must inspect read-only owner state."))
     (let ((result (tool-registry-execute-call registry operation context)))
       (unless (tool-result-success-p result)

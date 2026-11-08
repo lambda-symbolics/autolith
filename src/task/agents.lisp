@@ -572,7 +572,7 @@ walking, cycle detection, node limits, and string limits stay in sexp-config."
   (make-condition
    'task-agent-definition-error
    :message         (format nil "Invalid task agent basename ~S in ~A." basename pathname)
-   :tool-name       "task.run"
+   :tool-name       "child.spawn"
    :pathname        pathname
    :source          source
    :line            nil
@@ -586,7 +586,7 @@ walking, cycle detection, node limits, and string limits stay in sexp-config."
   (make-condition
    'task-agent-definition-error
    :message         (format nil "Duplicate ~A task agent basename ~S." source basename)
-   :tool-name       "task.run"
+   :tool-name       "child.spawn"
    :pathname        (first pathnames)
    :source          source
    :line            nil
@@ -661,7 +661,7 @@ walking, cycle detection, node limits, and string limits stay in sexp-config."
 Project basenames claim a name before parsing, followed by user, site, and
 bundled basenames. An invalid higher-precedence file therefore blocks only its
 own lower-precedence name. The second value contains diagnostics suitable for
-task.agents and for re-signaling when task.run requests a blocked role."
+child.roles and for re-signaling when child.spawn requests a blocked role."
   (let ((claimed     (make-hash-table :test #'equal))
         (definitions nil)
         (diagnostics nil))

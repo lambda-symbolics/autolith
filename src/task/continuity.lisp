@@ -460,7 +460,7 @@ require a new human decision rather than an automatic second attempt."
                context "lisp" "start"
                :arguments (json-object "image" (getf checkpoint :image) "repl" (getf checkpoint :repl)))
               (task-continuity-dispatch
-               context "task" "run"
+               context "child" "spawn"
                :arguments (let ((arguments (json-object "agent" (getf spec :agent) "task" (getf spec :task))))
                             (when (getf spec :context)
                               (setf (gethash "context" arguments) (getf spec :context)))

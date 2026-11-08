@@ -68,7 +68,7 @@
              (task-worktree-tests--git configuration source '("add" "file"))
              (task-worktree-tests--git configuration source '("commit" "-m" "baseline"))
              (funcall function configuration source parent job
-                      (tool-registry-find registry "task" "worktree") context))
+                      (tool-registry-find registry "child" "worktree") context))
         (task-orchestrator-close orchestrator)))))
 
 (-> task-worktree-tests--publish (task-job keyword) list)

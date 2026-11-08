@@ -2292,7 +2292,7 @@
 (defun test-native-role-and-continuity-presentation ()
   "Show rejected roles and completed jobs with failed retained outcomes."
   (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
-    (dolist (case (list (list "task.agents"
+    (dolist (case (list (list "child.roles"
                               (task--agents-page '((:kind :diagnostic :name "broken" :cause "invalid role")) 0 20)
                               "broken" "invalid role")
                         (list "job.continuity"
@@ -2330,7 +2330,7 @@
                    "cyclic native progress is bounded before presentation")))
   (let* ((summary (make-string 10000 :initial-element #\x))
          (items   (loop repeat 1000 collect (list :id "bounded" :state ':failed :summary summary)))
-         (record  (list :tool-result :tool "task.run" :status ':ok
+         (record  (list :tool-result :tool "child.spawn" :status ':ok
                         :output "native output" :details (list :task-run :results items))))
     (dolist (width '(1 4 12))
       (let* ((application (application-tests--ui-application :columns width :compact-view-p nil))
@@ -7396,7 +7396,7 @@
              (application--task-orchestrator application))
            (new-orchestrator
              (task-run-tool-orchestrator
-              (tool-registry-find new-registry "task" "run")))
+              (tool-registry-find new-registry "child" "spawn")))
            (mcp-registration-snapshot     (mcp--registry-snapshot))
            (context-registration-snapshot (context--registry-snapshot))
            (command-registration-snapshot
@@ -7766,7 +7766,7 @@
                                        'task-error
                                        :message
                                        "Injected reconnect retirement failure."
-                                       :tool-name "task.run")
+                                       :tool-name "child.spawn")
                                       retirement-failure))))
                              (funcall original-registry-quiesce registry))))
                       (list
@@ -7867,7 +7867,7 @@
                     (let ((new-orchestrator
                             (task-run-tool-orchestrator
                              (tool-registry-find
-                              new-registry "task" "run"))))
+                              new-registry "child" "spawn"))))
                       (test-assert
                        (and failure-p (null returned-application))
                        "runtime retirement failure aborts reconnect")
@@ -7951,7 +7951,7 @@
          (registry
            (task-augment-tool-registry
             (make-default-tool-registry)))
-         (run-tool                 (tool-registry-find registry "task" "run"))
+         (run-tool                 (tool-registry-find registry "child" "spawn"))
          (orchestrator             (task-run-tool-orchestrator run-tool))
          (clock                    65)
          (terminal
@@ -8339,7 +8339,7 @@
                     (make-default-tool-registry))
                    replacement-orchestrator
                    (task-run-tool-orchestrator
-                    (tool-registry-find replacement-registry "task" "run"))
+                    (tool-registry-find replacement-registry "child" "spawn"))
                    (application-tool-registry application)
                    replacement-registry)
              (application-connect-task-presentation application)
@@ -9848,7 +9848,7 @@
          (root          (test-configuration-root configuration))
          (registry      (task-augment-tool-registry (make-default-tool-registry)))
          (orchestrator  (task-run-tool-orchestrator
-                         (tool-registry-find registry "task" "run")))
+                         (tool-registry-find registry "child" "spawn")))
          (conversation  (conversation-create configuration :identifier "status-owner"))
          (terminal      (make-instance 'scripted-terminal))
          (ui            (terminal-ui-create :terminal terminal))

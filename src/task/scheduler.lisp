@@ -641,7 +641,7 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
 
 (-> task-orchestrator--refuse-admission (task-orchestrator condition) nil)
 (defun task-orchestrator--refuse-admission (orchestrator condition)
-  "Re-signal pool refusal CONDITION as the typed task error task.run reports."
+  "Re-signal pool refusal CONDITION as the typed task error child.spawn reports."
   (error 'task-error
          :message
          (typecase condition
@@ -653,7 +653,7 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
                         (task-orchestrator-maximum-live-jobs orchestrator))))
            (t
             "The task runtime is shutting down."))
-         :tool-name "task.run"))
+         :tool-name "child.spawn"))
 
 (-> task-orchestrator--reserve-hurry-up-admission-locked
     (task-orchestrator (integer 0))
@@ -662,7 +662,7 @@ condition report, and terminal state, as TOOL-EXECUTION-JOB--TERMINAL-RECORD doe
     (orchestrator count)
   "Reserve COUNT hurry-up admissions while ORCHESTRATOR's lock is held.
 
-The reservation is charged before pool submission, so concurrent task.run calls
+The reservation is charged before pool submission, so concurrent child.spawn calls
 cannot each observe the same remaining allowance. Return the charged count, or
 zero outside hurry-up mode."
   (if (task-orchestrator-hurry-up-p orchestrator)
@@ -674,7 +674,7 @@ zero outside hurry-up mode."
                  (format nil
                          "Hurry-up mode permits at most ~D child agents before it is turned off."
                          *task-hurry-up-maximum-agents*)
-                 :tool-name "task.run"))
+                 :tool-name "child.spawn"))
         (setf (task-orchestrator-hurry-up-admission-count orchestrator) total)
         count)
       0))

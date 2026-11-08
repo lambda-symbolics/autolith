@@ -84,8 +84,8 @@
     (when
         (and (task-agent-definition-spawns definition)
              (< depth (task-orchestrator-maximum-depth orchestrator)))
-      (dolist (name '("run" "agents"))
-        (let ((task-tool (tool-registry-find parent-registry "task" name)))
+      (dolist (name '("spawn" "roles"))
+        (let ((task-tool (tool-registry-find parent-registry "child" name)))
           (when task-tool
             (tool-registry-register registry task-tool)))))
     (let ((output (task-agent-definition-output definition)))
@@ -639,7 +639,7 @@ continuation, allowing callers to hold a source lock through actual removal."
                :message
                (format nil "Task artifact pathname is already occupied: ~A"
                        target)
-               :tool-name "task.run"
+               :tool-name "child.spawn"
                :task-id   (job-identifier job)))
       (unwind-protect
            (progn
@@ -662,7 +662,7 @@ continuation, allowing callers to hold a source lock through actual removal."
                       :message
                       (format nil "Task artifact pathname became occupied: ~A"
                               target)
-                      :tool-name "task.run"
+                      :tool-name "child.spawn"
                       :task-id   (job-identifier job)))
              (rename-file temporary target)
              target)
