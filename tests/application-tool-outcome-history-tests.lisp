@@ -12,6 +12,49 @@
               unless (member key '(:seq :time))
                 append (list key value)))))
 
+(-> test-application-tool-outcomes-spacing () null)
+(defun test-application-tool-outcomes-spacing ()
+  "Keep clickable invocation groups compact through live completion and history replay."
+  (dolist (compact-p '(t nil))
+    (dolist (mode '(:live :batch :replay))
+      (with-test-configuration (configuration)
+        (let* ((application (application-tool-outcome-tests--application
+                             configuration :compact-view-p compact-p))
+               (ui          (application-ui application))
+               (viewport    (fullscreen-terminal-ui-viewport ui))
+               (records     (loop for index below 3
+                                  for call-id = (format nil "spacing-~D" index)
+                                  append (list (application-tool-outcome-tests--call (* 2 index) call-id)
+                                               (application-tool-outcome-tests--result
+                                                (1+ (* 2 index)) call-id :output (format nil "first row~%second row"))))))
+          (with-terminal-ui (ui ui)
+            (ecase mode
+              (:live
+               (dolist (record records)
+                 (application-tool-outcome-tests--present application record)))
+              (:batch
+               (apply #'application-tool-outcome-tests--present application records))
+              (:replay
+               (dolist (record records)
+                 (application-tool-outcome-history-tests--append
+                  (application-conversation application) record))
+               (application-render-records application)))
+            (test-assert (= 3 (clinedi:transcript-viewport-chunk-count viewport))
+                         "three completed calls occupy three replaceable transcript chunks")
+            (dotimes (index 3)
+              (let ((text (clinedi:transcript-viewport-chunk-text viewport index)))
+                (test-assert (and (uiop:string-prefix-p "✓ (resource.read" text)
+                                  (uiop:string-suffix-p text (string #\Newline))
+                                  (not (search (format nil "~%~%") text)))
+                             "completion preserves the original call's spacing identity")
+                (test-assert (eql (not compact-p) (not (null (search "second row" text))))
+                             "expanded results retain their multiline body inside the call group")))
+            (test-assert
+             (let ((action (terminal-ui-fullscreen--click-action ui 4 1)))
+               (and (eq (first action) ':insert) (search "resource.read" (second action))))
+             "completed application calls still insert their invocation when clicked"))))))
+  nil)
+
 (-> test-application-tool-outcomes-history-replay () null)
 (defun test-application-tool-outcomes-history-replay ()
   "Page an original invocation after its later result or completion was displayed."

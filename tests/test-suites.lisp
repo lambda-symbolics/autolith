@@ -1691,6 +1691,7 @@
   test-application-tool-outcomes-background-lifecycle
   test-application-tool-outcomes-inline-compatibility
   test-application-tool-outcomes-transient
+  test-application-tool-outcomes-spacing
   test-application-tool-outcomes-history-replay
   test-application-tool-outcomes-history-bounded
   test-application-tool-outcomes-startup-history
