@@ -249,15 +249,30 @@ whether to write."
          (values kept nil (< (length kept) (length current)))))))
   nil)
 
+(defparameter *world-delivery-receipt-prefix* "channel:"
+  "What begins the pending-input identifier of a channel delivery's receipt.")
+
+(-> world-delivery-receipt (string) string)
+(defun world-delivery-receipt (identifier)
+  "Return the pending-input identifier whose durable receipt settles delivery IDENTIFIER."
+  (concatenate 'string *world-delivery-receipt-prefix* identifier))
+
+(-> world-delivery-receipt-delivery (string) string)
+(defun world-delivery-receipt-delivery (receipt)
+  "Return the delivery identifier channel delivery RECEIPT settles."
+  (subseq receipt (length *world-delivery-receipt-prefix*)))
+
 (-> world-delivery-pending-identifier (world-delivery) string)
 (defun world-delivery-pending-identifier (delivery)
   "Return the pending-input identifier whose durable receipt settles DELIVERY."
-  (format nil "channel:~A" (world-delivery-identifier delivery)))
+  (world-delivery-receipt (world-delivery-identifier delivery)))
 
 (-> world-delivery-pending-identifier-p (t) boolean)
 (defun world-delivery-pending-identifier-p (identifier)
   "Return true when IDENTIFIER is the receipt of a channel delivery."
-  (and (stringp identifier) (uiop:string-prefix-p "channel:" identifier) t))
+  (and (stringp identifier)
+       (uiop:string-prefix-p *world-delivery-receipt-prefix* identifier)
+       t))
 
 (-> world-inbox-unsettled (configuration string conversation) (values list list))
 (defun world-inbox-unsettled (configuration channel-identifier conversation)
@@ -755,7 +770,7 @@ Deliveries CONVERSATION already recorded are settled on the way."
     (when settled
       (world-inbox-settle configuration channel settled)
       (dolist (identifier settled)
-        (remhash (format nil "channel:~A" identifier) taken)))
+        (remhash (world-delivery-receipt identifier) taken)))
     (loop for delivery in pending
           for identifier = (world-delivery-pending-identifier delivery)
           unless (or (eq (gethash identifier taken) ':taken)
@@ -774,7 +789,7 @@ Settling makes room in the inbox, so a send that found it full is resumed
 at once."
   (when (world-delivery-pending-identifier-p identifier)
     (world-inbox-settle configuration channel
-                        (list (subseq identifier (length "channel:"))))
+                        (list (world-delivery-receipt-delivery identifier)))
     (remhash identifier taken)
     (world-message-resume configuration)
     t))

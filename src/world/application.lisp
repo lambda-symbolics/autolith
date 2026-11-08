@@ -114,7 +114,7 @@ inbox made room."
       (when settled
         (world-inbox-settle configuration channel settled)
         (dolist (identifier settled)
-          (remhash (format nil "channel:~A" identifier)
+          (remhash (world-delivery-receipt identifier)
                    (application-world-deliveries application))))
       (values pending settled))))
 
